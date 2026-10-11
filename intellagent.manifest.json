@@ -1,0 +1,11 @@
+{
+  "appName": "Intellagent",
+  "host": "127.0.0.1",
+  "port": 7420,
+  "dataDir": "./data",
+  "defaultBoard": "main",
+  "lease": { "defaultMinutes": 30, "maxMinutes": 1440, "warningMinutes": 5 },
+  "presenceTimeoutSeconds": 90,
+  "readonlyData": true,
+  "backups": 10
+}

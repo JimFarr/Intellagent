@@ -1,0 +1,26 @@
+{
+  "name": "intellagent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Portable human + agent kanban. Zero dependencies.",
+  "main": "server.js",
+  "bin": {
+    "intellagent": "bin/intellagent.js"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "public",
+    "server.js",
+    "cli.js",
+    "mcp.js",
+    "git-hook.js",
+    "AGENTS.md"
+  ]
+}
