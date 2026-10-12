@@ -1332,19 +1332,34 @@ function finishSession(ctx, d, actor) {
 
 /* requests: free-form asks from the human to an agent ("let's create some tickets for X"), not tied
    to a ticket. They go to a chosen agent, else the board's coordinator, else the project's default agent. */
+// Files sent with a request or a reply (pasted screenshots…): stored like ticket attachments. Events carry
+// each file's local path too, so a woken agent can open it with its file tools.
+function requestFiles(ctx, req, list, actor) {
+  if (list == null) return [];
+  if (!Array.isArray(list)) fail(400, '"attachments" must be an array');
+  if (list.length > 10) fail(400, 'At most 10 attachments per message');
+  return list.map((a) => saveAttachment(ctx, req, a, actor));
+}
+const filesForEvent = (ctx, atts) => (atts || []).map((a) => ({
+  name: a.name, mime: a.mime, url: a.url,
+  ...(a.kind === 'file' ? { path: path.join(ctx.attachDir, decodeURIComponent(a.url.split('/').pop())) } : {}),
+}));
+
 function requestTarget(ctx, to) {
   return (to && str(to, 64).trim()) || ctx.board.coordinator || M.defaultAgent || null;
 }
 function createRequest(ctx, d, actor) {
   const body = str(d.body || '', 20_000).trim();
-  if (!body) fail(400, '"body" is required');
+  if (!body && !d.attachments?.length) fail(400, '"body" is required');
   const to = requestTarget(ctx, d.to);
   if (!to) fail(400, 'No agent to send this to: pass "to", or set a coordinator (PATCH /api/boards/<board> { "coordinator": "name" }).', { code: 'NO_AGENT' });
   return tx(ctx, (events) => {
     const req = { id: rid('r'), body, to, by: actor, at: now(), status: 'open', replies: [] };
+    const atts = requestFiles(ctx, req, d.attachments, actor);
+    if (atts.length) req.attachments = atts;
     (ctx.board.requests ||= []).push(req);
     if (ctx.board.requests.length > 300) ctx.board.requests.splice(0, ctx.board.requests.length - 300);
-    events.push({ board: ctx.id, type: 'request.created', actor, request: { id: req.id, body: trimChange(body), to }, recipients: [to].filter((n) => n !== actor.name), addressed: [to].filter((n) => n !== actor.name) });
+    events.push({ board: ctx.id, type: 'request.created', actor, request: { id: req.id, body: trimChange(body), to, ...(atts.length ? { attachments: filesForEvent(ctx, atts) } : {}) }, recipients: [to].filter((n) => n !== actor.name), addressed: [to].filter((n) => n !== actor.name) });
     return req;
   });
 }
@@ -1357,13 +1372,14 @@ function replyRequest(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const req = getRequest(ctx, id);
     const body = str(d.body || '', 20_000).trim();
-    if (!body && d.done == null) fail(400, '"body" or "done" is required');
-    if (body) req.replies.push({ id: rid('c'), author: actor, body, at: now() });
+    const atts = requestFiles(ctx, req, d.attachments, actor);
+    if (!body && !atts.length && d.done == null) fail(400, '"body" or "done" is required');
+    if (body || atts.length) req.replies.push({ id: rid('c'), author: actor, body, at: now(), ...(atts.length ? { attachments: atts } : {}) });
     if (d.done === true) req.status = 'done';
     if (d.done === false) req.status = 'open';
     req.updatedAt = now();
     const to = actor.name === req.to ? [] : [req.to];
-    events.push({ board: ctx.id, type: req.status === 'done' && d.done ? 'request.done' : 'request.replied', actor, request: { id: req.id, body: trimChange(req.body), to: req.to, status: req.status }, ...(body ? { reply: trimChange(body) } : {}), recipients: to });
+    events.push({ board: ctx.id, type: req.status === 'done' && d.done ? 'request.done' : 'request.replied', actor, request: { id: req.id, body: trimChange(req.body), to: req.to, status: req.status }, ...(body ? { reply: trimChange(body) } : {}), ...(atts.length ? { attachments: filesForEvent(ctx, atts) } : {}), recipients: to });
     return req;
   });
 }

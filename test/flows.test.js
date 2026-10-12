@@ -320,6 +320,18 @@ describe('agent flows', () => {
     assert.ok(r.cursor < 999999);
   });
 
+  it('requests carry pasted files, and the event gives the agent a local path it can open', async () => {
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const { seq } = await s.ok('GET', '/api/app');
+    const req = await s.ok('POST', `${B}/requests`, { body: 'what is wrong here?', to: 'ada', attachments: [{ name: 'shot.png', mime: 'image/png', dataBase64: png }] }, USER);
+    assert.deepEqual(req.attachments.map((a) => a.name), ['shot.png']);
+    const ev = (await s.ok('GET', `/api/events?since=${seq}&types=request.created`)).events.at(-1);
+    assert.ok(require('fs').existsSync(ev.request.attachments[0].path), 'the agent can read the file');
+    const r = await s.ok('POST', `${B}/requests/${req.id}/reply`, { attachments: [{ name: 'answer.png', mime: 'image/png', dataBase64: png }] }, A);
+    assert.equal(r.replies.at(-1).attachments[0].name, 'answer.png', 'a reply can be just a file');
+    assert.equal((await s.api('POST', `${B}/requests`, { body: 'x', to: 'ada', attachments: 'nope' }, USER)).status, 400);
+  });
+
   it('create with a pasted image: the new ticket gets the attachment and its description points at it', async () => {
     // what the create modal does after Create (INT-33): create, upload each staged file, rewrite its blob: link
     const staged = 'blob:http://127.0.0.1/abc';

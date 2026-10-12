@@ -2454,6 +2454,35 @@
   function readFile(f) {
     return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
   }
+  // Paste files into a text box's .staged strip; they travel inline with the message when it is sent,
+  // so nothing is uploaded for a draft that is cleared or abandoned.
+  function pasteStage(box) {
+    const strip = $('.staged', box);
+    const st = { files: [] };
+    const draw = () => {
+      for (const u of strip._urls || []) URL.revokeObjectURL(u);
+      strip._urls = [];
+      strip.innerHTML = st.files.map((f, i) => {
+        if (/^image\//.test(f.type)) { const u = URL.createObjectURL(f); strip._urls.push(u); return `<div class="st"><img src="${u}" alt=""><button type="button" data-i="${i}" title="Remove">${icon('x', 'sm')}</button></div>`; }
+        return `<div class="st"><span>${esc((f.name || 'file').slice(0, 18))}</span><button type="button" data-i="${i}" title="Remove">${icon('x', 'sm')}</button></div>`;
+      }).join('');
+    };
+    strip.addEventListener('click', (e) => { const b = e.target.closest('[data-i]'); if (b) { e.stopPropagation(); st.files.splice(Number(b.dataset.i), 1); draw(); } });
+    $('textarea', box).addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData?.files || [])];
+      if (!files.length) return; // text paste: untouched
+      e.preventDefault();
+      for (const f of files) {
+        if (f.size > 15 * 1024 * 1024) { toast(`${f.name} is over 15 MB`, { kind: 'error' }); continue; }
+        if (st.files.length >= 10) { toast('At most 10 files per message', { kind: 'error' }); break; }
+        st.files.push(f);
+      }
+      draw();
+    });
+    st.payload = async () => Promise.all(st.files.map(async (f) => ({ name: f.name || 'pasted.png', mime: f.type, dataBase64: await readFile(f) })));
+    st.clear = () => { st.files = []; draw(); };
+    return st;
+  }
   // Create mode: keep pasted files in the page (blob: URLs) until the ticket exists. Nothing is uploaded
   // before Create, so cancelling leaves no orphan attachments.
   function stageForCreate(m, files) {
@@ -3296,46 +3325,119 @@
 
   /* ─── requests: free-form asks to an agent (default: the board's coordinator) ─── */
   const agentChoices = () => [...new Set([...Object.keys(state.standing || {}), ...state.presence.map((p) => p.name), ...Object.keys(state.profiles).filter((n) => state.profiles[n]?.kind !== 'user')])].filter((n) => n && n !== settings.userName);
+  // The request chat reads like an IM thread: every request and reply in time order, the human on the
+  // right, agents on the left with their profile look. One sender's back-to-back messages (same day,
+  // within REQ_GROUP_MS) share a single head; a reply that doesn't follow its own request quotes it.
+  const REQ_GROUP_MS = 5 * 60 * 1000;
+  function reqThread(list, who) {
+    const msgs = [];
+    for (const q of list) {
+      if (who && q.to !== who) continue;
+      msgs.push({ id: q.id, q, ask: true, author: q.by, at: q.at, body: q.body, attachments: q.attachments });
+      for (const x of q.replies || []) msgs.push({ id: x.id, q, author: x.author, at: x.at, body: x.body, attachments: x.attachments });
+    }
+    msgs.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    msgs.forEach((m, i) => {
+      const p = msgs[i - 1];
+      m.mine = m.author?.kind !== 'agent';
+      m.day = new Date(m.at).toLocaleDateString('en-CA');
+      m.cont = !!p && p.day === m.day && p.author?.name === m.author?.name && Date.parse(m.at) - Date.parse(p.at) < REQ_GROUP_MS;
+      m.quote = !m.ask && !(p && p.q === m.q);
+      if (p) p.last = !m.cont;
+    });
+    if (msgs.length) msgs[msgs.length - 1].last = true;
+    return msgs;
+  }
+  let reqWho = ''; // the conversation picked in the chat ('' = all agents); kept while the page is open
   async function openRequests() {
     const body = openDrawer('requestsDrawer', 'Ask an agent', 'send');
-    let to = state.board.coordinator || '';
+    const pane = body.closest('.hub-pane');
+    let to = reqWho || state.board.coordinator || '';
     let list = [];
-    const toLabel = () => (to ? `${avatar({ name: to })}${esc(to)}${to === state.board.coordinator ? ' <span class="muted">· coordinator</span>' : ''}` : '<span class="muted">Choose an agent</span>');
-    body.innerHTML = `<div class="req-compose">
+    let seen = null; // message ids already drawn: only new ones animate in
+    const toLabel = () => (to ? `${avatar({ name: to })}${nameHTML(to)}${to === state.board.coordinator ? ' <span class="muted">· coordinator</span>' : ''}` : '<span class="muted">Choose an agent</span>');
+    const ph = () => (to ? `Message ${nameOf(to)}… — @mention to loop someone in` : 'Choose an agent to message');
+    body.innerHTML = `<div class="req-chats"></div><div class="req-thread"></div>
+      <div class="req-compose">
         <div class="req-to"><span class="muted">To</span><button class="dd" data-req-to>${toLabel()}${icon('chev', 'sm')}</button></div>
-        ${tboxHTML({ ph: 'e.g. “Let’s create tickets for the search feature” — @mention to loop someone in', okIcon: 'send', okTitle: 'Send (Ctrl+Enter)', rows: 3 })}
-      </div><div class="req-list"></div>`;
+        ${tboxHTML({ ph: ph(), okIcon: 'send', okTitle: 'Send (Ctrl+Enter)', rows: 2 })}
+      </div>`;
+    const ta = $('.req-compose textarea', body);
+    const staged = pasteStage($('.req-compose .tbox', body));
+    const setTo = (n) => {
+      to = n;
+      $('[data-req-to]', body).innerHTML = `${toLabel()}${icon('chev', 'sm')}`;
+      ta.placeholder = ph();
+    };
+    // One chip per agent that has requests (plus the current recipient), most recent conversation first.
+    const drawChats = () => {
+      const last = new Map();
+      for (const q of list) last.set(q.to, Math.max(last.get(q.to) || 0, Date.parse(q.updatedAt || q.at)));
+      if (to && !last.has(to)) last.set(to, Infinity);
+      if (reqWho && !last.has(reqWho)) last.set(reqWho, Infinity);
+      const who = [...last.keys()].sort((a, b) => last.get(b) - last.get(a));
+      const open = (n) => list.filter((q) => q.status === 'open' && (!n || q.to === n)).length;
+      const chip = (n, inner, tip) => { const k = open(n); return `<button class="req-chat ${reqWho === n ? 'on' : ''}" data-req-who="${esc(n)}" title="${tip}${k ? ` · ${k} open` : ''}">${inner}${k ? `<span class="n">${k}</span>` : ''}</button>`; };
+      $('.req-chats', body).innerHTML = chip('', `${icon('send', 'sm')}All`, 'All conversations') + who.map((n) => chip(n, `${avatar({ name: n })}<span class="nm">${esc(nameOf(n))}</span>`, `${esc(nameOf(n))}|Only your conversation with @${esc(n)}`)).join('');
+    };
+    const msgHTML = (m) => {
+      const q = m.q;
+      const time = new Date(m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const quote = m.quote ? `<button class="msg-quote" data-req-jump="${esc(q.id)}" title="Re|Show the request this answers">${icon('chev', 'to')}${esc(String(q.body || '').replace(/\s+/g, ' ').slice(0, 90))}</button>` : '';
+      const status = m.ask ? `<span class="msg-st ${q.status}">${q.status === 'done' ? `${icon('check', 'sm')}Done` : 'Open'}</span><button class="msg-act" data-req-toggle="${esc(q.id)}" title="${q.status === 'done' ? 'Reopen|Put this request back on the agent’s list' : 'Mark done|Nothing more needed on this one'}">${icon(q.status === 'done' ? 'restore' : 'check', 'sm')}</button>` : '';
+      const meta = m.last || m.ask ? `<div class="msg-meta">${m.ask && !reqWho ? `<span class="to">to ${nameHTML(q.to)}</span>` : ''}<span title="${esc(m.at)}">${time}</span>${status}</div>` : '';
+      return `<div class="msg ${m.mine ? 'me' : 'them'} ${m.cont ? 'cont' : ''} ${m.ask ? `ask ${q.status}` : ''} ${seen && !seen.has(m.id) ? 'new' : ''}" data-mid="${esc(m.id)}"${m.ask ? ` data-q="${esc(q.id)}"` : ''}>
+        ${m.mine ? '' : `<span class="msg-av">${m.cont ? '' : avatar(m.author, 'lg')}</span>`}
+        <div class="msg-col">${!m.cont && !m.mine ? `<div class="msg-who">${nameHTML(m.author?.name)}</div>` : ''}${quote}<div class="bubble">${m.body ? `<div class="md">${md(m.body)}</div>` : ''}${commentAtts(m)}</div>${meta}</div></div>`;
+    };
     const draw = () => {
-      const box = $('.req-list', body);
+      const box = $('.req-thread', body);
       if (!box) return;
-      box.innerHTML = list.length ? list.map((q) => `<div class="req ${q.status}">
-          <div class="req-head">${avatar(q.by)}<b>${nameHTML(q.by?.name)}</b>${icon('chev', 'to')}${avatar({ name: q.to })}<b>${nameHTML(q.to)}</b><span class="muted">${rel(q.at)}</span><span class="grow"></span>
-            <span class="chip req-status ${q.status}">${q.status === 'done' ? `${icon('check', 'sm')}Done` : 'Open'}</span>
-            <button class="btn ghost sm" data-req-toggle="${esc(q.id)}" title="${q.status === 'done' ? 'Reopen' : 'Mark done'}">${icon(q.status === 'done' ? 'restore' : 'check', 'sm')}</button></div>
-          <div class="md">${md(q.body)}</div>
-          ${q.replies.map((x) => `<div class="req-reply">${avatar(x.author)}<div><div class="cmt-head"><b>${nameHTML(x.author?.name)}</b><span>${rel(x.at)}</span></div><div class="md">${md(x.body)}</div></div></div>`).join('')}
-        </div>`).join('') : `<div class="empty-note">${icon('send')}</div>`;
+      const atEnd = !seen || pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80;
+      drawChats();
+      const msgs = reqThread(list, reqWho);
+      let day = '';
+      box.innerHTML = msgs.length ? msgs.map((m) => (m.day !== day ? `<div class="msg-day"><span>${esc(dayLabel((day = m.day)))}</span></div>` : '') + msgHTML(m)).join('')
+        : `<div class="empty-note">${icon('send')}${reqWho ? `<div>No messages with ${esc(nameOf(reqWho))} yet</div>` : ''}</div>`;
+      seen = new Set(msgs.map((m) => m.id));
+      if (atEnd) pane.scrollTop = pane.scrollHeight;
     };
     const load = async () => { try { list = await api('GET', B('/requests')); draw(); } catch { /* offline */ } };
     body._reload = load;
-    const ta = $('.req-compose textarea', body);
     const send = async () => {
       const text = ta.value.trim();
-      if (!text) { ta.focus(); return; }
+      if (!text && !staged.files.length) { ta.focus(); return; }
       if (!to) { toast('Choose an agent first (or set a coordinator on the Agents page)', { kind: 'error' }); return; }
       try {
-        await api('POST', B('/requests'), { body: text, to });
+        await api('POST', B('/requests'), { body: text, to, ...(staged.files.length ? { attachments: await staged.payload() } : {}) });
+        staged.clear();
         ta.value = '';
         autosize(ta);
-        toast(`Sent to ${to}`, { icon: 'send', kind: 'ok', timeout: 2000 });
-        load();
+        await load();
+        pane.scrollTop = pane.scrollHeight;
       } catch (e) { toast(e.message, { kind: 'error' }); }
     };
     wireTbox($('.req-compose .tbox', body), send);
     body.addEventListener('click', async (e) => {
+      const who = e.target.closest('[data-req-who]');
+      if (who) {
+        reqWho = who.dataset.reqWho;
+        if (reqWho) setTo(reqWho);
+        seen = null; // a different conversation: land on its newest message, no entrance animation
+        draw();
+        return;
+      }
       const pickTo = e.target.closest('[data-req-to]');
       if (pickTo) {
-        menu(pickTo, agentChoices().map((n) => ({ label: n, avatar: { name: n }, hint: n === state.board.coordinator ? 'coordinator' : '', cls: n === to ? 'on' : '', run: () => { to = n; pickTo.innerHTML = `${toLabel()}${icon('chev', 'sm')}`; } })), { search: true });
+        // Choosing a recipient opens that conversation (unless you're reading All).
+        menu(pickTo, agentChoices().map((n) => ({ label: nameOf(n), avatar: { name: n }, hint: n === state.board.coordinator ? 'coordinator' : '', cls: n === to ? 'on' : '', run: () => { setTo(n); if (reqWho) { reqWho = n; seen = null; draw(); } } })), { search: true });
+        return;
+      }
+      const jump = e.target.closest('[data-req-jump]');
+      if (jump) {
+        const t = $(`.msg[data-q="${CSS.escape(jump.dataset.reqJump)}"]`, body);
+        t?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
+        t?.classList.remove('flash'); void t?.offsetWidth; t?.classList.add('flash');
         return;
       }
       const tg = e.target.closest('[data-req-toggle]');
@@ -3444,18 +3546,19 @@
     placeAsk();
     $('#askField').classList.add('open');
     const ta = $('textarea', pop);
+    const staged = pasteStage($('.ask-box', pop));
     ta.value = ask.draft[state.boardId] || '';
     autosize(ta);
     const drawTo = () => {
       const to = askTo();
-      $('.ask-to', pop).innerHTML = to ? `<span class="muted">To</span>${avatar({ kind: 'agent', name: to })}<b>${esc(to)}</b>${icon('chev', 'sm')}` : `<span class="muted">To</span><b class="ph">Choose an agent</b>${icon('chev', 'sm')}`;
+      $('.ask-to', pop).innerHTML = to ? `<span class="muted">To</span>${avatar({ kind: 'agent', name: to })}<b>${nameHTML(to)}</b>${icon('chev', 'sm')}` : `<span class="muted">To</span><b class="ph">Choose an agent</b>${icon('chev', 'sm')}`;
       $('.ask-to', pop).dataset.tip = to === state.board.coordinator ? 'Coordinator|The board’s default agent for asks · click to send to someone else' : 'Recipient|Click to choose another agent';
-      ta.placeholder = to ? `Ask ${to} to plan, create tickets, explain…` : 'Ask an agent…';
+      ta.placeholder = to ? `Ask ${nameOf(to)} to plan, create tickets, explain…` : 'Ask an agent…';
     };
     const pickTo = () => {
       const btn = $('.ask-to', pop);
       const to = askTo();
-      menu(btn, agentChoices().map((n) => ({ label: n, avatar: { kind: 'agent', name: n }, hint: n === state.board.coordinator ? 'coordinator' : state.standing?.[n] ? 'standing' : '', cls: n === to ? 'on' : '', run: () => { ask.to[state.boardId] = n; drawTo(); renderAsk(); ta.focus(); } })),
+      menu(btn, agentChoices().map((n) => ({ label: nameOf(n), avatar: { kind: 'agent', name: n }, hint: n === state.board.coordinator ? 'coordinator' : state.standing?.[n] ? 'standing' : '', cls: n === to ? 'on' : '', run: () => { ask.to[state.boardId] = n; drawTo(); renderAsk(); ta.focus(); } })),
         { search: true, placeholder: 'Find or type a name…', onClose: () => setTimeout(() => { if (askOpen() && !pop.contains(document.activeElement)) ta.focus(); }), creatable: (n) => { ask.to[state.boardId] = n; drawTo(); renderAsk(); ta.focus(); } });
     };
     pop._pickTo = pickTo;
@@ -3463,12 +3566,13 @@
     drawAskThread();
     const send = async () => {
       const text = ta.value.trim();
-      if (!text) { ta.focus(); return; }
+      if (!text && !staged.files.length) { ta.focus(); return; }
       const to = askTo();
       if (!to) { pickTo(); return; }
       pop.classList.add('sending');
       try {
-        await api('POST', B('/requests'), { body: text, to });
+        await api('POST', B('/requests'), { body: text, to, ...(staged.files.length ? { attachments: await staged.payload() } : {}) });
+        staged.clear();
         ta.value = '';
         ask.draft[state.boardId] = '';
         autosize(ta);
@@ -3534,7 +3638,7 @@
       const waiting = q.status === 'open' && q.replies.at(-1)?.author?.kind !== 'agent';
       const fresh = r && r.at > seen;
       return `<div class="ask-item ${q.status} ${fresh ? 'fresh' : ''}" data-req="${esc(q.id)}" title="Open the thread|All replies, and mark it done">
-        <div class="ai-q"><span class="ai-body">${esc(q.body.split('\n')[0])}</span><span class="ai-meta">${q.status === 'done' ? icon('check', 'sm') : ''}${esc(q.to)} · ${rel(q.at)}</span></div>
+        <div class="ai-q"><span class="ai-body">${q.attachments?.length ? icon('clip', 'sm') : ''}${esc(q.body.split('\n')[0])}</span><span class="ai-meta">${q.status === 'done' ? icon('check', 'sm') : ''}${esc(nameOf(q.to))} · ${rel(q.at)}</span></div>
         ${waiting ? `<div class="ai-r wait">${avatar({ kind: 'agent', name: q.to })}<span>${r ? 'Following up' : 'On it'}<i class="ai-dots"><b></b><b></b><b></b></i></span></div>`
           : r ? `<div class="ai-r">${avatar(r.author)}<div class="md">${md(r.body)}</div></div>` : ''}
       </div>`;
