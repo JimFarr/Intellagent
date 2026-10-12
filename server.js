@@ -34,6 +34,10 @@ const MANIFEST_DEFAULTS = {
   auth: { userToken: null, agentTokens: {}, requireAgentTokens: false },
   // Optional per-agent limits: { "agent-name" | "*": { columns?: [names or ids it may change], readOnly?: bool } }
   permissions: {},
+  // A ticket an agent left in the working column with no activity for this long goes back to the pickup
+  // column (Ready) with a comment. 0 turns the sweep off.
+  staleWorkMinutes: 120,
+  staleSweepSeconds: 300,
 };
 
 function loadManifest() {
@@ -2246,6 +2250,7 @@ function presenceView() {
 
 const warned = new Set();
 
+setInterval(() => { try { sweepStale(); } catch (e) { console.warn(`stale sweep: ${e.message}`); } }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => {
   for (const ctx of boards.values()) {
     const ms = ctx.board.master;
@@ -2970,6 +2975,79 @@ function listenersFor(ctx) {
 route('GET', '/api/boards/:board/listeners', 'Agents listening to each item: { itemId: [agent names] }', ({ p }) => listenersFor(getCtx(p.board)));
 
 /* standing agents: defined in agents.json next to the manifest; the API only observes and steers them */
+// Is this name an agent (not a person)? People have kind "user" profiles.
+const isAgentName = (n) => !!n && profiles[n]?.kind !== 'user';
+// Send a ticket an agent was working on back to the pickup column, keeping its assignee, with a comment.
+function backToReady(ctx, item, actor, events, note) {
+  const ready = pickupColumns(ctx)[0];
+  const l = item.lease;
+  if (l) { item.lease = null; events.push(itemEvent(ctx, 'lease.revoked', item, actor, { claimant: l.claimant, reason: note.reason, mentions: [l.claimant] })); }
+  item.comments.push({ id: rid('c'), author: actor, body: note.body, createdAt: now() });
+  events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: item.comments.at(-1).id, body: trimChange(note.body) }, mentions: [note.agent].filter(Boolean) }));
+  // a full Ready (WIP limit) must not undo the stop: the ticket then just stays where it is, released
+  if (ready && ready.id !== item.columnId) { try { moveInto(ctx, item, ready.id, 'top', actor, events); } catch { /* stays put */ } }
+  item.version++;
+  item.updatedAt = now();
+}
+
+// Stop every agent: kill runs, pause standing agents, release agent leases and the master lease, and send
+// the tickets they were working on back to Ready (assignee kept) with a comment saying what happened.
+function stopAllAgents(actor) {
+  const agents = standing ? standing.stopAll() : { paused: [], stopped: [] };
+  const moved = [];
+  const released = [];
+  for (const ctx of boards.values()) {
+    const work = workingColumn(ctx);
+    tx(ctx, (events) => {
+      const m = activeMaster(ctx);
+      const masterAgent = m && isAgentName(m.holder) ? m.holder : null;
+      if (masterAgent) { ctx.board.master = null; events.push({ board: ctx.id, type: 'master.revoked', actor, holder: masterAgent, recipients: [masterAgent] }); }
+      for (const item of Object.values(ctx.board.items)) {
+        const l = activeLease(item);
+        const who = l && isAgentName(l.claimant) ? l.claimant : (!l && masterAgent && item.assignee === masterAgent ? masterAgent : null);
+        if (!who) continue;
+        const inWork = work && item.columnId === work.id;
+        if (inWork) {
+          backToReady(ctx, item, actor, events, { agent: who, reason: 'stopped', body: `⏹ Stopped by ${actor.name}: ${who} was halted mid-work. Check for half-finished changes before restarting.` });
+          moved.push(`${ctx.id}/${item.id}`);
+        } else if (l) {
+          item.lease = null;
+          item.version++;
+          events.push(itemEvent(ctx, 'lease.revoked', item, actor, { claimant: l.claimant, reason: 'stopped', mentions: [l.claimant] }));
+        }
+        if (l) released.push(`${ctx.id}/${item.id}`);
+      }
+      events.push({ board: ctx.id, type: 'agents.stopped', actor, agents: agents.paused, stopped: agents.stopped, recipients: [] });
+    });
+  }
+  return { ...agents, released, moved };
+}
+
+// Tickets an agent left in the working column with no sign of life go back to Ready.
+function sweepStale() {
+  const mins = Number(M.staleWorkMinutes) || 0;
+  if (!mins) return;
+  for (const ctx of boards.values()) {
+    const work = workingColumn(ctx);
+    if (!work) continue;
+    const m = activeMaster(ctx);
+    const stale = Object.values(ctx.board.items).filter((it) => {
+      if (it.columnId !== work.id || activeLease(it) || it.test) return false;
+      if (it.assignee && !isAgentName(it.assignee)) return false; // a person's own work is theirs to manage
+      if (m && it.assignee === m.holder) return false; // the master holder works without leases
+      if (it.assignee && standing?.isRunning(it.assignee)) return false;
+      const last = Math.max(Date.parse(it.updatedAt || 0), Date.parse(it.enteredColumnAt || 0), ...(it.comments || []).map((c) => Date.parse(c.createdAt)));
+      return Date.now() - last > mins * 60_000;
+    });
+    if (!stale.length) continue;
+    try {
+      tx(ctx, (events) => {
+        for (const it of stale) backToReady(ctx, it, SYSTEM, events, { agent: it.assignee, reason: 'stale', body: `⏸ Back to Ready: no activity for ${mins} min in ${work.name} and nobody holds it.${it.assignee ? ` @${it.assignee} — start it again when you pick it up.` : ''}` });
+      });
+    } catch { /* e.g. Ready at its WIP limit: try again next sweep */ }
+  }
+}
+
 const humanOnly = (actor) => { if (actor.kind !== 'user') fail(403, 'Only the human can control standing agents', { code: 'HUMAN_ONLY' }); };
 // pause / resume / run: the human, or an agent granted agents.control — never on itself
 const controls = (actor, target) => {
@@ -3004,6 +3082,14 @@ route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=2
   fs.readSync(fd, buf, 0, buf.length, size - buf.length);
   fs.closeSync(fd);
   return { file: f, truncated: size > n, log: buf.toString('utf8') };
+});
+route('POST', '/api/agents/stop-all', 'Human (or the agents.control grant): stop every agent now — kill runs, pause standing agents, release agent leases and the master lease, send their In Progress tickets back to Ready with a comment', ({ actor }) => {
+  if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
+  return stopAllAgents(actor);
+});
+route('POST', '/api/agents/resume-all', 'Human (or the agents.control grant): resume every standing agent', ({ actor }) => {
+  if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
+  return standing ? standing.resumeAll() : { resumed: [] };
 });
 route('POST', '/api/agents/:name/pause', 'Human: pause (current run finishes; events keep queueing)', ({ p, actor }) => { controls(actor, p.name); return standing.pause(p.name); });
 route('POST', '/api/agents/:name/resume', 'Human: resume a paused or failed agent', ({ p, actor }) => { controls(actor, p.name); return standing.unpause(p.name); });

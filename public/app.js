@@ -3913,7 +3913,13 @@
     const coord = state.board?.coordinator || null;
     const coordRow = `<div class="coord-row"><div class="cr-label"><span>Coordinator</span><span class="sr-auto">gets “Ask an agent” requests by default</span></div><button class="dd" data-coord>${coord ? `${avatar({ name: coord })}${esc(coord)}` : '<span class="v ph">None</span>'}${icon('chev', 'sm')}</button></div>`;
     const addBtn = '<button class="add-agent-btn" data-add-agent>＋ Add standing agent</button>';
-    body.innerHTML = coordRow + addBtn + (rows.length ? rows.map((p, i) => {
+    // One control to halt everything; once everyone is paused it offers to bring them back.
+    const sa = Object.values(state.standing || {});
+    const allPaused = sa.length && sa.every((a) => a.status === 'paused');
+    const stopRow = sa.length || state.presence.some((p) => p.leases?.length) ? `<div class="stop-row">${allPaused
+      ? `<button class="btn sm" data-resume-all title="Resume all|Unpause every standing agent; their queued events run">${icon('play', 'sm')}Resume all agents</button>`
+      : `<button class="btn sm danger" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}Stop all agents</button>`}</div>` : '';
+    body.innerHTML = stopRow + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
@@ -3931,6 +3937,24 @@
       }
       const aa = e.target.closest('[data-add-agent]');
       if (aa) { e.stopPropagation(); addAgentForm(aa); return; }
+      const stop = e.target.closest('[data-stop-all]');
+      if (stop) {
+        e.stopPropagation();
+        if (!stop.classList.contains('armed')) { stop.classList.add('armed'); stop.lastChild.textContent = 'Click again to stop everything'; setTimeout(() => { if (stop.isConnected) { stop.classList.remove('armed'); stop.lastChild.textContent = 'Stop all agents'; } }, 3500); return; }
+        try {
+          const r = await api('POST', '/api/agents/stop-all', {});
+          toast(`Stopped ${r.stopped.length ? r.stopped.join(', ') : 'all agents'}${r.moved.length ? ` · ${r.moved.length} ticket${r.moved.length > 1 ? 's' : ''} back to Ready` : ''}`, { icon: 'pause', kind: 'ok' });
+          await refreshPresence();
+          scheduleRefresh(0);
+          fillAgents(body);
+        } catch (err) { toast(err.message, { kind: 'error' }); }
+        return;
+      }
+      if (e.target.closest('[data-resume-all]')) {
+        e.stopPropagation();
+        try { await api('POST', '/api/agents/resume-all', {}); toast('All agents resumed', { icon: 'play', kind: 'ok' }); await refreshPresence(); fillAgents(body); } catch (err) { toast(err.message, { kind: 'error' }); }
+        return;
+      }
       if (e.target.closest('.add-agent')) return;
       const mk = e.target.closest('[data-make-coord]');
       if (mk) { e.stopPropagation(); setCoordinator(mk.dataset.makeCoord); return; }

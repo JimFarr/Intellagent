@@ -283,3 +283,42 @@ describe('keep-alive standing agents', () => {
     }
   });
 });
+
+describe('stop all agents', () => {
+  it('kills runs without counting a failure, pauses everyone, frees leases, sends their In Progress tickets to Ready; resume-all restarts', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { busy: { run: run('slow', 4000) }, calm2: { run: run('ok') } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'half done', column: 'Ready' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/start`, { status: 'editing' }, { agent: 'busy' });
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@busy keep going' }, USER);
+      await until(async () => (await agentState(s, 'busy')).status === 'running', 6000, 'busy running');
+      assert.equal((await s.api('POST', '/api/agents/stop-all', {}, { agent: 'busy' })).status, 403, 'agents need the grant');
+      const r = await s.ok('POST', '/api/agents/stop-all', {}, USER);
+      assert.deepEqual(r.stopped, ['busy']);
+      assert.ok(r.moved.some((x) => x.endsWith(it.id)));
+      await until(async () => (await agentState(s, 'busy')).status === 'paused', 6000, 'busy paused');
+      const a = await agentState(s, 'busy');
+      assert.equal(a.failures, 0, 'a stopped run is not a failure');
+      assert.ok(a.queued >= 1, 'its events wait for the resume');
+      assert.equal((await agentState(s, 'calm2')).status, 'paused');
+      const after = await s.ok('GET', `${B}/items/${it.id}`);
+      assert.equal(after.column, 'Ready');
+      assert.equal(after.lease, null);
+      assert.equal(after.assignee, 'busy', 'kept, so it is easy to resume');
+      assert.match(after.comments.at(-1).body, /Stopped by .*busy was halted mid-work/);
+      await s.ok('POST', '/api/agents/resume-all', {}, USER);
+      await until(async () => ['running', 'queued', 'idle'].includes((await agentState(s, 'busy')).status), 6000, 'busy resumed');
+    } finally { await s.stop(); }
+  });
+
+  it('the stale sweep sends an agent ticket left in In Progress, with no lease and no activity, back to Ready', async () => {
+    const s = await startServer({ manifest: { staleWorkMinutes: 0.01, staleSweepSeconds: 0.4 }, agents: { agents: {} } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'abandoned', column: 'Ready' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/start`, {}, { agent: 'ghost' });
+      await s.ok('DELETE', `${B}/items/${it.id}/lease`, undefined, { agent: 'ghost' });
+      await until(async () => (await s.ok('GET', `${B}/items/${it.id}`)).column === 'Ready', 6000, 'swept to Ready');
+      assert.match((await s.ok('GET', `${B}/items/${it.id}`)).comments.at(-1).body, /Back to Ready: no activity/);
+    } finally { await s.stop(); }
+  });
+});
