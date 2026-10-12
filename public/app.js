@@ -3911,7 +3911,7 @@
     const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
       .sort((a, b) => Number(!!state.standing[b.name]) - Number(!!state.standing[a.name]));
     const coord = state.board?.coordinator || null;
-    const coordRow = `<div class="coord-row"><div class="cr-label"><span>Coordinator</span><span class="sr-auto">gets “Ask an agent” requests by default</span></div><button class="dd" data-coord>${coord ? `${avatar({ name: coord })}${esc(coord)}` : '<span class="v ph">None</span>'}${icon('chev', 'sm')}</button></div>`;
+    const coordRow = `<div class="coord-row"><div class="cr-label"><span>Coordinator</span><span class="sr-auto">gets “Ask an agent” requests by default</span></div><button class="dd" data-coord>${coord ? `${avatar({ name: coord })}${nameHTML(coord)}` : '<span class="v ph">None</span>'}${icon('chev', 'sm')}</button></div>`;
     const addBtn = '<button class="add-agent-btn" data-add-agent>＋ Add standing agent</button>';
     // One control to halt everything; once everyone is paused it offers to bring them back.
     const sa = Object.values(state.standing || {});
@@ -3932,7 +3932,7 @@
       const co = e.target.closest('[data-coord]');
       if (co) {
         e.stopPropagation();
-        menu(co, [{ label: 'None', icon: 'x', run: () => setCoordinator(null) }, ...agentChoices().map((n) => ({ label: n, avatar: { name: n }, cls: n === coord ? 'on' : '', run: () => setCoordinator(n) }))], { search: true });
+        menu(co, [{ label: 'None', icon: 'x', run: () => setCoordinator(null) }, ...agentChoices().map((n) => ({ label: nameOf(n), avatar: { name: n }, cls: n === coord ? 'on' : '', run: () => setCoordinator(n) }))], { search: true });
         return;
       }
       const aa = e.target.closest('[data-add-agent]');
