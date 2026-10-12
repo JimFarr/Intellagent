@@ -241,7 +241,7 @@
       { card: 14, col: 20, modal: 22, ctl: 12, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'orbit', enter: 'zoom', lanes: 'outline', chips: 'outline', bg: 'aurora', texture: true },
       '.card { border: 1px solid transparent; background: linear-gradient(var(--surface), var(--surface)) padding-box, conic-gradient(from 210deg, #c084fc, #5eead4, #60a5fa, #f472b6, #fcd34d, #c084fc) border-box; } .card:hover { box-shadow: 0 18px 40px -16px rgb(192 132 252 / .5), 0 0 24px -10px rgb(94 234 212 / .5); } .column { border-color: rgb(255 255 255 / .07); background: rgb(14 14 21 / .55); } .app-name { background: linear-gradient(90deg, #c084fc, #5eead4, #f472b6); -webkit-background-clip: text; background-clip: text; } .btn.primary { background: linear-gradient(120deg, #c084fc, #60a5fa, #5eead4); }'),
     riso: T('Riso', 'light', ['#f5f0e6', '#efe8da', '#fbf8f1', '#1d2b6b', '#5c6aa3', '#1d2b6b', '#ff48b0', '#0078bf', '#ff48b0', '#0078bf', '#ffe800', '#00a95c', '#ff6c2f', '#ff48b0', '#ff48b0', '#0078bf', '#ffe800'],
-      { md: 'paper', card: 4, col: 6, modal: 8, ctl: 6, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'tint', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'outline', chips: 'tag', heads: 'caps', bg: 'none', texture: true, grain: '.4', titleW: 700, font: "'Bricolage Grotesque'", display: "'Bricolage Grotesque'" },
+      { md: 'paper', card: 4, col: 6, modal: 8, ctl: 6, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'tint', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'outline', chips: 'tag', heads: 'caps', bg: 'halftone', texture: true, grain: '.4', titleW: 700, font: "'Bricolage Grotesque'", display: "'Bricolage Grotesque'" },
       '.card { --card-line: var(--text); box-shadow: 3px 3px 0 var(--accent); } .card:hover { box-shadow: 5px 5px 0 var(--accent), -2px -2px 0 color-mix(in oklab, var(--accent-2) 70%, transparent); } .c-title { text-shadow: 1.5px 1px 0 color-mix(in oklab, var(--accent) 50%, transparent); } .col-name { color: var(--accent-2); text-shadow: 2px 1px 0 color-mix(in oklab, var(--accent) 60%, transparent); } .column { box-shadow: 6px 6px 0 color-mix(in oklab, var(--accent-2) 28%, transparent); } .app-name { background: none; color: var(--accent-2); -webkit-text-fill-color: currentColor; text-shadow: 2px 1.5px 0 var(--accent); } .btn.primary { background: var(--accent); box-shadow: 3px 3px 0 var(--accent-2); }'),
   };
   // Each theme's avatar look (kept in one table so the set reads as a whole).
@@ -263,7 +263,7 @@
   for (const [k, v] of Object.entries(DROP_STYLE)) if (THEMES[k]) THEMES[k].style.drop ??= v;
   // Organic themes lean on their colour fields: let the background blobs come through more.
   for (const [k, o] of [['moss', '.62'], ['clay', '.7'], ['tide', '.75'], ['bloom', '.6'], ['cloud', '.8'], ['liquid', '.95']]) if (THEMES[k]) THEMES[k].vars['fx-o'] = o;
-  const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['stars', 'Stars'], ['mesh', 'Mesh'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['topo', 'Topo'], ['confetti', 'Confetti'], ['halftone', 'Halftone'], ['none', 'None']];
+  const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['mesh', 'Mesh'], ['stars', 'Stars'], ['topo', 'Topo'], ['halftone', 'Halftone'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['confetti', 'Confetti'], ['none', 'None']];
   const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES.intellagent).style });
   // A user setting of "theme" (or unset) defers to the theme's own choice.
   const pick = (k) => (settings[k] != null && settings[k] !== 'theme' ? settings[k] : themeStyle()[k]);
@@ -325,7 +325,7 @@
     let meta = $('meta[name="theme-color"]');
     if (!meta) { meta = document.createElement('meta'); meta.name = 'theme-color'; document.head.append(meta); }
     meta.content = t.vars.bg;
-    stars.sync();
+    stars.sync(); art.sync();
   }
   function switchTheme(name, x = innerWidth / 2, y = 0, after = null) {
     const apply = () => { settings.theme = name; saveSettings(); after?.(); };
@@ -400,6 +400,190 @@
       },
     };
   })();
+
+  /* ─── generated art: topo · squiggles · doodles · confetti · halftone ───
+     Drawn once per theme/size onto one canvas, never tiled: a seeded noise field decides where marks
+     cluster and where the board gets quiet, so nothing reads as wallpaper. Motion is a slow compositor drift (CSS). */
+  const art = (() => {
+    const KINDS = ['topo', 'squiggles', 'doodles', 'confetti', 'halftone'];
+    const M = 60; // canvas overhang each side, room for the drift
+    const hash = (x, y, s) => { let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(s, 1274126177)) | 0; h = Math.imul(h ^ (h >>> 13), 1103515245); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+    const vn = (x, y, s) => {
+      const xi = Math.floor(x), yi = Math.floor(y), u0 = x - xi, v0 = y - yi;
+      const u = u0 * u0 * u0 * (u0 * (u0 * 6 - 15) + 10), v = v0 * v0 * v0 * (v0 * (v0 * 6 - 15) + 10);
+      const a = hash(xi, yi, s), b = hash(xi + 1, yi, s), c = hash(xi, yi + 1, s), d = hash(xi + 1, yi + 1, s);
+      return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+    };
+    const fbm = (x, y, s, o = 3) => { // octaves rotated ~37° so the lattice never shows
+      let t = 0, a = 0.5, n = 0;
+      for (let i = 0; i < o; i++) { t += a * vn(x, y, s + i * 31); n += a; [x, y] = [(x * 0.8 - y * 0.6) * 2.02, (x * 0.6 + y * 0.8) * 2.02]; a *= 0.5; }
+      return t / n;
+    };
+    const rng = (s) => () => { s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const pickW = (r, list) => { let x = r() * list.reduce((n, [, w]) => n + w, 0); for (const [v, w] of list) if ((x -= w) <= 0) return v; return list[0][0]; };
+
+    // contour lines of a domain-warped noise field; every fifth line is an index contour
+    function topo(ctx, W, H, k, c) {
+      const cell = 6 * Math.max(0.6, k), nx = Math.ceil(W / cell) + 1, ny = Math.ceil(H / cell) + 1, f = new Float32Array(nx * ny), sc = 1 / (500 * k);
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+        const x = i * cell * sc, y = j * cell * sc;
+        f[j * nx + i] = fbm(x + 0.9 * fbm(x + 3.1, y + 7.7, 5, 2), y + 0.9 * fbm(x + 8.3, y + 1.9, 9, 2), 2, 4);
+      }
+      const step = 0.028, paths = [new Path2D(), new Path2D()];
+      const E = (e, x, y, a, b, cc, d, L) => { // edge crossing point: 0 top, 1 right, 2 bottom, 3 left
+        const t = (p, q) => (L - p) / (q - p);
+        return e === 0 ? [x + t(a, b) * cell, y] : e === 1 ? [x + cell, y + t(b, cc) * cell] : e === 2 ? [x + t(d, cc) * cell, y + cell] : [x, y + t(a, d) * cell];
+      };
+      const SEG = [[], [[3, 2]], [[2, 1]], [[3, 1]], [[0, 1]], [[3, 0], [2, 1]], [[0, 2]], [[3, 0]], [[3, 0]], [[0, 2]], [[0, 1], [3, 2]], [[0, 1]], [[3, 1]], [[2, 1]], [[3, 2]], []];
+      for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+        const a = f[j * nx + i], b = f[j * nx + i + 1], cc = f[(j + 1) * nx + i + 1], d = f[(j + 1) * nx + i];
+        const lo = Math.ceil(Math.min(a, b, cc, d) / step), hi = Math.floor(Math.max(a, b, cc, d) / step);
+        for (let l = lo; l <= hi; l++) {
+          const L = l * step, idx = (a > L) << 3 | (b > L) << 2 | (cc > L) << 1 | (d > L);
+          for (const [e1, e2] of SEG[idx]) {
+            const p = E(e1, i * cell, j * cell, a, b, cc, d, L), q = E(e2, i * cell, j * cell, a, b, cc, d, L), P = paths[l % 5 === 0 ? 1 : 0];
+            P.moveTo(p[0], p[1]); P.lineTo(q[0], q[1]);
+          }
+        }
+      }
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = c.accent; ctx.lineWidth = Math.max(0.7, 1 * k); ctx.stroke(paths[0]);
+      ctx.strokeStyle = c['accent-2']; ctx.lineWidth = Math.max(1, 1.9 * k); ctx.stroke(paths[1]);
+    }
+
+    // two offset halftone screens (15° and 75°) whose dots swell where each colour pools
+    function halftone(ctx, W, H, k, c) {
+      const screen = (ang, col, cx, cy, seed) => {
+        const p = 13 * Math.max(0.55, k), ca = Math.cos(ang), sa = Math.sin(ang), R = Math.hypot(W, H);
+        ctx.fillStyle = col; ctx.beginPath();
+        for (let v = -R; v < R; v += p) for (let u = -R; u < R; u += p) {
+          const x = W / 2 + u * ca - v * sa, y = H / 2 + u * sa + v * ca;
+          if (x < -p || y < -p || x > W + p || y > H + p) continue;
+          const d = Math.hypot((x / W - cx) * 1.15, (y / H - cy) * 1.5);
+          const t = (1 - sstep(0, 0.8, d)) * (0.5 + 0.9 * fbm(x / (260 * k), y / (260 * k), seed, 2)) - 0.06;
+          const r = p * 0.5 * Math.sqrt(Math.max(0, Math.min(0.8, t)));
+          if (r > 0.45) { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 6.2832); }
+        }
+        ctx.fill();
+      };
+      screen(0.26, c.accent, 0.92, 0.02, 3);
+      screen(1.31, c['accent-2'], 0.06, 1.02, 8);
+    }
+
+    // marks for the scattered kinds, drawn in a unit box around the origin
+    const wave = (n, amp) => { const p = []; for (let i = 0; i <= 48; i++) { const t = i / 48; p.push([-1 + 2 * t, amp * Math.sin(t * Math.PI * 2 * n)]); } return p; };
+    const coil = () => { const p = []; for (let i = 0; i <= 90; i++) { const t = i / 90; p.push([-0.95 + 1.9 * t - 0.2 * Math.sin(t * Math.PI * 9), 0.2 * Math.cos(t * Math.PI * 9)]); } return p; };
+    const ring = (r, n = 40, a0 = 0, a1 = 6.2832) => Array.from({ length: n + 1 }, (_, i) => { const a = a0 + (a1 - a0) * i / n; return [r * Math.cos(a), r * Math.sin(a)]; });
+    const line = (ctx, pts) => { ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke(); };
+    // hand-drawn: jitter the points, then run a smooth curve through their midpoints
+    const sketch = (ctx, pts, r, closed = false, j = 0.035) => {
+      const q = pts.map(([x, y]) => [x + (r() - 0.5) * 2 * j, y + (r() - 0.5) * 2 * j]);
+      if (closed) q.push(q[0], q[1]);
+      ctx.beginPath(); ctx.moveTo(q[0][0], q[0][1]);
+      for (let i = 1; i < q.length - 1; i++) ctx.quadraticCurveTo(q[i][0], q[i][1], (q[i][0] + q[i + 1][0]) / 2, (q[i][1] + q[i + 1][1]) / 2);
+      if (!closed) ctx.lineTo(q[q.length - 1][0], q[q.length - 1][1]);
+      ctx.stroke();
+    };
+    const dense = (pts, closed) => pts.flatMap((p, i) => { const q = pts[(i + 1) % pts.length]; return !closed && i === pts.length - 1 ? [p] : [p, [p[0] + (q[0] - p[0]) * 0.15, p[1] + (q[1] - p[1]) * 0.15], [p[0] + (q[0] - p[0]) * 0.85, p[1] + (q[1] - p[1]) * 0.85]]; }); // keeps corners from melting
+    const dot = (ctx, x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill(); };
+    const MEMPHIS = [
+      [(x) => line(x, wave(2.5, 0.22)), 4], [(x) => line(x, coil()), 2.5], [(x) => line(x, wave(3, 0.16).map(([a, b], i) => [a, i % 8 < 4 ? b : -b]).filter((_, i) => i % 4 === 0)), 2],
+      [(x) => line(x, ring(0.55, 30, Math.PI, 6.2832)), 1.4], [(x) => line(x, ring(0.32)), 1], [(x) => { dot(x, -0.42, 0.1, 0.1); dot(x, 0, -0.12, 0.1); dot(x, 0.42, 0.1, 0.1); }, 1],
+      [(x) => { line(x, [[-0.3, 0], [0.3, 0]]); line(x, [[0, -0.3], [0, 0.3]]); }, 1], [(x) => { for (const o of [-0.26, 0, 0.26]) line(x, [[-0.5, o - 0.15], [0.5, o + 0.15]]); }, 1],
+    ];
+    const star = (n, R, r0) => Array.from({ length: n * 2 }, (_, i) => { const a = -Math.PI / 2 + i * Math.PI / n, q = i % 2 ? r0 : R; return [q * Math.cos(a), q * Math.sin(a)]; });
+    const DOODLES = [
+      [(x, r) => sketch(x, [[-0.5, 0.02], [-0.32, 0.2], [-0.14, 0.38], [0.2, -0.05], [0.55, -0.45]], r), 2], // check
+      [(x, r) => sketch(x, dense(star(5, 0.6, 0.26), true), r, true, 0.025), 1.6],
+      [(x, r) => { x.beginPath(); x.moveTo(0, -0.62); for (const [a, b, cx, cy] of [[0.55, 0, 0.08, -0.08], [0, 0.62, 0.08, 0.08], [-0.55, 0, -0.08, 0.08], [0, -0.62, -0.08, -0.08]]) x.quadraticCurveTo(cx, cy, a, b); x.stroke(); }, 2], // sparkle
+      [(x, r) => sketch(x, Array.from({ length: 34 }, (_, i) => { const a = i * 0.42, q = 0.04 + i * 0.016; return [q * Math.cos(a), q * Math.sin(a)]; }), r, false, 0.015), 1.3], // spiral
+      [(x, r) => { sketch(x, [[-0.6, 0.35], [-0.2, 0.42], [0.15, 0.1], [0.5, -0.3]], r); sketch(x, [[0.18, -0.32], [0.5, -0.3], [0.46, 0.02]], r, false, 0.02); }, 1.6], // arrow
+      [(x, r) => sketch(x, Array.from({ length: 24 }, (_, i) => { const t = i / 24 * 6.2832; return [0.036 * 16 * Math.sin(t) ** 3, -0.036 * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) - 0.05]; }), r, true, 0.02), 1.2], // heart
+      [(x, r) => { sketch(x, dense([[-0.5, -0.38], [0.5, -0.38], [0.52, 0.38], [-0.5, 0.38]], true), r, true, 0.025); sketch(x, [[-0.3, -0.12], [0.28, -0.12]], r, false, 0.02); sketch(x, [[-0.3, 0.1], [0.08, 0.1]], r, false, 0.02); }, 1.4], // card
+      [(x, r) => sketch(x, dense([[0.12, -0.62], [-0.3, 0.06], [0.04, 0.04], [-0.12, 0.62], [0.36, -0.12], [0.02, -0.1], [0.12, -0.62]]), r, false, 0.015), 1.2], // bolt
+      [(x, r) => { sketch(x, dense([[-0.55, -0.4], [0.55, -0.42], [0.55, 0.22], [-0.05, 0.22], [-0.3, 0.48], [-0.28, 0.22], [-0.55, 0.22], [-0.55, -0.4]]), r, false, 0.02); }, 1.4], // speech bubble
+      [(x, r) => { sketch(x, ring(0.5, 14), r, true, 0.03); dot(x, -0.17, -0.1, 0.06); dot(x, 0.17, -0.1, 0.06); sketch(x, ring(0.27, 8, 0.5, 2.64).map(([a, b]) => [a, b + 0.02]), r, false, 0.015); }, 1], // smile
+      [(x, r) => { for (let i = 0; i < 4; i++) { const a = i * Math.PI / 4; sketch(x, [[-0.45 * Math.cos(a), -0.45 * Math.sin(a)], [0.45 * Math.cos(a), 0.45 * Math.sin(a)]], r, false, 0.02); } }, 1], // asterisk
+    ];
+    const CONFETTI = [
+      [(x) => { x.beginPath(); x.roundRect(-0.55, -0.2, 1.1, 0.4, 0.08); x.fill(); }, 4], [(x) => dot(x, 0, 0, 0.32), 2.2],
+      [(x) => { x.beginPath(); x.moveTo(0, -0.42); x.lineTo(0.4, 0.3); x.lineTo(-0.4, 0.3); x.closePath(); x.fill(); }, 1.6],
+      [(x) => { x.lineWidth = 0.2; line(x, wave(1.5, 0.18).map(([a, b]) => [a * 0.6, b])); }, 1.8], [(x) => { x.fillRect(-0.28, -0.28, 0.56, 0.56); }, 1],
+    ];
+    const KIND = { // marks, size px, spacing ×size, stroke px, colour weights, foreshorten
+      squiggles: { marks: MEMPHIS, size: [30, 50], gap: 2.6, lw: 2.2, cols: [['accent', 5], ['accent-2', 4], ['spike', 1.4]] },
+      doodles: { marks: DOODLES, size: [28, 42], gap: 2.35, lw: 1.9, cols: [['accent', 5], ['accent-2', 4]] },
+      confetti: { marks: CONFETTI, size: [12, 21], gap: 3, lw: 0, cols: [['accent', 4], ['accent-2', 3.6], ['spike', 2.6], ['issue', 1.6]], fore: true },
+    };
+    function scatter(ctx, W, H, k, c, kind) {
+      const K = KIND[kind], r = rng(kind.length * 977 + 13), placed = [], cellSz = 70 * k, grid = new Map();
+      const near = (x, y, rad) => {
+        const gx = Math.floor(x / cellSz), gy = Math.floor(y / cellSz);
+        for (let a = gx - 1; a <= gx + 1; a++) for (let b = gy - 1; b <= gy + 1; b++) for (const p of grid.get(a + ',' + b) || []) if (Math.hypot(p[0] - x, p[1] - y) < (p[2] + rad)) return true;
+        return false;
+      };
+      const tries = Math.round((W * H) / ((k < 1 ? 120 : 900) * k * k));
+      for (let n = 0; n < tries; n++) {
+        const x = r() * W, y = r() * H, s = (K.size[0] + r() * (K.size[1] - K.size[0])) * k;
+        // clusters and calm patches: low-frequency noise gates the density
+        if (k >= 1 && r() > 0.04 + 0.96 * sstep(0.47, 0.62, fbm(x / (460 * k), y / (460 * k), kind.length, 2))) continue;
+        const rad = s * K.gap * (k < 1 ? 0.36 : 0.5);
+        if (near(x, y, rad)) continue;
+        const key = Math.floor(x / cellSz) + ',' + Math.floor(y / cellSz);
+        (grid.get(key) || grid.set(key, []).get(key)).push([x, y, rad]);
+        placed.push([x, y, s]);
+      }
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (const [x, y, s] of placed) {
+        const mark = pickW(r, K.marks), col = c[pickW(r, K.cols)];
+        ctx.save(); ctx.translate(x, y); ctx.rotate((r() - 0.5) * (kind === 'doodles' ? 0.9 : 6.2832));
+        if (K.fore) ctx.scale(0.35 + 0.65 * r(), 1);
+        ctx.scale(s, s);
+        ctx.strokeStyle = ctx.fillStyle = col; ctx.lineWidth = (K.lw * Math.max(0.75, k)) / s;
+        ctx.globalAlpha = K.fore ? 0.6 + 0.4 * r() : 1;
+        mark(ctx, r);
+        ctx.restore();
+      }
+    }
+    const paint = (ctx, W, H, kind, c, k) => (kind === 'topo' ? topo : kind === 'halftone' ? halftone : scatter)(ctx, W, H, k, c, kind);
+
+    let cv = null, key = '', timer = 0;
+    const tiles = new Map();
+    const vars = () => (THEMES[settings.theme] || THEMES.intellagent).vars;
+    function sync() {
+      const kind = document.documentElement.dataset.bg;
+      cv ||= document.getElementById('art');
+      if (!cv) return;
+      if (!KINDS.includes(kind)) { if (key) { cv.width = cv.height = 0; key = ''; } return; }
+      const d = Math.min(2, devicePixelRatio || 1), W = innerWidth + 2 * M, H = innerHeight + 2 * M, k2 = [kind, settings.theme, W, H, d].join();
+      if (k2 === key) return;
+      key = k2;
+      cv.width = Math.round(W * d); cv.height = Math.round(H * d);
+      const ctx = cv.getContext('2d');
+      ctx.setTransform(d, 0, 0, d, 0, 0);
+      paint(ctx, W, H, kind, vars(), 1);
+    }
+    addEventListener('resize', () => { clearTimeout(timer); timer = setTimeout(sync, 250); });
+    return {
+      sync,
+      // Settings tile: the same generator at a smaller scale (no calm patches), a little stronger than on the board
+      tile(kind) {
+        if (!KINDS.includes(kind)) return '';
+        const v = vars(), id = kind + settings.theme;
+        if (!tiles.has(id)) {
+          const W = 200, H = 80, c = document.createElement('canvas'), o = document.createElement('canvas');
+          c.width = o.width = W * 2; c.height = o.height = H * 2;
+          const g = o.getContext('2d'); g.scale(2, 2); paint(g, W, H, kind, v, kind === 'topo' || kind === 'halftone' ? 0.5 : 0.6);
+          const x = c.getContext('2d'); x.globalAlpha = Math.min(1, parseFloat(v['fx-o']) * (FXK[kind] || 1) * 1.8); x.drawImage(o, 0, 0);
+          tiles.set(id, c.toDataURL());
+        }
+        return `background: url(${tiles.get(id)}) center / cover, var(--bg)`;
+      },
+    };
+  })();
+  // per-kind strength of the generated art (multiplies --fx-o; mirrored in app.css)
+  const FXK = { topo: 1.05, squiggles: 0.62, doodles: 0.7, confetti: 1.3, halftone: 0.7 };
 
   /* ═════════════════════════ state + api ═════════════════════════ */
 
@@ -3242,7 +3426,7 @@
           <i style="background:${v.panel}"><b style="background:${v.spike};opacity:.85"></b></i></span><span class="nm">${th.label}</span></button>`;
       }).join('');
       const themeBg = themeStyle().bg;
-      const bgs = [['theme', `Theme · ${BACKGROUNDS.find(([k]) => k === themeBg)?.[1] || ''}`], ...BACKGROUNDS].map(([k, label]) => `<button class="tile ${(settings.bg || 'theme') === k ? 'on' : ''}" data-bgfx="${k}"><span class="bgpv ${k === 'theme' ? themeBg : k}"></span><span class="nm">${label}</span></button>`).join('');
+      const bgs = [['theme', `Theme · ${BACKGROUNDS.find(([k]) => k === themeBg)?.[1] || ''}`], ...BACKGROUNDS].map(([k, label]) => `<button class="tile ${(settings.bg || 'theme') === k ? 'on' : ''}" data-bgfx="${k}"><span class="bgpv ${k === 'theme' ? themeBg : k}" style="${art.tile(k === 'theme' ? themeBg : k)}"></span><span class="nm">${label}</span></button>`).join('');
       // A style choice: equal-width options, the theme's own pick marked with a dot. Choosing one overrides
       // the theme; "Theme default" (shown only while overridden) hands the choice back to the theme.
       const opt = (key, label, list) => {

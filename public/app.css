@@ -87,36 +87,23 @@ body.scrimmed .topbar, body.scrimmed .board, body.scrimmed .bg-layer, body.scrim
 :root[data-bg="stars"] .bg-layer { background: radial-gradient(ellipse 90% 70% at 50% 115%, color-mix(in oklab, var(--blob1) 20%, var(--bg)), var(--bg) 70%); }
 .fx-stars { width: 100%; height: 100%; }
 
-@property --mx1 { syntax: '<percentage>'; inherits: false; initial-value: 12%; }
-@property --my1 { syntax: '<percentage>'; inherits: false; initial-value: 10%; }
-@property --mx2 { syntax: '<percentage>'; inherits: false; initial-value: 88%; }
-@property --my2 { syntax: '<percentage>'; inherits: false; initial-value: 20%; }
-@property --mx3 { syntax: '<percentage>'; inherits: false; initial-value: 50%; }
-@property --my3 { syntax: '<percentage>'; inherits: false; initial-value: 95%; }
-.fx-mesh {
-  opacity: calc(var(--fx-o) * 1.6);
-  background:
-    radial-gradient(at var(--mx1) var(--my1), color-mix(in oklab, var(--blob1) 60%, transparent) 0, transparent 46%),
-    radial-gradient(at var(--mx2) var(--my2), color-mix(in oklab, var(--blob2) 55%, transparent) 0, transparent 44%),
-    radial-gradient(at var(--mx3) var(--my3), color-mix(in oklab, var(--blob3) 50%, transparent) 0, transparent 48%);
-  animation: mesh 28s ease-in-out infinite alternate;
-}
-@keyframes mesh {
-  50% { --mx1: 55%; --my1: 30%; --mx2: 20%; --my2: 75%; --mx3: 85%; --my3: 40%; }
-  100% { --mx1: 80%; --my1: 85%; --mx2: 45%; --my2: 10%; --mx3: 10%; --my3: 60%; }
-}
-@property --gr { syntax: '<length>'; inherits: false; initial-value: 0px; }
+/* mesh: three hard-edged colour pools travelling on transforms (no repaints) under a fixed engineering grid */
+.fx-mesh { opacity: calc(var(--fx-o) * 1.6); }
+.fx-mesh i { position: absolute; width: 92vmax; height: 92vmax; border-radius: 50%; will-change: transform; background: radial-gradient(closest-side, color-mix(in oklab, var(--c) 60%, transparent), color-mix(in oklab, var(--c) 22%, transparent) 62%, transparent); animation: mesh1 34s ease-in-out infinite alternate; }
+.fx-mesh i:nth-child(1) { --c: var(--blob1); left: -40vmax; top: -44vmax; }
+.fx-mesh i:nth-child(2) { --c: var(--blob2); right: -42vmax; top: -30vmax; animation-name: mesh2; animation-duration: 41s; }
+.fx-mesh i:nth-child(3) { --c: var(--blob3); left: 4vmax; bottom: -56vmax; animation-name: mesh3; animation-duration: 47s; }
+@keyframes mesh1 { 50% { transform: translate(38vw, 18vh); } 100% { transform: translate(62vw, 64vh); } }
+@keyframes mesh2 { 50% { transform: translate(-58vw, 46vh); } 100% { transform: translate(-36vw, -6vh); } }
+@keyframes mesh3 { 50% { transform: translate(34vw, -26vh); } 100% { transform: translate(-6vw, -42vh); } }
 .fx-grid {
-  --line: color-mix(in oklab, var(--text) 10%, transparent);
+  --line: color-mix(in oklab, var(--text) 7%, transparent);
   background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
-  background-size: 56px 56px; background-position: center;
-  -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 0, #000 calc(var(--gr) * .6), transparent var(--gr));
-  mask-image: radial-gradient(circle at 50% 45%, #000 0, #000 calc(var(--gr) * .6), transparent var(--gr));
-  animation: gridpulse 10s ease-in-out infinite;
+  background-size: 48px 48px; background-position: center;
+  -webkit-mask-image: radial-gradient(120% 90% at 50% 0%, #000 10%, transparent 75%); mask-image: radial-gradient(120% 90% at 50% 0%, #000 10%, transparent 75%);
 }
-@keyframes gridpulse { 0% { --gr: 8vmax; opacity: .9; } 70% { --gr: 90vmax; opacity: .25; } 100% { --gr: 95vmax; opacity: 0; } }
 :root[data-bg="mesh"] .board { background-image: none; }
-.reduced .blob, .reduced .rib, .reduced .fx-mesh, .reduced .fx-grid { animation: none; }
+.reduced .blob, .reduced .rib, .reduced .fx-mesh i { animation: none; }
 
 .grain {
   position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: calc(var(--grain) * .55);
@@ -1344,40 +1331,22 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 :root[data-lanes="glass"] .column { position: relative; }
 :root[data-lanes="glass"] .column > * { position: relative; z-index: 1; }
 
-/* ───────── pattern backgrounds: squiggles · doodles · topo · confetti · halftone ─────────
-   Each pattern is a mask tinted with theme colours, drifting very slowly. */
-:root {
-  --pat-squiggle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'%3E%3Cg fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%0A%3Cpath d='M14 38q12-14 24 0t24 0t24 0'/%3E%3Cpath d='M150 24c8 14 22-10 30 4s22-10 30 4'/%3E%0A%3Cpath d='M112 104q10 12 20 0t20 0t20 0t20 0'/%3E%3Cpath d='M22 150c14-18 24 18 38 0s24 18 38 0'/%3E%0A%3Cpath d='M160 186q9-11 18 0t18 0t18 0'/%3E%3Cpath d='M60 214c6 8 14-6 20 2'/%3E%3C/g%3E%3C/svg%3E");
-  --pat-doodle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='280' viewBox='0 0 280 280'%3E%3Cg fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%0A%3Cpath d='M30 30l4 10 11 1-8 7 3 11-10-6-10 6 3-11-8-7 11-1z'/%3E%0A%3Cpath d='M150 40c0-6 10-6 10 1 0 9-17 9-17-2 0-13 24-13 24 3 0 17-31 17-31-3'/%3E%0A%3Cpath d='M230 30c-6-8-18 0-12 8l12 12 12-12c6-8-6-16-12-8z'/%3E%0A%3Cpath d='M40 140h22m-8-7 8 7-8 7'/%3E%3Cpath d='M120 120v18m-9-9h18'/%3E%0A%3Ccircle cx='212' cy='130' r='11'/%3E%3Cpath d='M60 220l10-14 10 14z'/%3E%0A%3Cpath d='M140 210c10-6 18 6 28 0'/%3E%3Cpath d='M230 220l6 6m0-6-6 6'/%3E%3C/g%3E%3C/svg%3E");
-  --pat-confetti: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'%3E%0A%3Crect x='30' y='26' width='12' height='5' rx='2' transform='rotate(25 36 28)'/%3E%3Ccircle cx='150' cy='40' r='4'/%3E%0A%3Cpath d='M220 30l7 12h-14z'/%3E%3Crect x='80' y='120' width='12' height='5' rx='2' transform='rotate(-35 86 122)'/%3E%0A%3Ccircle cx='200' cy='150' r='3.5'/%3E%3Cpath d='M30 200l6 11h-12z' transform='rotate(18 30 205)'/%3E%0A%3Crect x='140' y='210' width='11' height='5' rx='2' transform='rotate(60 145 212)'/%3E%0A%3Cpath d='M110 60q6-7 12 0t12 0' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E");
-  --pat-topo: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600' viewBox='0 0 600 600'%3E%0A%3Cfilter id='w' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.012' numOctaves='2' seed='7'/%3E%3CfeDisplacementMap in='SourceGraphic' scale='70'/%3E%3C/filter%3E%0A%3Cg fill='none' stroke='%23000' stroke-width='1.4' filter='url(%23w)'%3E%0A%3Ccircle cx='170' cy='190' r='30'/%3E%3Ccircle cx='170' cy='190' r='62'/%3E%3Ccircle cx='170' cy='190' r='96'/%3E%3Ccircle cx='170' cy='190' r='132'/%3E%3Ccircle cx='170' cy='190' r='170'/%3E%0A%3Ccircle cx='460' cy='420' r='26'/%3E%3Ccircle cx='460' cy='420' r='58'/%3E%3Ccircle cx='460' cy='420' r='92'/%3E%3Ccircle cx='460' cy='420' r='128'/%3E%3C/g%3E%3C/svg%3E");
-}
-:root[data-bg="squiggles"] .fx-pattern, :root[data-bg="doodles"] .fx-pattern, :root[data-bg="topo"] .fx-pattern,
-:root[data-bg="confetti"] .fx-pattern, :root[data-bg="halftone"] .fx-pattern { display: block; }
-.fx-pattern, .fx-pattern::before, .fx-pattern::after { position: absolute; inset: -40px; }
-.fx-pattern::before, .fx-pattern::after { content: ''; }
-.fx-pattern { --pat: none; --size: 240px; opacity: calc(var(--fx-o) * .55); }
-.fx-pattern::before { background: var(--accent); -webkit-mask: var(--pat) 0 0 / var(--size) var(--size); mask: var(--pat) 0 0 / var(--size) var(--size); animation: pat-drift 160s linear infinite; }
-.fx-pattern::after { background: var(--accent-2); -webkit-mask: var(--pat) calc(var(--size) / 2) calc(var(--size) / 2) / var(--size) var(--size); mask: var(--pat) calc(var(--size) / 2) calc(var(--size) / 2) / var(--size) var(--size); animation: pat-drift 220s linear infinite reverse; opacity: .8; }
-@keyframes pat-drift { to { -webkit-mask-position: var(--size) var(--size); mask-position: var(--size) var(--size); } }
-:root[data-bg="squiggles"] .fx-pattern { --pat: var(--pat-squiggle); --size: 240px; }
-:root[data-bg="doodles"] .fx-pattern { --pat: var(--pat-doodle); --size: 280px; }
-:root[data-bg="confetti"] .fx-pattern { --pat: var(--pat-confetti); --size: 260px; opacity: calc(var(--fx-o) * .8); }
-:root[data-bg="topo"] .fx-pattern { --pat: var(--pat-topo); --size: 600px; opacity: calc(var(--fx-o) * .45); }
-:root[data-bg="topo"] .fx-pattern::after { display: none; }
-:root[data-bg="halftone"] .fx-pattern { opacity: calc(var(--fx-o) * 1.3); }
-:root[data-bg="halftone"] .fx-pattern::before { -webkit-mask: none; mask: none; animation: none; background: radial-gradient(circle, var(--accent) 1.3px, transparent 1.7px) 0 0 / 14px 14px; -webkit-mask-image: radial-gradient(75% 65% at 85% 10%, #000, transparent 70%); mask-image: radial-gradient(75% 65% at 85% 10%, #000, transparent 70%); }
-:root[data-bg="halftone"] .fx-pattern::after { -webkit-mask: none; mask: none; animation: none; background: radial-gradient(circle, var(--accent-2) 1.3px, transparent 1.7px) 7px 7px / 14px 14px; -webkit-mask-image: radial-gradient(70% 60% at 10% 95%, #000, transparent 70%); mask-image: radial-gradient(70% 60% at 10% 95%, #000, transparent 70%); }
-.reduced .fx-pattern::before, .reduced .fx-pattern::after { animation: none; }
-/* tiles in Settings › Background */
-.bgpv.squiggles, .bgpv.doodles, .bgpv.confetti, .bgpv.topo, .bgpv.halftone { background: var(--bg); }
-.bgpv.squiggles::after, .bgpv.doodles::after, .bgpv.confetti::after, .bgpv.topo::after { content: ''; position: absolute; inset: 0; background: linear-gradient(120deg, var(--accent), var(--accent-2)); opacity: .7; -webkit-mask: var(--p) 0 0 / var(--s) var(--s); mask: var(--p) 0 0 / var(--s) var(--s); }
-.bgpv.squiggles { --p: var(--pat-squiggle); --s: 110px; }
-.bgpv.doodles { --p: var(--pat-doodle); --s: 120px; }
-.bgpv.confetti { --p: var(--pat-confetti); --s: 110px; }
-.bgpv.topo { --p: var(--pat-topo); --s: 220px; }
-.bgpv.halftone { background: radial-gradient(circle, var(--accent) 1px, transparent 1.4px) 0 0 / 8px 8px, var(--bg); }
-.bgpv.halftone::after { content: ''; position: absolute; inset: 0; background: linear-gradient(225deg, transparent 30%, var(--bg) 75%); }
+/* ───────── generated backgrounds: topo · halftone · squiggles · doodles · confetti ─────────
+   Painted once onto canvas#art by app.js (art), tinted with the theme's colours; only the drift animates.
+   Strength per kind = --fx-o × k (keep in step with FXK in app.js). */
+:root[data-bg="topo"] .fx-art, :root[data-bg="halftone"] .fx-art, :root[data-bg="squiggles"] .fx-art,
+:root[data-bg="doodles"] .fx-art, :root[data-bg="confetti"] .fx-art { display: block; }
+.fx-art { inset: -60px; width: calc(100% + 120px); height: calc(100% + 120px); --k: 1; opacity: calc(var(--fx-o) * var(--k)); will-change: transform; animation: art-drift 90s ease-in-out infinite alternate; }
+:root[data-bg="topo"] .fx-art { --k: 1.05; animation-duration: 120s; }
+:root[data-bg="halftone"] .fx-art { --k: .7; animation-name: art-drift-x; }
+:root[data-mode="light"][data-bg="halftone"] .fx-art { --k: .55; }
+:root[data-bg="squiggles"] .fx-art { --k: .62; }
+:root[data-bg="doodles"] .fx-art { --k: .7; animation-duration: 110s; }
+:root[data-bg="confetti"] .fx-art { --k: 1.3; animation-name: art-fall; animation-duration: 70s; }
+@keyframes art-drift { from { transform: translate(-34px, -22px) rotate(-.4deg); } to { transform: translate(34px, 22px) rotate(.4deg); } }
+@keyframes art-drift-x { from { transform: translate(-40px, 0); } to { transform: translate(40px, 0); } }
+@keyframes art-fall { from { transform: translate(-14px, -50px) rotate(-.6deg); } to { transform: translate(14px, 50px) rotate(.6deg); } }
+.reduced .fx-art { animation: none; }
 
 /* ───────── decoration placement varies per card (data-slot 0–3, --deco-x, --deco-r) ───────── */
 /* tape: centred strip · across the top-left corner · across the top-right corner · off-centre strip */
