@@ -133,6 +133,7 @@
     bg: 'blobs', texture: true,
     corner: null, // px kept clear in each card's top-right (auto: 16 when the fold decoration is on)
     avatars: 'color', // color | accent | ink
+    groups: 'tray', // tickets sharing a parent: tray (tinted panel) | rail (coloured rail) | rule (header + hairline) | tab (folder tab) | spine (vertical label) | foot (caption below)
     avStyle: 'gem', // avatar look: gem | flat | tint | ring | pebble | stamp
     drop: 'ring', // a column a ticket is dragged over: ring | tint | lift | spotlight | dashed | pulse
     colColor: 'own', // own | accent | ink — column dots and rules
@@ -262,6 +263,16 @@
     bloom: 'pulse', dracula: 'pulse', mocha: 'pulse', cork: 'pulse',
   };
   for (const [k, v] of Object.entries(DROP_STYLE)) if (THEMES[k]) THEMES[k].style.drop ??= v;
+  // …and how tickets sharing a parent are drawn (tray unless named here). Paper themes file them under folder tabs,
+  // grid themes set the label on a spine, crisp product themes use a ruled header, bold/neon ones a coloured rail.
+  const GROUP_LOOK = {
+    paper: 'tab', cork: 'tab', riso: 'tab', solarized: 'tab',
+    swiss: 'spine', bauhaus: 'spine', brutalist: 'spine',
+    phosphor: 'foot', blueprint: 'foot',
+    github: 'rule', slate: 'rule', graphite: 'rule', midnight: 'rule', nord: 'rule',
+    dracula: 'rail', tokyo: 'rail', synthwave: 'rail', gruvbox: 'rail', pop: 'rail', iridescent: 'rail',
+  };
+  for (const [k, v] of Object.entries(GROUP_LOOK)) if (THEMES[k]) THEMES[k].style.groups ??= v;
   // Organic themes lean on their colour fields: let the background blobs come through more.
   for (const [k, o] of [['moss', '.62'], ['clay', '.7'], ['tide', '.75'], ['bloom', '.6'], ['cloud', '.8'], ['liquid', '.95']]) if (THEMES[k]) THEMES[k].vars['fx-o'] = o;
   const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['mesh', 'Mesh'], ['stars', 'Stars'], ['topo', 'Topo'], ['halftone', 'Halftone'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['confetti', 'Confetti'], ['none', 'None']];
@@ -272,7 +283,7 @@
   const KEY = 'intellagent.settings.v1';
   const DEFAULTS = {
     theme: matchMedia('(prefers-color-scheme: light)').matches ? 'daylight' : 'intellagent',
-    v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme', drop: 'theme',
+    v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme', drop: 'theme', groups: 'theme',
     density: 'cozy', colw: 300, ageDays: '7',
     motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full',
     stub: { id: true, type: true, priority: true, parent: true, author: true, lease: true, comments: true, attachments: true, blocked: true, properties: false, description: false, thumbnail: true, fields: true, assignee: true, status: true, checklist: true, listeners: true },
@@ -309,7 +320,7 @@
     Object.assign(r.dataset, {
       theme: settings.theme in THEMES ? settings.theme : 'intellagent', mode: t.mode, glow: t.glow ? '1' : '',
       shadow: st.shadow, typeind: st.typeInd, chips: st.chips, heads: st.heads, avatar: st.avatar,
-      tape: pick('tape'), cards: pick('cards'), attn: pick('attn'), enter: pick('enter'), lanes: pick('lanes'), bg: pick('bg'), md: pick('md'), avstyle: pick('avStyle'), drop: pick('drop'),
+      tape: pick('tape'), cards: pick('cards'), attn: pick('attn'), enter: pick('enter'), lanes: pick('lanes'), bg: pick('bg'), md: pick('md'), avstyle: pick('avStyle'), drop: pick('drop'), groups: pick('groups'),
       density: settings.density,
     });
     const texture = settings.texture === 'theme' || settings.texture == null ? st.texture : settings.texture === 'on' || settings.texture === true;
@@ -1049,7 +1060,7 @@
 
   const SPRING = 'cubic-bezier(.2,.9,.25,1.12)';
   // Opening/closing a stack is a deliberate gesture: calm ease-in-out, no overshoot, for the stack and its neighbours.
-  const EASE_IO = 'cubic-bezier(.65,0,.35,1)';
+  const EASE_IO = 'cubic-bezier(.45,0,.2,1)';
   const MORPH_MS = 420;
   let morphNext = null;
   function flip(before, { flights = true } = {}) {
@@ -1059,14 +1070,23 @@
     // A FLIP still in flight would skew the new measurement; the snapshot already holds where it is now.
     for (const node of before.keys()) for (const an of node.getAnimations()) if (an.id === 'flip') an.cancel();
     const own = mo && $('.group-cards', mo.g);
+    // Measure everything first. A card inside a group that itself moves only animates its offset *relative to
+    // the group*; animating both would carry the card twice the distance, across the headers above it.
+    const delta = new Map();
     for (const [node, a] of before) {
-      if (!node.isConnected || (own && node.parentNode === own)) continue;
+      if (!node.isConnected) continue;
       const r = node.getBoundingClientRect();
-      const dx = a.r.left - r.left;
-      const dy = a.r.top - r.top;
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+      delta.set(node, { r, dx: a.r.left - r.left, dy: a.r.top - r.top });
+    }
+    for (const [node, a] of before) {
+      const d = delta.get(node);
+      if (!d || (own && node.parentNode === own)) continue;
       const newCol = node.closest('.column')?.dataset.id;
-      if (flights && a.col && newCol && a.col !== newCol) { fly(node, a.r, r); continue; }
+      if (flights && a.col && newCol && a.col !== newCol) { if (Math.abs(d.dx) >= 1 || Math.abs(d.dy) >= 1) fly(node, a.r, d.r); continue; }
+      const pg = node.parentNode?.parentNode;
+      const gd = pg && pg.classList?.contains('group') ? delta.get(pg) : null;
+      const dx = d.dx - (gd?.dx || 0), dy = d.dy - (gd?.dy || 0);
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
       node.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0px 0px' }], mo ? { id: 'flip', duration: MORPH_MS, easing: EASE_IO } : { id: 'flip', duration: 520, easing: SPRING });
     }
     if (mo) morphStack(mo, before);
@@ -1088,7 +1108,7 @@
     for (const c of cards) for (const x of [c, ...faces(c), $('.g-bg', g)]) for (const an of x.getAnimations()) if (an.id === 'morph') an.cancel();
     const ends = cards.map((c) => c.getBoundingClientRect());
     const opts = (delay = 0, extra = {}) => ({ id: 'morph', duration: MORPH_MS, delay, easing: EASE_IO, fill: 'backwards', ...extra });
-    let last = 0;
+    const runs = [];
     cards.forEach((c, i) => {
       const a = before.get(c)?.r;
       const r = ends[i];
@@ -1099,8 +1119,7 @@
       const lw = r.width / s, lh = r.height / s;
       const dx = a.left + a.width / 2 - (r.left + r.width / 2), dy = a.top + a.height / 2 - (r.top + r.height / 2 - ty);
       const delay = opening ? Math.min(i, 5) * 24 : Math.min(cards.length - 1 - i, 5) * 16;
-      last = Math.max(last, delay);
-      c.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${a.width / lw}, ${a.height / lh})` }, { transform: `translate(0px, ${ty}px) scale(${s}, ${s})` }], opts(delay));
+      runs.push(c.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${a.width / lw}, ${a.height / lh})` }, { transform: `translate(0px, ${ty}px) scale(${s}, ${s})` }], opts(delay)));
       const w = was?.get(c), o = +getComputedStyle(c).opacity;
       if (!w) return;
       if (Math.abs(w.o - o) > 0.01) c.animate([{ opacity: w.o }, { opacity: o }], opts(delay, { easing: opening ? 'cubic-bezier(.3,0,.2,1)' : 'cubic-bezier(.6,0,.9,.4)' }));
@@ -1115,10 +1134,12 @@
     const ga = before.get(g)?.r;
     if (ga) {
       const dh = g.getBoundingClientRect().height - ga.height;
-      if (Math.abs(dh) > 1) $('.g-bg', g).animate([{ bottom: `${dh - 6}px` }, { bottom: '-6px' }], opts());
+      const bg = $('.g-bg', g), b0 = parseFloat(getComputedStyle(bg).bottom) || 0;
+      if (Math.abs(dh) > 1) bg.animate([{ bottom: `${b0 + dh}px` }, { bottom: `${b0}px` }], opts());
     }
-    clearTimeout(g._morphT);
-    g._morphT = setTimeout(() => delete g.dataset.morph, MORPH_MS + last + 40);
+    // Hand the cards back to CSS only once their own trip is over (a later toggle takes over the token).
+    const token = (g._morph = (g._morph || 0) + 1);
+    Promise.allSettled(runs.map((x) => x.finished)).then(() => { if (g._morph === token) delete g.dataset.morph; });
   }
 
   // Cross-column moves fly a ghost above everything so overflow clipping never hides the trip.
@@ -1253,7 +1274,7 @@
   }
   function updateGroup(g, n) {
     const mode = settings.grouping;
-    g.className = `group ${mode}${mode === 'stack' && state.expanded.has(n.key) ? ' open' : ''}${mode === 'list' && state.folded.has(n.key) ? ' folded' : ''}`;
+    g.className = `group ${mode === 'list' ? 'listed' : mode}${mode === 'stack' && state.expanded.has(n.key) ? ' open' : ''}${mode === 'list' && state.folded.has(n.key) ? ' folded' : ''}`;
     g.style.setProperty('--tagc', tagColor(n.parent));
     $('.g-name', g).textContent = n.parent;
     $('.g-count', g).textContent = n.ids.length;
@@ -3705,6 +3726,8 @@
   function previewCard(it, { lease = null, blockers = [], listeners = [], needs = false, inGroup = false, si = null } = {}) {
     return `<article class="card ${needs ? 'needs' : ''}" data-type="${it.type}" data-slot="${decoSlot(it.id)}" style="--tilt:${tilt(it.id)}deg;${decoVars(it.id)}${si != null ? `;--si:${si}` : ''}"><i class="tape"></i><div class="c-body">${cardHTML(it, lease, blockers, inGroup, listeners)}</div><span class="c-check">${icon('check')}</span><span class="c-ask">?</span></article>`;
   }
+  // A group exactly as the board draws it (grouping mode and label placement come from the page's classes/attributes).
+  const pvGroup = (parent, items, first = {}) => `<section class="group ${settings.grouping === 'list' ? 'listed' : settings.grouping}" style="--tagc:${tagColor(parent)}"><button class="group-head"><span class="g-dot"></span><span class="g-name">${esc(parent)}</span><span class="g-count">${items.length}</span><span class="grow"></span>${icon('chev', 'g-chev')}</button><i class="g-bg"></i><div class="group-cards">${items.map((it, i) => previewCard(it, { ...(i ? {} : first), inGroup: true, si: i })).join('')}</div></section>`;
   function previewStage(kind) {
     const col = (name, color, inner, n) => `<section class="column pv-col" style="--col:${color}"><header class="col-head"><span class="col-dot"></span><h2 class="col-name">${name}</h2><span class="col-count">${n}</span></header><div class="list">${inner}</div></section>`;
     const bare = { parent: null, assignee: null, description: '', comments: [], attachments: [], fields: {}, properties: {} };
@@ -3713,13 +3736,14 @@
     }
     if (kind === 'style') {
       const a = previewCard(sampleItem({ ...bare, id: 'DEMO-4', title: 'Token refresh race on wake', type: 'issue', priority: 'Critical' }), { needs: true });
-      const b = previewCard(sampleItem({ ...bare, id: 'DEMO-9', title: 'Benchmark cache options', type: 'spike', priority: 'Medium', parent: 'storage' }), { lease: demoLease() });
-      return `<div class="pv-stage pv-wide">${col('Review', '#b07cf2', a + b, 2)}<div class="pv-side"><button class="pill-btn">${icon('board', 'sm')}Main${icon('chev', 'sm')}</button><button class="btn primary">${icon('check', 'sm')}Save</button><button class="btn">${icon('archive', 'sm')}Archive</button><span class="chip parent" style="--tagc:${tagColor('storage')}">storage</span><div class="seg"><button class="on">Edit</button><button>Read</button></div>${avatar({ kind: 'agent', name: 'claude-builder' })}</div></div>`;
+      const bi = [sampleItem({ ...bare, id: 'DEMO-9', title: 'Benchmark cache options', type: 'spike', priority: 'Medium', parent: 'storage' }), sampleItem({ ...bare, id: 'DEMO-11', title: 'Evict stale entries', type: 'task', priority: 'Low', parent: 'storage' })];
+      const b = settings.grouping === 'off' ? previewCard(bi[0], { lease: demoLease() }) : pvGroup('storage', bi, { lease: demoLease() });
+      return `<div class="pv-stage pv-wide">${col('Review', '#b07cf2', a + b, 3)}<div class="pv-side"><button class="pill-btn">${icon('board', 'sm')}Main${icon('chev', 'sm')}</button><button class="btn primary">${icon('check', 'sm')}Save</button><button class="btn">${icon('archive', 'sm')}Archive</button><span class="chip parent" style="--tagc:${tagColor('storage')}">storage</span><div class="seg"><button class="on">Edit</button><button>Read</button></div>${avatar({ kind: 'agent', name: 'claude-builder' })}</div></div>`;
     }
     const items = ['Login form', 'Session cookie', 'Refresh endpoint'].map((title, i) => sampleItem({ ...bare, id: `DEMO-${i + 1}`, title, type: i === 2 ? 'issue' : 'task', priority: ['Medium', 'Low', 'High'][i], parent: 'auth' }));
     const inner = settings.grouping === 'off'
       ? items.map((it) => previewCard(it)).join('')
-      : `<section class="group ${settings.grouping}" style="--tagc:${tagColor('auth')}"><button class="group-head"><span class="g-dot"></span><span class="g-name">auth</span><span class="g-count">3</span><span class="grow"></span>${icon('chev', 'g-chev')}</button><i class="g-bg"></i><div class="group-cards">${items.map((it, i) => previewCard(it, { inGroup: true, si: i })).join('')}</div></section>`;
+      : pvGroup('auth', items);
     return `<div class="pv-stage">${col('Ready', '#5aa9e6', inner, 3)}</div>`;
   }
 
@@ -3792,6 +3816,7 @@
         ${opt('tape', 'Decoration', [['tape', 'Tape', 'A strip of tape on sticky notes'], ['pin', 'Pin', 'A push-pin at the top'], ['clip', 'Clip', 'A binder clip on the edge'], ['corner', 'Fold', 'A folded top corner'], ['none', 'None', 'No decoration']])}
         ${opt('attn', 'Needs you', [['orbit', 'Orbit', 'Spinning ring and a bouncing badge'], ['glow', 'Glow', 'A soft breathing halo'], ['bar', 'Bar', 'Accent edge and tint — calm'], ['outline', 'Outline', 'A solid outline and small badge'], ['ribbon', 'Ribbon', 'A bookmark tab on the card']])}
         ${opt('enter', 'Opening', [['rise', 'Rise', 'Fades in with a small lift'], ['sheet', 'Sheet', 'Slides in from the right as a side panel'], ['fade', 'Fade', 'A quick cross-fade'], ['pop', 'Pop', 'Snaps in with a little bounce'], ['zoom', 'Zoom', 'Grows out of the ticket']])}
+        ${opt('groups', 'Groups', [['tray', 'Tray', 'Tickets sharing a parent sit on a faintly tinted panel'], ['rail', 'Rail', 'A coloured rail beside the cards, no panel'], ['rule', 'Rule', 'A header with a hairline underneath'], ['tab', 'Tab', 'A folder tab joined to the top of the cards'], ['spine', 'Spine', 'The #tag runs down a spine beside the cards'], ['foot', 'Footer', 'A quiet #tag caption under the cards']])}
         ${opt('lanes', 'Columns', [['glass', 'Glass', 'Translucent panels'], ['solid', 'Solid', 'Opaque panels'], ['outline', 'Outline', 'Bordered, see-through'], ['lane', 'Lanes', 'No panels — dividers between lanes']])}
         ${opt('texture', 'Texture', [['on', 'On', 'Film grain and dotted board'], ['off', 'Off', 'Plain surfaces']])}
         ${opt('drop', 'Drop target', [['ring', 'Ring', 'An outline glow in the column colour'], ['tint', 'Tint', 'The column floods with its colour'], ['lift', 'Lift', 'The column rises to meet the card'], ['spotlight', 'Spot', 'Other columns dim; the target lights up'], ['dashed', 'Dashed', 'A technical dashed outline'], ['pulse', 'Pulse', 'A gentle breathing glow']])}

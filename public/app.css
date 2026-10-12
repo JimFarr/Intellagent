@@ -9,7 +9,7 @@
   --gap: 10px;
   --spring: cubic-bezier(.2, .9, .25, 1.15);
   --ease: cubic-bezier(.22, 1, .36, 1);
-  --ease-io: cubic-bezier(.65, 0, .35, 1);
+  --ease-io: cubic-bezier(.45, 0, .2, 1);
   --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --display: 'Outfit', var(--font);
   --mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
@@ -379,33 +379,55 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .reduced .card.needs::after, .reduced .c-ask { animation: none; }
 
 /* ───────── groups (parent tags) ───────── */
-/* The tag colour marks the group (dot, name, tray edge) but never carries text: counts are neutral chips
-   built from --text/--muted, so they read on every theme and any hue. */
-.group { --tagc: var(--accent); position: relative; border-radius: 14px; isolation: isolate; }
-.group-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: color-mix(in oklab, var(--tagc) 55%, var(--text)); font: 600 11.5px var(--mono); padding: 2px 4px 6px; cursor: pointer; text-align: left; border-radius: 8px; }
+/* A group is a header + its cards. Cards keep exactly the width of loose cards in every look and state, so
+   opening a stack never resizes anything; panels and rails are drawn *around* the cards, bleeding into the
+   list's side padding by --gi. The tag colour only marks (dot, rail, faint tint): text never sits on it, and
+   the count is a neutral chip built from --text, so both read on any theme and any hue.
+   Looks (theme token `groups`, Settings › Appearance): tray · rail · rule · tab · spine · foot. */
+.group { --tagc: var(--accent); --gi: 6px; --gpad: 6px; --cpx: 12px; position: relative; isolation: isolate; }
+:root[data-density="compact"] .group { --cpx: 10px; }
+/* decorations that overhang a card's top edge (tape, pin, clip) get room under the header */
+:root:is([data-tape="tape"], [data-tape="pin"], [data-tape="clip"]) .group { --gpad: 13px; }
+.list > .group:first-child { margin-top: 2px; }
+.group-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: color-mix(in oklab, var(--tagc) 50%, var(--text)); font: 600 11.5px/16px var(--mono); padding: 2px 4px var(--gpad) var(--cpx); cursor: pointer; text-align: left; border-radius: 8px; }
 .group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .group-head .g-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--tagc); flex: none; }
+.group-head .g-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-head .g-name::before { content: '#'; opacity: .5; }
-.g-count { display: inline-grid; place-items: center; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 99px; font: 600 10px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); background: color-mix(in oklab, var(--text) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--text) 7%, transparent); transition: color .2s, background-color .2s; }
+.g-count { display: inline-grid; place-items: center; flex: none; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 99px; font: 600 10px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); background: color-mix(in oklab, var(--text) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--text) 7%, transparent); transition: color .2s, background-color .2s; }
 .group-head:hover .g-count { color: var(--text); background: color-mix(in oklab, var(--text) 12%, transparent); }
-.group-head .g-chev { width: 13px; height: 13px; color: var(--muted); transition: rotate .42s var(--ease-io); }
+.group-head .g-chev { width: 13px; height: 13px; flex: none; color: var(--muted); transition: rotate .42s var(--ease-io); }
 .group-cards { position: relative; display: flex; flex-direction: column; gap: var(--gap); }
-.group.list { padding: 6px 6px 8px 8px; background: color-mix(in oklab, var(--tagc) 7%, transparent); box-shadow: inset 2px 0 0 color-mix(in oklab, var(--tagc) 65%, transparent); }
-.group.list.folded .group-cards { display: none; }
-.group.list.folded .g-chev { rotate: -90deg; }
-.g-bg { display: none; }
-/* Stack: an open stack is a tinted tray drawn around (not inside) the cards, so opening never changes
-   their width or nudges the header; the tray fades in while the cards fan out. */
-.group.stack .g-bg { display: block; position: absolute; inset: -4px -6px -6px; z-index: -1; border-radius: 14px; pointer-events: none; opacity: 0; transition: opacity .42s var(--ease-io);
-  background: color-mix(in oklab, var(--tagc) 7%, transparent); box-shadow: inset 2px 0 0 color-mix(in oklab, var(--tagc) 65%, transparent); }
-.group.stack.open .g-bg { opacity: 1; }
-.group.stack .group-head .g-chev { rotate: -90deg; }
-.group.stack.open .group-head .g-chev { rotate: 0deg; }
-/* Collapsed: the first card in front, two sheets peeking below it. Sheets take the front card's box
-   (absolute), so the pile has one height and its edges stay even whatever the tickets contain. */
+.group.listed.folded .group-cards { display: none; }
+.group.listed.folded .g-chev, .group.stack:not(.open) .g-chev { rotate: -90deg; }
+/* The backdrop (tray or rail). Shown for list groups and open stacks; a stack's appears first as it opens
+   and leaves last as it closes. JS animates its bottom edge along with the cards. */
+.g-bg { position: absolute; inset: calc(-1 * var(--gi)); z-index: -1; pointer-events: none; display: none; opacity: 0; transition: opacity .3s .12s var(--ease-io); }
+.group.listed .g-bg, .group.stack.open .g-bg { opacity: 1; transition: opacity .24s ease-out; }
+:root:not([data-groups]) .g-bg, :root[data-groups="tray"] .g-bg { display: block; border-radius: calc(var(--r-card) + var(--gi)); background: color-mix(in oklab, var(--tagc) 6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tagc) 12%, transparent); }
+:root[data-groups="rail"] .g-bg { display: block; inset: calc(18px + var(--gpad)) auto 0 -8px; width: 2px; border-radius: 2px; background: color-mix(in oklab, var(--tagc) 70%, transparent); }
+:root[data-groups="rule"] .group-head { padding-bottom: 6px; margin-bottom: calc(var(--gpad) - 2px); box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--text) 12%, transparent); border-radius: 0; }
+/* tab: a folder tab joined to the top edge of the cards (it replaces the first card's own decoration) */
+:root[data-groups="tab"] .group-head { width: fit-content; max-width: calc(100% - 24px); margin-left: 12px; padding: 4px 9px 4px 8px; border-radius: 9px 9px 0 0; background: color-mix(in oklab, var(--tagc) 14%, var(--surface)); color: color-mix(in oklab, var(--tagc) 40%, var(--text)); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--tagc) 30%, transparent); }
+:root[data-groups="tab"] .group-head .grow { display: none; }
+:root[data-groups="tab"] .group-cards > .card:first-child .tape { display: none; }
+/* spine: the label runs down a rail beside the cards */
+:root[data-groups="spine"] .group { padding-left: 24px; }
+:root[data-groups="spine"] .group-head { position: absolute; left: 0; top: 0; bottom: 0; width: 24px; padding: 2px 0 4px; writing-mode: vertical-rl; gap: 7px; overflow: hidden; }
+:root[data-groups="spine"] .group-head .g-name { min-height: 0; flex: 0 1 auto; }
+:root[data-groups="spine"] .group-head .g-count { text-combine-upright: all; width: 16px; min-width: 0; height: auto; min-height: 18px; padding: 2px 0; }
+:root[data-groups="spine"] .group-head .grow { display: block; flex: 1 1 0; width: 1px; min-height: 8px; align-self: center; background: color-mix(in oklab, var(--tagc) 45%, transparent); }
+/* foot: a quiet caption under the group */
+:root[data-groups="foot"] .group { display: flex; flex-direction: column; margin-bottom: 6px; }
+:root[data-groups="foot"] .group-head { order: 2; padding: 4px 4px 0 var(--cpx); font-weight: 500; }
+:root[data-groups="foot"] .group.stack:not(.open) .group-head { padding-top: 1px; }
+/* Stack. Collapsed: the first card in front, two sheets peeking below it. Sheets take the front card's box
+   (absolute), so the pile has one height and even edges whatever the tickets contain. */
 .group.stack:not(.open) .group-cards { display: block; padding-bottom: 14px; cursor: pointer; }
-.group.stack:not(.open) .group-cards > .card { pointer-events: none; transform: translateY(calc(min(var(--si), 2) * 7px)) scale(calc(1 - min(var(--si), 2) * .04)); z-index: calc(20 - var(--si));
+.group.stack:not(.open) .group-cards > .card { pointer-events: none; transform: translateY(calc(min(var(--si), 2) * 7px)) scale(calc(1 - min(var(--si), 2) * .04));
   transition: box-shadow .25s, background-color .45s, border-color .45s, opacity .3s, filter .3s, transform .34s var(--ease); }
+/* Back cards sit under the front one, also while they travel (so they slide out from beneath it). */
+.group.stack:not(.open) .group-cards > .card, .group[data-morph] .group-cards > .card { z-index: calc(20 - var(--si)); }
 .group.stack:not(.open) .group-cards > .card:not(:first-child) { position: absolute; inset: 0 0 14px; }
 .group.stack:not(.open) .group-cards > .card:nth-child(n+4) { opacity: 0; }
 .group.stack:not(.open) .group-cards > .card:not(:first-child) > :is(.c-body, .tape, .c-ask, .c-check) { opacity: 0; }
@@ -1365,10 +1387,11 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .reduced .fx-art { animation: none; }
 
 /* ───────── decoration placement varies per card (data-slot 0–3, --deco-x, --deco-r) ───────── */
-/* tape: centred strip · across the top-left corner · across the top-right corner · off-centre strip */
+/* tape: centred strip · across the top-left corner · across the top-right corner · off-centre strip.
+   Corner strips stay within the card's width: the list clips sideways, so nothing may overhang its padding. */
 :root[data-tape="tape"] .card[data-slot="0"] .tape { left: var(--deco-x); rotate: calc(-2.5deg + var(--deco-r) * .4); }
 :root[data-tape="tape"] .card[data-slot="1"] .tape { left: 2px; top: 2px; width: 50px; rotate: -38deg; }
-:root[data-tape="tape"] .card[data-slot="2"] .tape { left: auto; right: -24px; top: 2px; width: 50px; translate: 0; rotate: 38deg; }
+:root[data-tape="tape"] .card[data-slot="2"] .tape { left: auto; right: 2px; top: 2px; width: 50px; translate: 0; rotate: 38deg; }
 :root[data-tape="tape"] .card[data-slot="3"] .tape { left: var(--deco-x); width: 46px; rotate: calc(4deg + var(--deco-r) * .5); }
 /* pin: anywhere along the top, sometimes a little lower */
 :root[data-tape="pin"] .card .tape { left: var(--deco-x); }
