@@ -388,3 +388,69 @@ describe('agent flows', () => {
     assert.ok(got.description.includes(att.url) && !got.description.includes('blob:'));
   });
 });
+
+describe('grants: powers the human delegates in agents.json', () => {
+  let s;
+  const ag = (agent) => ({ agent });
+  before(async () => {
+    s = await startServer({ agents: { agents: {
+      approver: { enabled: false, grants: ['review.decide'] },
+      gatekeeper: { enabled: false, grants: [{ power: 'column.gate', where: { 'properties.risk': 'low' } }] },
+      boss: { enabled: false, grants: ['agents.control'] },
+      worker: { enabled: false },
+    } } });
+  });
+  after(async () => { await s.stop(); });
+  const reviewed = async (title, by = 'worker', extra = {}) => {
+    const it = await s.ok('POST', `${B}/items`, { title, column: 'Backlog', ...extra }, USER);
+    await s.ok('POST', `${B}/items/${it.id}/start`, {}, ag(by));
+    await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'ready' }, ag(by));
+    return it;
+  };
+
+  it('review.decide: a granted agent decides (final, recorded as delegated); never its own work; the human can override', async () => {
+    const it = await reviewed('feature');
+    const no = await s.api('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'approve' }, ag('worker'));
+    assert.equal(no.body.code, 'HUMAN_ONLY');
+    const { seq } = await s.ok('GET', '/api/app');
+    const done = await s.ok('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'approve', comment: 'tests pass, small change' }, ag('approver'));
+    assert.equal(done.column, 'Done', 'a delegated approval goes through the gate');
+    assert.deepEqual(done.review.delegated, { power: 'review.decide', onBehalfOf: 'human' });
+    const ev = (await s.ok('GET', `/api/events?since=${seq}&types=review.approved`)).events.at(-1);
+    assert.equal(ev.delegated.power, 'review.decide');
+    // the human overrides
+    const back = await s.ok('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'changes', comment: 'not yet' }, USER);
+    assert.equal(back.review.verdict, 'changes');
+    assert.equal(back.review.delegated, undefined);
+    // own work
+    const mine = await reviewed('approver did this', 'approver');
+    assert.equal((await s.api('POST', `${B}/items/${mine.id}/review/decision`, { verdict: 'approve' }, ag('approver'))).body.code, 'OWN_WORK');
+  });
+
+  it('column.gate: moves through human-only columns within its scope only', async () => {
+    const low = await s.ok('POST', `${B}/items`, { title: 'low', column: 'Backlog', properties: { risk: 'low' } }, USER);
+    const high = await s.ok('POST', `${B}/items`, { title: 'high', column: 'Backlog', properties: { risk: 'high' } }, USER);
+    assert.equal((await s.api('POST', `${B}/items/${low.id}/move`, { column: 'Done' }, ag('worker'))).body.code, 'HUMAN_ONLY');
+    const { seq } = await s.ok('GET', '/api/app');
+    await s.ok('POST', `${B}/items/${low.id}/move`, { column: 'Done' }, ag('gatekeeper'));
+    const ev = (await s.ok('GET', `/api/events?since=${seq}&types=item.moved`)).events.at(-1);
+    assert.equal(ev.delegated.power, 'column.gate');
+    assert.equal((await s.api('POST', `${B}/items/${high.id}/move`, { column: 'Done' }, ag('gatekeeper'))).body.code, 'OUT_OF_SCOPE');
+    const open = await reviewed('open review', 'worker', { properties: { risk: 'low' } });
+    assert.equal((await s.api('POST', `${B}/items/${open.id}/move`, { column: 'Done' }, ag('gatekeeper'))).body.code, 'REVIEW_OPEN');
+  });
+
+  it('agents.control: pause / resume others, never itself; grants show in permissions, the brief and metrics', async () => {
+    assert.equal((await s.api('POST', '/api/agents/worker/pause', {}, ag('worker'))).body.code, 'HUMAN_ONLY');
+    assert.equal((await s.ok('POST', '/api/agents/worker/pause', {}, ag('boss'))).status, 'paused');
+    await s.ok('POST', '/api/agents/worker/resume', {}, ag('boss'));
+    assert.equal((await s.api('POST', '/api/agents/boss/pause', {}, ag('boss'))).body.code, 'OWN_WORK');
+    assert.equal((await s.api('POST', '/api/agents', { name: 'x', role: 'builder', grants: ['review.decide'] }, ag('boss'))).status, 403, 'defining agents stays human-only');
+    const me = await s.ok('GET', '/api/permissions/me', undefined, ag('approver'));
+    assert.deepEqual(me.grants.map((g) => g.power), ['review.decide']);
+    const brief = (await s.api('GET', `${B}/brief`, undefined, ag('approver'))).body;
+    assert.match(typeof brief === 'string' ? brief : brief.markdown, /Powers the human delegated to you/);
+    const m = await s.ok('GET', `${B}/metrics?days=7`, undefined, USER);
+    assert.ok(m.delegated.reviews >= 1 && m.delegated.moves >= 1);
+  });
+});

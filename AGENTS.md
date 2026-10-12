@@ -163,6 +163,19 @@ At the end of a session: `POST /api/boards/main/digest { "summary": "markdown", 
 ### Approval gates
 Columns with `humanOnlyIn` / `humanOnlyOut` can only be entered / left by a human (`403` for agents). By default **Done** is human-only: move finished work to **Review** and let the human accept it.
 
+### Grants: powers the human delegates
+Some agents may do human-only things because the human said so in **agents.json** (or the manifest's `permissions.<name>.grants`) — never through the API:
+```jsonc
+"approver":   { "role": "reviewer", "grants": ["review.decide"] },
+"gatekeeper": { "enabled": false, "grants": [{ "power": "column.gate", "where": { "column": "Done", "fields.risk": "low" } }] }
+```
+- `review.decide` — `POST …/review/decision`; the verdict is final, moves the ticket on, and is recorded as delegated (`review.delegated`, the event's `delegated`, a note in the comment).
+- `column.gate` — move tickets into / out of human-only columns (a ticket with an open review must be decided instead: `409 REVIEW_OPEN`).
+- `agents.control` — pause / resume / run *other* standing agents. Defining agents and grants stays with the human.
+- `where` limits a grant to tickets matching every key (`column`, or any dotted path such as `fields.risk`, `properties.area`; a value or a list).
+- Never on your own work: a ticket you worked on or whose review you requested → `403 OWN_WORK`. Out of scope → `403 OUT_OF_SCOPE`; no grant → `403 HUMAN_ONLY`.
+- The human can override any delegated verdict or move. Grants in agents.json are re-read on change, so removing one takes effect at once. `GET /api/permissions/me` and your brief list yours; metrics count delegated decisions (`delegated`).
+
 ### Handoffs
 `PATCH … { "assignee": "other-agent" }` hands a ticket over; the assignee receives its events (`for=<name>` / `assignee=<name>`).
 When a ticket's last open blocker reaches the final column (or is archived), its watchers get `item.unblocked`.

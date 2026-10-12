@@ -587,6 +587,49 @@ function itemEvent(ctx, type, item, actor, extra = {}) {
 
 const permsFor = (name) => M.permissions[name] || M.permissions['*'] || null;
 
+/* Grants: powers that are human-only by default, delegated by the human to named agents. They live only in
+   the human's files — agents.json ("grants") or the manifest's permissions — never in the API, and are
+   re-read on every call, so removing one takes effect at once.
+     "grants": ["review.decide", { "power": "column.gate", "where": { "column": ["Done"], "fields.risk": "low" } }]
+   review.decide  approve / request changes on reviews     column.gate  move into / out of human-only columns
+   agents.control pause / resume / run other standing agents
+   An agent never uses a grant on its own work: a ticket it worked on, or a review it requested. */
+const POWERS = {
+  'review.decide': 'Decide reviews (approve / request changes)',
+  'column.gate': 'Move tickets into / out of human-only columns',
+  'agents.control': 'Pause, resume and run other standing agents',
+};
+function grantsOf(name) {
+  const raw = [...arr(standing?.grantsOf?.(name)), ...arr(M.permissions[name]?.grants)];
+  return raw.map((g) => (typeof g === 'string' ? { power: g } : isObj(g) ? { power: String(g.power || ''), ...(isObj(g.where) ? { where: g.where } : {}) } : null))
+    .filter((g) => g && POWERS[g.power]);
+}
+// Does a grant's scope cover this ticket? where: { column: name|id|[…], "<dotted path>": value|[values] }
+function inScope(ctx, item, where) {
+  if (!where || !item) return true;
+  return Object.entries(where).every(([k, want]) => {
+    const wants = [].concat(want).map((v) => String(v).toLowerCase());
+    if (k === 'column') {
+      const col = ctx.board.columns.find((c) => c.id === item.columnId);
+      return wants.includes(item.columnId.toLowerCase()) || wants.includes(String(col?.name).toLowerCase());
+    }
+    const have = [].concat(getPath(item, k) ?? []).map((v) => String(v).toLowerCase());
+    return have.some((v) => wants.includes(v));
+  });
+}
+const ownWork = (item, name) => !!item && ((item.workedBy || []).includes(name) || (item.questions || []).some((q) => q.kind === 'review' && q.raisedBy === name)
+  || item.review?.requestedBy === name);
+// The grant an agent would use for this action, or a fail() saying why not. Humans never need one.
+function grantFor(ctx, actor, power, item, what) {
+  if (actor.kind === 'user') return null;
+  const mine = grantsOf(actor.name).filter((g) => g.power === power);
+  if (!mine.length) fail(403, `Only the human can ${what}`, { code: 'HUMAN_ONLY', hint: `The human can delegate this by adding "grants": ["${power}"] to your entry in agents.json` });
+  if (item && ownWork(item, actor.name)) fail(403, `${actor.name} worked on ${item.id} or asked for its review — an agent never approves its own work`, { code: 'OWN_WORK', hint: 'Leave it for the human or another agent' });
+  const g = mine.find((x) => inScope(ctx, item, x.where));
+  if (!g) fail(403, `${item?.id || 'This'} is outside your ${power} grant (${JSON.stringify(mine.map((x) => x.where || 'any'))})`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
+  return g;
+}
+
 // Per-agent column limits from the manifest (humans are never limited).
 function checkColumnPerm(ctx, actor, colIds) {
   if (actor.kind !== 'agent') return;
@@ -866,16 +909,25 @@ function createItem(ctx, d, actor) {
   });
 }
 
-function moveInto(ctx, item, colRef, position, actor, events) {
+function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } = {}) {
   const b = ctx.board;
   const from = findColumn(b, item.columnId);
   const to = colRef != null && colRef !== '' ? findColumn(b, colRef) : from;
   const cross = from.id !== to.id;
+  let gated = false;
   if (cross) {
     if (!from.flags.allowMoveOut) fail(403, `Items cannot leave "${from.name}"`);
     if (!to.flags.allowMoveIn) fail(403, `"${to.name}" does not accept moved items`);
-    if (actor.kind !== 'user' && to.flags.humanOnlyIn) fail(403, `Only a human can move items into "${to.name}". Move it to the column before and ask for review.`, { code: 'HUMAN_ONLY', hint: 'POST …/items/<id>/review { summary }' });
-    if (actor.kind !== 'user' && from.flags.humanOnlyOut) fail(403, `Only a human can move items out of "${from.name}"`);
+    // Human-only gates: an agent passes only with a column.gate grant (a delegated review carries its own).
+    gated = actor.kind !== 'user' && !!(to.flags.humanOnlyIn || from.flags.humanOnlyOut);
+    if (gated && !gateBy) {
+      if (!grantsOf(actor.name).some((g) => g.power === 'column.gate')) {
+        if (to.flags.humanOnlyIn) fail(403, `Only a human can move items into "${to.name}". Move it to the column before and ask for review.`, { code: 'HUMAN_ONLY', hint: 'POST …/items/<id>/review { summary }' });
+        fail(403, `Only a human can move items out of "${from.name}"`, { code: 'HUMAN_ONLY' });
+      }
+      if (to.flags.humanOnlyIn && (item.questions || []).some((q) => q.kind === 'review')) fail(409, `${item.id} has an open review — decide it instead of moving it`, { code: 'REVIEW_OPEN', hint: `POST /api/boards/${ctx.id}/items/${item.id}/review/decision { "verdict": "approve" | "changes", "comment": "…" } (needs the review.decide grant)` });
+      gateBy = grantFor(ctx, actor, 'column.gate', item, `move items ${to.flags.humanOnlyIn ? `into "${to.name}"` : `out of "${from.name}"`}`);
+    }
     checkColumnPerm(ctx, actor, [to.id]);
     checkWip(to);
     // A human moving a ticket with an open review into an approval gate (e.g. Done) approves it.
@@ -890,7 +942,7 @@ function moveInto(ctx, item, colRef, position, actor, events) {
   to.itemIds.splice(idx, 0, item.id);
   if (cross) {
     enterColumn(item, to.id);
-    events.push(itemEvent(ctx, 'item.moved', item, actor, { fromColumnId: from.id, columnId: to.id, position: idx }));
+    events.push(itemEvent(ctx, 'item.moved', item, actor, { fromColumnId: from.id, columnId: to.id, position: idx, ...(gated ? { delegated: { power: gateBy.power, onBehalfOf: 'human' } } : {}) }));
     if (to.flags.releaseLeaseOnEnter && item.lease) {
       const c = item.lease.claimant;
       item.lease = null;
@@ -1299,10 +1351,11 @@ function replyAfter(item, w) {
 
 // Human verdict on a review, in one step. approve: through the gate; changes: back to the working column.
 function decideReview(ctx, id, d, actor) {
-  if (actor.kind !== 'user') fail(403, 'Only the human decides reviews', { code: 'HUMAN_ONLY' });
+  if (actor.kind !== 'user') grantsOf(actor.name).some((g) => g.power === 'review.decide') || fail(403, 'Only the human decides reviews', { code: 'HUMAN_ONLY', hint: 'The human can delegate this with "grants": ["review.decide"] in agents.json' });
   const verdict = d.verdict === 'approve' || d.verdict === 'approved' ? 'approve' : d.verdict === 'changes' ? 'changes' : fail(400, '"verdict" must be "approve" or "changes"');
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
+    const grant = grantFor(ctx, actor, 'review.decide', item, 'decide reviews');
     const comment = str(d.comment || '', 20_000).trim();
     if (verdict === 'changes' && !comment) fail(400, 'Say what needs to change in "comment"');
     // Where it goes: approve → through the next gate; changes → back to the working column.
@@ -1311,8 +1364,9 @@ function decideReview(ctx, id, d, actor) {
     const target = d.column ? findColumn(ctx.board, d.column)
       : verdict === 'approve' ? (cols.slice(idx + 1).find((c) => c.flags.humanOnlyIn) || cols[idx + 1])
         : (workingColumn(ctx) && cols.indexOf(workingColumn(ctx)) < idx ? workingColumn(ctx) : cols[idx - 1]);
-    recordVerdict(ctx, item, actor, events, verdict, comment);
-    if (target && target.id !== item.columnId) moveInto(ctx, item, target.id, 'top', actor, events);
+    recordVerdict(ctx, item, actor, events, verdict, comment, grant);
+    // a delegated verdict carries its move through the gate with it
+    if (target && target.id !== item.columnId) moveInto(ctx, item, target.id, 'top', actor, events, grant ? { gateBy: grant } : {});
     item.version++;
     item.updatedAt = now();
     return item;
@@ -1322,16 +1376,18 @@ function decideReview(ctx, id, d, actor) {
 // One place that records a review verdict: the human's comment, the review question closed, item.review
 // set, and review.approved / review.changes_requested sent to whoever asked and worked on it.
 // Used by the review decision and by a human moving a reviewed ticket into an approval gate.
-function recordVerdict(ctx, item, actor, events, verdict, comment = '') {
+function recordVerdict(ctx, item, actor, events, verdict, comment = '', grant = null) {
   syncNeeds(item);
   const prev = item.questions.find((q) => q.kind === 'review') || null;
   const requestedBy = prev?.raisedBy || item.workedBy?.at(-1) || null;
-  const body = comment || 'Approved ✓';
+  const said = comment || 'Approved ✓';
+  const body = grant ? `${said}\n\n_Decided on the human's behalf (\`${grant.power}\` grant)._` : said;
   if (comment || verdict === 'approve') item.comments.push({ id: rid('c'), author: actor, body, createdAt: now() });
   closeQuestions(ctx, item, actor, events, { pick: (q) => q.kind === 'review', reply: body, extra: { verdict } });
-  item.review = { verdict, comment: comment || null, by: actor.name, at: now(), requestedBy };
+  const delegated = grant ? { power: grant.power, onBehalfOf: 'human' } : null;
+  item.review = { verdict, comment: comment || null, by: actor.name, at: now(), requestedBy, ...(delegated ? { delegated } : {}) };
   const who = [requestedBy, ...(item.workedBy || [])].filter(Boolean);
-  events.push(itemEvent(ctx, verdict === 'approve' ? 'review.approved' : 'review.changes_requested', item, actor, { verdict, feedback: comment || null, mentions: who }));
+  events.push(itemEvent(ctx, verdict === 'approve' ? 'review.approved' : 'review.changes_requested', item, actor, { verdict, feedback: comment || null, mentions: who, ...(delegated ? { delegated } : {}) }));
 }
 
 // End of a session: release every lease (and the board hold) you have, optionally posting the digest.
@@ -1587,6 +1643,18 @@ function briefing(ctx, name, base, via = 'cli') {
       ? w.next.map((n, i) => n.requestId ? `${i + 1}. **handle request ${n.requestId}** — ${n.why}` : `${i + 1}. **${n.action.replace(/_/g, ' ')} ${n.id}** "${n.title}" — ${n.why}`)
       : ['Nothing is waiting for you. Ask the human what to work on, or create tickets for work you were given.']),
     ...(w.waitingOnHuman.length ? ['', `Waiting on the human (don't redo these): ${w.waitingOnHuman.map((x) => `${x.id} "${x.question}"`).join('; ')}`] : []),
+    ...(() => {
+      const g = grantsOf(name);
+      if (!g.length) return [];
+      const how = {
+        'review.decide': `decide: ${cli('POST', `${P}/items/<ID>/review/decision`, 'verdict=approve comment="why"')} (or verdict=changes with what to change)`,
+        'column.gate': 'move tickets through human-only columns with a normal move (tickets with an open review: decide the review instead)',
+        'agents.control': `${cli('POST', '/api/agents/<name>/pause')} · …/resume · …/run`,
+      };
+      return ['', '## Powers the human delegated to you',
+        ...g.map((x) => `- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}: ${how[x.power]}`),
+        'Your verdicts and moves are final and recorded as made on the human\'s behalf; the human can still override them. Never use a power on your own work (a ticket you worked on or asked to have reviewed) — the board refuses it. Explain each decision in its comment.'];
+    })(),
     '',
     '## Columns (left to right)',
     ...b.columns.map((col) => `- **${col.name}** (${col.itemIds.length})${flagsOf(col) ? ` — ${flagsOf(col)}` : ''}`),
@@ -1677,6 +1745,12 @@ function metrics(ctx, days) {
     answerHours: { median: answered.length ? median(answered.map((a) => a.ms)) / HOUR : null, count: answered.length },
     columns, slowest: slowest ? { name: slowest.name, medianStayHours: slowest.medianStayHours } : null,
     byAgent,
+    delegated: (() => {
+      const evs = recent.filter((e) => e.board === ctx.id && e.delegated && t(e.ts) >= from);
+      const by = {};
+      for (const e of evs) { const n = e.actor?.name || '?'; by[n] ||= { reviews: 0, moves: 0 }; by[n][e.type.startsWith('review.') ? 'reviews' : 'moves']++; }
+      return { reviews: evs.filter((e) => e.type.startsWith('review.')).length, moves: evs.filter((e) => e.type === 'item.moved').length, byAgent: by };
+    })(),
   };
 }
 
@@ -2865,7 +2939,13 @@ function listenersFor(ctx) {
 route('GET', '/api/boards/:board/listeners', 'Agents listening to each item: { itemId: [agent names] }', ({ p }) => listenersFor(getCtx(p.board)));
 
 /* standing agents: defined in agents.json next to the manifest; the API only observes and steers them */
-const humanOnly = (actor) => { if (actor.kind !== 'user') fail(403, 'Only the human can control standing agents'); };
+const humanOnly = (actor) => { if (actor.kind !== 'user') fail(403, 'Only the human can control standing agents', { code: 'HUMAN_ONLY' }); };
+// pause / resume / run: the human, or an agent granted agents.control — never on itself
+const controls = (actor, target) => {
+  if (actor.kind === 'user') return;
+  if (!grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
+  if (String(target).toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent cannot pause, resume or run itself', { code: 'OWN_WORK' });
+};
 route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run', () => standing.list());
 route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents', () => {
   const { ROLES, PERMS } = require('./lib/agents');
@@ -2894,9 +2974,9 @@ route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=2
   fs.closeSync(fd);
   return { file: f, truncated: size > n, log: buf.toString('utf8') };
 });
-route('POST', '/api/agents/:name/pause', 'Human: pause (current run finishes; events keep queueing)', ({ p, actor }) => { humanOnly(actor); return standing.pause(p.name); });
-route('POST', '/api/agents/:name/resume', 'Human: resume a paused or failed agent', ({ p, actor }) => { humanOnly(actor); return standing.unpause(p.name); });
-route('POST', '/api/agents/:name/run', 'Human: start a run now: { note? }', ({ p, body, actor }) => { humanOnly(actor); return standing.runNow(p.name, body.note); });
+route('POST', '/api/agents/:name/pause', 'Human: pause (current run finishes; events keep queueing)', ({ p, actor }) => { controls(actor, p.name); return standing.pause(p.name); });
+route('POST', '/api/agents/:name/resume', 'Human: resume a paused or failed agent', ({ p, actor }) => { controls(actor, p.name); return standing.unpause(p.name); });
+route('POST', '/api/agents/:name/run', 'Human: start a run now: { note? }', ({ p, body, actor }) => { controls(actor, p.name); return standing.runNow(p.name, body.note); });
 
 route('GET', '/api/presence', 'Agents seen by this instance, online state, leases, subscriptions', () => presenceView());
 // Forget an offline agent: it leaves the agents list (its profile stays, and it reappears if it calls again).
@@ -2915,6 +2995,7 @@ route('DELETE', '/api/presence/:name', 'Human: forget an offline agent (not stan
 });
 route('GET', '/api/permissions/me', 'What you are allowed to do (from the manifest)', ({ actor }) => ({
   name: actor.name, kind: actor.kind, permissions: actor.kind === 'agent' ? permsFor(actor.name) : null,
+  grants: actor.kind === 'agent' ? grantsOf(actor.name).map((g) => ({ ...g, means: POWERS[g.power] })) : null,
   tokenRequired: actor.kind === 'user' ? !!M.auth.userToken : !!M.auth.agentTokens?.[actor.name] || !!M.auth.requireAgentTokens,
 }));
 route('GET', '/api/profiles', 'Display profiles (colour, glyph, image) for agents and users', () => profiles);

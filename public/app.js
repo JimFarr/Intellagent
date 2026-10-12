@@ -3199,7 +3199,7 @@
     switch (ev.type) {
       case 'item.created': return `${who} created ${b(id)}${html ? '' : ` · ${ev.item?.title}`}`;
       case 'item.updated': return `${who} changed ${b(id)} ${fields}`;
-      case 'item.moved': return `${who} moved ${b(id)} → ${b(ev.item?.column || '')}`;
+      case 'item.moved': return `${who} moved ${b(id)} → ${b(ev.item?.column || '')}${ev.delegated ? ' for you' : ''}`;
       case 'item.reordered': return `${who} reordered ${b(id)}`;
       case 'item.archived': return `${who} archived ${b(id)}`;
       case 'item.deleted': return `${who} deleted test ticket ${b(id)}`;
@@ -3237,8 +3237,8 @@
       case 'request.created': return `${who} asked ${b(ev.request?.to)}: ${html ? esc(String(ev.request?.body || '').slice(0, 80)) : String(ev.request?.body || '').slice(0, 80)}`;
       case 'request.replied': return `${who} replied to a request${ev.reply ? `: ${html ? esc(ev.reply.slice(0, 80)) : ev.reply.slice(0, 80)}` : ''}`;
       case 'request.done': return `${who} finished a request${ev.reply ? `: ${html ? esc(ev.reply.slice(0, 80)) : ev.reply.slice(0, 80)}` : ''}`;
-      case 'review.approved': return `${who} approved ${b(id)}`;
-      case 'review.changes_requested': return `${who} sent ${b(id)} back${ev.feedback ? `: ${html ? esc(ev.feedback) : ev.feedback}` : ''}`;
+      case 'review.approved': return `${who} approved ${b(id)}${ev.delegated ? ' for you' : ''}`;
+      case 'review.changes_requested': return `${who} sent ${b(id)} back${ev.delegated ? ' for you' : ''}${ev.feedback ? `: ${html ? esc(ev.feedback) : ev.feedback}` : ''}`;
       case 'digest.added': return `${who} posted to the digest`;
       case 'item.unblocked': return `${b(id)} is unblocked (${b(ev.resolvedBy)} done)`;
       case 'app.renamed': return `${who} renamed the app to ${b(ev.to)}`;
