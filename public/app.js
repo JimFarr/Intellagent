@@ -113,6 +113,14 @@
     return `<span class="avatar ${kind} ${p?.image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}"${run && run !== 'idle' ? ` data-run="${run}"` : ''} style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${p?.image ? '' : esc(p?.glyph || initials(name))}</span>`;
   }
 
+  // How an agent or person is called on screen: the profile's label when it has one ("Receptionist"),
+  // else the id. The id is what routes (@mentions, assignee), so it stays in tooltips and muted suffixes.
+  const nameOf = (n) => state.profiles[n]?.label || n || '';
+  const nameHTML = (n) => {
+    const l = state.profiles[n]?.label;
+    return l && l !== n ? `<span class="dn" title="@${esc(n)}">${esc(l)}</span>` : esc(n || '');
+  };
+
   /* ═════════════════════════ themes + settings ═════════════════════════ */
 
   // A theme = palette + style spec + optional CSS. The style spec drives data-attributes on <html>
@@ -1399,7 +1407,7 @@
 
   function ringHTML(lease) {
     const kind = lease.claimant === settings.userName ? 'user' : 'agent';
-    return `<span class="ring" data-exp="${esc(lease.expiresAt)}" data-min="${lease.minutes || 30}" title="Lease|${esc(lease.claimant)} is working on this until ${new Date(lease.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}">${avatar({ kind, name: lease.claimant })}<svg viewBox="0 0 24 24"><circle class="trk" cx="12" cy="12" r="10.5" pathLength="100"/><circle class="prg" cx="12" cy="12" r="10.5" pathLength="100"/></svg></span>`;
+    return `<span class="ring" data-exp="${esc(lease.expiresAt)}" data-min="${lease.minutes || 30}" title="Lease|${esc(nameOf(lease.claimant))} is working on this until ${new Date(lease.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}">${avatar({ kind, name: lease.claimant })}<svg viewBox="0 0 24 24"><circle class="trk" cx="12" cy="12" r="10.5" pathLength="100"/><circle class="prg" cx="12" cy="12" r="10.5" pathLength="100"/></svg></span>`;
   }
 
   // Human-readable rendering of a declared field value (cards, read-only views).
@@ -1452,7 +1460,7 @@
     if (s.attachments && stub('attachments') && it.attachments.length) meta.push(`<span class="m" title="Files|${it.attachments.length} attached">${icon('clip', 'sm')}${it.attachments.length}</span>`);
     const nProps = Object.keys(it.properties || {}).length;
     if (s.properties && shown('properties') && nProps) meta.push(`<span class="m" title="Properties|Free-form data agents attached">${icon('braces', 'sm')}${nProps}</span>`);
-    if (stub('assignee') && it.assignee) meta.push(`<span class="m assn" title="${esc(bi('assignee').label)}|Handed to ${esc(it.assignee)} — they get its events">${icon('move', 'sm')}${avatar({ name: it.assignee })}</span>`);
+    if (stub('assignee') && it.assignee) meta.push(`<span class="m assn" title="${esc(bi('assignee').label)}|Handed to ${esc(nameOf(it.assignee))} — they get its events">${icon('move', 'sm')}${avatar({ name: it.assignee })}</span>`);
     const ck = checklist(it.description);
     if (s.checklist && ck.total) meta.push(`<span class="m" title="Checklist|${ck.done} of ${ck.total} done">${icon('checks', 'sm')}${ck.done}/${ck.total}</span>`);
     if (s.listeners && ls?.length) meta.push(`<span class="m listen" title="Listening|${esc(ls.join(', '))} ${ls.length > 1 ? 'get' : 'gets'} events about this ticket">${icon('radio', 'sm')}<span class="stack-av">${ls.slice(0, 3).map((n) => avatar({ kind: 'agent', name: n })).join('')}</span>${ls.length > 3 ? `+${ls.length - 3}` : ''}</span>`);
@@ -1468,7 +1476,7 @@
     const right = top.slice(top.indexOf('<span class="grow"></span>') + 1);
     const lead = !s.id && stub('type') ? `<span class="c-type inline" title="${TYPE_TIPS[it.type]}">${icon(it.type, 'sm')}</span>` : '';
     const head = s.id ? `<div class="c-top">${top.join('')}</div>` : right.length ? `<div class="c-top float">${right.join('')}</div>` : '';
-    return `${head}<h3 class="c-title ${lead ? 'has-lead' : ''}">${lead}${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(lease.claimant)} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
+    return `${head}<h3 class="c-title ${lead ? 'has-lead' : ''}">${lead}${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(nameOf(lease.claimant))} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
   }
 
   function tickRings(root = document) {
@@ -2508,7 +2516,7 @@
     const col = colById(it.columnId);
     const rx = $('.m-reacts', main) || (() => { const d = el('<div class="m-reacts"></div>'); $('.m-sub', main).after(d); wireReactions(d, m.id); return d; })();
     rx.innerHTML = reactionsHTML(it.reactions, { add: !m.archived });
-    $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${esc(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}`;
+    $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${nameHTML(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}`;
 
     // needs-you banner
     const slot = $('.ask-slot', main);
@@ -2592,7 +2600,7 @@
     const sig = `${it.id}:${it.comments.map((c) => `${c.id}${JSON.stringify(c.reactions || {})}`).join('|')}`;
     if (cmts.dataset.sig !== sig) {
       cmts.dataset.sig = sig;
-      cmts.innerHTML = it.comments.map((c) => `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${esc(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(c.author.name)} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}${reactionsHTML(c.reactions, { cid: c.id, add: !m.archived })}</div></div>`).join('');
+      cmts.innerHTML = it.comments.map((c) => `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${nameHTML(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(nameOf(c.author.name))} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}${reactionsHTML(c.reactions, { cid: c.id, add: !m.archived })}</div></div>`).join('');
       if (!cmts._reactWired) { cmts._reactWired = true; wireReactions(cmts, m.id); }
       cmts.onclick = (e) => {
         const b = e.target.closest('[data-why]');
@@ -2707,7 +2715,7 @@
       det.push(`<div class="field">${lbl('parent', 'hash')}${lock('parent') ? `<div class="ro-val ${it.parent ? '' : 'empty'}">${v || '—'}</div>` : ddHTML('parent', v, { placeholder: 'None' })}</div>`);
     }
     if (shown('assignee')) {
-      const v = it.assignee ? `${avatar({ name: it.assignee })}${esc(it.assignee)}` : '';
+      const v = it.assignee ? `${avatar({ name: it.assignee })}${nameHTML(it.assignee)}` : '';
       det.push(`<div class="field">${lbl('assignee', 'user')}${lock('assignee') ? `<div class="ro-val ${it.assignee ? '' : 'empty'}">${v || '—'}</div>` : ddHTML('assignee', v, { placeholder: 'Nobody' })}</div>`);
     }
     parts.push(`<div class="fgroup">${det.join('')}</div>`);
@@ -2717,8 +2725,8 @@
     // Lease, Blocked by and Blocks read as one-line rows (label left, value right), like boolean fields.
     // A held lease opens into a card underneath for the timer and live status.
     if (!m.create) work.push(lease
-      ? `<div class="field"><div class="row-line"><div class="lbl">${icon('clock', 'sm')}Lease</div><span class="row-val">${esc(lease.claimant)}${m.archived ? '' : `<button class="mini-x" data-act="revoke" title="Revoke lease|Take the ticket back from this agent">${icon('x', 'sm')}</button>`}</span></div>
-        <div class="lease-box">${ringHTML(lease)}<div style="min-width:0"><div class="who">${esc(lease.claimant)}</div><div class="left" data-left="${esc(lease.expiresAt)}"></div></div>${lease.status ? `<div class="lstatus">${esc(lease.status)}</div>` : ''}</div></div>`
+      ? `<div class="field"><div class="row-line"><div class="lbl">${icon('clock', 'sm')}Lease</div><span class="row-val">${nameHTML(lease.claimant)}${m.archived ? '' : `<button class="mini-x" data-act="revoke" title="Revoke lease|Take the ticket back from this agent">${icon('x', 'sm')}</button>`}</span></div>
+        <div class="lease-box">${ringHTML(lease)}<div style="min-width:0"><div class="who">${nameHTML(lease.claimant)}</div><div class="left" data-left="${esc(lease.expiresAt)}"></div></div>${lease.status ? `<div class="lstatus">${esc(lease.status)}</div>` : ''}</div></div>`
       : `<div class="field inline"><div class="lbl">${icon('clock', 'sm')}Lease</div>${m.archived ? '<span class="row-val empty">—</span>' : `<button class="row-btn" data-act="claim" title="Hold|Lease it yourself — agents can't change it until you release it">${icon('lock', 'sm')}Hold</button>`}</div>`);
     if (shown('blockedBy')) {
       const last = b.columns[b.columns.length - 1]?.id;
@@ -2931,7 +2939,7 @@
   function closeMention() { mention.pop?.remove(); mention.pop = null; mention.ta = null; }
   function drawMention() {
     const pop = mention.pop;
-    pop.innerHTML = mention.items.map((x, i) => `<button class="mi ${i === mention.active ? 'act' : ''}" data-i="${i}">${avatar({ name: x.name })}<span class="mn">${esc(x.name)}</span>${x.label ? `<span class="ml">${esc(x.label)}</span>` : ''}${x.live ? `<i class="mlive ${x.live}" title="${x.live}"></i>` : ''}</button>`).join('');
+    pop.innerHTML = mention.items.map((x, i) => `<button class="mi ${i === mention.active ? 'act' : ''}" data-i="${i}">${avatar({ name: x.name })}<span class="mn">${esc(x.label || x.name)}</span>${x.label && x.label !== x.name ? `<span class="ml">@${esc(x.name)}</span>` : ''}${x.live ? `<i class="mlive ${x.live}" title="${x.live}"></i>` : ''}</button>`).join('');
   }
   function updateMention(ta) {
     const upto = ta.value.slice(0, ta.selectionStart);
@@ -3088,7 +3096,8 @@
 
   function describe(ev, html = false) {
     const b = (s) => (html ? `<b>${esc(s)}</b>` : s);
-    const who = b(ev.actor?.name || 'someone');
+    const who = b(ev.actor?.name ? nameOf(ev.actor.name) : 'someone');
+    const nb = (n) => b(nameOf(n));
     const id = ev.item?.id || ev.itemId || '';
     const fields = Object.keys(ev.changes || {}).map((k) => k.replace(/^(properties|fields)\./, '')).join(', ');
     switch (ev.type) {
@@ -3099,12 +3108,12 @@
       case 'item.archived': return `${who} archived ${b(id)}`;
       case 'item.restored': return `${who} restored ${b(id)}`;
       case 'comment.added': return `${who} on ${b(id)}: ${html ? esc(ev.comment?.body?.slice(0, 120)) : ev.comment?.body?.slice(0, 80)}${ev.comment?.attachments ? ` ${html ? icon('clip', 'sm') : '📎'}` : ''}`;
-      case 'lease.claimed': return `${b(ev.claimant)} claimed ${b(id)}`;
-      case 'lease.renewed': return `${b(ev.claimant)} renewed ${b(id)}`;
-      case 'lease.released': return `${b(ev.claimant)} released ${b(id)}`;
-      case 'lease.revoked': return `${who} revoked ${b(ev.claimant)}'s lease on ${b(id)}`;
-      case 'lease.warning': return `${b(ev.claimant)}'s lease on ${b(id)} ends in ${ev.minutesLeft}m`;
-      case 'lease.expired': return `${b(ev.claimant)}'s lease on ${b(id)} expired`;
+      case 'lease.claimed': return `${nb(ev.claimant)} claimed ${b(id)}`;
+      case 'lease.renewed': return `${nb(ev.claimant)} renewed ${b(id)}`;
+      case 'lease.released': return `${nb(ev.claimant)} released ${b(id)}`;
+      case 'lease.revoked': return `${who} revoked ${nb(ev.claimant)}'s lease on ${b(id)}`;
+      case 'lease.warning': return `${nb(ev.claimant)}'s lease on ${b(id)} ends in ${ev.minutesLeft}m`;
+      case 'lease.expired': return `${nb(ev.claimant)}'s lease on ${b(id)} expired`;
       case 'attention.raised': return `${who} needs you on ${b(id)}`;
       case 'attention.resolved': return `${who} answered ${b(id)}`;
       case 'column.created': return `${who} added column ${b(ev.column?.name || '')}`;
@@ -3112,7 +3121,7 @@
       case 'schema.updated': return `${who} changed the ticket schema`;
       case 'board.updated': return `${who} updated the board`;
       case 'board.external-edit': return 'Board file changed on disk';
-      case 'lease.status': return `${b(ev.claimant)} on ${b(id)}: ${html ? esc(ev.status || '—') : ev.status || '—'}`;
+      case 'lease.status': return `${nb(ev.claimant)} on ${b(id)}: ${html ? esc(ev.status || '—') : ev.status || '—'}`;
       case 'item.assigned': return `${who} assigned ${b(id)} to ${b(ev.assignee || 'nobody')}`;
       case 'agent.run.started': return `${b(ev.agent)} woke up${ev.items?.length ? ` for ${ev.items.map(b).join(', ')}` : ''}`;
       case 'agent.run.finished': return ev.code === 0 ? `${b(ev.agent)} finished a run` : `${b(ev.agent)}'s run failed (${ev.code}) — retrying`;
@@ -3300,11 +3309,11 @@
       const box = $('.req-list', body);
       if (!box) return;
       box.innerHTML = list.length ? list.map((q) => `<div class="req ${q.status}">
-          <div class="req-head">${avatar(q.by)}<b>${esc(q.by?.name)}</b>${icon('chev', 'to')}${avatar({ name: q.to })}<b>${esc(q.to)}</b><span class="muted">${rel(q.at)}</span><span class="grow"></span>
+          <div class="req-head">${avatar(q.by)}<b>${nameHTML(q.by?.name)}</b>${icon('chev', 'to')}${avatar({ name: q.to })}<b>${nameHTML(q.to)}</b><span class="muted">${rel(q.at)}</span><span class="grow"></span>
             <span class="chip req-status ${q.status}">${q.status === 'done' ? `${icon('check', 'sm')}Done` : 'Open'}</span>
             <button class="btn ghost sm" data-req-toggle="${esc(q.id)}" title="${q.status === 'done' ? 'Reopen' : 'Mark done'}">${icon(q.status === 'done' ? 'restore' : 'check', 'sm')}</button></div>
           <div class="md">${md(q.body)}</div>
-          ${q.replies.map((x) => `<div class="req-reply">${avatar(x.author)}<div><div class="cmt-head"><b>${esc(x.author?.name)}</b><span>${rel(x.at)}</span></div><div class="md">${md(x.body)}</div></div></div>`).join('')}
+          ${q.replies.map((x) => `<div class="req-reply">${avatar(x.author)}<div><div class="cmt-head"><b>${nameHTML(x.author?.name)}</b><span>${rel(x.at)}</span></div><div class="md">${md(x.body)}</div></div></div>`).join('')}
         </div>`).join('') : `<div class="empty-note">${icon('send')}</div>`;
     };
     const load = async () => { try { list = await api('GET', B('/requests')); draw(); } catch { /* offline */ } };
@@ -3701,7 +3710,7 @@
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
       const subs = p.subscriptions.map((s) => `<span class="mini-chip" title="${esc(JSON.stringify(s.filter))}">${icon('bell', 'sm')}${esc(s.label || Object.entries(s.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join('');
       return `<div class="agent-row ${p.online || sa ? '' : 'off'}" data-agent="${esc(p.name)}" style="animation-delay:${i * 40}ms">${avatar({ kind: 'agent', name: p.name }, 'lg')}
-        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(p.name)}${p.name === coord ? '<span class="chip coord-chip">coordinator</span>' : ''}${!p.online && !sa && !p.leases.length ? `<button class="forget" data-forget="${esc(p.name)}" title="Forget|Remove from this list — it reappears if it connects again">${icon('x', 'sm')}Forget</button>` : ''}</div><div class="sub" title="${esc(p.lastAction || '')}">${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(p.lastAction)}` : ''}</div></div>
+        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(nameOf(p.name))}${nameOf(p.name) !== p.name ? `<span class="nm-id">@${esc(p.name)}</span>` : ''}${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from the Ask field go to this agent unless you pick another">takes requests</span>' : ''}${!p.online && !sa && !p.leases.length ? `<button class="forget" data-forget="${esc(p.name)}" title="Forget|Remove from this list — it reappears if it connects again">${icon('x', 'sm')}Forget</button>` : ''}</div><div class="sub" title="${esc(p.lastAction || '')}">${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(p.lastAction)}` : ''}</div></div>
         ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}${p.name !== coord ? `<button class="make-coord" data-make-coord="${esc(p.name)}" title="Make coordinator|Requests go to this agent by default">${icon('send', 'sm')}Make coordinator</button>` : ''}</div>`;
     }).join('') : `<div class="empty-note">${icon('bot')}</div>`);
     body.onclick = async (e) => {
@@ -3953,7 +3962,7 @@
       const byDay = new Map();
       for (const e of (state.board.digest || []).slice().reverse()) { if (!byDay.has(e.date)) byDay.set(e.date, []); byDay.get(e.date).push(e); }
       body.innerHTML = `<div class="digest-compose">${tboxHTML({ ph: 'Add a note…', okIcon: 'send', okTitle: 'Post (Ctrl+Enter)' })}</div>${[...byDay].map(([d, list]) => `<div class="dg-day"><div class="section-head"><span>${esc(dayLabel(d))}</span><span class="rule"></span></div>
-        ${list.map((e) => `<div class="dg-entry">${avatar(e.author, 'lg')}<div style="min-width:0"><div class="cmt-head"><b>${esc(e.author?.name)}</b><span>${new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>${(e.items || []).map((id) => `<span class="mini-chip link" data-open="${esc(id)}">${esc(id)}</span>`).join('')}</div><div class="md">${md(e.summary)}</div></div></div>`).join('')}</div>`).join('') || `<div class="empty-note">${icon('news')}</div>`}`;
+        ${list.map((e) => `<div class="dg-entry">${avatar(e.author, 'lg')}<div style="min-width:0"><div class="cmt-head"><b>${nameHTML(e.author?.name)}</b><span>${new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>${(e.items || []).map((id) => `<span class="mini-chip link" data-open="${esc(id)}">${esc(id)}</span>`).join('')}</div><div class="md">${md(e.summary)}</div></div></div>`).join('')}</div>`).join('') || `<div class="empty-note">${icon('news')}</div>`}`;
       wireTbox($('.tbox', body), post);
     };
     body._redraw = draw;

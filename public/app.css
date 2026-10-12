@@ -790,6 +790,8 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .agent-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 4px 10px; align-items: center; padding: 12px; border-radius: 14px; margin-bottom: 8px; background: var(--hover); animation: drop-in .35s var(--ease) backwards; }
 .agent-row.off { opacity: .55; }
 .agent-row .nm { font-weight: 600; display: flex; align-items: center; gap: 7px; }
+.agent-row .nm-id { font: 500 11px var(--mono, ui-monospace, monospace); color: var(--muted); }
+.dn { cursor: default; }
 .agent-row .sub { font: 11.5px var(--mono); color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-row .extra { grid-column: 2; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
