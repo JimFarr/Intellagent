@@ -133,7 +133,7 @@
     bg: 'blobs', texture: true,
     corner: null, // px kept clear in each card's top-right (auto: 16 when the fold decoration is on)
     avatars: 'color', // color | accent | ink
-    groups: 'tray', // tickets sharing a parent: tray (tinted panel) | rail (coloured rail) | rule (header + hairline) | tab (folder tab) | spine (vertical label) | foot (caption below)
+    groups: 'tray', // tickets sharing a parent: tray (tinted panel) | rail (coloured rail) | rule (header + hairline) | tab (folder tab) | spine (vertical label) | foot (caption below) | cover (a summary card on top of the pile)
     avStyle: 'gem', // avatar look: gem | flat | tint | ring | pebble | stamp
     drop: 'ring', // a column a ticket is dragged over: ring | tint | lift | spotlight | dashed | pulse
     colColor: 'own', // own | accent | ink — column dots and rules
@@ -263,10 +263,11 @@
     bloom: 'pulse', dracula: 'pulse', mocha: 'pulse', cork: 'pulse',
   };
   for (const [k, v] of Object.entries(DROP_STYLE)) if (THEMES[k]) THEMES[k].style.drop ??= v;
-  // …and how tickets sharing a parent are drawn (tray unless named here). Paper themes file them under folder tabs,
+  // …and how tickets sharing a parent are drawn (tray unless named here). Paper and soft themes file them behind a
+  // cover card (an index divider) or under folder tabs,
   // grid themes set the label on a spine, crisp product themes use a ruled header, bold/neon ones a coloured rail.
   const GROUP_LOOK = {
-    paper: 'tab', cork: 'tab', riso: 'tab', solarized: 'tab',
+    paper: 'cover', cork: 'cover', clay: 'cover', cloud: 'cover', riso: 'tab', solarized: 'tab',
     swiss: 'spine', bauhaus: 'spine', brutalist: 'spine',
     phosphor: 'foot', blueprint: 'foot',
     github: 'rule', slate: 'rule', graphite: 'rule', midnight: 'rule', nord: 'rule',
@@ -1279,7 +1280,7 @@
   function ensureGroup(key) {
     let g = groupEls.get(key);
     if (g) return g;
-    g = el(`<section class="group" data-key="${esc(key)}"><button class="group-head"><span class="g-dot"></span><span class="g-name"></span><span class="g-count"></span><span class="grow"></span>${icon('chev', 'g-chev')}</button><i class="g-bg"></i><div class="group-cards"></div></section>`);
+    g = el(`<section class="group" data-key="${esc(key)}"><button class="group-head"><i class="tape"></i><span class="g-dot"></span><span class="g-name"></span><span class="g-count"></span><span class="grow"></span>${icon('chev', 'g-chev')}<span class="g-sum"></span></button><i class="g-bg"></i><div class="group-cards"></div></section>`);
     $('.group-head', g).onclick = () => toggleGroup(key);
     $('.group-cards', g).addEventListener('click', () => { if (g.classList.contains('stack') && !g.classList.contains('open')) toggleGroup(key); });
     groupEls.set(key, g);
@@ -1291,10 +1292,22 @@
     g.style.setProperty('--tagc', tagColor(n.parent));
     $('.g-name', g).textContent = n.parent;
     $('.g-count', g).textContent = n.ids.length;
+    const cover = pick('groups') === 'cover';
+    const sum = cover ? groupSummary(n.ids.map((id) => state.board.items[id]).filter(Boolean)) : '';
+    const se = $('.g-sum', g);
+    if (se._html !== sum) { se.innerHTML = sum; se._html = sum; }
     const open = mode === 'stack' ? state.expanded.has(n.key) : !state.folded.has(n.key);
     const head = $('.group-head', g);
     head.setAttribute('aria-expanded', open);
     head.dataset.tip = `#${n.parent} · ${n.ids.length} tickets|${mode === 'stack' ? (open ? 'Click to stack them again' : 'Click to fan the stack out') : (open ? 'Click to fold' : 'Click to unfold')}`;
+  }
+  // The cover look's summary of a group: what kind of work, how urgent, who is on it, how far along.
+  function groupSummary(items) {
+    const types = ['task', 'issue', 'spike'].map((t) => [t, items.filter((it) => it.type === t).length]).filter(([, k]) => k);
+    const top = [...PRIORITIES].reverse().find((p) => items.some((it) => it.priority === p));
+    const ck = items.reduce((a, it) => { const c = checklist(it.description); return { done: a.done + c.done, total: a.total + c.total }; }, { done: 0, total: 0 });
+    const who = [...new Set(items.flatMap((it) => [activeLease(it)?.claimant, it.assignee]).filter(Boolean))];
+    return `${types.map(([t, k]) => `<span class="g-t" data-type="${t}">${icon(t, 'sm')}${k}</span>`).join('')}${top === 'High' || top === 'Critical' ? `<span class="prio" data-p="${top.toLowerCase()}">${top}</span>` : ''}<span class="grow"></span>${who.length ? `<span class="stack-av">${who.slice(0, 3).map((name) => avatar({ name })).join('')}</span>` : ''}${ck.total ? `<span class="g-ck">${icon('checks', 'sm')}${ck.done}/${ck.total}</span><span class="g-prog"><i style="width:${(ck.done / ck.total) * 100}%"></i></span>` : ''}`;
   }
   function toggleGroup(key) {
     const stack = settings.grouping === 'stack';
@@ -4022,7 +4035,7 @@
     return `<article class="card ${needs ? 'needs' : ''}" data-type="${it.type}" data-slot="${decoSlot(it.id)}" style="--tilt:${tilt(it.id)}deg;${decoVars(it.id)}${si != null ? `;--si:${si}` : ''}"><i class="tape"></i><div class="c-body">${cardHTML(it, lease, blockers, inGroup, listeners)}</div><span class="c-check">${icon('check')}</span><span class="c-ask">?</span></article>`;
   }
   // A group exactly as the board draws it (grouping mode and label placement come from the page's classes/attributes).
-  const pvGroup = (parent, items, first = {}) => `<section class="group ${settings.grouping === 'list' ? 'listed' : settings.grouping}" style="--tagc:${tagColor(parent)}"><button class="group-head"><span class="g-dot"></span><span class="g-name">${esc(parent)}</span><span class="g-count">${items.length}</span><span class="grow"></span>${icon('chev', 'g-chev')}</button><i class="g-bg"></i><div class="group-cards">${items.map((it, i) => previewCard(it, { ...(i ? {} : first), inGroup: true, si: i })).join('')}</div></section>`;
+  const pvGroup = (parent, items, first = {}) => `<section class="group ${settings.grouping === 'list' ? 'listed' : settings.grouping}" style="--tagc:${tagColor(parent)}"><button class="group-head"><i class="tape"></i><span class="g-dot"></span><span class="g-name">${esc(parent)}</span><span class="g-count">${items.length}</span><span class="grow"></span>${icon('chev', 'g-chev')}<span class="g-sum">${pick('groups') === 'cover' ? groupSummary(items) : ''}</span></button><i class="g-bg"></i><div class="group-cards">${items.map((it, i) => previewCard(it, { ...(i ? {} : first), inGroup: true, si: i })).join('')}</div></section>`;
   function previewStage(kind) {
     const col = (name, color, inner, n) => `<section class="column pv-col" style="--col:${color}"><header class="col-head"><span class="col-dot"></span><h2 class="col-name">${name}</h2><span class="col-count">${n}</span></header><div class="list">${inner}</div></section>`;
     const bare = { parent: null, assignee: null, description: '', comments: [], attachments: [], fields: {}, properties: {} };
@@ -4111,7 +4124,7 @@
         ${opt('tape', 'Decoration', [['tape', 'Tape', 'A strip of tape on sticky notes'], ['pin', 'Pin', 'A push-pin at the top'], ['clip', 'Clip', 'A binder clip on the edge'], ['corner', 'Fold', 'A folded top corner'], ['none', 'None', 'No decoration']])}
         ${opt('attn', 'Needs you', [['orbit', 'Orbit', 'Spinning ring and a bouncing badge'], ['glow', 'Glow', 'A soft breathing halo'], ['bar', 'Bar', 'Accent edge and tint — calm'], ['outline', 'Outline', 'A solid outline and small badge'], ['ribbon', 'Ribbon', 'A bookmark tab on the card']])}
         ${opt('enter', 'Opening', [['rise', 'Rise', 'Fades in with a small lift'], ['sheet', 'Sheet', 'Slides in from the right as a side panel'], ['fade', 'Fade', 'A quick cross-fade'], ['pop', 'Pop', 'Snaps in with a little bounce'], ['zoom', 'Zoom', 'Grows out of the ticket']])}
-        ${opt('groups', 'Groups', [['tray', 'Tray', 'Tickets sharing a parent sit on a faintly tinted panel'], ['rail', 'Rail', 'A coloured rail beside the cards, no panel'], ['rule', 'Rule', 'A header with a hairline underneath'], ['tab', 'Tab', 'A folder tab joined to the top of the cards'], ['spine', 'Spine', 'The #tag runs down a spine beside the cards'], ['foot', 'Footer', 'A quiet #tag caption under the cards']])}
+        ${opt('groups', 'Groups', [['tray', 'Tray', 'Tickets sharing a parent sit on a faintly tinted panel'], ['rail', 'Rail', 'A coloured rail beside the cards, no panel'], ['rule', 'Rule', 'A header with a hairline underneath'], ['tab', 'Tab', 'A folder tab joined to the top of the cards'], ['spine', 'Spine', 'The #tag runs down a spine beside the cards'], ['foot', 'Footer', 'A quiet #tag caption under the cards'], ['cover', 'Cover', 'A summary card on top of the pile; the tickets list out beneath it']])}
         ${opt('lanes', 'Columns', [['glass', 'Glass', 'Translucent panels'], ['solid', 'Solid', 'Opaque panels'], ['outline', 'Outline', 'Bordered, see-through'], ['lane', 'Lanes', 'No panels — dividers between lanes']])}
         ${opt('texture', 'Texture', [['on', 'On', 'Film grain and dotted board'], ['off', 'Off', 'Plain surfaces']])}
         ${opt('drop', 'Drop target', [['ring', 'Ring', 'An outline glow in the column colour'], ['tint', 'Tint', 'The column floods with its colour'], ['lift', 'Lift', 'The column rises to meet the card'], ['spotlight', 'Spot', 'Other columns dim; the target lights up'], ['dashed', 'Dashed', 'A technical dashed outline'], ['pulse', 'Pulse', 'A gentle breathing glow']])}
