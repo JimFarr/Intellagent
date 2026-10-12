@@ -763,7 +763,8 @@ function requestReview(ctx, id, d, actor) {
     if (lease && lease.claimant === actor.name) item.lease = null;
     syncNeeds(item);
     item.questions = item.questions.filter((q) => q.kind !== 'review');
-    const rq = parseNeedsHuman({ reason: str(d.reason || (summary ? summary.split('\n')[0].slice(0, 200) : 'Ready for review'), 2000), kind: 'review' }, actor);
+    // The review card shows this text: keep the summary's whole first paragraph, not a clipped line.
+    const rq = parseNeedsHuman({ reason: str(d.reason || (summary ? summary.split(/\n\s*\n/)[0] : 'Ready for review'), 2000), kind: 'review' }, actor);
     item.version++;
     item.updatedAt = now();
     if (lease && !item.lease) events.push(itemEvent(ctx, 'lease.released', item, actor, { claimant: lease.claimant, reason: 'review requested' }));
@@ -1971,7 +1972,12 @@ function readBody(req) {
       chunks.push(c);
     });
     req.on('end', () => {
-      const text = Buffer.concat(chunks).toString('utf8').trim();
+      // Bodies should be UTF-8, but Windows shells often send the legacy code page (an em dash
+      // arrives as byte 0x97): decode those as Windows-1252 instead of storing replacement characters.
+      const buf = Buffer.concat(chunks);
+      let text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { text = new TextDecoder('windows-1252').decode(buf); }
+      text = text.trim();
       if (!text) return resolve({});
       try { resolve(JSON.parse(text)); } catch { reject(new HttpError(400, 'Body must be valid JSON')); }
     });

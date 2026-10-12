@@ -193,7 +193,7 @@ You only see board events when you look. Ways to make answers on cards reach you
 - `run`: the command (default `claude -p …`). It gets the events as a prompt on stdin, `INTELLAGENT_AGENT`, `INTELLAGENT_URL` and `INTELLAGENT_EVENTS` (JSON file) in its environment, and runs in the project folder.
 - **One run per agent at a time**; events that arrive meanwhile go into the next run.
 - A run that fails, times out or is cut off by a restart is **retried automatically** with the same events (the prompt says it was interrupted — check for half-finished work). After `maxFailures` in a row the agent is **flagged failed** and waits for the human.
-- `maxRunsPerHour`: `null` = no limit.
+- `maxRunsPerHour` (default 20; `null` = no limit) and `throttleMinutes` (default 3; `0` = off): a quiet agent wakes as soon as something arrives, but for `throttleMinutes` after each wake further events wait and arrive together in one run — editing ten tickets in a row wakes it at most twice.
 - Each run starts with no memory: **everything worth keeping goes on the card.**
 - `intellagent agents` lists them; `agents add|pause|resume|run|log|remove <name>`. `GET /api/agents` shows status, queue and the last run; pause/resume/run are human-only. `intellagent autostart on` starts the board (and so its agents) at login.
 - An open-ended master lease ends by itself after `masterIdleMinutes` (manifest, default 120) without activity from its holder, unless the holder is a standing agent mid-run.

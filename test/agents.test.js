@@ -8,7 +8,7 @@ const { startServer, until, USER } = require('./helpers');
 const FAKE = path.join(__dirname, 'fake-agent.js');
 const run = (...args) => `node "${FAKE}" ${args.join(' ')}`;
 const B = '/api/boards/main';
-const fast = { settleSeconds: 0.2, retrySeconds: 0.2 };
+const fast = { settleSeconds: 0.2, retrySeconds: 0.2, throttleMinutes: 0 };
 
 const comments = async (s, id) => (await s.ok('GET', `${B}/items/${id}`)).comments.map((c) => `${c.author.name}: ${c.body}`);
 const agentState = (s, name) => s.ok('GET', `/api/agents/${name}`);
@@ -25,6 +25,7 @@ describe('standing agents', () => {
           slowpoke: { run: run('slow', 800) },
           budget: { run: run('ok'), maxRunsPerHour: 1 },
           coord: { run: run('ok'), listen: 'human', enabled: false },
+          calm: { run: run('ok'), throttleMinutes: 0.04 }, // 2.4 s window
         },
       },
     });
@@ -33,7 +34,7 @@ describe('standing agents', () => {
 
   it('lists agents from agents.json', async () => {
     const { agents } = await s.ok('GET', '/api/agents');
-    assert.deepEqual(agents.map((a) => a.name), ['bot', 'flaky', 'slowpoke', 'budget', 'coord']);
+    assert.deepEqual(agents.map((a) => a.name), ['bot', 'flaky', 'slowpoke', 'budget', 'coord', 'calm']);
     assert.equal(agents.find((a) => a.name === 'coord').status, 'paused');
   });
 
@@ -80,6 +81,17 @@ describe('standing agents', () => {
     await until(async () => (await agentState(s, 'budget')).status === 'idle', 4000, 'idle');
     await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@budget two' }, USER);
     await until(async () => (await agentState(s, 'budget')).status === 'throttled', 4000, 'throttled');
+  });
+
+  it('throttles to one run per window: a burst after a run lands in a single later run', async () => {
+    const it = await s.ok('POST', `${B}/items`, { title: 'calm test', column: 'Backlog' }, USER);
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@calm first' }, USER);
+    await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('calm:')), 8000, 'first run (no wait)');
+    await until(async () => (await agentState(s, 'calm')).status === 'idle', 4000, 'idle');
+    for (const n of ['two', 'three', 'four']) await s.ok('POST', `${B}/items/${it.id}/comments`, { body: `@calm ${n}` }, USER);
+    await until(async () => (await agentState(s, 'calm')).status === 'waiting', 3000, 'waiting out the window');
+    await until(async () => (await comments(s, it.id)).filter((c) => c.startsWith('calm:')).length === 2, 8000, 'one batched run');
+    assert.ok((await comments(s, it.id)).includes('calm: handled 3 event(s)'));
   });
 
   it('paused agents queue events; resuming runs them', async () => {

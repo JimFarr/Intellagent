@@ -391,6 +391,7 @@ async function agentsCmd() {
       listen,
       ...(f.run ? { run: String(f.run) } : {}),
       ...(f['max-runs'] != null ? { maxRunsPerHour: f['max-runs'] === 'none' ? null : Number(f['max-runs']) } : {}),
+      ...(f.throttle != null ? { throttleMinutes: Number(f.throttle) } : {}),
       ...(f.description ? { description: String(f.description) } : {}),
     };
     fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
@@ -476,7 +477,7 @@ const HELP = `intellagent — a kanban for you and your agents
   hook ...         git: install | post-commit | sync-ci
 
   agents           standing agents the board wakes up itself (defined in .intellagent/agents.json)
-    add NAME       --listen inbox|human|"types=…&column=…"  --run "<command>"  --max-runs N|none
+    add NAME       --listen inbox|human|"types=…&column=…"  --run "<command>"  --max-runs N|none  --throttle MIN
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 `;
