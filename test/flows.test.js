@@ -320,6 +320,31 @@ describe('agent flows', () => {
     assert.ok(r.cursor < 999999);
   });
 
+  it('test tickets: flagged at creation, immutable, deletable by anyone (leases apply); others are refused', async () => {
+    const t1 = await s.ok('POST', `${B}/items`, { title: 'throwaway', column: 'Backlog', test: true }, USER);
+    const keep = await s.ok('POST', `${B}/items`, { title: 'real work', column: 'Backlog', blockedBy: [t1.id] }, USER);
+    assert.equal(t1.test, true);
+    const imm = await s.api('PATCH', `${B}/items/${t1.id}`, { test: false }, USER);
+    assert.equal(imm.status, 400);
+    assert.equal(imm.body.code, 'IMMUTABLE');
+    assert.equal((await s.api('PATCH', `${B}/items/${keep.id}`, { test: true }, USER)).body.code, 'IMMUTABLE');
+    const refused = await s.api('DELETE', `${B}/items/${keep.id}`, undefined, A);
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.code, 'NOT_TEST');
+    // leased by another agent → refused; by its holder or anyone after release → gone
+    await s.ok('POST', `${B}/items/${t1.id}/lease`, { minutes: 5 }, { agent: 'bob' });
+    assert.equal((await s.api('DELETE', `${B}/items/${t1.id}`, undefined, A)).status, 423);
+    await s.ok('DELETE', `${B}/items/${t1.id}/lease`, undefined, { agent: 'bob' });
+    assert.deepEqual((await s.ok('DELETE', `${B}/items/${t1.id}`, undefined, A)).deleted, [t1.id]);
+    assert.equal((await s.api('GET', `${B}/items/${t1.id}`)).status, 404, 'gone for good, not archived');
+    assert.deepEqual((await s.ok('GET', `${B}/items/${keep.id}`)).blockedBy, [], 'no dangling blocker');
+    // bulk: human only
+    const t2 = await s.ok('POST', `${B}/items`, { title: 'another', column: 'Backlog', test: true }, USER);
+    await s.ok('POST', `${B}/archive`, { ids: [t2.id] }, USER);
+    assert.equal((await s.api('DELETE', `${B}/test-items`, undefined, A)).status, 403);
+    assert.ok((await s.ok('DELETE', `${B}/test-items`, undefined, USER)).deleted.includes(t2.id), 'archived test tickets go too');
+  });
+
   it('"let the agent write it": the writer rewrites everything except what the human set on purpose', async () => {
     const it = await s.ok('POST', `${B}/items`, { title: 'login thing broken??', column: 'Backlog', priority: 'High', agentWrite: true, writer: 'ada', explicit: ['priority'] }, USER);
     assert.deepEqual(it.agentDraft.explicit, ['priority']);

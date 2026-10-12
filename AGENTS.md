@@ -33,7 +33,7 @@ Errors are `{ "error": "…", "code": "LEASED", "hint": "…" }`. Codes: `LEASED
 3. **Start before you work** (`POST …/start` leases the ticket for you), renew while working, request review when done — or, if you are the only agent, **hold the whole board** once (master lease, below).
 4. **Ask, don't guess**: `POST …/attention` when blocked on a decision — allowed even on tickets others hold. The answer shows up in `GET …/work`.
 5. **Never write `data/` files directly.** They are read-only on purpose. The API is the only writer.
-6. Tickets are never deleted — archive them.
+6. Tickets are never deleted — archive them. The one exception is **test tickets**: created with `"test": true` (fixed at creation), they may be removed for good by anyone with `DELETE …/items/<ID>` (leases still apply; the human can clear them all with `DELETE …/test-items`). Use them for anything throwaway; they stay out of metrics, the digest and the receptionist's sweep.
 
 ## 1. Orient (cheap)
 

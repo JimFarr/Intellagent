@@ -1716,3 +1716,9 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .card .m.drafting .i { animation: drafting 2.4s ease-in-out infinite; }
 @keyframes drafting { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .card .m.drafting .i { animation: none; } }
+
+/* Test tickets (INT-39): a muted badge on the card, and a delete that asks twice */
+.card .m.test-tag { color: var(--warn); font-weight: 600; letter-spacing: .02em; text-transform: uppercase; font-size: 10px; }
+.item-modal [data-a="delete"].armed { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.agent-write.test-flag[aria-pressed="true"] { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.agent-write.test-flag[aria-pressed="true"] .sw { background: var(--warn); }

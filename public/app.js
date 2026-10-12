@@ -40,6 +40,8 @@
   const ICONS = {
     plus: '<path d="M12 5v14M5 12h14"/>',
     x: '<path d="M18 6 6 18M6 6l12 12"/>',
+    trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
+    flask: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3M7.5 15h9"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
     sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
     bot: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 13v2M15 13v2"/><circle cx="12" cy="3" r="1"/>',
@@ -960,12 +962,33 @@
     if ($('#agentsDrawer') && !$('#agentsDrawer .add-agent')) fillAgents($('#agentsDrawer .drawer-body')); // never wipe a half-filled form
   }
 
+  function armDelete(btn, ids, done = () => {}) {
+    if (!btn.classList.contains('armed')) {
+      btn.classList.add('armed');
+      toast(`Click again to delete ${ids.length > 1 ? `${ids.length} test tickets` : ids[0]} for good`, { icon: 'trash', timeout: 3000 });
+      clearTimeout(btn._arm);
+      btn._arm = setTimeout(() => btn.classList.remove('armed'), 3000);
+      return;
+    }
+    btn.classList.remove('armed');
+    deleteTests(ids).then(done);
+  }
+  async function deleteTests(ids) {
+    try {
+      const r = ids === 'all' ? await api('DELETE', B('/test-items')) : await api('DELETE', I(ids[0]));
+      toast(r.deleted.length ? `Deleted ${r.deleted.length > 1 ? `${r.deleted.length} test tickets` : r.deleted[0]}` : 'No test tickets to delete', { icon: 'trash' });
+      scheduleRefresh(0);
+    } catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+
   function boardMenu(anchor) {
     const items = state.boards.map((b) => ({
       label: b.name, icon: 'board', hint: b.needsHuman ? `${b.needsHuman}?` : String(b.items), cls: b.id === state.boardId ? 'on' : '',
       run: () => { closeModal(true); loadBoard(b.id); },
     }));
     items.push('-', { label: 'Archive', icon: 'archive', hint: String(state.archivedCount), run: openArchive });
+    const tests = Object.values(state.board?.items || {}).filter((it) => it.test).length;
+    if (tests) items.push({ label: 'Delete test tickets', icon: 'trash', hint: String(tests), run: () => deleteTests('all') });
     menu(anchor, items);
   }
 
@@ -1460,6 +1483,7 @@
     if (s.attachments && stub('attachments') && it.attachments.length) meta.push(`<span class="m" title="Files|${it.attachments.length} attached">${icon('clip', 'sm')}${it.attachments.length}</span>`);
     const nProps = Object.keys(it.properties || {}).length;
     if (s.properties && shown('properties') && nProps) meta.push(`<span class="m" title="Properties|Free-form data agents attached">${icon('braces', 'sm')}${nProps}</span>`);
+    if (it.test) meta.unshift(`<span class="m test-tag" title="Test ticket|Disposable — anyone may delete it for good">${icon('flask', 'sm')}test</span>`);
     if (it.agentDraft) meta.push(`<span class="m drafting" title="Being written up|${esc(nameOf(it.agentDraft.writer))} is turning these notes into a full ticket${it.agentDraft.explicit.length ? ` — keeping ${esc(it.agentDraft.explicit.join(', '))}` : ''}">${icon('sparkle', 'sm')}drafting</span>`);
     if (stub('assignee') && it.assignee) meta.push(`<span class="m assn" title="${esc(bi('assignee').label)}|Handed to ${esc(nameOf(it.assignee))} — they get its events">${icon('move', 'sm')}${avatar({ name: it.assignee })}</span>`);
     const ck = checklist(it.description);
@@ -1948,6 +1972,7 @@
     closeModal(true);
     const root = el(`<div class="scrim"><div class="modal item-modal" role="dialog" aria-modal="true">
       <header class="m-head"><span class="m-type"></span><span class="m-id" title="Copy ID|Copy the ticket number to the clipboard"></span><span class="saved">${icon('check', 'sm')}</span><span class="grow"></span>
+        <button class="pill-btn icon-btn sm" data-a="delete" hidden title="Delete|A test ticket: removed for good, with its comments and files">${icon('trash')}</button>
         <button class="pill-btn icon-btn sm" data-a="archive" title="Archive|Kept in the archive and restorable — tickets are never deleted">${icon('archive')}</button>
         <button class="pill-btn icon-btn sm" data-a="close" title="Close">${icon('x')}</button></header>
       <div class="m-frame"><nav class="m-rail" hidden></nav><div class="m-main"></div><aside class="m-side"></aside></div>
@@ -2020,7 +2045,8 @@
         <button class="pill-btn icon-btn sm" data-a="close" title="Close">${icon('x')}</button></header>
       <div class="m-frame"><nav class="m-rail" hidden></nav><div class="m-main"></div><aside class="m-side"></aside></div>
       <div class="m-save"><span class="dot"></span><span class="txt"></span><span class="grow"></span>
-        <button class="agent-write" type="button" aria-pressed="false"></button>
+        <button class="agent-write test-flag" type="button" aria-pressed="false" title="Test ticket|Disposable: anyone may delete it for good later. Can't be changed after Create"><i class="sw"></i>${icon('flask', 'sm')}<span>Test</span></button>
+        <button class="agent-write" data-aw type="button" aria-pressed="false"></button>
         <button class="btn ghost sm" data-draft="discard">Cancel</button><button class="btn primary sm" data-draft="save" title="Create|Create the ticket (Ctrl+Enter)">${icon('plus', 'sm')}Create</button></div>
       <footer class="m-foot"></footer></div></div>`);
     document.body.append(root);
@@ -2042,7 +2068,9 @@
     }
     if (template) applyTemplateToDraft(m, template);
     // "Let the agent write it": the coordinator turns these notes into a full ticket, keeping what you set.
-    const aw = $('.agent-write', root);
+    const aw = $('[data-aw]', root);
+    const tf = $('.test-flag', root);
+    tf.onclick = () => { m.create.test = !m.create.test; tf.setAttribute('aria-pressed', String(m.create.test)); };
     const writer = state.board.coordinator;
     const drawAw = () => {
       m.create.agentWrite = !!writer && !!settings.agentWrite;
@@ -2105,6 +2133,7 @@
       ...(Object.keys(d.properties || {}).length ? { properties: d.properties } : {}),
       ...(q.template || m.create.template ? { template: q.template || m.create.template } : {}),
     };
+    if (m.create.test) body.test = true;
     if (m.create.agentWrite) {
       // explicit = what you set here yourself (not the template's defaults); title and description are the notes
       const tpl = m.create.fromTemplate || new Set();
@@ -2142,6 +2171,8 @@
       if (a === 'save') saveDraft(m);
       if (a === 'discard') discardDraft(m);
     };
+    const del = $('[data-a="delete"]', root);
+    if (del) del.onclick = () => armDelete(del, [m.id], () => { m.draft = {}; closeModal(true); });
     $('[data-a="archive"]', root).onclick = async () => {
       if (m.archived) return;
       const keep = m.id;
@@ -2571,6 +2602,8 @@
     $('.m-type', root).innerHTML = icon(it.type);
     $('.m-id', root).textContent = m.create ? 'New ticket' : it.id;
     $('[data-a="archive"]', root).hidden = m.archived;
+    const del = $('[data-a="delete"]', root);
+    if (del) del.hidden = !it.test;
 
     const title = $('.m-title', main);
     if (focus !== title) { title.value = it.title; autosize(title); }
@@ -3169,6 +3202,7 @@
       case 'item.moved': return `${who} moved ${b(id)} → ${b(ev.item?.column || '')}`;
       case 'item.reordered': return `${who} reordered ${b(id)}`;
       case 'item.archived': return `${who} archived ${b(id)}`;
+      case 'item.deleted': return `${who} deleted test ticket ${b(id)}`;
       case 'item.restored': return `${who} restored ${b(id)}`;
       case 'comment.added': return `${who} on ${b(id)}: ${html ? esc(ev.comment?.body?.slice(0, 120)) : ev.comment?.body?.slice(0, 80)}${ev.comment?.attachments ? ` ${html ? icon('clip', 'sm') : '📎'}` : ''}`;
       case 'lease.claimed': return `${nb(ev.claimant)} claimed ${b(id)}`;
@@ -4171,6 +4205,7 @@
           : { label: 'Hold 30 min', icon: 'lock', run: () => api('POST', I(it.id, '/lease'), { minutes: 30, force: true }).then(() => scheduleRefresh(0), fail) },
         { label: 'Copy ID', icon: 'copy', run: () => { navigator.clipboard?.writeText(it.id); toast(`Copied ${it.id}`, { icon: 'copy', timeout: 1500 }); } },
         { label: 'Archive', icon: 'archive', run: () => api('POST', I(it.id, '/archive'), {}).then(() => { toast(`Archived ${it.id}`, { icon: 'archive', action: 'Undo', onAction: () => restoreMany([it.id]) }); scheduleRefresh(0); }, fail) },
+        ...(it.test ? [{ label: 'Delete (test ticket)', icon: 'trash', run: () => deleteTests([it.id]) }] : []),
       ],
     };
   }

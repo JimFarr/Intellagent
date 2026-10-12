@@ -840,6 +840,8 @@ function createItem(ctx, d, actor) {
       comments: [],
       flow: [{ col: col.id, at: t }],
       ...(template ? { template } : {}),
+      // Disposable: may be permanently deleted. Chosen at creation, never changed.
+      ...(d.test === true ? { test: true } : {}),
     };
     applyFields(ctx, item, d.fields, actor, null, true);
     // "Let the agent write it": the coordinator rewrites the ticket from these notes, except the values the
@@ -907,6 +909,7 @@ const PATCHABLE = ['title', 'description', 'type', 'priority', 'parent', 'blocke
 function trimChange(v) { return typeof v === 'string' && v.length > 400 ? `${v.slice(0, 400)}…` : v; }
 
 function applyPatch(ctx, item, p, actor, events) {
+  if ('test' in p) fail(400, `"test" is set when a ticket is created and can't change afterwards (${item.id} is ${item.test ? '' : 'not '}a test ticket)`, { code: 'IMMUTABLE', hint: item.test ? 'Delete it when done: DELETE …/items/<ID>' : 'Create a new ticket with "test": true, or archive this one' });
   const unknown = Object.keys(p).filter((k) => !PATCHABLE.includes(k));
   if (unknown.length) fail(400, `Unknown field(s): ${unknown.join(', ')}. Patchable: ${PATCHABLE.join(', ')}. Put custom data in "properties". Leases use /lease, comments use /comments.`, { code: 'UNKNOWN_FIELD' });
   guardWrite(ctx, item, actor);
@@ -1502,7 +1505,7 @@ function untriaged(ctx) {
   const b = ctx.board;
   const done = doneColumnId(ctx);
   return b.columns.filter((c) => c.id !== done).flatMap((c) => c.itemIds.map((id) => b.items[id]).filter(Boolean))
-    .filter((it) => !it.assignee && !activeLease(it) && !(it.questions || []).length);
+    .filter((it) => !it.test && !it.assignee && !activeLease(it) && !(it.questions || []).length);
 }
 
 function pendingWork(name, pickup = false) {
@@ -1628,7 +1631,7 @@ function metrics(ctx, days) {
   const cols = b.columns;
   const done = doneColumnId(ctx);
   const work = workingColumn(ctx);
-  const all = [...Object.values(b.items), ...Object.values(ctx.archive.items)];
+  const all = [...Object.values(b.items), ...Object.values(ctx.archive.items)].filter((it) => !it.test);
   const t = (x) => Date.parse(x);
 
   // Throughput + cycle time: tickets that reached the last column in the window.
@@ -1653,14 +1656,15 @@ function metrics(ctx, days) {
     }
   }
   const columns = cols.map((c) => {
-    const ages = c.itemIds.map((id) => nowMs - t(b.items[id]?.enteredColumnAt || nowMs));
-    return { id: c.id, name: c.name, color: c.color, count: c.itemIds.length, medianStayHours: stays[c.id].length ? median(stays[c.id]) / HOUR : null, oldestHours: ages.length ? Math.max(...ages) / HOUR : null };
+    const real = c.itemIds.filter((id) => b.items[id] && !b.items[id].test);
+    const ages = real.map((id) => nowMs - t(b.items[id].enteredColumnAt || nowMs));
+    return { id: c.id, name: c.name, color: c.color, count: real.length, medianStayHours: stays[c.id].length ? median(stays[c.id]) / HOUR : null, oldestHours: ages.length ? Math.max(...ages) / HOUR : null };
   });
   const middle = columns.slice(1, -1).filter((c) => c.medianStayHours != null);
   const slowest = middle.sort((x, y) => y.medianStayHours - x.medianStayHours)[0] || null;
 
   // Waiting on the human: open questions now, and how fast they were answered in the window.
-  const open = Object.values(b.items).flatMap((it) => (it.questions || []).map((q) => ({ id: it.id, kind: q.kind, ms: nowMs - t(q.raisedAt) })));
+  const open = Object.values(b.items).filter((it) => !it.test).flatMap((it) => (it.questions || []).map((q) => ({ id: it.id, kind: q.kind, ms: nowMs - t(q.raisedAt) })));
   const answered = all.flatMap((it) => (it.waits || []).filter((w) => t(w.resolvedAt) >= from).map((w) => ({ kind: w.kind, ms: t(w.resolvedAt) - t(w.raisedAt) })));
   const byAgent = {};
   for (const f of finished) for (const n of new Set(f.it.workedBy || [])) byAgent[n] = (byAgent[n] || 0) + 1;
@@ -1694,6 +1698,40 @@ function archiveItems(ctx, ids, actor, reason = null) {
       done.push(id);
     }
     return done;
+  });
+}
+
+// Test tickets are the one exception to "never deleted": anyone may remove them for good (leases still apply).
+function deleteItems(ctx, ids, actor) {
+  return tx(ctx, (events) => {
+    const gone = [];
+    for (const raw of arr(ids)) {
+      const id = String(raw).toUpperCase();
+      const live = ctx.board.items[id];
+      const item = live || ctx.archive.items[id];
+      if (!item) fail(404, `Item "${id}" not found`);
+      if (!item.test) fail(403, `${id} is not a test ticket — tickets are never deleted, only archived`, { code: 'NOT_TEST', hint: `POST /api/boards/${ctx.id}/items/${id}/archive` });
+      if (live) {
+        guardWrite(ctx, live, actor);
+        const col = ctx.board.columns.find((c) => c.id === live.columnId);
+        if (col) col.itemIds = col.itemIds.filter((x) => x !== id);
+        delete ctx.board.items[id];
+      } else delete ctx.archive.items[id];
+      for (const a of [...(item.attachments || []), ...(item.comments || []).flatMap((c) => c.attachments || [])]) {
+        if (a.kind !== 'file') continue;
+        try { fs.rmSync(path.join(ctx.attachDir, decodeURIComponent(a.url.split('/').pop())), { force: true }); } catch { /* already gone */ }
+      }
+      // no dangling links: other tickets stop waiting on it
+      for (const other of [...Object.values(ctx.board.items), ...Object.values(ctx.archive.items)]) {
+        if (!(other.blockedBy || []).includes(id)) continue;
+        other.blockedBy = other.blockedBy.filter((x) => x !== id);
+        other.version++;
+      }
+      events.push({ board: ctx.id, type: 'item.deleted', actor, itemId: id, item: { id, title: item.title }, recipients: [] });
+      if (live) emitUnblocked(ctx, id, actor, events);
+      gone.push(id);
+    }
+    return gone;
   });
 }
 
@@ -2682,7 +2720,7 @@ route('POST', '/api/boards/:board/digest', 'Append to today\'s digest: { summary
   if (!String(body.summary || '').trim()) fail(400, '"summary" is required');
   return created(tx(ctx, (events) => {
     const t = now();
-    const entry = { id: rid('d'), date: new Date().toLocaleDateString('en-CA'), ts: t, author: actor, summary: str(body.summary, 20_000), items: arr(body.items).map((x) => String(x).toUpperCase()).slice(0, 50) };
+    const entry = { id: rid('d'), date: new Date().toLocaleDateString('en-CA'), ts: t, author: actor, summary: str(body.summary, 20_000), items: arr(body.items).map((x) => String(x).toUpperCase()).filter((id) => !(ctx.board.items[id] || ctx.archive.items[id])?.test).slice(0, 50) };
     ctx.board.digest.push(entry);
     if (ctx.board.digest.length > 500) ctx.board.digest.splice(0, ctx.board.digest.length - 500);
     events.push({ board: ctx.id, type: 'digest.added', actor, entry: { id: entry.id, summary: trimChange(entry.summary) } });
@@ -2737,6 +2775,13 @@ route('DELETE', '/api/boards/:board/items/:id/attention', 'Answer: { reply?, que
   return itemView(ctx, resolveAttention(ctx, p.id, body, actor));
 });
 
+route('DELETE', '/api/boards/:board/items/:id', 'Permanently delete a TEST ticket (created with "test": true); any other ticket → 403 NOT_TEST, archive it instead', ({ p, actor }) => ({ deleted: deleteItems(getCtx(p.board), [p.id], actor) }));
+route('DELETE', '/api/boards/:board/test-items', 'Human: permanently delete every test ticket on the board (archived ones too)', ({ p, actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Only a human can delete all test tickets at once — delete them one by one', { code: 'HUMAN_ONLY' });
+  const ctx = getCtx(p.board);
+  const ids = [...Object.values(ctx.board.items), ...Object.values(ctx.archive.items)].filter((it) => it.test).map((it) => it.id);
+  return { deleted: ids.length ? deleteItems(ctx, ids, actor) : [] };
+});
 route('POST', '/api/boards/:board/items/:id/archive', 'Archive one item (never deleted)', ({ p, body, actor }) => ({ archived: archiveItems(getCtx(p.board), [p.id], actor, body.reason || null) }));
 route('POST', '/api/boards/:board/archive', 'Archive many: { ids: [], reason? }', ({ p, body, actor }) => ({ archived: archiveItems(getCtx(p.board), body.ids, actor, body.reason || null) }));
 route('GET', '/api/boards/:board/archive', 'Archived items (newest first)', ({ p }) => {
