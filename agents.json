@@ -1,5 +1,7 @@
 {
-  "defaults": {},
+  "defaults": {
+    "keepAlive": true
+  },
   "agents": {
     "coordinator": {
       "role": "coordinator",
