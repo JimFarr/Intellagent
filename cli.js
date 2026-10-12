@@ -49,9 +49,19 @@ function readBody() {
 (async () => {
   if (!base) { console.error(NO_BOARD); process.exit(3); }
   const body = readBody();
+  const M = method.toUpperCase();
+  // Inside a standing-agent run: tag calls with the run, and derive an Idempotency-Key from the batch, so
+  // a retry that repeats an identical write gets the first reply instead of doing it twice.
+  const { INTELLAGENT_RUN: run, INTELLAGENT_BATCH: batch } = process.env;
+  const idemKey = batch && M !== 'GET' ? require('crypto').createHash('sha1').update(`${batch}|${M}|${path}|${body || ''}`).digest('hex') : null;
   const res = await fetch(base + path, {
-    method: method.toUpperCase(),
-    headers: { 'Content-Type': 'application/json', 'X-Agent': agent, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    method: M,
+    headers: {
+      'Content-Type': 'application/json', 'X-Agent': agent,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(run ? { 'X-Intellagent-Run': run } : {}),
+      ...(idemKey ? { 'Idempotency-Key': idemKey } : {}),
+    },
     body,
   });
   const text = await res.text();

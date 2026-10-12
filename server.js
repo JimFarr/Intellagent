@@ -1530,6 +1530,7 @@ function parseFilter(src = {}) {
     excludeActor: src.excludeActor || undefined,
     assignee: src.assignee || undefined,
     actor: src.actor || undefined,
+    run: src.run || undefined,
   };
   if (f.columnId && f.board && boards.has(f.board)) {
     const r = String(f.columnId).toLowerCase();
@@ -1572,6 +1573,7 @@ function matchesFilter(event, filter) {
   if (filter.assignee && !same(event.item?.assignee, filter.assignee) && !same(event.assignee, filter.assignee)) return false;
   if (filter.actor && !same(event.actor?.name, filter.actor)) return false;
   if (filter.actorKind && event.actor?.kind !== filter.actorKind) return false;
+  if (filter.run && event.actor?.run !== filter.run) return false;
   if (filter.excludeActor && same(event.actor?.name, filter.excludeActor)) return false;
   return true;
 }
@@ -1943,7 +1945,10 @@ function checkAuth(req, q, actor, pathname) {
 
 function actorOf(req, q) {
   const agent = req.headers['x-agent'] || q.agent;
-  if (agent) return { kind: 'agent', name: str(agent, 64) };
+  // X-Intellagent-Run: which run of a (standing) agent made this call. Events carry it, so a retry can
+  // see what the failed attempt already did (GET /api/events?run=<id>).
+  const run = req.headers['x-intellagent-run'];
+  if (agent) return { kind: 'agent', name: str(agent, 64), ...(run ? { run: str(run, 40) } : {}) };
   const user = req.headers['x-user'];
   if (user) return { kind: 'user', name: str(user, 64) };
   return { kind: 'agent', name: 'anonymous' };
@@ -2391,6 +2396,16 @@ route('DELETE', '/api/subscriptions/:id', 'Remove a subscription', ({ p }) => {
   saveSubs();
   return { deleted: p.id };
 });
+route('POST', '/api/subscriptions/:id/ack', 'Advance the cursor after handling events read with ?peek=true: { cursor } (at-least-once delivery)', ({ p, body }) => {
+  const sub = subs[p.id];
+  if (!sub) fail(404, `No subscription "${p.id}"`);
+  const c = Number(body.cursor);
+  if (!Number.isFinite(c)) fail(400, '"cursor" is required');
+  sub.cursor = Math.max(sub.cursor, Math.min(c, seq));
+  sub.lastDelivery = now();
+  saveSubs();
+  return { id: sub.id, cursor: sub.cursor };
+});
 route('GET', '/api/subscriptions/:id/next', 'Long-poll the subscription; advances its cursor. ?timeout=25&limit=50&peek=true', ({ res, p, q }) => {
   const s = subs[p.id];
   if (!s) fail(404, 'Subscription not found');
@@ -2486,6 +2501,19 @@ for (const [urlPath, file] of Object.entries(STATIC)) {
 
 /* ───────────────────────── server ───────────────────────── */
 
+/* Idempotency-Key: a retried write (same caller, same key) gets the first reply back instead of acting
+   twice. Kept 24h, persisted so it survives restarts. */
+const IDEM_FILE = path.join(DATA, 'idempotency.json');
+const IDEM_TTL = 24 * 3600_000;
+const idem = new Map(Object.entries(readJson(IDEM_FILE, {})).filter(([, v]) => Date.now() - v.at < IDEM_TTL));
+let idemTimer = null;
+function rememberIdem(key, status, body) {
+  idem.set(key, { status, body, at: Date.now() });
+  if (idem.size > 3000) idem.delete(idem.keys().next().value);
+  clearTimeout(idemTimer);
+  idemTimer = setTimeout(() => { try { fs.writeFileSync(IDEM_FILE, JSON.stringify(Object.fromEntries(idem))); } catch { /* best effort */ } }, 500);
+}
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
@@ -2509,10 +2537,17 @@ const server = http.createServer(async (req, res) => {
       guardBoard(gctx, actor);
     }
     if (actor.kind === 'agent' && u.pathname.startsWith('/api')) touch(actor.name, `${req.method} ${u.pathname}`);
+    const ik = req.method !== 'GET' && req.headers['idempotency-key'] ? `${actor.kind}:${actor.name}:${req.method}:${u.pathname}:${str(req.headers['idempotency-key'], 200)}` : null;
+    if (ik && idem.has(ik) && Date.now() - idem.get(ik).at < IDEM_TTL) {
+      const hit = idem.get(ik);
+      reply(res, hit.status, hit.body, { 'Idempotent-Replayed': 'true' });
+      return;
+    }
     const out = await m.r.handler({ req, res, p: m.params, q, body, actor });
     if (out === HANDLED || res.headersSent) return;
-    if (out instanceof Reply) reply(res, out.status, out.body);
-    else reply(res, 200, out ?? {});
+    const [st, payload] = out instanceof Reply ? [out.status, out.body] : [200, out ?? {}];
+    if (ik) rememberIdem(ik, st, payload);
+    reply(res, st, payload);
   } catch (e) {
     if (res.headersSent) { res.end(); return; }
     const status = e.status || 500;

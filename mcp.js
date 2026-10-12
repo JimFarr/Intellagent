@@ -127,7 +127,8 @@ const TOOLS = [
 
 const tools = TOOLS.map(([name, description, properties, required, call]) => ({
   name, description,
-  inputSchema: { type: 'object', properties: { ...properties, agent: S('string', `Act as this agent name (default "${AGENT}")`) }, required },
+  // No per-call "agent" override: one MCP server speaks as one agent (set by INTELLAGENT_AGENT or the project default).
+  inputSchema: { type: 'object', properties, required },
   call,
 }));
 
@@ -135,10 +136,13 @@ async function callTool(name, args = {}) {
   const t = tools.find((x) => x.name === name);
   if (!t) throw new Error(`Unknown tool ${name}`);
   if (!BASE) return { text: NO_BOARD, isError: true };
-  const headers = { 'Content-Type': 'application/json', 'X-Agent': args.agent || AGENT, ...(tokenFor(args.agent || AGENT) ? { Authorization: `Bearer ${tokenFor(args.agent || AGENT)}` } : {}) };
+  const { INTELLAGENT_RUN: run, INTELLAGENT_BATCH: batch } = process.env;
+  const headers = { 'Content-Type': 'application/json', 'X-Agent': AGENT, ...(tokenFor(AGENT) ? { Authorization: `Bearer ${tokenFor(AGENT)}` } : {}), ...(run ? { 'X-Intellagent-Run': run } : {}) };
   // A tool spec may look something up first (e.g. create-or-update), so it can be async and gets a JSON GET helper.
   const getJson = async (m, p) => (await fetch(BASE + p, { method: m, headers })).json();
   const [method, path, body] = await t.call(args, getJson);
+  // In a standing-agent run, identical writes on a retry replay the first reply instead of acting twice.
+  if (batch && method !== 'GET') headers['Idempotency-Key'] = require('crypto').createHash('sha1').update(`${batch}|${method}|${path}|${JSON.stringify(body ?? null)}`).digest('hex');
   const res = await fetch(BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await res.text();
   return { text, isError: !res.ok };

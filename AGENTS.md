@@ -230,8 +230,13 @@ Typical recipes:
 | Handed to me | `types=item.assigned,item.unblocked&for=my-agent` |
 | What another agent did | `actor=other-agent` (add `tail=true` on `/api/events` for the newest) |
 
+### Safe retries
+- **`Idempotency-Key: <anything unique>`** on a write: repeating it (same caller, same key, within 24h) returns the first reply with `Idempotent-Replayed: true` instead of acting twice. Inside a standing-agent run, `intellagent api` and the MCP tools add one automatically, derived from the event batch — so a retried run that repeats an identical write doesn't duplicate it.
+- **`X-Intellagent-Run: <id>`** tags every event a call causes (`actor.run`); filter with `?run=<id>`. Standing agents set it (`INTELLAGENT_RUN`), and a retried run's prompt lists what the failed attempt already did.
+- **Subscriptions, at-least-once:** read with `GET /api/subscriptions/<id>/next?peek=true`, handle the events, then `POST /api/subscriptions/<id>/ack { "cursor": … }`. Without `peek`, `next` advances immediately (at-most-once).
+
 ### Permissions & tokens
-The manifest may restrict agents (`permissions: { "<name>" | "*": { "columns": ["Backlog","Ready"], "readOnly": false } }`) and require tokens (`auth.agentTokens`). Check yours with `GET /api/permissions/me`; send tokens as `Authorization: Bearer <token>`.
+The manifest may restrict agents (`permissions: { "<name>" | "*": { "columns": ["Backlog","Ready"], "readOnly": false } }`) and require tokens (`auth.agentTokens`). Check yours with `GET /api/permissions/me`; send tokens as `Authorization: Bearer <token>`. The human's own token (from `intellagent init`) lives in `.intellagent/local.json`; without it, requests sending `X-User` are refused, so agents cannot act as the human.
 
 ### Git
 `node intellagent/git-hook.js install` links commits that mention `INT-12` to that ticket. `node intellagent/git-hook.js sync-ci` fills a `ci` field from GitHub checks for tickets with a `pr` URL (needs `gh`).

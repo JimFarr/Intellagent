@@ -90,6 +90,23 @@ describe('standing agents', () => {
   });
 });
 
+describe('standing agents retry safely', () => {
+  it('a retry is told what the failed attempt did, and repeated writes are not duplicated', async () => {
+    const marker = path.join(require('os').tmpdir(), `ia-flaky-${Date.now()}`);
+    const s = await startServer({ agents: { defaults: fast, agents: { flaky2: { run: run('flaky-once', `"${marker}"`) } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'retry test', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@flaky2 go' }, USER);
+      await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('flaky2: retry saw')), 10000, 'retry');
+      const mine = (await comments(s, it.id)).filter((c) => c.startsWith('flaky2:'));
+      assert.deepEqual(mine, ['flaky2: picked this up', 'flaky2: retry saw earlier work: true']);
+    } finally {
+      await s.stop();
+      require('fs').rmSync(marker, { force: true });
+    }
+  });
+});
+
 describe('standing agents survive a reboot', () => {
   it('retries the run that was cut off, telling the agent it was interrupted', async () => {
     let s = await startServer({ agents: { defaults: fast, agents: { worker: { run: run('slow', 1500) } } } });

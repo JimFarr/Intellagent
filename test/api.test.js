@@ -212,6 +212,36 @@ describe('board API', () => {
     assert.equal(full.waits[0].by, 'James');
   });
 
+  test('Idempotency-Key replays the first reply instead of acting twice', async () => {
+    const it = await mk({ title: 'idem' });
+    const post = (agent, key) => fetch(`${s.base}${B}/items/${it.id}/comments`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': agent, 'idempotency-key': key }, body: '{"body":"once"}' });
+    const a = await post('ia', 'k1');
+    const b = await post('ia', 'k1');
+    assert.equal(b.headers.get('idempotent-replayed'), 'true');
+    assert.equal((await a.json()).id, (await b.json()).id);
+    await post('other', 'k1'); // keys are per caller
+    const full = await s.ok('GET', `${B}/items/${it.id}`);
+    assert.equal(full.comments.filter((c) => c.body === 'once').length, 2);
+  });
+
+  test('events carry the run that caused them', async () => {
+    const it = await mk({ title: 'runs' });
+    await fetch(`${s.base}${B}/items/${it.id}/comments`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': 'runner', 'x-intellagent-run': 'run_abc' }, body: '{"body":"from a run"}' });
+    const evs = (await s.ok('GET', '/api/events?since=0&run=run_abc')).events;
+    assert.equal(evs.length, 1);
+    assert.equal(evs[0].actor.run, 'run_abc');
+  });
+
+  test('subscriptions: peek, then ack, for at-least-once delivery', async () => {
+    const sub = await s.ok('POST', '/api/subscriptions', { filter: { types: 'item.created' } }, { agent: 'acker' });
+    await mk({ title: 'ack me' });
+    const peek = await s.ok('GET', `/api/subscriptions/${sub.id}/next?timeout=1&peek=true`);
+    assert.equal(peek.events.length, 1);
+    assert.equal((await s.ok('GET', `/api/subscriptions/${sub.id}/next?timeout=1&peek=true`)).events.length, 1, 'still there until acked');
+    await s.ok('POST', `/api/subscriptions/${sub.id}/ack`, { cursor: peek.cursor });
+    assert.equal((await s.ok('GET', `/api/subscriptions/${sub.id}/next?timeout=1&peek=true`)).events.length, 0);
+  });
+
   test('cross-origin writes are refused', async () => {
     const r = await fetch(`${s.base}${B}/items`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example', 'x-user': 'James' }, body: '{"title":"x"}' });
     assert.equal(r.status, 403);
