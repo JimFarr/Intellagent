@@ -220,6 +220,7 @@
     motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full',
     stub: { id: true, type: true, priority: true, parent: true, author: true, lease: true, comments: true, attachments: true, blocked: true, properties: false, description: false, thumbnail: true, fields: true, assignee: true, status: true, checklist: true, listeners: true },
     grouping: 'stack', saveMode: 'accept', userName: 'You', notify: false, notifyHidden: true, sound: false, toasts: true,
+    metrics: true, metricsDays: 7,
   };
   function loadSettings() {
     try {
@@ -396,10 +397,12 @@
   async function loadBoard(id) {
     const data = await api('GET', `/api/boards/${encodeURIComponent(id)}`);
     if (state.boardId !== data.board.id) resetBoardDom();
+    const boardChanged = state.boardId !== data.board.id;
     state.boardId = data.board.id;
     state.board = data.board;
     state.hash = data.hash;
     state.seq = data.seq;
+    loadMetrics(boardChanged);
     state.offset = Date.parse(data.serverTime) - Date.now();
     state.archivedCount = data.archivedCount;
     Object.assign(state.app, data.app);
@@ -560,6 +563,64 @@
     };
     $('#board').addEventListener('scroll', updateOverflow, { passive: true });
     addEventListener('resize', updateOverflow);
+  }
+
+  /* ─── metrics strip: how work flows, and how long agents wait on you ─── */
+
+  const dur = (h) => (h == null ? '—' : h < 1 ? `${Math.max(1, Math.round(h * 60))}m` : h < 48 ? `${Math.round(h)}h` : `${(h / 24).toFixed(h < 240 ? 1 : 0)}d`);
+  let metricsAt = 0;
+  let metricsTimer = null;
+  // Throttled: board refreshes are frequent; metrics move slowly.
+  function loadMetrics(now = false) {
+    const box = $('#metrics');
+    if (!settings.metrics) { box.hidden = true; return; }
+    clearTimeout(metricsTimer);
+    const wait = now ? 0 : Math.max(0, 15000 - (Date.now() - metricsAt));
+    metricsTimer = setTimeout(async () => {
+      metricsAt = Date.now();
+      try { state.metrics = await api('GET', B(`/metrics?days=${settings.metricsDays}`)); } catch { return; }
+      renderMetrics();
+    }, wait);
+  }
+  function sparkline(xs) {
+    const w = 56; const h = 16; const max = Math.max(1, ...xs);
+    const pts = xs.map((v, i) => `${(i / Math.max(1, xs.length - 1)) * w},${h - (v / max) * (h - 2) - 1}`).join(' ');
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><polyline points="${pts}"/></svg>`;
+  }
+  function renderMetrics() {
+    const box = $('#metrics');
+    const m = state.metrics;
+    if (!m || !settings.metrics) { box.hidden = true; return; }
+    box.hidden = false;
+    const delta = m.done - m.donePrev;
+    const trend = delta ? `<span class="mt-delta ${delta > 0 ? 'up' : 'down'}">${delta > 0 ? '↑' : '↓'}${Math.abs(delta)}</span>` : '';
+    const w = m.waiting;
+    box.innerHTML = `
+      <div class="seg mini mt-days">${[7, 30].map((d) => `<button class="${m.days === d ? 'on' : ''}" data-days="${d}" title="Window|Last ${d} days">${d}d</button>`).join('')}</div>
+      <button class="mt" data-mt="done" title="Done|Tickets that reached ${esc(state.board.columns.at(-1)?.name || 'the last column')} in the last ${m.days} days (vs the ${m.days} before)">${icon('check', 'sm')}<b>${m.done}</b> done${trend}${sparkline(m.perDay)}</button>
+      <button class="mt" data-mt="cycle" title="Cycle time|Median time from starting work to done">${icon('clock', 'sm')}<b>${dur(m.cycleHours.median)}</b> cycle</button>
+      <button class="mt ${w.open ? 'attn' : ''}" data-mt="waiting" title="Waiting on you|Open questions and reviews${w.oldestId ? ` — oldest on ${esc(w.oldestId)}` : ''}">${icon('ask', 'sm')}<b>${w.open}</b> waiting on you${w.open ? ` · oldest ${dur(w.oldestHours)}` : ''}</button>
+      <button class="mt" data-mt="answer" title="Your answer time|Median time from an agent asking to you answering (${m.answerHours.count} answered)">${icon('send', 'sm')}you answer in <b>${dur(m.answerHours.median)}</b></button>
+      ${m.slowest ? `<button class="mt" data-mt="slow" title="Slowest step|Column where tickets wait longest (median)">${icon('layers', 'sm')}slowest: <b>${esc(m.slowest.name)}</b> ${dur(m.slowest.medianStayHours)}</button>` : ''}`;
+    box.onclick = (e) => {
+      const d = e.target.closest('[data-days]');
+      if (d) { settings.metricsDays = Number(d.dataset.days); saveSettings(); loadMetrics(true); return; }
+      const t = e.target.closest('[data-mt]');
+      if (!t) return;
+      if (t.dataset.mt === 'waiting' && w.oldestId) { openItem(w.oldestId, cardEls.get(w.oldestId), { rail: true }); return; }
+      openMetrics();
+    };
+  }
+  function openMetrics() {
+    const m = state.metrics;
+    if (!m) return;
+    const body = openDrawer('metricsDrawer', `Flow · last ${m.days} days`, 'activity');
+    const maxStay = Math.max(1, ...m.columns.map((c) => c.medianStayHours || 0));
+    const agents = Object.entries(m.byAgent).sort((a, b) => b[1] - a[1]);
+    body.innerHTML = `<div class="section"><div class="section-head">${icon('layers', 'sm')}<span>Time in each column (median)</span><span class="rule"></span></div>
+        ${m.columns.map((c) => `<div class="mbar"><span class="mb-name"><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span class="mb-track"><b style="width:${((c.medianStayHours || 0) / maxStay) * 100}%;background:${esc(c.color)}"></b></span><span class="mb-val">${dur(c.medianStayHours)}</span><span class="mb-sub">${c.count} now${c.oldestHours != null ? ` · oldest ${dur(c.oldestHours)}` : ''}</span></div>`).join('')}</div>
+      <div class="section"><div class="section-head">${icon('check', 'sm')}<span>Done per day</span><span class="rule"></span></div><div class="mdays">${m.perDay.map((v) => `<i style="height:${(v / Math.max(1, ...m.perDay)) * 100}%" title="${v}"></i>`).join('')}</div></div>
+      ${agents.length ? `<div class="section"><div class="section-head">${icon('bot', 'sm')}<span>Finished, by who worked on it</span><span class="rule"></span></div>${agents.map(([n, v]) => `<div class="magent">${avatar({ kind: 'agent', name: n })}<span>${esc(n)}</span><b>${v}</b></div>`).join('')}</div>` : ''}`;
   }
 
   function updateOverflow() {
@@ -2382,6 +2443,7 @@
     if (ev.type === 'hello') return;
     if (ev.type === 'presence.changed' || (ev.type?.startsWith('lease.') && ev.type !== 'lease.status')) refreshPresence();
     if (ev.type === 'presence.changed') scheduleListeners();
+    if (/^(item\.moved|item\.archived|attention\.|review\.)/.test(ev.type || '')) loadMetrics();
     if (ev.type?.startsWith('agent.') || ev.type === 'agents.changed') refreshPresence();
     if (ev.board && ev.itemId) {
       if (document.hidden) { if (newsworthy(ev)) { noteUnseen(ev); saveSeen(); } }
@@ -3142,6 +3204,7 @@
     if (t === 'board') {
       const me = state.profiles[settings.userName] || {};
       return `<h3>Parent groups</h3>
+        ${choiceRow('metrics', 'Metrics strip', [['on', 'Show', 'Done, cycle time and how long agents wait on you, under the top bar'], ['off', 'Hide', 'No metrics strip']], settings.metrics ? 'on' : 'off')}
         ${choiceRow('grouping', 'Grouping', [['off', 'Off', 'Show every ticket separately'], ['list', 'List', 'Group tickets sharing a parent under a heading'], ['stack', 'Stack', 'Pile tickets sharing a parent — click to fan out']], settings.grouping)}
         ${previewStage('grouping')}
         <h3>Ticket edits</h3>
@@ -3372,7 +3435,13 @@
       const rs = e.target.closest('[data-reset]');
       if (rs) { settings[rs.dataset.reset] = 'theme'; saveSettings(); pulseSaved(); show(t, true); return; }
       const sb = e.target.closest('.seg[data-set] button, .opt-grid[data-set] button');
-      if (sb) { settings[sb.parentElement.dataset.set] = sb.dataset.v; saveSettings(); pulseSaved(); show(t, true); return; }
+      if (sb) {
+        const k = sb.parentElement.dataset.set;
+        settings[k] = k === 'metrics' ? sb.dataset.v === 'on' : sb.dataset.v;
+        saveSettings(); pulseSaved(); show(t, true);
+        if (k === 'metrics') loadMetrics(true);
+        return;
+      }
       const s = e.target.closest('[data-sw]');
       if (s) {
         const k = s.dataset.sw;

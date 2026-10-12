@@ -112,6 +112,17 @@ describe('agent flows', () => {
     assert.equal((await s.ok('GET', `${B}/items/${it.id}`)).columnId, 'done');
   });
 
+  it('metrics count finished work, cycle time and waits on the human', async () => {
+    const m = await s.ok('GET', `${B}/metrics?days=7`);
+    assert.ok(m.done >= 1, 'the approved ticket counts as done');
+    assert.equal(m.perDay.length, 7);
+    assert.ok(m.cycleHours.median >= 0);
+    assert.ok(m.answerHours.count >= 1, 'answered questions and reviews are timed');
+    assert.ok(m.waiting.open >= 1, 'open questions are counted');
+    assert.deepEqual(m.columns.map((c) => c.name), ['Backlog', 'Ready', 'In Progress', 'Review', 'Done']);
+    assert.equal((await s.ok('GET', `${B}/metrics?days=30`)).perDay.length, 30);
+  });
+
   it('transitions explain where a ticket can go', async () => {
     const it = await mk({ title: 'where to' });
     const t = await s.ok('GET', `${B}/items/${it.id}/transitions`, undefined, A);

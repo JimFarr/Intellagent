@@ -1325,6 +1325,67 @@ function briefing(ctx, name, base, via = 'cli') {
   return lines.join('\n');
 }
 
+/* ───── metrics: flow (column entries) and waits (closed questions) over a window ───── */
+
+const median = (xs) => { if (!xs.length) return null; const a = [...xs].sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
+const HOUR = 3600_000;
+
+function metrics(ctx, days) {
+  const b = ctx.board;
+  const nowMs = Date.now();
+  const from = nowMs - days * 86_400_000;
+  const prevFrom = from - days * 86_400_000;
+  const cols = b.columns;
+  const done = doneColumnId(ctx);
+  const work = workingColumn(ctx);
+  const all = [...Object.values(b.items), ...Object.values(ctx.archive.items)];
+  const t = (x) => Date.parse(x);
+
+  // Throughput + cycle time: tickets that reached the last column in the window.
+  // Cycle time runs from first entering the working column (or creation, if it never did) to done.
+  const finishedIn = (lo, hi) => all.map((it) => {
+    const end = (it.flow || []).filter((f) => f.col === done && t(f.at) >= lo && t(f.at) < hi).at(-1);
+    if (!end) return null;
+    const start = (it.flow || []).find((f) => work && f.col === work.id) || { at: it.createdAt };
+    return { it, ms: Math.max(0, t(end.at) - t(start.at)), at: t(end.at) };
+  }).filter(Boolean);
+  const finished = finishedIn(from, nowMs + 1);
+  const before = finishedIn(prevFrom, from);
+  const perDay = Array.from({ length: days }, (_, i) => finished.filter((f) => f.at >= from + i * 86_400_000 && f.at < from + (i + 1) * 86_400_000).length);
+
+  // Time spent per column: stays that ended inside the window, plus what is sitting there now.
+  const stays = Object.fromEntries(cols.map((c) => [c.id, []]));
+  for (const it of all) {
+    const fl = it.flow || [];
+    for (let i = 0; i < fl.length - 1; i++) {
+      const end = t(fl[i + 1].at);
+      if (end >= from && stays[fl[i].col]) stays[fl[i].col].push(end - t(fl[i].at));
+    }
+  }
+  const columns = cols.map((c) => {
+    const ages = c.itemIds.map((id) => nowMs - t(b.items[id]?.enteredColumnAt || nowMs));
+    return { id: c.id, name: c.name, color: c.color, count: c.itemIds.length, medianStayHours: stays[c.id].length ? median(stays[c.id]) / HOUR : null, oldestHours: ages.length ? Math.max(...ages) / HOUR : null };
+  });
+  const middle = columns.slice(1, -1).filter((c) => c.medianStayHours != null);
+  const slowest = middle.sort((x, y) => y.medianStayHours - x.medianStayHours)[0] || null;
+
+  // Waiting on the human: open questions now, and how fast they were answered in the window.
+  const open = Object.values(b.items).flatMap((it) => (it.questions || []).map((q) => ({ id: it.id, kind: q.kind, ms: nowMs - t(q.raisedAt) })));
+  const answered = all.flatMap((it) => (it.waits || []).filter((w) => t(w.resolvedAt) >= from).map((w) => ({ kind: w.kind, ms: t(w.resolvedAt) - t(w.raisedAt) })));
+  const byAgent = {};
+  for (const f of finished) for (const n of new Set(f.it.workedBy || [])) byAgent[n] = (byAgent[n] || 0) + 1;
+
+  return {
+    days, from: new Date(from).toISOString(),
+    done: finished.length, donePrev: before.length, perDay,
+    cycleHours: { median: finished.length ? median(finished.map((f) => f.ms)) / HOUR : null, prev: before.length ? median(before.map((f) => f.ms)) / HOUR : null },
+    waiting: { open: open.length, reviews: open.filter((q) => q.kind === 'review').length, oldestHours: open.length ? Math.max(...open.map((q) => q.ms)) / HOUR : null, oldestId: open.sort((x, y) => y.ms - x.ms)[0]?.id || null },
+    answerHours: { median: answered.length ? median(answered.map((a) => a.ms)) / HOUR : null, count: answered.length },
+    columns, slowest: slowest ? { name: slowest.name, medianStayHours: slowest.medianStayHours } : null,
+    byAgent,
+  };
+}
+
 function archiveItems(ctx, ids, actor, reason = null) {
   return tx(ctx, (events) => {
     const done = [];
@@ -2330,6 +2391,8 @@ route('GET', '/api/boards/:board/brief', 'Start here (agents): who you are, what
   const text = briefing(ctx, q.agent || actor.name, `http://${req.headers.host}`, ['cli', 'mcp', 'http'].includes(q.via) ? q.via : 'cli');
   return q.format === 'json' ? { brief: text, work: workFor(ctx, q.agent || actor.name) } : text;
 });
+route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=7|30: done, cycle time, time per column, waiting on the human, answer time', ({ p, q }) =>
+  metrics(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90)));
 route('GET', '/api/boards/:board/work', 'What needs you now (agent): next actions, your leases, answered questions, review feedback, assigned and ready tickets. ?agent= to look at another agent', ({ p, q, actor }) =>
   workFor(getCtx(p.board), q.agent || actor.name));
 route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move this ticket, and why not elsewhere', ({ p, actor }) => {

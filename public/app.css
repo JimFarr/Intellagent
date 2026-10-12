@@ -1125,3 +1125,33 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 /* several open questions on one ticket */
 .m-ask + .m-ask { margin-top: 10px; }
 .q-count { margin-left: auto; font: 600 10.5px var(--mono); color: var(--muted); }
+
+/* metrics strip: under the top bar, aligned with the columns */
+.metrics { display: flex; align-items: center; gap: 4px; padding: 0 var(--frame-r, 22px) 6px var(--frame-l, 22px); overflow-x: auto; scrollbar-width: none; flex-shrink: 0; transition: padding .45s var(--ease); animation: drop-in .35s var(--spring); }
+.metrics::-webkit-scrollbar { display: none; }
+.metrics .mt-days { margin-right: 6px; }
+.metrics .mt-days button { height: 22px; font-size: 11px; padding: 0 7px; }
+.mt { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 12px var(--font); white-space: nowrap; cursor: pointer; transition: background .2s, color .2s; }
+.mt:hover { background: var(--hover); color: var(--text); }
+.mt b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.mt + .mt { position: relative; }
+.mt + .mt::before { content: ''; position: absolute; left: -3px; top: 8px; bottom: 8px; width: 1px; background: color-mix(in oklab, var(--border) 70%, transparent); }
+.mt.attn { color: var(--accent-2); }
+.mt.attn b { color: var(--accent-2); }
+.mt-delta { font: 600 10.5px var(--mono); }
+.mt-delta.up { color: var(--ok, #4cc38a); }
+.mt-delta.down { color: var(--muted); }
+.spark { overflow: visible; }
+.spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; opacity: .8; }
+.mbar { display: grid; grid-template-columns: 110px 1fr 46px; grid-template-rows: auto auto; gap: 2px 10px; align-items: center; padding: 7px 0; }
+.mb-name { display: inline-flex; align-items: center; gap: 7px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mb-name i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.mb-track { height: 8px; border-radius: 99px; background: var(--hover); overflow: hidden; }
+.mb-track b { display: block; height: 100%; border-radius: 99px; opacity: .85; transition: width .6s var(--spring); }
+.mb-val { font: 600 12px var(--mono); text-align: right; }
+.mb-sub { grid-column: 2 / 4; font: 11px var(--mono); color: var(--muted); }
+.mdays { display: flex; align-items: flex-end; gap: 3px; height: 70px; padding: 4px 0; }
+.mdays i { flex: 1; min-height: 2px; border-radius: 3px 3px 0 0; background: color-mix(in oklab, var(--accent) 70%, transparent); }
+.magent { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.magent b { margin-left: auto; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .mt[data-mt="answer"], .mt[data-mt="slow"] { display: none; } }

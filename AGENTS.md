@@ -142,6 +142,9 @@ The human decides with `POST …/review/decision { "verdict": "approve" | "chang
 ### End a session
 `POST /api/boards/main/finish { "summary": "markdown", "items": ["INT-12"] }` releases every lease you hold (and the master lease) and posts the summary to the digest. Standing-agent runs that exit cleanly get this release automatically.
 
+### Metrics
+`GET /api/boards/main/metrics?days=7` (or 30): tickets done (and the previous window), median cycle time (working column → done), median time in each column, open questions and how long the oldest has waited, and how fast the human answers. The UI shows it as a strip under the top bar.
+
 ### Daily digest
 At the end of a session: `POST /api/boards/main/digest { "summary": "markdown", "items": ["INT-12"] }`. Read what others wrote with `GET /api/boards/main/digest?days=3` — a cheap way to catch up.
 
