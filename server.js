@@ -291,6 +291,7 @@ function normalizeBoard(b) {
   b.items = isObj(b.items) ? b.items : {};
   b.directives = b.directives || '';
   b.digest = Array.isArray(b.digest) ? b.digest : [];
+  b.master = isObj(b.master) ? b.master : null;
   b.schema = { builtins: normBuiltins(b.schema?.builtins, true), fields: Array.isArray(b.schema?.fields) ? b.schema.fields : [] };
   for (const it of Object.values(b.items)) { it.fields = isObj(it.fields) ? it.fields : {}; it.cover = it.cover || 'auto'; it.assignee = it.assignee || null; }
   for (const c of b.columns) {
@@ -499,7 +500,54 @@ function checkColumnPerm(ctx, actor, colIds) {
   }
 }
 
+// Master lease: one agent holds the whole board (no per-ticket leases needed). Other agents become
+// read-only except for comments, questions and the digest; humans are never blocked.
+const activeMaster = (ctx) => {
+  const m = ctx.board.master;
+  return m && (!m.expiresAt || Date.parse(m.expiresAt) > Date.now()) ? m : null;
+};
+function guardBoard(ctx, actor) {
+  const m = activeMaster(ctx);
+  if (m && actor.kind === 'agent' && m.holder !== actor.name) {
+    fail(423, `Board "${ctx.id}" is held by ${m.holder} (master lease). You can still comment, ask the human, or post to the digest.`, { master: m });
+  }
+}
+
+function claimMaster(ctx, d, actor) {
+  return tx(ctx, (events) => {
+    const cur = activeMaster(ctx);
+    if (cur && cur.holder !== actor.name && !(d.force && actor.kind === 'user')) fail(409, `Board is already held by ${cur.holder}`, { master: cur });
+    const others = Object.values(ctx.board.items).map((it) => activeLease(it)).filter((l) => l && l.claimant !== actor.name);
+    if (others.length && !(d.force && actor.kind === 'user')) {
+      fail(409, `Other leases are active (${[...new Set(others.map((l) => l.claimant))].join(', ')}). Wait for them to be released.`, { leases: others });
+    }
+    const minutes = Number(d.minutes) > 0 ? clamp(Number(d.minutes), 1, 60 * 24 * 30) : null;
+    const renew = !!cur && cur.holder === actor.name;
+    ctx.board.master = {
+      holder: actor.name, kind: actor.kind,
+      since: renew ? cur.since : now(),
+      expiresAt: minutes ? new Date(Date.now() + minutes * 60_000).toISOString() : null,
+      ...(d.status ? { status: str(d.status, 140), statusAt: now() } : renew && cur.status ? { status: cur.status, statusAt: cur.statusAt } : {}),
+    };
+    if (cur && !renew) events.push({ board: ctx.id, type: 'master.revoked', actor, holder: cur.holder, recipients: [cur.holder] });
+    events.push({ board: ctx.id, type: renew ? 'master.renewed' : 'master.claimed', actor, holder: actor.name, expiresAt: ctx.board.master.expiresAt });
+    return ctx.board.master;
+  });
+}
+
+function releaseMaster(ctx, actor) {
+  return tx(ctx, (events) => {
+    const cur = ctx.board.master;
+    if (!cur) return null;
+    if (actor.kind === 'agent' && cur.holder !== actor.name) fail(403, `Only ${cur.holder} (or a human) can release the board`);
+    ctx.board.master = null;
+    events.push({ board: ctx.id, type: cur.holder === actor.name ? 'master.released' : 'master.revoked', actor, holder: cur.holder, recipients: [cur.holder].filter((n) => n !== actor.name) });
+    return null;
+  });
+}
+
 function guardWrite(ctx, item, actor) {
+  guardBoard(ctx, actor);
   checkColumnPerm(ctx, actor, [item.columnId]);
   const l = activeLease(item);
   if (l && actor.kind === 'agent' && l.claimant !== actor.name) {
@@ -919,6 +967,8 @@ function boardSummary(ctx) {
   return {
     board: { id: b.id, name: b.name, hash: ctx.hash, idPrefix: b.idPrefix },
     hasDirectives: !!b.directives.trim(),
+    projectRules: projectRules().map((r) => r.file),
+    master: activeMaster(ctx),
     columns: b.columns.map((c) => ({
       id: c.id, name: c.name, flags: c.flags, count: c.itemIds.length,
       items: c.itemIds.map((id) => {
@@ -1288,6 +1338,10 @@ const warned = new Set();
 
 setInterval(() => {
   for (const ctx of boards.values()) {
+    const ms = ctx.board.master;
+    if (ms?.expiresAt && Date.parse(ms.expiresAt) <= Date.now()) {
+      tx(ctx, (events) => { ctx.board.master = null; events.push({ board: ctx.id, type: 'master.expired', actor: SYSTEM, holder: ms.holder, recipients: [ms.holder] }); });
+    }
     const expired = [];
     for (const item of Object.values(ctx.board.items)) {
       if (!item.lease) continue;
@@ -1368,7 +1422,8 @@ const SCHEMA = {
     type: ['item.created', 'item.updated', 'item.moved', 'item.reordered', 'item.archived', 'item.restored', 'comment.added',
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
       'attention.raised', 'attention.resolved', 'review.requested', 'digest.added', 'schema.updated', 'column.created', 'column.updated', 'column.deleted',
-      'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated'],
+      'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
+      'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
     changes: '{ [field | "properties.<key>"]: { from, to } }?', item: 'snapshot { id,title,type,priority,columnId,column,parent,claimant,needsHuman }?',
     recipients: 'string[] — agents/users this event concerns (leaseholder, asker, agent author, @mentions)',
@@ -1532,10 +1587,38 @@ route('GET', '/api/boards/:board/hash', 'Current board hash (cheap change check)
 
 route('GET', '/api/boards/:board/summary', 'Compact board overview — cheapest way to orient', ({ p }) => boardSummary(getCtx(p.board)));
 
-route('GET', '/api/boards/:board/directives', 'Standing rules from the human (markdown)', ({ p }) => {
+// The project's own convention files (e.g. CLAUDE.md) are served read-only next to the board rules,
+// so rules live in one place: the repo for conventions, the board for workflow.
+const PROJECT_ROOT = path.basename(path.dirname(MANIFEST_PATH)) === '.intellagent' ? path.dirname(path.dirname(MANIFEST_PATH)) : path.dirname(MANIFEST_PATH);
+function projectRules() {
+  return arr(M.projectRules ?? ['CLAUDE.md']).map((f) => {
+    const fp = path.resolve(PROJECT_ROOT, String(f));
+    if (!fp.startsWith(PROJECT_ROOT) || !fs.existsSync(fp)) return null;
+    return { file: path.relative(PROJECT_ROOT, fp).replace(/\\/g, '/'), content: str(fs.readFileSync(fp, 'utf8'), 50_000) };
+  }).filter(Boolean);
+}
+
+route('GET', '/api/boards/:board/directives', 'Standing rules: board workflow rules (editable) + the project\'s own convention files (read-only)', ({ p }) => {
   const ctx = getCtx(p.board);
-  return { directives: ctx.board.directives, updatedAt: ctx.board.updatedAt };
+  return { directives: ctx.board.directives, projectRules: projectRules(), updatedAt: ctx.board.updatedAt };
 });
+
+route('GET', '/api/boards/:board/master', 'Who holds the whole board (master lease), if anyone', ({ p }) => activeMaster(getCtx(p.board)));
+route('POST', '/api/boards/:board/master', 'Hold the whole board as the only agent: { minutes? (omit = until released), status? }. Fails while other agents hold ticket leases.', ({ p, body, actor }) =>
+  claimMaster(getCtx(p.board), body, actor));
+route('PUT', '/api/boards/:board/master/status', 'Live status while holding the board: { status }', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  return tx(ctx, (events) => {
+    const m = activeMaster(ctx);
+    if (!m) fail(409, 'Nobody holds the board');
+    if (m.holder !== actor.name) fail(403, `Only ${m.holder} can set the board status`);
+    const st = str(body.status, 140).trim();
+    if (st) { m.status = st; m.statusAt = now(); } else { delete m.status; delete m.statusAt; }
+    events.push({ board: ctx.id, type: 'master.status', actor, holder: m.holder, status: st || null });
+    return m;
+  });
+});
+route('DELETE', '/api/boards/:board/master', 'Release the board (e.g. before spawning helper agents that use ticket leases)', ({ p, actor }) => releaseMaster(getCtx(p.board), actor));
 route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directives }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {
@@ -1570,31 +1653,38 @@ route('PUT', '/api/boards/:board/schema', 'Set schema: { builtins?: { type: { ui
     }
   });
 });
-route('POST', '/api/boards/:board/schema/fields', 'Declare a field: { key, label, type, options?, ui?, stub?, icon?, help?, required?, default?, min?, max?, position? }', ({ p, body, actor }) => {
+// Field writes answer with just the field (add ?full=true for the whole schema).
+const fieldReply = (ctx, key, q) => (q.full === 'true' ? schemaView(ctx) : { field: ctx.board.schema.fields.find((f) => f.key === key) || null });
+route('POST', '/api/boards/:board/schema/fields', 'Declare a field: { key, label, type, options?, ui?, stub?, icon?, help?, required?, default?, min?, max?, position? }', ({ p, q, body, actor }) => {
   const ctx = getCtx(p.board);
-  return created(schemaTx(ctx, actor, () => {
+  let key;
+  schemaTx(ctx, actor, () => {
     const def = normField(body);
+    key = def.key;
     if (ctx.board.schema.fields.some((f) => f.key === def.key)) fail(409, `Field "${def.key}" already exists — PATCH it instead`);
     ctx.board.schema.fields.splice(resolveIndex(ctx.board.schema.fields.map((f) => f.key), body.position), 0, def);
-  }));
+  });
+  return created(fieldReply(ctx, key, q));
 });
-route('PATCH', '/api/boards/:board/schema/fields/:key', 'Change a field definition (merged)', ({ p, body, actor }) => {
+route('PATCH', '/api/boards/:board/schema/fields/:key', 'Change a field definition (merged)', ({ p, q, body, actor }) => {
   const ctx = getCtx(p.board);
-  return schemaTx(ctx, actor, () => {
+  schemaTx(ctx, actor, () => {
     const list = ctx.board.schema.fields;
     const i = list.findIndex((f) => f.key === p.key);
     if (i < 0) fail(404, `Field "${p.key}" not declared`);
     list[i] = normField(body, list[i]);
     if ('position' in body) { const [f] = list.splice(i, 1); list.splice(resolveIndex(list.map((x) => x.key), body.position), 0, f); }
   });
+  return fieldReply(ctx, p.key, q);
 });
 route('DELETE', '/api/boards/:board/schema/fields/:key', 'Remove a field definition (stored values are kept)', ({ p, actor }) => {
   const ctx = getCtx(p.board);
-  return schemaTx(ctx, actor, () => {
+  schemaTx(ctx, actor, () => {
     const n = ctx.board.schema.fields.length;
     ctx.board.schema.fields = ctx.board.schema.fields.filter((f) => f.key !== p.key);
     if (ctx.board.schema.fields.length === n) fail(404, `Field "${p.key}" not declared`);
   });
+  return { deleted: p.key };
 });
 
 route('GET', '/api/boards/:board/columns', 'List columns with flags', ({ p }) => getCtx(p.board).board.columns);
@@ -1899,6 +1989,10 @@ const server = http.createServer(async (req, res) => {
     const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {};
     const actor = actorOf(req, q);
     checkAuth(req, q, actor, u.pathname);
+    const bm = /^\/api\/boards\/([^/]+)(?:\/(.*))?$/.exec(u.pathname);
+    if (req.method !== 'GET' && bm && boards.has(bm[1]) && !/(^|\/)(comments|attention|digest|master)(\/|$)/.test(bm[2] || '')) {
+      guardBoard(boards.get(bm[1]), actor);
+    }
     if (actor.kind === 'agent' && u.pathname.startsWith('/api')) touch(actor.name, `${req.method} ${u.pathname}`);
     const out = await m.r.handler({ req, res, p: m.params, q, body, actor });
     if (out === HANDLED || res.headersSent) return;

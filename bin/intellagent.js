@@ -16,7 +16,7 @@ const path = require('path');
 const net = require('net');
 const { spawn } = require('child_process');
 const os = require('os');
-const { findManifest, readManifest, baseUrl } = require('../lib/locate');
+const { findManifest, readManifest, baseUrl, NO_BOARD } = require('../lib/locate');
 const TEMPLATES = require('../lib/templates');
 
 const ROOT = path.join(__dirname, '..');
@@ -84,7 +84,7 @@ async function init() {
   };
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\n');
+  fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\n');
   const url = `http://127.0.0.1:${port}`;
   fs.writeFileSync(path.join(folder, 'README.md'), `# ${name} · Intellagent board\n\nStart it with \`intellagent start\` (from anywhere inside this project), then open ${url}.\n\n## Prompt for agents\n\n\`\`\`\n${agentPrompt(url)}\n\`\`\`\n`);
   console.log(`\n  ✓ ${path.relative(process.cwd(), manifestPath) || manifestPath}`);
@@ -139,6 +139,7 @@ async function start() {
 async function status() {
   const mp = findManifest();
   const url = baseUrl(readManifest(mp));
+  if (!url) { console.log(NO_BOARD); return; }
   const app = await alive(url);
   console.log(`manifest  ${mp || '(none — using defaults)'}`);
   console.log(`url       ${url}  ${app ? '● running' : '○ not running'}`);
@@ -149,7 +150,8 @@ async function status() {
 
 async function docs() {
   const url = baseUrl();
-  try { process.stdout.write(await (await fetch(`${url}/api/docs`)).text()); }
+  try {
+    if (!url) throw new Error('no board'); process.stdout.write(await (await fetch(`${url}/api/docs`)).text()); }
   catch { process.stdout.write(fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8')); }
 }
 
@@ -180,6 +182,86 @@ function skill() {
   console.log('In Claude Code: /intellagent-setup, or just ask it to set up Intellagent.');
 }
 
+/* ── wait / watch: make the board able to wake an agent ── */
+
+function agentName(f) {
+  const a = f.agent || process.env.INTELLAGENT_AGENT;
+  if (!a) { console.error('Pass --agent <name> or set INTELLAGENT_AGENT.'); process.exit(1); }
+  return String(a);
+}
+const cursorPath = (mp, agent) => path.join(path.dirname(mp), 'cursors', `${agent.replace(/[^\w.-]+/g, '_')}.json`);
+
+// Long-polls the agent's inbox from its saved cursor; resolves with the events (or [] on timeout).
+async function nextEvents({ agent, types, timeoutSec, quiet }) {
+  const mp = findManifest();
+  const url = baseUrl(readManifest(mp));
+  if (!url) { console.error(NO_BOARD); process.exit(3); }
+  const file = cursorPath(mp, agent);
+  let since = null;
+  try { since = JSON.parse(fs.readFileSync(file, 'utf8')).cursor; } catch { /* first run */ }
+  const headers = { 'X-Agent': agent };
+  if (since == null) since = (await (await fetch(`${url}/api/app`, { headers })).json()).seq; // start from now
+  const deadline = timeoutSec ? Date.now() + timeoutSec * 1000 : Infinity;
+  for (;;) {
+    const left = Math.max(1, Math.min(50, Math.ceil((deadline - Date.now()) / 1000)));
+    const q = new URLSearchParams({ for: agent, excludeActor: agent, since: String(since), timeout: String(left), ...(types ? { types } : {}) });
+    let r;
+    try { r = await (await fetch(`${url}/api/events/wait?${q}`, { headers })).json(); }
+    catch (e) { if (!quiet) console.error(`board unreachable (${e.message}); retrying…`); await new Promise((res) => setTimeout(res, 5000)); continue; }
+    since = r.cursor;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ cursor: since, at: new Date().toISOString() }));
+    if (r.events?.length) return r.events;
+    if (Date.now() >= deadline) return [];
+  }
+}
+
+const eventLine = (e) => `#${e.seq} ${e.type}${e.itemId ? ` ${e.itemId}` : ''}${e.item?.title ? ` "${e.item.title}"` : ''} by ${e.actor?.name || '?'}${e.reply ? ` — reply: ${e.reply}` : e.comment?.body ? ` — ${e.comment.body}` : e.reason ? ` — ${e.reason}` : ''}`;
+
+async function waitCmd() {
+  const f = flags(rest);
+  const agent = agentName(f);
+  const events = await nextEvents({ agent, types: f.types, timeoutSec: Number(f.timeout) || 0 });
+  if (!events.length) { console.log('(no events before timeout)'); process.exit(2); }
+  console.log(f.json ? JSON.stringify(events, null, 2) : events.map(eventLine).join('\n'));
+}
+
+function quoteWin(a) { return /[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a; }
+
+async function watchCmd() {
+  const sep = rest.indexOf('--');
+  const f = flags(sep >= 0 ? rest.slice(0, sep) : rest);
+  const cmd = sep >= 0 ? rest.slice(sep + 1) : (f.claude ? ['claude', '-p', 'Handle the Intellagent events described on stdin.'] : null);
+  const agent = agentName(f);
+  if (!cmd?.length) { console.error('Usage: intellagent watch --agent <name> -- <command…>   (or --claude)'); process.exit(1); }
+  console.log(`watching inbox of "${agent}" — runs: ${cmd.join(' ')}`);
+  for (;;) {
+    let events = await nextEvents({ agent, types: f.types, timeoutSec: 0, quiet: true });
+    await new Promise((res) => setTimeout(res, 3000)); // let a burst of edits settle into one run
+    events = events.concat(await nextEvents({ agent, types: f.types, timeoutSec: 1, quiet: true }));
+    const mp = findManifest();
+    const evFile = path.join(path.dirname(mp), 'cursors', `${agent.replace(/[^\w.-]+/g, '_')}-events.json`);
+    fs.writeFileSync(evFile, JSON.stringify(events, null, 2));
+    const prompt = [
+      `You are "${agent}", working on this project's Intellagent board. These events are addressed to you:`,
+      ...events.map((e) => `- ${eventLine(e)}`),
+      '',
+      `Read each ticket for context (intellagent api GET /api/boards/main/items/<ID>), act on it following the board's standing rules and the project's CLAUDE.md, and reply on the card.`,
+      `Use INTELLAGENT_AGENT=${agent} for API calls. Full event JSON: ${evFile}`,
+    ].join('\n');
+    console.log(`\n▶ ${events.length} event(s): ${events.map((e) => e.itemId || e.type).join(', ')}`);
+    const args = cmd.slice(1).map((a) => a.replace('{events}', evFile));
+    const win = process.platform === 'win32';
+    const child = spawn(win ? cmd[0] : cmd[0], win ? args.map(quoteWin) : args, {
+      stdio: ['pipe', 'inherit', 'inherit'], shell: win, env: { ...process.env, INTELLAGENT_AGENT: agent, INTELLAGENT_EVENTS: evFile },
+    });
+    child.stdin.end(prompt);
+    const code = await new Promise((res) => child.on('close', res));
+    console.log(`■ finished (exit ${code})`);
+    if (f.once) return;
+  }
+}
+
 const HELP = `intellagent — a kanban for you and your agents
 
   init [dir]       scaffold .intellagent/ here   --template --name --prefix --port --mcp --agent --claude --demo
@@ -189,14 +271,18 @@ const HELP = `intellagent — a kanban for you and your agents
   open             open the board in a browser
   status           where it is and whether it's running
   docs             print the agent guide
-  api M PATH [b]   call the API as an agent      (INTELLAGENT_AGENT=name)
+  api M PATH [b]   call the API as an agent      (INTELLAGENT_AGENT=name; body: key=value… | json | @file | -)
+  wait             block until something arrives in your inbox, print it, exit   --agent --types --timeout --json
+  watch -- CMD     run CMD each time your inbox gets events (unattended agents)   --agent --claude --once
   mcp              MCP server over stdio
   hook ...         git: install | post-commit | sync-ci
 `;
 
 const commands = {
   init, start, status, docs, templates, skill,
-  open: () => openUrl(baseUrl()),
+  open: () => { const u = baseUrl(); if (!u) { console.error(NO_BOARD); process.exit(3); } openUrl(u); },
+  wait: waitCmd,
+  watch: watchCmd,
   api: () => forward('cli.js', rest),
   mcp: () => forward('mcp.js', rest),
   hook: () => forward('git-hook.js', rest),

@@ -1056,3 +1056,13 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 :root[data-mode="dark"][data-lanes="outline"] .column { background: color-mix(in oklab, var(--panel) 38%, transparent); }
 
 @media (max-width: 640px) { .topbar { flex-wrap: wrap; } }
+
+/* master lease pill + project rules */
+.master-btn { gap: 6px; max-width: 280px; border-color: color-mix(in oklab, var(--warn) 55%, var(--border)); color: color-mix(in oklab, var(--warn) 75%, var(--text)); }
+.master-btn .ms { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.topbar > .master-btn { flex-shrink: 1; }
+.proj-rules { border: var(--bw) solid var(--border); border-radius: calc(var(--r-ctl) + 2px); padding: 8px 12px; margin-bottom: 8px; background: var(--hover); }
+.proj-rules summary { cursor: pointer; display: flex; align-items: center; gap: 8px; list-style: none; font-size: 13px; }
+.proj-rules summary::-webkit-details-marker { display: none; }
+.proj-rules summary span { margin-left: auto; font: 10.5px var(--mono); color: var(--muted); }
+.proj-rules .md { margin-top: 10px; font-size: 13px; }

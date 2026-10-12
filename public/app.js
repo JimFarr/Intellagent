@@ -522,6 +522,7 @@
       <button class="pill-btn board-btn" id="boardBtn"><span id="boardName"></span>${icon('chev', 'sm')}</button>
       <label class="search">${icon('search')}<input id="search" placeholder="Filter" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
       <span class="grow"></span>
+      <button class="pill-btn master-btn" id="masterBtn" hidden></button>
       <button class="pill-btn needs-btn" id="needsBtn" title="Needs you|Tickets where an agent is waiting for your answer" hidden>${icon('ask')}<span id="needsCount"></span></button>
       <button class="pill-btn catch-btn" id="catchBtn" title="While you were away|Tickets agents changed since you last looked" hidden>${icon('sparkle')}<span id="catchCount"></span></button>
       <button class="pill-btn icon-btn" id="inboxBtn" title="Inbox|Everything addressed to you — mentions, replies, questions and handoffs">${icon('bell')}<span class="badge" hidden></span></button>
@@ -532,6 +533,7 @@
       <button class="pill-btn icon-btn" id="settingsBtn" title="Settings|Themes, card contents, ticket fields and alerts">${icon('sliders')}</button>`;
     $('#boardBtn').onclick = (e) => boardMenu(e.currentTarget);
     $('#search').oninput = (e) => { state.query = e.target.value; applyFilter(); };
+    $('#masterBtn').onclick = (e) => masterMenu(e.currentTarget);
     $('#needsBtn').onclick = () => { const ids = needsIds(); if (ids.length) openItem(ids[0], cardEls.get(ids[0]), { rail: true }); };
     $('#rulesBtn').onclick = openRules;
     $('#catchBtn').onclick = openCatchup;
@@ -573,6 +575,13 @@
     $('#needsBtn').hidden = !needs;
     $('#needsCount').textContent = needs;
     $('#rulesBtn .dot').hidden = !state.board.directives?.trim();
+    const ms = activeMaster();
+    const mb = $('#masterBtn');
+    mb.hidden = !ms;
+    if (ms) {
+      mb.innerHTML = `${icon('lock', 'sm')}${avatar({ kind: ms.kind === 'user' ? 'user' : 'agent', name: ms.holder })}<span class="ms">${esc(ms.status || 'holds the board')}</span>`;
+      mb.dataset.tip = `Board held by ${ms.holder}|Working alone — other agents can only comment or ask${ms.expiresAt ? ` · until ${new Date(ms.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}. Click to release.`;
+    }
     const lastDigest = state.board.digest?.[state.board.digest.length - 1]?.ts || '';
     $('#digestBtn .dot').hidden = !lastDigest || lastDigest <= (digestSeen[state.boardId] || '');
     $('#bulkBtn').classList.toggle('on', state.bulk);
@@ -608,6 +617,18 @@
     render();
     renderPresenceButton();
     state.modal?.refresh();
+  }
+
+  const activeMaster = () => {
+    const m = state.board?.master;
+    return m && (!m.expiresAt || Date.parse(m.expiresAt) > nowMs()) ? m : null;
+  };
+  function masterMenu(anchor) {
+    const ms = activeMaster();
+    if (!ms) return;
+    const mine = ms.holder === settings.userName;
+    menu(anchor, [{ label: mine ? 'Release the board' : `Revoke ${ms.holder}'s hold`, icon: 'x', cls: mine ? '' : 'danger',
+      run: async () => { try { await api('DELETE', B('/master')); scheduleRefresh(0); } catch (e) { toast(e.message, { kind: 'error' }); } } }]);
   }
 
   async function refreshBoards() { try { state.boards = await api('GET', '/api/boards'); } catch { /* offline */ } }
@@ -2226,6 +2247,7 @@
     if (t === 'item.assigned') return 'user';
     if (t === 'item.unblocked') return 'sparkle';
     if (t === 'review.requested') return 'eye';
+    if (t.startsWith('master')) return 'lock';
     if (t === 'digest.added') return 'news';
     if (t.startsWith('lease')) return 'clock';
     if (t.startsWith('attention')) return 'ask';
@@ -2266,6 +2288,12 @@
       case 'board.external-edit': return 'Board file changed on disk';
       case 'lease.status': return `${b(ev.claimant)} on ${b(id)}: ${html ? esc(ev.status || '—') : ev.status || '—'}`;
       case 'item.assigned': return `${who} assigned ${b(id)} to ${b(ev.assignee || 'nobody')}`;
+      case 'master.claimed': return `${b(ev.holder)} is holding the whole board`;
+      case 'master.renewed': return `${b(ev.holder)} renewed the board hold`;
+      case 'master.released': return `${b(ev.holder)} released the board`;
+      case 'master.revoked': return `${who} revoked ${b(ev.holder)}'s board hold`;
+      case 'master.expired': return `${b(ev.holder)}'s board hold expired`;
+      case 'master.status': return `${b(ev.holder)}: ${html ? esc(ev.status || '—') : ev.status || '—'}`;
       case 'review.requested': return `${who} asked you to review ${b(id)}`;
       case 'digest.added': return `${who} posted to the digest`;
       case 'item.unblocked': return `${b(id)} is unblocked (${b(ev.resolvedBy)} done)`;
@@ -2296,7 +2324,7 @@
     if (on) { scheduleRefresh(0); refreshPresence(); }
   }
 
-  const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status']);
+  const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status', 'master.status', 'master.renewed']);
   function onEvent(ev) {
     if (ev.type === 'hello') return;
     if (ev.type === 'presence.changed' || (ev.type?.startsWith('lease.') && ev.type !== 'lease.status')) refreshPresence();
@@ -2378,9 +2406,12 @@
 
   function openRules() {
     const body = openDrawer('rulesDrawer', 'Standing rules', 'pin');
+    let project = [];
+    api('GET', B('/directives')).then((r) => { project = r.projectRules || []; if (!body.querySelector('.tbox')) show(); }, () => {});
     const show = () => {
       const txt = state.board.directives || '';
-      body.innerHTML = `<div class="md desc-view editable ${txt.trim() ? '' : 'empty'}" data-ph="Rules agents should follow…" style="margin:0">${md(txt)}</div>`;
+      const proj = project.map((r) => `<details class="proj-rules"><summary>${icon('text', 'sm')}<b>${esc(r.file)}</b><span>project conventions · read-only</span></summary><div class="md">${md(r.content)}</div></details>`).join('');
+      body.innerHTML = `${proj}${proj ? `<div class="section-head" style="margin-top:14px">${icon('pin', 'sm')}<span>Board rules</span><span class="rule"></span></div>` : ''}<div class="md desc-view editable ${txt.trim() ? '' : 'empty'}" data-ph="How agents should use this board…" style="margin:0">${md(txt)}</div>`;
       $('.desc-view', body).onclick = (e) => { if (!e.target.closest('a')) edit(); };
     };
     const edit = () => {
@@ -2736,6 +2767,9 @@
       { section: A, label: 'While you were away', icon: 'sparkle', run: openCatchup },
       { section: A, label: 'Standing rules', icon: 'pin', run: openRules },
       { section: A, label: 'Digest', icon: 'news', run: openDigest },
+      activeMaster()
+        ? { section: A, label: `Release the board (${activeMaster().holder})`, icon: 'x', run: () => api('DELETE', B('/master')).then(() => scheduleRefresh(0), (e) => toast(e.message, { kind: 'error' })) }
+        : { section: A, label: 'Hold the whole board', icon: 'lock', hint: 'master lease', run: () => api('POST', B('/master'), { force: true }).then(() => scheduleRefresh(0), (e) => toast(e.message, { kind: 'error' })) },
       { section: A, label: 'Agents', icon: 'bot', run: openAgents },
       { section: A, label: 'Archive', icon: 'archive', run: openArchive },
       { section: A, label: 'Select mode', icon: 'checks', run: () => setBulk(!state.bulk) },

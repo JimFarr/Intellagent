@@ -109,6 +109,7 @@ async function syncCi() {
 }
 
 const cmd = process.argv[2];
+if (!BASE && cmd !== 'install') { if (cmd === 'post-commit') process.exit(0); console.error(require('./lib/locate').NO_BOARD); process.exit(3); }
 const run = { install, 'post-commit': postCommit, 'sync-ci': syncCi }[cmd];
 if (!run) { console.log('Usage: node git-hook.js install | post-commit | sync-ci'); process.exit(1); }
 Promise.resolve(run()).catch((e) => { console.error(`intellagent: ${e.message}`); process.exit(cmd === 'post-commit' ? 0 : 1); });

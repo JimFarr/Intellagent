@@ -6,7 +6,7 @@
  */
 'use strict';
 
-const { baseUrl, tokenFor } = require('./lib/locate');
+const { baseUrl, tokenFor, NO_BOARD } = require('./lib/locate');
 
 const BASE = baseUrl(); // nearest .intellagent/ manifest from the working directory, or INTELLAGENT_URL
 // Agent name: INTELLAGENT_AGENT, else the MCP client's own name (e.g. "claude-code"), set during initialize.
@@ -85,6 +85,12 @@ const TOOLS = [
     (a) => ['POST', `/api/boards/${b(a)}/digest`, pick(a, ['summary', 'items'])]],
   ['read_digest', 'Read recent digest entries (what other agents and the human summarised).', { board, days: S('number', 'Days back, default 7') }, [],
     (a) => ['GET', `/api/boards/${b(a)}/digest?days=${a.days || 7}`]],
+  ['claim_board', 'Hold the whole board as the only agent (master lease): no per-ticket leases needed; other agents become read-only. Omit minutes to hold until released.', { board, minutes: S('number', 'Optional time limit'), status: S('string', 'What you are doing') }, [],
+    (a) => ['POST', `/api/boards/${b(a)}/master`, pick(a, ['minutes', 'status'])]],
+  ['set_board_status', 'Live status while you hold the whole board.', { board, status: S('string', 'e.g. "fixing auth tickets"') }, ['status'],
+    (a) => ['PUT', `/api/boards/${b(a)}/master/status`, { status: a.status }]],
+  ['release_board', 'Release the whole board (do this before spawning helper agents that use ticket leases).', { board }, [],
+    (a) => ['DELETE', `/api/boards/${b(a)}/master`]],
   ['release_lease', 'Release your lease.', { board, id }, ['id'], (a) => ['DELETE', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease`]],
   ['ask_human', 'Flag the item as needing the human, with a question.', { board, id, reason: S('string', 'Your question') }, ['id', 'reason'],
     (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/attention`, { reason: a.reason }]],
@@ -112,6 +118,7 @@ const tools = TOOLS.map(([name, description, properties, required, call]) => ({
 async function callTool(name, args = {}) {
   const t = tools.find((x) => x.name === name);
   if (!t) throw new Error(`Unknown tool ${name}`);
+  if (!BASE) return { text: NO_BOARD, isError: true };
   const [method, path, body] = t.call(args);
   const res = await fetch(BASE + path, {
     method,
@@ -135,7 +142,9 @@ async function handle(msg) {
         protocolVersion: params?.protocolVersion || '2025-06-18',
         capabilities: { tools: {} },
         serverInfo: { name: 'intellagent', version: VERSION },
-        instructions: `Kanban shared with the human at ${BASE}. You are "${AGENT}". Call get_directives and board_summary before working; lease items you work on; use ask_human when blocked.`,
+        instructions: BASE
+          ? `Kanban shared with the human at ${BASE}. You are "${AGENT}". Call get_directives and board_summary before working; working alone, take the master lease (claim_board); otherwise lease items you work on; use ask_human when blocked.`
+          : NO_BOARD,
       } });
     }
     if (method === 'ping') return send({ jsonrpc: '2.0', id: rid, result: {} });

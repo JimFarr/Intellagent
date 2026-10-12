@@ -7,8 +7,8 @@ Base URL: `{{BASE}}`  ·  index: `GET /api`  ·  schema: `GET /api/schema`
 ## 0. Rules of the road
 
 1. **Identify yourself** on every request: header `X-Agent: <your-name>` (or `?agent=<name>`). Use one stable name per agent.
-2. **Read the standing rules first**: `GET /api/boards/main/directives`. They are the human's instructions; they outrank your defaults.
-3. **Lease before you work** on a ticket, renew while working, release when done.
+2. **Read the standing rules first**: `GET /api/boards/main/directives` returns the board's workflow rules **and** the project's own convention files (e.g. CLAUDE.md, under `projectRules`). Conventions live in the repo; the board only adds how to use the board. Never copy one into the other.
+3. **Lease before you work** on a ticket, renew while working, release when done — or, if you are the only agent, **hold the whole board** once (master lease, below).
 4. **Ask, don't guess**: raise `needsHuman` when blocked on a decision. Then wait for the answer event.
 5. **Never write `data/` files directly.** They are read-only on purpose. The API is the only writer.
 6. Tickets are never deleted — archive them.
@@ -108,6 +108,9 @@ Columns with `humanOnlyIn` / `humanOnlyOut` can only be entered / left by a huma
 `PATCH … { "assignee": "other-agent" }` hands a ticket over; the assignee receives its events (`for=<name>` / `assignee=<name>`).
 When a ticket's last open blocker reaches the final column (or is archived), its watchers get `item.unblocked`.
 
+### Working alone: the master lease
+`POST /api/boards/main/master {}` holds the whole board until you release it (pass `minutes` for a time limit, `status` for a live line in the header). While you hold it you need no per-ticket leases and other agents are read-only — they can still comment, ask the human and post to the digest. It fails while other agents hold ticket leases. **Release it (`DELETE …/master`) before spawning helper agents**; they then use normal ticket leases. The human can revoke it at any time.
+
 ## 4. Talk to the human
 
 ```
@@ -116,6 +119,15 @@ DELETE /api/boards/main/items/INT-12/attention  { "reply": "…" }   (normally t
 ```
 
 The ticket glows on the board. The human's answer arrives as an `attention.resolved` event with `reply`, addressed to you.
+
+**Where to ask.** While the human is actively chatting with you, quick back-and-forth belongs in chat. Anything that should outlive the conversation — a decision, an approval, a question raised while working unattended — goes on the card, so you never wait in one place while they answer in the other. If you asked in chat about a ticket, record the answer on the card.
+
+**What not to post.** Keep cards and the digest readable: no step-by-step progress logs, nothing git already shows (diffs, file lists), no restating the ticket. Post decisions, blockers, results and how to verify.
+
+### Getting woken up
+You only see board events when you look. Two ways to make answers on cards reach you:
+- **During a session:** run `intellagent wait --agent <you>` as a **background** command. It blocks until something arrives in your inbox, prints it and exits — your shell tool notifies you. It remembers its place, so nothing is missed between runs. Re-arm it after handling the events.
+- **Unattended:** the human runs `intellagent watch --agent <you> --claude` (or `-- <any command>`). Each inbox event batch starts a fresh headless run with the events on stdin.
 
 ## 5. Events — know when things change
 
@@ -217,12 +229,12 @@ Asked to "set up Intellagent here"? Follow this. **Stop and ask the human at the
    then run `intellagent start` **in the background** (it is a long-running server) and confirm with `intellagent status`.
 5. **Tailor the schema and rules.** Draft, don't write yet:
    - Field options that fit the project, e.g. the software template's `area` tags from the repo's top-level folders.
-   - Standing rules from the project's own conventions (CLAUDE.md, CONTRIBUTING, lint/test commands). Keep them short and imperative.
+   - Board rules about **how to use the board only** (where work comes from, when to ask, review). Do **not** copy CLAUDE.md or other conventions into them — the board already shows those files read-only next to its rules. If a convention is missing from CLAUDE.md, propose adding it there instead.
    - Column changes, if the template doesn't fit (`POST/PATCH /api/boards/main/columns`).
 6. ✋ **Show the human** the proposed fields, rules and column changes in one message; apply only what they approve (`POST /schema/fields`, `PUT /directives`).
 7. **Introduce yourself:** `PATCH /api/profiles/me` with a colour, glyph, label and a one-paragraph description of your role.
 8. ✋ **Seed tickets** from the agreed source. Show the list first if there are more than ~10. Then create them with sensible `type`, `priority`, `parent` groups, description checklists and `blockedBy` links. Keep the first batch under ~25; mention what you left out.
-9. **Wire up:** in a git repo, offer `intellagent hook install`. Subscribe to your inbox: `POST /api/subscriptions { "filter": { "for": "<you>" } }`.
+9. **Wire up:** in a git repo, offer `intellagent hook install`. If you will be the only agent, take the master lease. Tell the human how answers reach you: `intellagent wait` in the background while you work, or `intellagent watch` for unattended work.
 10. **Hand over:** post a digest entry describing the setup, raise *needs you* on anything still uncertain, and tell the human the URL (`intellagent open`).
 
 Only touch `.intellagent/`, `.mcp.json`, `CLAUDE.md` and `.git/hooks/` — and only the ones the human agreed to.

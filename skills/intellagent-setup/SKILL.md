@@ -7,7 +7,7 @@ description: Set up an Intellagent kanban board in the current project and shape
 
 Intellagent is a local kanban that the human and agents share: the human steers work by editing tickets, answering questions and approving reviews; agents work through its HTTP API. Your job is to give this project a board that fits it, **with the human deciding its shape at three checkpoints (✋)**.
 
-Use `intellagent api <METHOD> <path> [json | @file | -]` for API calls (it finds this project's board automatically). Set `INTELLAGENT_AGENT` to your name for every call. On Windows prefer `@file` or stdin (`-`) for JSON bodies instead of inline quotes.
+Use `intellagent api <METHOD> <path> [key=value … | json | @file | -]` for API calls (it finds this project's board automatically and refuses if there is none). Set `INTELLAGENT_AGENT` to your name for every call. Prefer `key=value` arguments (`title="Fix login" priority=High fields.risk=low`) — they avoid shell quoting problems on every platform.
 
 ## 1. Preconditions
 
@@ -43,12 +43,12 @@ intellagent docs             # read the full agent guide before going further
 ## 5. Draft the tailoring (don't write yet)
 
 - **Field options** that match the project. For `software`, set the `area` tag options from real top-level folders/packages; adjust `estimate` units if the team uses points.
-- **Standing rules**: 4–8 short imperative bullets drawn from the project's own conventions (test command, branch/PR rules, things that need approval). Start from the template's rules and edit, don't pad.
+- **Board rules** about how to use the board only (where work comes from, when to ask on a card, review, digest). Start from the template's rules. **Do not copy CLAUDE.md or other conventions into them** — the board shows the project's CLAUDE.md read-only next to its own rules, so copying creates two sources of truth. If a convention is missing from CLAUDE.md, propose adding it there.
 - **Column changes** only if the template clearly doesn't fit.
 
 ## 6. ✋ Confirm the shape
 
-Show the user, in one message, the proposed fields (key, type, options), the standing rules, and any column changes. Apply only what they approve:
+Show the user, in one message, the proposed fields (key, type, options), the board rules (and any CLAUDE.md additions you suggest), and any column changes. Apply only what they approve:
 - `POST /api/boards/main/schema/fields` or `PATCH /api/boards/main/schema/fields/<key>`
 - `PUT /api/boards/main/directives { "directives": "…" }`
 - `POST` / `PATCH /api/boards/main/columns`
@@ -69,12 +69,13 @@ Collect candidates from the agreed source and de-duplicate them. If there are mo
 ## 9. Wire up
 
 - In a git repo, offer `intellagent hook install` (links commits mentioning ticket IDs).
-- Subscribe to your inbox: `POST /api/subscriptions { "label": "inbox", "filter": { "for": "<your name>" } }`.
+- If you will be the only agent working this board, take the master lease: `POST /api/boards/main/master { "status": "…" }` (release it before spawning helpers).
+- Explain how answers on cards reach an agent: `intellagent wait --agent <name>` run in the background during a session, or `intellagent watch --agent <name> --claude` for unattended work.
 
 ## 10. Hand over
 
 - `POST /api/boards/main/digest` summarising what you set up.
-- Raise *needs you* (`POST /items/<id>/attention`) on anything you were unsure about.
+- Raise *needs you* (`POST /items/<id>/attention`) on anything you were unsure about — on the card, not only in chat, so the answer stays with the work.
 - Tell the user the board URL (or run `intellagent open`), what was created, and how to use it: answer questions on cards, approve reviews, edit standing rules.
 
 ## Boundaries
