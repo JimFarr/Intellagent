@@ -387,8 +387,8 @@ async function agentsCmd() {
     if (error) console.log(`⚠ ${error}`);
     if (!agents.length) { console.log(`No standing agents. Add one:  intellagent agents add builder\n(definitions live in ${file})`); return; }
     for (const a of agents) {
-      const last = a.lastRun ? `last run ${ago(a.lastRun.endedAt || a.lastRun.startedAt)} (${a.lastRun.code ?? 'running'})` : 'never run';
-      console.log(`${a.name.padEnd(14)} ${a.status.padEnd(10)} ${String(a.queued).padStart(3)} queued  ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs/h  ${last}   listens: ${typeof a.listen === 'string' ? a.listen : JSON.stringify(a.listen)}`);
+      const last = a.lastRun ? `last run ${ago(a.lastRun.endedAt || a.lastRun.startedAt)} (${a.lastRun.code ?? 'running'})${a.lastRun.why ? ` for ${a.lastRun.why}` : ''}` : 'never run';
+      console.log(`${a.name.padEnd(14)} ${a.status.padEnd(10)} ${String(a.queued).padStart(3)} queued  ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs/h  ${last}   listens: ${typeof a.listen === 'string' ? a.listen : JSON.stringify(a.listen)}${a.pickup ? `  pickup: ${a.pickup}` : ''}`);
     }
     return;
   }

@@ -1440,6 +1440,39 @@ function workFor(ctx, name) {
   };
 }
 
+// Work already sitting on the boards for a standing agent, so an idle agent wakes without being poked.
+// Each entry has a stable key: the dispatcher wakes the agent once per key, and again only after the key
+// has left the list and come back (reassigned, answered anew…), so leaving something alone never loops.
+// pickup: false | 'ready' (also unassigned tickets in the pickup columns) | 'all' (every open unassigned
+// ticket — the receptionist's view of the board).
+function pendingWork(name, pickup = false) {
+  const out = [];
+  for (const ctx of boards.values()) {
+    const b = ctx.board;
+    const w = workFor(ctx, name);
+    const items = b.columns.flatMap((c) => c.itemIds.map((id) => b.items[id]).filter(Boolean));
+    const waitingOnHuman = (it) => (it.questions || []).length > 0;
+    for (const n of w.next) {
+      if (n.action === 'renew' || n.action === 'continue') continue; // housekeeping, or already mid-run
+      const it = n.id && b.items[n.id];
+      if (it && n.action === 'start' && (it.assignee !== name || waitingOnHuman(it))) continue; // "ready" suggestions are pickup's job
+      const tag = n.action === 'resume' ? w.answered.find((x) => x.id === n.id)?.questionId
+        : n.action === 'address_feedback' ? it?.review?.at
+          : n.action === 'explain' ? w.explain.find((x) => x.id === n.id)?.commentId : '';
+      out.push({ key: `${ctx.id}:${n.action}:${n.requestId || n.id}${tag ? `:${tag}` : ''}`, board: ctx.id, action: n.action, id: n.id || null, requestId: n.requestId || null, title: n.title || null, why: n.why });
+    }
+    if (!pickup) continue;
+    const done = doneColumnId(ctx);
+    const cols = new Set((pickup === 'all' ? b.columns : pickupColumns(ctx)).map((c) => c.id));
+    for (const it of items) {
+      if (!cols.has(it.columnId) || it.columnId === done || it.assignee || activeLease(it) || waitingOnHuman(it)) continue;
+      out.push({ key: `${ctx.id}:triage:${it.id}`, board: ctx.id, action: pickup === 'all' ? 'triage' : 'pickup', id: it.id, title: it.title,
+        why: pickup === 'all' ? `Unassigned in ${b.columns.find((c) => c.id === it.columnId)?.name}: triage it — assign, ask, or leave it` : `Ready and unassigned (${it.priority})` });
+    }
+  }
+  return out;
+}
+
 // One page an agent reads first: who it is, what to do next, how this board works, and the exact calls.
 // via: cli (intellagent api …) | mcp (tool names) | http (raw requests).
 function briefing(ctx, name, base, via = 'cli') {
@@ -2931,6 +2964,7 @@ standing = require('./lib/agents').createAgents({
   cwd: PROJECT_ROOT,
   env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
   emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
+  pending: (name, def) => pendingWork(name, def.pickup === true ? 'ready' : def.pickup || false),
   // A run starting means the agent has the comments in front of it: mark them seen with 👀.
   onRunStart: (name, events) => {
     for (const e of events) {

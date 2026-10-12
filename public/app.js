@@ -3924,7 +3924,8 @@
   function standingSection(a) {
     const l = a.lastRun;
     const listen = listenLabel(a.listen);
-    const meta = `wakes on ${esc(listen)} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
+    const why = l?.why ? ` for ${esc(l.why.replace('work.pending', 'work waiting on the board'))}` : '';
+    const meta = `wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
     return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div></div>`;
   }
 

@@ -187,3 +187,30 @@ describe('standing agents survive a reboot', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('standing agents pick up work already on the board', () => {
+  it('on board start: assigned work wakes its agent, the receptionist sees unassigned tickets, and nothing loops', async () => {
+    let s = await startServer({ agents: { agents: {} } });
+    const loose = await s.ok('POST', `${B}/items`, { title: 'nobody owns this', column: 'Backlog' }, USER);
+    const owned = await s.ok('POST', `${B}/items`, { title: 'for the builder', column: 'Backlog', assignee: 'maker' }, USER);
+    const dir = s.dir;
+    await s.stop({ keep: true });
+
+    s = await startServer({ dir, agents: { defaults: fast, agents: {
+      desk: { role: 'coordinator', run: run('ok') }, maker: { run: run('ok') }, idle: { run: run('ok') },
+    } } });
+    try {
+      const started = async (name) => (await s.ok('GET', '/api/events?types=agent.run.started')).events.filter((e) => e.agent === name);
+      await until(async () => (await started('maker')).length && (await started('desk')).length, 8000, 'pending wakes');
+      assert.deepEqual((await started('maker'))[0].items, [owned.id], 'assigned work wakes its agent');
+      const deskItems = (await started('desk'))[0].items;
+      assert.ok(deskItems.includes(loose.id) && !deskItems.includes(owned.id), 'the receptionist sees unassigned tickets only');
+      await until(async () => (await agentState(s, 'maker')).status === 'idle' && (await agentState(s, 'desk')).status === 'idle', 4000, 'idle');
+      assert.equal((await agentState(s, 'maker')).lastRun.why, 'work.pending');
+      await new Promise((r) => setTimeout(r, 1200));
+      assert.equal((await started('maker')).length, 1, 'untouched work does not wake it again');
+      assert.equal((await started('desk')).length, 1);
+      assert.equal((await started('idle')).length, 0, 'agents with nothing waiting stay asleep');
+    } finally { await s.stop(); }
+  });
+});
