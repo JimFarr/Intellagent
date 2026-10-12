@@ -23,13 +23,17 @@ if (mode === 'stream') {
       if (!line.trim()) continue;
       turns++;
       if (arg && !fs.existsSync(arg)) { fs.writeFileSync(arg, 'crashed'); process.exit(1); }
+      // which prompt this turn got: the full first-turn one (role brief + rules) or the short later-turn one
+      const content = String(JSON.parse(line).message?.content || '');
+      const kind = /Same session, same rules/.test(content) ? 'short' : 'full';
+      const role = /Your role:/.test(content) ? '+role' : '';
       const ctx = runContext();
       const events = JSON.parse(fs.readFileSync(ctx.events, 'utf8'));
       for (const id of new Set(events.map((e) => e.itemId).filter(Boolean))) {
         await fetch(`${process.env.INTELLAGENT_URL}/api/boards/main/items/${id}/comments`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT, ...(ctx.run ? { 'x-intellagent-run': ctx.run } : {}) },
-          body: JSON.stringify({ body: `turn ${turns} in pid ${process.pid}` }),
+          body: JSON.stringify({ body: `turn ${turns} in pid ${process.pid} (${kind}${role})` }),
         });
       }
       process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok' })}\n`);

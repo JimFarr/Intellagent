@@ -250,7 +250,7 @@ describe('keep-alive standing agents', () => {
   it('one process serves several wakes as turns, is recycled after recycleAfterRuns, restarts after a crash and stops on pause', async () => {
     const marker = path.join(require('os').tmpdir(), `ia-crash-${Date.now()}`);
     const s = await startServer({ agents: { defaults: fast, agents: {
-      keeper: { run: run('stream'), keepAlive: true, recycleAfterRuns: 2 },
+      keeper: { role: 'builder', run: run('stream'), keepAlive: true, recycleAfterRuns: 2, throttleMinutes: 0 },
       crashy: { run: run('stream', `"${marker}"`), keepAlive: true },
     } } });
     const pidOf = (c) => Number(/pid (\d+)/.exec(c)?.[1]);
@@ -268,6 +268,10 @@ describe('keep-alive standing agents', () => {
       assert.match(t2, /turn 2 in/);
       assert.equal(pidOf(t1), pidOf(t2), 'the second wake is a turn in the same process');
       assert.match(t3, /turn 1 in/, 'recycled after 2 turns: a fresh process');
+      // only the first turn of a session carries the role brief and the rules; later turns get the short prompt
+      assert.ok(t1.endsWith('(full+role)'), t1);
+      assert.ok(t2.endsWith('(short)'), `turn 2 gets the short prompt, without the role brief: ${t2}`);
+      assert.ok(t3.endsWith('(full+role)'), `a recycled session starts with the full prompt again: ${t3}`);
       assert.notEqual(pidOf(t3), pidOf(t1));
       assert.equal((await agentState(s, 'keeper')).session.turns, 1);
       await s.ok('POST', '/api/agents/keeper/pause', {}, USER);
