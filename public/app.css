@@ -81,7 +81,7 @@ body.scrimmed .topbar, body.scrimmed .board, body.scrimmed .bg-layer, body.scrim
 .r1 { --c: var(--accent); rotate: -7deg; }
 .r2 { --c: var(--accent-2); rotate: 5deg; top: -8vh; animation-duration: 31s; animation-delay: -9s; }
 .r3 { --c: var(--blob3); rotate: -2deg; top: 4vh; height: 40vh; animation-duration: 41s; animation-delay: -17s; opacity: calc(var(--fx-o) * .7); }
-.fx-aurora::after { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 3px, color-mix(in oklab, var(--bg) 18%, transparent) 3px 9px); }
+.fx-aurora::after { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 4px, color-mix(in oklab, var(--bg) 9%, transparent) 4px 7px); }
 @keyframes aur { 0% { translate: -9% 0; scale: 1 1; } 50% { translate: 3% 5vh; scale: 1.12 .78; } 100% { translate: 11% -3vh; scale: .94 1.2; } }
 
 :root[data-bg="stars"] .bg-layer { background: radial-gradient(ellipse 90% 70% at 50% 115%, color-mix(in oklab, var(--blob1) 20%, var(--bg)), var(--bg) 70%); }
@@ -129,8 +129,10 @@ body.scrimmed .topbar, body.scrimmed .board, body.scrimmed .bg-layer, body.scrim
 .i.sm { width: 13px; height: 13px; }
 
 /* ───────── top bar ───────── */
-.topbar { display: flex; align-items: center; gap: 8px; padding: 12px 22px 10px; position: relative; z-index: 30; flex-wrap: wrap; }
-.brand { display: flex; align-items: center; gap: 10px; margin-right: 6px; }
+.topbar { display: flex; align-items: center; gap: 8px; padding: 12px 22px 10px; position: relative; z-index: 30; flex-wrap: nowrap; }
+.brand { display: flex; align-items: center; gap: 10px; margin-right: 6px; min-width: 0; flex-shrink: 0; }
+.brand .app-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.topbar > .pill-btn, .topbar > .grow { flex-shrink: 0; }
 .logo { width: 32px; height: 32px; display: grid; place-items: center; cursor: pointer; filter: drop-shadow(0 6px 14px color-mix(in oklab, var(--accent) 45%, transparent)); transition: transform .5s var(--spring); }
 .logo:hover { transform: rotate(-8deg) scale(1.08); }
 .logo svg { width: 32px; height: 32px; }
@@ -151,7 +153,7 @@ body.scrimmed .topbar, body.scrimmed .board, body.scrimmed .bg-layer, body.scrim
 .board-btn { font-family: var(--display); font-weight: 600; font-size: 14px; }
 .board-btn .i { opacity: .6; }
 
-.search { position: relative; display: flex; align-items: center; flex: 0 1 240px; min-width: 120px; }
+.search { position: relative; display: flex; align-items: center; flex: 0 1 240px; min-width: 44px; }
 .search .i { position: absolute; left: 11px; color: var(--muted); pointer-events: none; }
 .search input {
   width: 100%; height: 34px; border-radius: var(--r-ctl); border: var(--bw) solid color-mix(in oklab, var(--border) 85%, transparent);
@@ -1005,11 +1007,6 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .reduced .tip { transition: none; }
 
 /* keep the folded corner (and sticky curl) clear of badges, lease rings and the select checkbox */
-:root[data-tape="corner"] .card .c-top { padding-right: 16px; }
-:root[data-tape="corner"] .bulk .card .c-top { padding-right: 42px; }
-:root[data-tape="corner"] .bulk .card .c-check { right: 22px; }
-:root[data-tape="corner"] .c-ask { right: 20px; }
-:root[data-tape="corner"][data-attn="ribbon"] .c-ask { right: 26px; }
 :root[data-cards="sticky"] .card .c-meta { padding-right: 10px; }
 
 .car-track { cursor: grab; user-select: none; -webkit-user-select: none; }
@@ -1018,3 +1015,44 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 /* header shares the board's frame (set from JS when the columns fit) */
 .topbar { padding-left: var(--frame-l, 22px); padding-right: var(--frame-r, 22px); transition: padding .45s var(--ease); }
+
+/* every column header is the same height, whether or not it has a + button or gate icon */
+.col-head { min-height: 50px; }
+.col-head > * { flex-shrink: 0; }
+.col-head .col-name { flex-shrink: 1; min-width: 0; }
+
+/* reserve room in the top row for the needs-you marker (and the folded corner) so badges never sit under it */
+
+/* draft save bar in the ticket modal */
+.m-save { flex: none; display: flex; align-items: center; gap: 8px; margin: 0 14px 4px; padding: 8px 8px 8px 14px; border-radius: calc(var(--r-ctl) + 4px);
+  background: color-mix(in oklab, var(--accent) 12%, var(--surface)); border: var(--bw) solid color-mix(in oklab, var(--accent) 40%, var(--border)); font-size: 12.5px; color: var(--muted); }
+.m-save .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-save b { color: var(--text); font-weight: 600; }
+.m-save .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.m-save .stale { color: var(--warn); }
+.m-save.nudge { animation: shake .4s; border-color: var(--warn); }
+
+/* ═════════ audit: reserved top-right corner (theme token `corner`, the fold, needs-you markers, select checkbox) ═════════ */
+.card .c-top { padding-right: var(--corner, 0px); }
+.card.needs .c-top { padding-right: calc(var(--corner, 0px) + 14px); }
+:root[data-attn="glow"] .card.needs .c-top { padding-right: calc(var(--corner, 0px) + 20px); }
+:root[data-attn="ribbon"] .card.needs .c-top { padding-right: calc(var(--corner, 0px) + 30px); }
+:root[data-attn="bar"] .card.needs .c-top { padding-right: var(--corner, 0px); }
+:root body.bulk .card .c-top { padding-right: calc(var(--corner, 0px) + 26px); }
+.bulk .card .c-check { right: calc(9px + var(--corner, 0px)); }
+.c-ask { right: calc(-6px + var(--corner, 0px)); }
+:root[data-attn="ribbon"] .c-ask { right: calc(12px + var(--corner, 0px)); }
+:root[data-attn="glow"] .c-ask { right: calc(10px + var(--corner, 0px)); }
+:root[data-attn="outline"] .c-ask { right: calc(-8px + var(--corner, 0px)); }
+
+/* theme token `avatars`: accent | ink — single-colour avatars for monochrome themes */
+:root[data-avatars="accent"] .avatar:not(.img) { --av: var(--accent) !important; color: var(--bg); text-shadow: none; }
+:root[data-avatars="ink"] .avatar:not(.img) { --av: var(--text) !important; color: var(--bg); text-shadow: none; }
+/* theme token `colColor`: accent | ink — override each column's own colour */
+:root[data-colcolor="accent"] .column { --col: var(--accent) !important; }
+:root[data-colcolor="ink"] .column { --col: var(--text) !important; }
+
+/* see-through columns keep a faint panel in dark themes so content separates from busy backgrounds */
+:root[data-mode="dark"][data-lanes="outline"] .column { background: color-mix(in oklab, var(--panel) 38%, transparent); }
+
+@media (max-width: 640px) { .topbar { flex-wrap: wrap; } }

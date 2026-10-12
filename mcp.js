@@ -9,7 +9,8 @@
 const { baseUrl, tokenFor } = require('./lib/locate');
 
 const BASE = baseUrl(); // nearest .intellagent/ manifest from the working directory, or INTELLAGENT_URL
-const AGENT = process.env.INTELLAGENT_AGENT || 'mcp-agent';
+// Agent name: INTELLAGENT_AGENT, else the MCP client's own name (e.g. "claude-code"), set during initialize.
+let AGENT = process.env.INTELLAGENT_AGENT || 'mcp-agent';
 const BOARD = process.env.INTELLAGENT_BOARD || 'main';
 const VERSION = '1.0.0';
 
@@ -128,6 +129,8 @@ async function handle(msg) {
   if (rid === undefined) return; // notification
   try {
     if (method === 'initialize') {
+      const client = params?.clientInfo?.name;
+      if (!process.env.INTELLAGENT_AGENT && client) AGENT = String(client).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 64);
       return send({ jsonrpc: '2.0', id: rid, result: {
         protocolVersion: params?.protocolVersion || '2025-06-18',
         capabilities: { tools: {} },

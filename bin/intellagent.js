@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /*
  * intellagent — global command.
- *   intellagent init [dir] [--name "My App"] [--prefix APP] [--port 7421] [--mcp] [--claude] [--demo]
+ *   intellagent init [dir] [--template software] [--name "My App"] [--prefix APP] [--port 7421] [--mcp] [--agent name] [--claude] [--demo]
+ *   intellagent templates               list board templates
+ *   intellagent skill install [--project] install the /intellagent-setup skill for Claude Code
  *   intellagent start [--open]          run the board for the nearest .intellagent/ folder
  *   intellagent open | status | docs
  *   intellagent api <METHOD> <path> [json | @file | -]
@@ -13,7 +15,9 @@ const fs = require('fs');
 const path = require('path');
 const net = require('net');
 const { spawn } = require('child_process');
+const os = require('os');
 const { findManifest, readManifest, baseUrl } = require('../lib/locate');
+const TEMPLATES = require('../lib/templates');
 
 const ROOT = path.join(__dirname, '..');
 const [cmd = 'help', ...rest] = process.argv.slice(2);
@@ -58,12 +62,15 @@ async function init() {
   const manifestPath = path.join(folder, 'intellagent.manifest.json');
   if (fs.existsSync(manifestPath)) { console.log(`Already initialised: ${manifestPath}`); return; }
   const name = String(f.name || path.basename(dir));
+  const template = String(f.template || 'default');
+  if (!TEMPLATES[template]) { console.error(`Unknown template "${template}". Available: ${Object.keys(TEMPLATES).join(', ')}`); process.exit(1); }
   const port = Number(f.port) || await freePort(7420);
   const manifest = {
     appName: 'Intellagent',
     boardName: name,
     idPrefix: String(f.prefix || prefixFrom(name)).toUpperCase(),
     seed: f.demo ? 'demo' : 'empty',
+    template,
     host: '127.0.0.1',
     port,
     dataDir: './data',
@@ -81,14 +88,17 @@ async function init() {
   const url = `http://127.0.0.1:${port}`;
   fs.writeFileSync(path.join(folder, 'README.md'), `# ${name} · Intellagent board\n\nStart it with \`intellagent start\` (from anywhere inside this project), then open ${url}.\n\n## Prompt for agents\n\n\`\`\`\n${agentPrompt(url)}\n\`\`\`\n`);
   console.log(`\n  ✓ ${path.relative(process.cwd(), manifestPath) || manifestPath}`);
-  console.log(`    board "${name}" · tickets ${manifest.idPrefix}-1, ${manifest.idPrefix}-2… · port ${port}`);
+  console.log(`    board "${name}" · ${TEMPLATES[template].label} template · tickets ${manifest.idPrefix}-1, ${manifest.idPrefix}-2… · port ${port}`);
 
   if (f.mcp) {
     const mcpPath = path.join(dir, '.mcp.json');
     let mcp = {};
     try { mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf8')); } catch { /* new file */ }
     mcp.mcpServers = mcp.mcpServers || {};
-    mcp.mcpServers.intellagent = { command: 'node', args: [path.join(ROOT, 'mcp.js').replace(/\\/g, '/')] };
+    mcp.mcpServers.intellagent = {
+      command: 'node', args: [path.join(ROOT, 'mcp.js').replace(/\\/g, '/')],
+      ...(f.agent ? { env: { INTELLAGENT_AGENT: String(f.agent) } } : {}),
+    };
     fs.writeFileSync(mcpPath, `${JSON.stringify(mcp, null, 2)}\n`);
     console.log('  ✓ .mcp.json  (intellagent MCP tools)');
   }
@@ -148,9 +158,33 @@ function forward(script, args) {
   require(path.join(ROOT, script));
 }
 
+function templates() {
+  for (const [k, t] of Object.entries(TEMPLATES)) {
+    console.log(`  ${k.padEnd(9)} ${t.label}`);
+    console.log(`  ${''.padEnd(9)} ${t.description}`);
+    const fields = (t.schema?.fields || []).map((x) => x.key);
+    if (fields.length) console.log(`  ${''.padEnd(9)} fields: ${fields.join(', ')}`);
+  }
+}
+
+// Copies the bundled Claude Code skill to ~/.claude/skills (or ./.claude/skills with --project).
+function skill() {
+  const f = flags(rest);
+  if (f._[0] !== 'install') { console.log('Usage: intellagent skill install [--project]'); return; }
+  const src = path.join(ROOT, 'skills', 'intellagent-setup', 'SKILL.md');
+  const base = f.project ? path.join(process.cwd(), '.claude', 'skills') : path.join(os.homedir(), '.claude', 'skills');
+  const dest = path.join(base, 'intellagent-setup', 'SKILL.md');
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
+  console.log(`Installed ${dest}`);
+  console.log('In Claude Code: /intellagent-setup, or just ask it to set up Intellagent.');
+}
+
 const HELP = `intellagent — a kanban for you and your agents
 
-  init [dir]       scaffold .intellagent/ here   --name --prefix --port --mcp --claude --demo
+  init [dir]       scaffold .intellagent/ here   --template --name --prefix --port --mcp --agent --claude --demo
+  templates        list board templates (software, research, ops, ...)
+  skill install    add the /intellagent-setup skill to Claude Code   [--project]
   start            run this project's board      --open
   open             open the board in a browser
   status           where it is and whether it's running
@@ -161,7 +195,7 @@ const HELP = `intellagent — a kanban for you and your agents
 `;
 
 const commands = {
-  init, start, status, docs,
+  init, start, status, docs, templates, skill,
   open: () => openUrl(baseUrl()),
   api: () => forward('cli.js', rest),
   mcp: () => forward('mcp.js', rest),

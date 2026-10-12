@@ -119,6 +119,9 @@
     heads: 'normal', // column titles: normal | caps
     avatar: 'mixed', // mixed (agents square, people round) | round | square
     bg: 'blobs', texture: true,
+    corner: null, // px kept clear in each card's top-right (auto: 16 when the fold decoration is on)
+    avatars: 'color', // color | accent | ink
+    colColor: 'own', // own | accent | ink — column dots and rules
   };
   const T = (label, mode, c, style = {}, css = '') => ({
     label, mode, style, css, glow: !!style.glow,
@@ -179,6 +182,27 @@
     blueprint: T('Blueprint', 'dark', ['#0b2545', '#0f2f57', '#13396a', '#e8f1ff', '#8fb3e0', '#2f5d93', '#7cc4ff', '#ffd166', '#ff8fa3', '#7cc4ff', '#ffd166', '#8ef0b0', '#ffb86b', '#ff8fa3', '#1d4e89', '#2b6cb0', '#0b3d73'],
       { card: 3, col: 6, modal: 8, ctl: 4, shadow: 'flat', tape: 'clip', cards: 'clean', typeInd: 'dot', attn: 'outline', enter: 'fade', lanes: 'outline', chips: 'outline', heads: 'caps', bg: 'none', texture: false, display: "'JetBrains Mono', monospace" },
       '.board { background-image: linear-gradient(color-mix(in oklab, var(--text) 8%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in oklab, var(--text) 8%, transparent) 1px, transparent 1px); background-size: 24px 24px; } .column, .card { border-style: dashed; } .c-title { text-transform: uppercase; font-size: 12.5px; letter-spacing: .04em; }'),
+    vision: T('Vision', 'light', ['#e9eef8', '#ffffff', '#ffffff', '#0f1222', '#5b6380', '#d9e0ee', '#5b5bf6', '#0ea5e9', '#f43f5e', '#3b82f6', '#f59e0b', '#10b981', '#f97316', '#ef4444', '#a78bfa', '#67e8f9', '#f9a8d4'],
+      { card: 18, col: 28, modal: 30, ctl: 14, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'glass', bg: 'mesh', texture: false, avatar: 'round', colAlpha: 45 },
+      '.column { background: linear-gradient(180deg, rgb(255 255 255 / .6), rgb(255 255 255 / .28)); border: 1px solid rgb(255 255 255 / .75); box-shadow: 0 1px 0 rgb(255 255 255 / .9) inset, 0 30px 60px -30px rgb(30 40 90 / .35); } .card { background: rgb(255 255 255 / .8); border-color: rgb(255 255 255 / .95); box-shadow: 0 1px 0 #fff inset, 0 12px 30px -14px rgb(30 40 90 / .32); } .modal, .drawer, .menu { background: rgb(255 255 255 / .93); } .pill-btn, .search input { background: rgb(255 255 255 / .62); border-color: rgb(255 255 255 / .85); } .app-name { background: linear-gradient(90deg, #5b5bf6, #0ea5e9); -webkit-background-clip: text; background-clip: text; }'),
+    phosphor: T('Phosphor', 'dark', ['#050805', '#081008', '#0b160b', '#b8ffb0', '#5f9a5a', '#1d3a1c', '#39ff14', '#a3ff7a', '#ff5f5f', '#39ff14', '#ffd84d', '#39ff14', '#ffb000', '#ff4040', '#0f3d0f', '#123a12', '#0a2a0a'],
+      { card: 0, col: 0, modal: 0, ctl: 0, shadow: 'flat', cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'outline', enter: 'fade', lanes: 'outline', chips: 'outline', heads: 'caps', bg: 'none', texture: false, avatar: 'square', avatars: 'accent', colColor: 'accent', titleW: 400, font: "'JetBrains Mono', monospace", display: "'VT323', monospace" },
+      'body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1000; background: repeating-linear-gradient(0deg, rgb(0 0 0 / .22) 0 1px, transparent 1px 3px); } .board { background-image: radial-gradient(ellipse at 50% 40%, rgb(57 255 20 / .07), transparent 70%); } .c-title, .col-name, .app-name { text-shadow: 0 0 6px color-mix(in oklab, var(--accent) 65%, transparent); } .c-title { font-family: var(--display); font-size: 20px; line-height: 1.05; letter-spacing: .02em; } .col-name { font-family: var(--display); font-size: 19px; letter-spacing: .04em; } .app-name { background: none; color: var(--accent); -webkit-text-fill-color: currentColor; font-family: var(--display); font-size: 23px; } .card:hover .c-title::after { content: "_"; animation: breathe 1s steps(1) infinite; }'),
+    swiss: T('Swiss', 'light', ['#f2f2ee', '#f2f2ee', '#ffffff', '#111111', '#6b6b6b', '#111111', '#e3000f', '#e3000f', '#e3000f', '#111111', '#ffb800', '#00875a', '#ff6b00', '#e3000f', '#f2f2ee', '#f2f2ee', '#f2f2ee'],
+      { card: 0, col: 0, modal: 0, ctl: 0, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'lane', chips: 'tag', bg: 'none', texture: false, avatar: 'square', avatars: 'ink', colColor: 'ink', titleW: 700, font: "'Inter'", display: "'Inter'", colAlpha: 100 },
+      '.col-head { border-bottom: 3px solid var(--text) !important; align-items: flex-end; } .col-name { font-size: 30px; font-weight: 800; letter-spacing: -.045em; text-transform: lowercase; line-height: 1; } .col-count { background: none; padding: 0; font: 300 30px/1 var(--display); letter-spacing: -.04em; color: var(--accent); } .col-dot, .col-icon { display: none; } .card { background: transparent; border-width: 0 0 1px; border-color: var(--text); border-radius: 0; box-shadow: none; padding: 12px 0 11px; } .card::before { display: none; } .card:hover { background: rgb(0 0 0 / .03); } .c-title { font-size: 15.5px; letter-spacing: -.02em; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 800; letter-spacing: -.045em; font-size: 22px; } .logo { filter: grayscale(1) contrast(1.6); }'),
+    bauhaus: T('Bauhaus', 'light', ['#f1ebdd', '#e8e0cd', '#fbf7ee', '#1a1a1a', '#6a645a', '#1a1a1a', '#d6312a', '#1f4fa3', '#d6312a', '#1f4fa3', '#f2b705', '#2e7d32', '#e8701a', '#d6312a', '#d6312a', '#1f4fa3', '#f2b705'],
+      { card: 0, col: 0, modal: 0, ctl: 20, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'solid', chips: 'pill', heads: 'caps', bg: 'none', texture: true, avatar: 'round', corner: 30, titleW: 700, font: "'Archivo'", display: "'Archivo'" },
+      '.card { background: radial-gradient(circle at 100% 0, var(--type-c) 0 22px, transparent 23px), var(--surface); } .card[data-type="task"] { background: linear-gradient(var(--type-c), var(--type-c)) 100% 0 / 22px 22px no-repeat, var(--surface); } .card[data-type="spike"] { background: linear-gradient(225deg, var(--type-c) 50%, transparent 50%) 100% 0 / 30px 30px no-repeat, var(--surface); } .card::before { display: none; } .column { border-top: 10px solid var(--col); } .col-name { font-weight: 900; letter-spacing: .06em; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 900; }'),
+    soft: T('Soft', 'light', ['#e6e9ef', '#e6e9ef', '#e6e9ef', '#2d3346', '#7b8196', '#d5d9e2', '#6c63ff', '#00b8a9', '#ef5d7a', '#5b8def', '#f0a93b', '#2bb673', '#f08c3b', '#e5484d', '#e6e9ef', '#e6e9ef', '#e6e9ef'],
+      { card: 16, col: 26, modal: 28, ctl: 14, bw: 0, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'solid', bg: 'none', texture: false, avatar: 'round', colAlpha: 100 },
+      '.column { box-shadow: 10px 10px 24px #c5c9d3, -10px -10px 24px #ffffff; } .card { box-shadow: 6px 6px 14px #c8ccd6, -6px -6px 14px #ffffff; } .card:hover { box-shadow: 2px 2px 6px #c8ccd6, -2px -2px 6px #ffffff; } .card::before { display: none; } .search input, .inp, .dd, .tbox, .seg { background: var(--bg); box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; border-color: transparent; } .pill-btn, .btn:not(.primary), .car-nav { background: var(--bg); border-color: transparent; box-shadow: 4px 4px 10px #c8ccd6, -4px -4px 10px #ffffff; } .pill-btn:active, .btn:active { box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; } .modal, .drawer { box-shadow: 20px 20px 50px #c5c9d3, -20px -20px 50px #ffffff; } .seg button.on { box-shadow: 3px 3px 6px #c8ccd6, -3px -3px 6px #ffffff; }'),
+    iridescent: T('Iridescent', 'dark', ['#07070b', '#0e0e15', '#13131c', '#f1f0ff', '#8d8ba8', '#24233a', '#c084fc', '#5eead4', '#fb7185', '#60a5fa', '#fcd34d', '#4ade80', '#fb923c', '#f43f5e', '#7c3aed', '#06b6d4', '#ec4899'],
+      { card: 14, col: 20, modal: 22, ctl: 12, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'orbit', enter: 'zoom', lanes: 'outline', chips: 'outline', bg: 'aurora', texture: true },
+      '.card { border: 1px solid transparent; background: linear-gradient(var(--surface), var(--surface)) padding-box, conic-gradient(from 210deg, #c084fc, #5eead4, #60a5fa, #f472b6, #fcd34d, #c084fc) border-box; } .card:hover { box-shadow: 0 18px 40px -16px rgb(192 132 252 / .5), 0 0 24px -10px rgb(94 234 212 / .5); } .column { border-color: rgb(255 255 255 / .07); background: rgb(14 14 21 / .55); } .app-name { background: linear-gradient(90deg, #c084fc, #5eead4, #f472b6); -webkit-background-clip: text; background-clip: text; } .btn.primary { background: linear-gradient(120deg, #c084fc, #60a5fa, #5eead4); }'),
+    riso: T('Riso', 'light', ['#f5f0e6', '#efe8da', '#fbf8f1', '#1d2b6b', '#5c6aa3', '#1d2b6b', '#ff48b0', '#0078bf', '#ff48b0', '#0078bf', '#ffe800', '#00a95c', '#ff6c2f', '#ff48b0', '#ff48b0', '#0078bf', '#ffe800'],
+      { card: 4, col: 6, modal: 8, ctl: 6, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'tint', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'outline', chips: 'tag', heads: 'caps', bg: 'none', texture: true, grain: '.4', titleW: 700, font: "'Bricolage Grotesque'", display: "'Bricolage Grotesque'" },
+      '.card { --card-line: var(--text); box-shadow: 3px 3px 0 var(--accent); } .card:hover { box-shadow: 5px 5px 0 var(--accent), -2px -2px 0 color-mix(in oklab, var(--accent-2) 70%, transparent); } .c-title { text-shadow: 1.5px 1px 0 color-mix(in oklab, var(--accent) 50%, transparent); } .col-name { color: var(--accent-2); text-shadow: 2px 1px 0 color-mix(in oklab, var(--accent) 60%, transparent); } .column { box-shadow: 6px 6px 0 color-mix(in oklab, var(--accent-2) 28%, transparent); } .app-name { background: none; color: var(--accent-2); -webkit-text-fill-color: currentColor; text-shadow: 2px 1.5px 0 var(--accent); } .btn.primary { background: var(--accent); box-shadow: 3px 3px 0 var(--accent-2); }'),
   };
   const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['stars', 'Stars'], ['mesh', 'Mesh'], ['none', 'None']];
   const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES.intellagent).style });
@@ -192,7 +216,7 @@
     density: 'cozy', colw: 300, ageDays: '7',
     motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full',
     stub: { id: true, type: true, priority: true, parent: true, author: true, lease: true, comments: true, attachments: true, blocked: true, properties: false, description: false, thumbnail: true, fields: true, assignee: true, status: true, checklist: true, listeners: true },
-    grouping: 'stack', userName: 'You', notify: false, notifyHidden: true, sound: false, toasts: true,
+    grouping: 'stack', saveMode: 'accept', userName: 'You', notify: false, notifyHidden: true, sound: false, toasts: true,
   };
   function loadSettings() {
     try {
@@ -231,6 +255,10 @@
     r.classList.toggle('no-texture', !texture);
     r.classList.toggle('reduced', reduced());
     r.style.setProperty('--colw', `${settings.colw}px`);
+    const corner = st.corner ?? (pick('tape') === 'corner' ? 16 : 0);
+    r.style.setProperty('--corner', `${corner}px`);
+    r.dataset.avatars = st.avatars;
+    r.dataset.colcolor = st.colColor;
     let css = $('#theme-css');
     if (!css) { css = document.createElement('style'); css.id = 'theme-css'; document.head.append(css); }
     css.textContent = t.css ? `:root[data-theme="${r.dataset.theme}"] { } ${t.css.replace(/(^|\})\s*([^{}]+)\{/g, (m, b, sel) => `${b} ${sel.split(',').map((x) => `:root[data-theme="${r.dataset.theme}"] ${x.trim()}`).join(', ')} {`)}` : '';
@@ -1320,6 +1348,11 @@
   function closeModal(instant) {
     const m = state.modal;
     if (!m) return;
+    if (!instant && isDirty(m)) {
+      if (Date.now() - (m.nudgedAt || 0) > 1500) { nudgeDraft(m); return; }
+      m.draft = {};
+      toast('Changes discarded', { icon: 'x', timeout: 1800 });
+    }
     state.modal = null;
     closeMenus();
     // Prefer the live card for this item (the board may have re-rendered while the modal was open).
@@ -1400,10 +1433,12 @@
         <button class="pill-btn icon-btn sm" data-a="archive" title="Archive|Kept in the archive and restorable — tickets are never deleted">${icon('archive')}</button>
         <button class="pill-btn icon-btn sm" data-a="close" title="Close">${icon('x')}</button></header>
       <div class="m-frame"><nav class="m-rail" hidden></nav><div class="m-main"></div><aside class="m-side"></aside></div>
+      <div class="m-save" hidden><span class="dot"></span><span class="txt"></span><span class="grow"></span>
+        <button class="btn ghost sm" data-draft="discard">Discard</button><button class="btn primary sm" data-draft="save" title="Save|Apply your changes (Ctrl+S)">${icon('check', 'sm')}Save</button></div>
       <footer class="m-foot"></footer></div></div>`);
     document.body.append(root);
     syncScrimmed();
-    const m = { kind: 'item', id, root, modal: $('.modal', root), item: got.item, archived: got.archived, rail, tab: 'comments', editingDesc: false, staged: [] };
+    const m = { kind: 'item', id, root, modal: $('.modal', root), item: got.item, archived: got.archived, rail, tab: 'comments', editingDesc: false, staged: [], draft: {}, baseVersion: null };
     state.modal = m;
     m.enter = pick('enter');
     if (m.enter === 'zoom') m.src = morphOpen(m.modal, fromEl);
@@ -1419,17 +1454,21 @@
       const answered = !!m.item.needsHuman && !fresh.needsHuman;
       m.item = fresh;
       if (m.rail && answered) { advanceRail(m); return; }
+      pruneDraft(m);
       fillModal(m);
+      renderSaveBar(m);
       if (changed && m.tab === 'activity') loadActivity(m);
     };
     m.switchTo = async (nid, pre) => {
       if (nid === m.id && !pre) return;
+      if (isDirty(m) && !pre?.force) { nudgeDraft(m); return; }
       const g = pre || await fetchItem(nid).catch(() => null);
       if (!g) return;
       if (m.src) m.src.classList.remove('morph-src', 'is-open');
       m.src = cardEls.get(nid) || null;
       if (m.src && state.modal === m) m.src.classList.add(m.enter === 'zoom' ? 'morph-src' : 'is-open');
-      Object.assign(m, { id: nid, item: g.item, archived: g.archived, editingDesc: false, staged: [], tab: 'comments' });
+      Object.assign(m, { id: nid, item: g.item, archived: g.archived, editingDesc: false, staged: [], tab: 'comments', draft: {}, baseVersion: null });
+      renderSaveBar(m);
       buildModalBody(m);
       for (const n of [$('.m-main', root), $('.m-side', root)]) { n.classList.remove('swap-in'); void n.offsetWidth; n.classList.add('swap-in'); n.scrollTop = 0; }
     };
@@ -1442,11 +1481,17 @@
     root.addEventListener('pointerdown', (e) => { root._down = e.target === root; });
     root.addEventListener('click', (e) => { if (e.target === root && root._down) closeModal(); });
     $('[data-a="close"]', root).onclick = () => closeModal();
+    $('.m-save', root).onclick = (e) => {
+      const a = e.target.closest('[data-draft]')?.dataset.draft;
+      if (a === 'save') saveDraft(m);
+      if (a === 'discard') discardDraft(m);
+    };
     $('[data-a="archive"]', root).onclick = async () => {
       if (m.archived) return;
       const keep = m.id;
       try {
         await api('POST', I(keep, '/archive'), {});
+        m.draft = {};
         if (!m.rail || !needsIds().filter((x) => x !== keep).length) closeModal();
         toast(`Archived ${keep}`, { icon: 'archive', action: 'Undo', onAction: () => restoreMany([keep]) });
         scheduleRefresh(0);
@@ -1551,6 +1596,108 @@
     foot.dataset.id = m.id;
   }
 
+  /* ─── drafts: modal edits wait for Save (Settings → Board → Ticket edits) ─── */
+
+  const DRAFT_SCALARS = ['title', 'description', 'type', 'priority', 'parent', 'assignee', 'blockedBy', 'cover'];
+  const isDirty = (m) => m?.kind === 'item' && Object.keys(m.draft || {}).length > 0;
+  const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+  // The item as the modal should show it: stored values with the unsaved draft laid over them.
+  function draftView(m) {
+    const it = m.item;
+    const d = m.draft || {};
+    if (!Object.keys(d).length) return it;
+    const out = { ...it };
+    for (const k of DRAFT_SCALARS) if (k in d) out[k] = d[k];
+    if (d.column) out.columnId = d.column;
+    for (const bag of ['properties', 'fields']) {
+      if (!d[bag]) continue;
+      out[bag] = { ...(it[bag] || {}) };
+      for (const [k, v] of Object.entries(d[bag])) { if (v === null) delete out[bag][k]; else out[bag][k] = v; }
+    }
+    return out;
+  }
+
+  // Drop draft entries that now match what is stored (e.g. changed back), so "unsaved" stays honest.
+  function pruneDraft(m) {
+    const d = m.draft;
+    const it = m.item;
+    for (const k of DRAFT_SCALARS) if (k in d && same(d[k], it[k])) delete d[k];
+    if (d.column === it.columnId) { delete d.column; delete d.position; }
+    for (const bag of ['properties', 'fields']) {
+      if (!d[bag]) continue;
+      for (const [k, v] of Object.entries(d[bag])) if (same(v, (it[bag] || {})[k])) delete d[bag][k];
+      if (!Object.keys(d[bag]).length) delete d[bag];
+    }
+    if (!Object.keys(d).length) m.baseVersion = null;
+  }
+
+  function editItem(m, body) {
+    if (settings.saveMode === 'instant' || m.kind !== 'item') return patchItem(m.id, body);
+    if (m.baseVersion == null) m.baseVersion = m.item.version;
+    for (const [k, v] of Object.entries(body)) {
+      if (k === 'properties' || k === 'fields') m.draft[k] = { ...(m.draft[k] || {}), ...v };
+      else m.draft[k] = v;
+    }
+    pruneDraft(m);
+    fillModal(m);
+    renderSaveBar(m);
+    return Promise.resolve(null);
+  }
+
+  function draftLabels(m) {
+    const d = m.draft;
+    const names = [];
+    const label = (k) => ({ column: 'column', blockedBy: bi('blockedBy').label.toLowerCase(), cover: 'card image' }[k] || k);
+    for (const k of Object.keys(d)) {
+      if (k === 'position') continue;
+      if (k === 'fields') names.push(...Object.keys(d.fields).map((x) => schema().fields.find((f) => f.key === x)?.label || x));
+      else if (k === 'properties') names.push(...Object.keys(d.properties));
+      else names.push(label(k));
+    }
+    return names;
+  }
+
+  function renderSaveBar(m) {
+    const bar = $('.m-save', m.root);
+    if (!bar) return;
+    const names = isDirty(m) ? draftLabels(m) : [];
+    const was = !bar.hidden;
+    bar.hidden = !names.length;
+    if (!names.length) return;
+    const stale = m.baseVersion != null && m.item.version > m.baseVersion;
+    $('.txt', bar).innerHTML = `<b>${names.length} unsaved</b> · ${esc(names.join(', '))}${stale ? ' · <span class="stale">updated meanwhile</span>' : ''}`;
+    if (!was) bar.animate([{ opacity: 0, translate: '0 10px' }, { opacity: 1, translate: '0 0' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  }
+
+  function nudgeDraft(m) {
+    m.nudgedAt = Date.now();
+    const bar = $('.m-save', m.root);
+    if (!bar) return;
+    bar.classList.remove('nudge');
+    void bar.offsetWidth;
+    bar.classList.add('nudge');
+    $('.txt', bar).insertAdjacentHTML('beforeend', ' · <span class="stale">save or discard — close again to discard</span>');
+    $('[data-draft="save"]', bar).focus();
+  }
+
+  async function saveDraft(m) {
+    if (!isDirty(m)) return;
+    const body = { ...m.draft };
+    m.draft = {};
+    m.baseVersion = null;
+    renderSaveBar(m);
+    const ok = await patchItem(m.id, body);
+    if (!ok) { m.draft = body; renderSaveBar(m); fillModal(m); }
+  }
+
+  function discardDraft(m) {
+    m.draft = {};
+    m.baseVersion = null;
+    renderSaveBar(m);
+    fillModal(m);
+  }
+
   async function patchItem(id, body) {
     try {
       const it = await api('PATCH', I(id), body);
@@ -1575,8 +1722,8 @@
     const title = $('.m-title', main);
     const saveTitle = () => {
       const v = title.value.replace(/\s+/g, ' ').trim();
-      if (!v) { title.value = m.item.title; return; }
-      if (v !== m.item.title && !m.archived) patchItem(m.id, { title: v });
+      if (!v) { title.value = draftView(m).title; return; }
+      if (v !== draftView(m).title && !m.archived) editItem(m, { title: v });
     };
     title.addEventListener('input', () => autosize(title));
     title.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); title.blur(); } });
@@ -1594,7 +1741,7 @@
         m.editingDesc = false;
         const v = $('textarea', box).value;
         editWrap.hidden = true; view.hidden = false;
-        if (save && v !== (m.item.description || '')) { m.item = { ...m.item, description: v }; fillModal(m); patchItem(m.id, { description: v }); }
+        if (save && v !== (draftView(m).description || '')) editItem(m, { description: v });
       };
       const ta = wireTbox(box, () => finish(true), { escape: () => finish(true) });
       ta.addEventListener('blur', () => setTimeout(() => { if (!box.contains(document.activeElement)) finish(true); }, 150));
@@ -1602,15 +1749,15 @@
         const cb = e.target.closest('input[type="checkbox"][data-line]');
         if (cb) {
           if (!canEdit('description') || m.archived) { e.preventDefault(); return; }
-          const lines = (m.item.description || '').split('\n');
+          const lines = (draftView(m).description || '').split('\n');
           const n = Number(cb.dataset.line);
           lines[n] = lines[n].replace(/\[( |x|X)\]/, cb.checked ? '[x]' : '[ ]');
-          patchItem(m.id, { description: lines.join('\n') });
+          editItem(m, { description: lines.join('\n') });
           return;
         }
         if (e.target.closest('a, img') || !canEdit('description') || m.archived) return;
         m.editingDesc = true;
-        ta.value = m.item.description || '';
+        ta.value = draftView(m).description || '';
         view.hidden = true; editWrap.hidden = false;
         autosize(ta); ta.focus();
       });
@@ -1683,7 +1830,7 @@
 
   function fillModal(m, first = false) {
     const { root } = m;
-    const it = m.item;
+    const it = draftView(m);
     const main = $('.m-main', root);
     if (!$('.m-title', main)) return; // all-clear screen
     const focus = document.activeElement;
@@ -1775,7 +1922,7 @@
   }
 
   function fillAttachments(m, atts) {
-    const it = m.item;
+    const it = draftView(m);
     const edit = canEdit('attachments') && !m.archived;
     const coverEdit = canEdit('cover') && shown('cover') && !m.archived;
     const cover = coverOf(it);
@@ -1803,7 +1950,7 @@
         if (rm) { await api('DELETE', I(m.id, `/attachments/${rm.dataset.rm}`)); toast('Removed', { icon: 'x', timeout: 1800 }); }
         if (cv) {
           const explicit = it.cover === cv.dataset.cover;
-          await patchItem(m.id, { cover: explicit ? 'none' : cv.dataset.cover });
+          await editItem(m, { cover: explicit ? 'none' : cv.dataset.cover });
         }
         scheduleRefresh(0);
       } catch (err) { toast(err.message, { kind: 'error' }); }
@@ -1817,7 +1964,7 @@
   function fillSide(m) {
     const side = $('.m-side', m.root);
     if (side.contains(document.activeElement) && document.activeElement.matches('input, textarea')) return;
-    const it = m.item;
+    const it = draftView(m);
     const b = state.board;
     const lock = (k) => !canEdit(k) || m.archived;
     const roIcon = (k) => (lock(k) && !m.archived ? `<span class="ro" title="Read-only|Only agents can change this, through the API">${icon('lock', 'sm')}</span>` : '');
@@ -1918,9 +2065,9 @@
   }
 
   function wireSide(m, side) {
-    const it = m.item;
+    const it = draftView(m);
     const b = state.board;
-    const setField = (k, v) => patchItem(m.id, { fields: { [k]: v } });
+    const setField = (k, v) => editItem(m, { fields: { [k]: v } });
     for (const box of $$('[data-fmd]', side)) {
       const k = box.dataset.fmd;
       const ta = wireTbox($('.tbox', box), () => setField(k, $('textarea', box).value));
@@ -1942,19 +2089,19 @@
       const segBtn = e.target.closest('.seg button');
       if (segBtn && !segBtn.classList.contains('on')) {
         segBtn.parentElement.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === segBtn));
-        patchItem(m.id, { [segBtn.parentElement.dataset.f]: segBtn.dataset.v });
+        editItem(m, { [segBtn.parentElement.dataset.f]: segBtn.dataset.v });
         return;
       }
       const sw = e.target.closest('[data-fbool]');
       if (sw && !sw.disabled) { sw.classList.toggle('on'); setField(sw.dataset.fbool, sw.classList.contains('on')); return; }
       const rmdep = e.target.closest('[data-rmdep]');
-      if (rmdep) { e.stopPropagation(); patchItem(m.id, { blockedBy: it.blockedBy.filter((x) => x !== rmdep.dataset.rmdep) }); return; }
+      if (rmdep) { e.stopPropagation(); editItem(m, { blockedBy: it.blockedBy.filter((x) => x !== rmdep.dataset.rmdep) }); return; }
       const rmtag = e.target.closest('[data-rmtag]');
       if (rmtag) { const k = rmtag.dataset.rmtag; const next = (it.fields[k] || []).filter((x) => x !== rmtag.dataset.tag); setField(k, next.length ? next : null); return; }
       const dep = e.target.closest('[data-open]');
       if (dep) { openItem(dep.dataset.open); return; }
       const del = e.target.closest('[data-del]');
-      if (del) { patchItem(m.id, { properties: { [del.dataset.del]: null } }); return; }
+      if (del) { editItem(m, { properties: { [del.dataset.del]: null } }); return; }
       if (e.target.closest('.add-row')) {
         const props = $('.props', side);
         const row = el(`<div class="prop"><input class="inp k" data-k="" placeholder="key"><input class="inp" data-v="" placeholder="value"><button class="x" title="Cancel">${icon('x', 'sm')}</button></div>`);
@@ -1992,7 +2139,7 @@
   }
 
   function openSideDropdown(m, btn) {
-    const it = m.item;
+    const it = draftView(m);
     const b = state.board;
     const key = btn.dataset.dd;
     if (key === 'column') {
@@ -2000,27 +2147,27 @@
       openDd(btn, b.columns.map((c) => ({
         label: c.name, color: c.color, cls: c.id === it.columnId ? 'on' : '',
         disabled: c.id !== it.columnId && !(from?.flags.allowMoveOut && c.flags.allowMoveIn),
-        run: () => { if (c.id !== it.columnId) patchItem(m.id, { column: c.id, position: 'top' }); },
+        run: () => { if (c.id !== it.columnId) editItem(m, { column: c.id, position: 'top' }); },
       })));
     } else if (key === 'parent') {
       const parents = [...new Set(Object.values(b.items).map((x) => x.parent).filter(Boolean))].sort();
       openDd(btn, [
-        { label: 'None', icon: 'x', cls: !it.parent ? 'on' : '', run: () => it.parent && patchItem(m.id, { parent: null }) },
+        { label: 'None', icon: 'x', cls: !it.parent ? 'on' : '', run: () => it.parent && editItem(m, { parent: null }) },
         ...(parents.length ? ['-'] : []),
-        ...parents.map((p) => ({ label: p, color: tagColor(p), cls: p === it.parent ? 'on' : '', hint: String(Object.values(b.items).filter((x) => x.parent === p).length), run: () => p !== it.parent && patchItem(m.id, { parent: p }) })),
-      ], { search: true, creatable: (v) => patchItem(m.id, { parent: v.replace(/^#/, '') }), placeholder: 'Find or add…' });
+        ...parents.map((p) => ({ label: p, color: tagColor(p), cls: p === it.parent ? 'on' : '', hint: String(Object.values(b.items).filter((x) => x.parent === p).length), run: () => p !== it.parent && editItem(m, { parent: p }) })),
+      ], { search: true, creatable: (v) => editItem(m, { parent: v.replace(/^#/, '') }), placeholder: 'Find or add…' });
     } else if (key === 'assignee') {
-      openDd(btn, [{ label: 'Nobody', icon: 'x', cls: !it.assignee ? 'on' : '', run: () => it.assignee && patchItem(m.id, { assignee: null }) }, '-',
-        ...knownPeople().map((n) => ({ label: n, avatar: { name: n, kind: n === settings.userName ? 'user' : 'agent' }, cls: n === it.assignee ? 'on' : '', run: () => n !== it.assignee && patchItem(m.id, { assignee: n }) }))],
-      { search: true, creatable: (v) => patchItem(m.id, { assignee: v }), placeholder: 'Find or add…' });
+      openDd(btn, [{ label: 'Nobody', icon: 'x', cls: !it.assignee ? 'on' : '', run: () => it.assignee && editItem(m, { assignee: null }) }, '-',
+        ...knownPeople().map((n) => ({ label: n, avatar: { name: n, kind: n === settings.userName ? 'user' : 'agent' }, cls: n === it.assignee ? 'on' : '', run: () => n !== it.assignee && editItem(m, { assignee: n }) }))],
+      { search: true, creatable: (v) => editItem(m, { assignee: v }), placeholder: 'Find or add…' });
     } else if (key === 'blockedBy') {
       const pool = Object.values(b.items).filter((x) => x.id !== it.id && !it.blockedBy?.includes(x.id));
-      openDd(btn, pool.map((x) => ({ label: `${x.id} · ${x.title}`, icon: x.type, run: () => patchItem(m.id, { blockedBy: [...(it.blockedBy || []), x.id] }) })), { search: true });
+      openDd(btn, pool.map((x) => ({ label: `${x.id} · ${x.title}`, icon: x.type, run: () => editItem(m, { blockedBy: [...(it.blockedBy || []), x.id] }) })), { search: true });
     } else if (key.startsWith('f:')) {
       const f = schema().fields.find((x) => x.key === key.slice(2));
       if (!f) return;
       const cur = it.fields?.[f.key];
-      const set = (v) => patchItem(m.id, { fields: { [f.key]: v } });
+      const set = (v) => editItem(m, { fields: { [f.key]: v } });
       if (f.type === 'enum') {
         openDd(btn, [{ label: 'None', icon: 'x', cls: cur == null ? 'on' : '', run: () => cur != null && set(null) }, '-',
           ...f.options.map((o) => ({ label: o.value, color: o.color || 'var(--accent)', cls: o.value === cur ? 'on' : '', run: () => set(o.value) }))], { search: f.options.length > 7 });
@@ -2049,11 +2196,11 @@
     const rows = $$('.prop', side);
     const next = {};
     for (const r of rows) { const k = $('[data-k]', r).value.trim(); if (k) next[k] = parseVal($('[data-v]', r).value); }
-    const cur = m.item.properties || {};
+    const cur = draftView(m).properties || {};
     const patch = {};
     for (const k of Object.keys(cur)) if (!(k in next)) patch[k] = null;
     for (const [k, v] of Object.entries(next)) if (JSON.stringify(cur[k]) !== JSON.stringify(v)) patch[k] = v;
-    if (Object.keys(patch).length) patchItem(m.id, { properties: patch });
+    if (Object.keys(patch).length) editItem(m, { properties: patch });
   }
 
   function tickModal() {
@@ -2841,6 +2988,8 @@
       return `<h3>Parent groups</h3>
         <div class="row"><span>Grouping</span>${seg('grouping', [['off', 'Off', 'Show every ticket separately'], ['list', 'List', 'Group tickets sharing a parent under a heading'], ['stack', 'Stack', 'Pile tickets sharing a parent — click to fan out']], settings.grouping)}</div>
         ${previewStage('grouping')}
+        <h3>Ticket edits</h3>
+        <div class="row"><span>Apply changes</span>${seg('saveMode', [['accept', 'Save button', 'Edits wait until you press Save'], ['instant', 'Instant', 'Every change applies immediately']], settings.saveMode)}</div>
         <h3>Ageing</h3>
         <div class="row"><span>Fade untouched tickets after</span>${seg('ageDays', [['0', 'Off', 'Never fade tickets'], ['3', '3d', 'Fully faded after 3 idle days'], ['7', '7d', 'Fully faded after a week'], ['14', '14d', 'Fully faded after two weeks']], String(settings.ageDays))}</div>
         <h3>You</h3>
@@ -3072,6 +3221,12 @@
   document.addEventListener('keydown', (e) => {
     const typing = e.target.matches('input, textarea, select, [contenteditable]');
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); togglePalette(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && state.modal?.kind === 'item') {
+      e.preventDefault();
+      if (document.activeElement?.matches('input, textarea')) document.activeElement.blur(); // commit the field being typed in
+      setTimeout(() => saveDraft(state.modal), 0);
+      return;
+    }
     if (e.key === 'Escape') {
       if ($('.menu')) { closeMenus(); return; }
       if ($('.palette-scrim')) { closePalette(); return; }

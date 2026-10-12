@@ -111,21 +111,7 @@ const DEFAULT_FLAGS = {
   humanOnlyOut: false,
   review: false,
 };
-const TEMPLATES = {
-  default: [
-    { name: 'Backlog', icon: 'inbox', color: '#8b8fa3', flags: { allowCreate: true } },
-    { name: 'Ready', icon: 'target', color: '#5aa9e6', flags: { allowCreate: true } },
-    { name: 'In Progress', icon: 'play', color: '#f2a541' },
-    { name: 'Review', icon: 'eye', color: '#b07cf2', flags: { review: true } },
-    { name: 'Done', icon: 'check', color: '#4cc38a', flags: { releaseLeaseOnEnter: true, humanOnlyIn: true } },
-  ],
-  simple: [
-    { name: 'To Do', icon: 'inbox', color: '#5aa9e6', flags: { allowCreate: true } },
-    { name: 'Doing', icon: 'play', color: '#f2a541' },
-    { name: 'Done', icon: 'check', color: '#4cc38a', flags: { releaseLeaseOnEnter: true } },
-  ],
-  empty: [],
-};
+const TEMPLATES = require('./lib/templates');
 
 /* ── schema: typed custom fields + configurable built-ins ── */
 const FIELD_TYPES = ['text', 'markdown', 'number', 'boolean', 'enum', 'tags', 'date', 'url', 'user'];
@@ -388,6 +374,8 @@ function addColumn(board, c) {
 function createBoard(d, actor) {
   const id = slug(d.id || d.name || '');
   if (!d.name && !d.id) fail(400, 'Board "name" is required');
+  const tpl = TEMPLATES[d.template || 'default'];
+  if (!tpl) fail(400, `Unknown template "${d.template}". Use: ${Object.keys(TEMPLATES).join(', ')} (see GET /api/templates)`);
   if (boards.has(id)) fail(409, `Board "${id}" already exists`);
   const p = boardPaths(id);
   fs.mkdirSync(p.attachDir, { recursive: true });
@@ -399,19 +387,18 @@ function createBoard(d, actor) {
     nextNumber: 1,
     createdAt: t,
     updatedAt: t,
-    directives: str(d.directives || '', 50_000),
-    schema: { builtins: normBuiltins(d.schema?.builtins), fields: [] },
+    directives: str(d.directives ?? tpl.directives ?? '', 50_000),
+    schema: { builtins: normBuiltins(d.schema?.builtins ?? tpl.schema?.builtins), fields: [] },
     digest: [],
     columns: [],
     items: {},
   };
-  for (const f of arr(d.schema?.fields)) {
+  for (const f of arr(d.schema?.fields ?? tpl.schema?.fields)) {
     const def = normField(f);
     if (board.schema.fields.some((x) => x.key === def.key)) fail(400, `Duplicate field "${def.key}"`);
     board.schema.fields.push(def);
   }
-  const cols = Array.isArray(d.columns) ? d.columns : TEMPLATES[d.template || 'default'];
-  if (!cols) fail(400, `Unknown template "${d.template}". Use: ${Object.keys(TEMPLATES).join(', ')}`);
+  const cols = Array.isArray(d.columns) ? d.columns : tpl.columns;
   for (const c of cols) addColumn(board, c);
   const ctx = { id, ...p, board, archive: { items: {} }, hash: '', lastBackup: 0 };
   boards.set(id, ctx);
@@ -1515,7 +1502,11 @@ route('GET', '/api/boards', 'List boards', () => [...boards.values()].map((ctx) 
   archived: Object.keys(ctx.archive.items).length,
 })));
 
-route('POST', '/api/boards', 'Create a board: { name, id?, idPrefix?, template?: default|simple|empty, columns?: Column[], directives? }',
+route('GET', '/api/templates', 'Board templates: columns, ticket fields and standing rules', () => Object.entries(TEMPLATES).map(([key, t]) => ({
+  key, label: t.label, description: t.description, columns: t.columns.map((c) => ({ name: c.name, flags: c.flags || {} })),
+  fields: (t.schema?.fields || []).map((f) => ({ key: f.key, type: f.type })), directives: t.directives || '',
+})));
+route('POST', '/api/boards', 'Create a board: { name, id?, idPrefix?, template?: (see GET /api/templates), columns?, schema?, directives? }',
   ({ body, actor }) => created(boardView(createBoard(body, actor))));
 
 route('GET', '/api/boards/:board', 'Full board JSON + hash', ({ p }) => boardView(getCtx(p.board)));
@@ -1925,7 +1916,7 @@ const server = http.createServer(async (req, res) => {
 
 function seed() {
   if (M.seed === 'empty') {
-    createBoard({ id: M.defaultBoard, name: M.boardName || 'Main', idPrefix: M.idPrefix || 'INT' }, SYSTEM);
+    createBoard({ id: M.defaultBoard, name: M.boardName || 'Main', idPrefix: M.idPrefix || 'INT', template: M.template || 'default' }, SYSTEM);
     return;
   }
   const ctx = createBoard({

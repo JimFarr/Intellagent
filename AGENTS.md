@@ -200,3 +200,29 @@ Columns can only be created by agents (the UI can't). Custom flags are stored as
 6. End of session → `POST …/digest`.
 7. GET /api/subscriptions/<id>/next to see what the human changed meanwhile.
 ```
+
+## 10. Setting up a board in a project
+
+Asked to "set up Intellagent here"? Follow this. **Stop and ask the human at the three ✋ points** — the board is how they will steer you, so its shape is their call.
+
+1. **Check.** `intellagent help` must work (if not: the human installs it with `npm link` from the Intellagent folder). If `intellagent status` already finds a `.intellagent/`, skip to step 5 and offer to reshape the existing board instead.
+2. **Look around** before proposing anything: README, CLAUDE.md / AGENTS.md, package manifests, top-level folders, test setup, `TODO`/`FIXME` count, open issues (`gh issue list` if available).
+3. ✋ **Ask** (one round of questions):
+   - Template: `software`, `research`, `ops`, `default` or `simple` (`intellagent templates`). Recommend one from what you found.
+   - Board name and ticket prefix (default: folder name, e.g. *Acme Billing* → `AB`).
+   - What to seed tickets from: TODO comments, GitHub issues, a plan they give you, or nothing.
+   - Register the MCP tools (`--mcp`) and add agent instructions to CLAUDE.md (`--claude`)?
+4. **Scaffold and start:**
+   `intellagent init --template software --name "Acme Billing" --prefix AB --mcp --claude`
+   then run `intellagent start` **in the background** (it is a long-running server) and confirm with `intellagent status`.
+5. **Tailor the schema and rules.** Draft, don't write yet:
+   - Field options that fit the project, e.g. the software template's `area` tags from the repo's top-level folders.
+   - Standing rules from the project's own conventions (CLAUDE.md, CONTRIBUTING, lint/test commands). Keep them short and imperative.
+   - Column changes, if the template doesn't fit (`POST/PATCH /api/boards/main/columns`).
+6. ✋ **Show the human** the proposed fields, rules and column changes in one message; apply only what they approve (`POST /schema/fields`, `PUT /directives`).
+7. **Introduce yourself:** `PATCH /api/profiles/me` with a colour, glyph, label and a one-paragraph description of your role.
+8. ✋ **Seed tickets** from the agreed source. Show the list first if there are more than ~10. Then create them with sensible `type`, `priority`, `parent` groups, description checklists and `blockedBy` links. Keep the first batch under ~25; mention what you left out.
+9. **Wire up:** in a git repo, offer `intellagent hook install`. Subscribe to your inbox: `POST /api/subscriptions { "filter": { "for": "<you>" } }`.
+10. **Hand over:** post a digest entry describing the setup, raise *needs you* on anything still uncertain, and tell the human the URL (`intellagent open`).
+
+Only touch `.intellagent/`, `.mcp.json`, `CLAUDE.md` and `.git/hooks/` — and only the ones the human agreed to.
