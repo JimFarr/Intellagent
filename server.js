@@ -854,6 +854,11 @@ function moveInto(ctx, item, colRef, position, actor, events) {
     if (actor.kind !== 'user' && from.flags.humanOnlyOut) fail(403, `Only a human can move items out of "${from.name}"`);
     checkColumnPerm(ctx, actor, [to.id]);
     checkWip(to);
+    // A human moving a ticket with an open review into an approval gate (e.g. Done) approves it.
+    // Other open questions stay; moving backwards implies nothing (changes need feedback text).
+    if (actor.kind === 'user' && to.flags.humanOnlyIn && (item.questions || []).some((q) => q.kind === 'review')) {
+      recordVerdict(ctx, item, actor, events, 'approve', `Approved ✓ (moved to ${to.name})`);
+    }
   }
   const oldIdx = from.itemIds.indexOf(item.id);
   from.itemIds.splice(oldIdx, 1);
@@ -1257,26 +1262,35 @@ function decideReview(ctx, id, d, actor) {
   const verdict = d.verdict === 'approve' || d.verdict === 'approved' ? 'approve' : d.verdict === 'changes' ? 'changes' : fail(400, '"verdict" must be "approve" or "changes"');
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
-    syncNeeds(item);
-    const prev = item.questions.find((q) => q.kind === 'review') || null;
-    const requestedBy = prev?.raisedBy || item.workedBy?.at(-1) || null;
     const comment = str(d.comment || '', 20_000).trim();
     if (verdict === 'changes' && !comment) fail(400, 'Say what needs to change in "comment"');
-    if (comment || verdict === 'approve') item.comments.push({ id: rid('c'), author: actor, body: comment || 'Approved ✓', createdAt: now() });
-    closeQuestions(ctx, item, actor, events, { pick: (q) => q.kind === 'review', reply: comment || 'Approved ✓', extra: { verdict } });
+    // Where it goes: approve → through the next gate; changes → back to the working column.
     const cols = ctx.board.columns;
     const idx = cols.findIndex((c) => c.id === item.columnId);
     const target = d.column ? findColumn(ctx.board, d.column)
       : verdict === 'approve' ? (cols.slice(idx + 1).find((c) => c.flags.humanOnlyIn) || cols[idx + 1])
         : (workingColumn(ctx) && cols.indexOf(workingColumn(ctx)) < idx ? workingColumn(ctx) : cols[idx - 1]);
+    recordVerdict(ctx, item, actor, events, verdict, comment);
     if (target && target.id !== item.columnId) moveInto(ctx, item, target.id, 'top', actor, events);
-    item.review = { verdict, comment: comment || null, by: actor.name, at: now(), requestedBy };
     item.version++;
     item.updatedAt = now();
-    const who = [requestedBy, ...(item.workedBy || [])].filter(Boolean);
-    events.push(itemEvent(ctx, verdict === 'approve' ? 'review.approved' : 'review.changes_requested', item, actor, { verdict, feedback: comment || null, mentions: who }));
     return item;
   });
+}
+
+// One place that records a review verdict: the human's comment, the review question closed, item.review
+// set, and review.approved / review.changes_requested sent to whoever asked and worked on it.
+// Used by the review decision and by a human moving a reviewed ticket into an approval gate.
+function recordVerdict(ctx, item, actor, events, verdict, comment = '') {
+  syncNeeds(item);
+  const prev = item.questions.find((q) => q.kind === 'review') || null;
+  const requestedBy = prev?.raisedBy || item.workedBy?.at(-1) || null;
+  const body = comment || 'Approved ✓';
+  if (comment || verdict === 'approve') item.comments.push({ id: rid('c'), author: actor, body, createdAt: now() });
+  closeQuestions(ctx, item, actor, events, { pick: (q) => q.kind === 'review', reply: body, extra: { verdict } });
+  item.review = { verdict, comment: comment || null, by: actor.name, at: now(), requestedBy };
+  const who = [requestedBy, ...(item.workedBy || [])].filter(Boolean);
+  events.push(itemEvent(ctx, verdict === 'approve' ? 'review.approved' : 'review.changes_requested', item, actor, { verdict, feedback: comment || null, mentions: who }));
 }
 
 // End of a session: release every lease (and the board hold) you have, optionally posting the digest.

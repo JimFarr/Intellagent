@@ -244,7 +244,31 @@ describe('agent flows', () => {
     } finally { mcp.kill(); }
   });
 
-  it('transitions explain where a ticket can go', async () => {
+  it('moving a reviewed ticket into Done approves it; other questions stay; bulk works too', async () => {
+    const one = await mk({ title: 'drag-approve' });
+    await s.ok('POST', `${B}/items/${one.id}/start`, {}, A);
+    await s.ok('POST', `${B}/items/${one.id}/review`, { changed: 'x', why: 'y', verify: 'z' }, A);
+    await s.ok('POST', `${B}/items/${one.id}/attention`, { reason: 'unrelated question' }, A);
+    const { seq } = await s.ok('GET', '/api/app');
+    await s.ok('POST', `${B}/items/${one.id}/move`, { column: 'Done' }, USER);
+    const got = await s.ok('GET', `${B}/items/${one.id}`);
+    assert.equal(got.review.verdict, 'approve');
+    assert.deepEqual(got.questions.map((q) => q.kind), ['question'], 'the other question is left open');
+    assert.match(got.comments.at(-1).body, /Approved ✓ \(moved to Done\)/);
+    assert.equal((await s.ok('GET', `/api/events?since=${seq}&for=ada&types=review.approved`)).events.length, 1);
+
+    const plain = await mk({ title: 'no review' });
+    await s.ok('POST', `${B}/items/${plain.id}/move`, { column: 'Done' }, USER);
+    assert.equal((await s.ok('GET', `${B}/items/${plain.id}`)).review, undefined, 'no open review: plain move');
+
+    const two = await mk({ title: 'bulk-approve' });
+    await s.ok('POST', `${B}/items/${two.id}/start`, {}, A);
+    await s.ok('POST', `${B}/items/${two.id}/review`, { changed: 'x', why: 'y', verify: 'z' }, A);
+    await s.ok('POST', `${B}/items/bulk`, { ids: [two.id], patch: { column: 'Done' } }, USER);
+    assert.equal((await s.ok('GET', `${B}/items/${two.id}`)).review.verdict, 'approve');
+  });
+
+    it('transitions explain where a ticket can go', async () => {
     const it = await mk({ title: 'where to' });
     const t = await s.ok('GET', `${B}/items/${it.id}/transitions`, undefined, A);
     const done = t.moves.find((m) => m.column === 'Done');
