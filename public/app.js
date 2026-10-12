@@ -1189,11 +1189,11 @@
   function buildColumn(id) {
     const c = el(`<section class="column" data-id="${esc(id)}">
       <header class="col-head"><span class="col-dot"></span><span class="col-icon"></span><h2 class="col-name"></h2><span class="col-gate" hidden>${icon('user', 'sm')}</span><span class="col-count"></span><span class="grow"></span>
-        <button class="col-add" title="New ticket|Quick syntax: Fix login #auth !high /issue">${icon('plus')}</button></header>
+        <button class="col-add" title="New ticket|Opens a full ticket to write · Shift+click for the quick one-line box (Fix login #auth !high /issue)">${icon('plus')}</button></header>
       <div class="col-wip" hidden><i></i></div>
       <div class="composer"><div class="tpl-row"></div>${tboxHTML({ ph: 'New ticket…', okIcon: 'plus', okTitle: 'Create', hint: 'Enter', rows: 2 })}</div>
       <div class="list"></div></section>`);
-    $('.col-add', c).onclick = () => openComposer(id);
+    $('.col-add', c).onclick = (e) => (e.shiftKey ? openComposer(id) : openCreate(id));
     $('.col-count', c).onclick = () => {
       if (!state.bulk) return;
       const ids = colById(id)?.itemIds || [];
@@ -1256,17 +1256,24 @@
     $('.composer textarea', c).value = '';
   }
   // Quick syntax: "Fix login #auth !high /issue"
-  async function submitComposer(colId) {
-    const c = colEls.get(colId);
-    const ta = $('.composer textarea', c);
-    let text = ta.value;
-    const body = { column: colId, position: 'top', ...(c.dataset.tpl ? { template: c.dataset.tpl } : {}) };
+  // Quick syntax in a title: "Fix login #auth !high /issue /bug" → parent, priority, type, template.
+  function parseQuick(raw) {
+    const body = {};
+    let text = String(raw || '');
     const tplKeys = new Set((state.board.ticketTemplates || []).map((t) => t.key));
     text = text.replace(/(^|\s)\/([\w-]+)\b/g, (m, s, k) => { if (!tplKeys.has(k.toLowerCase())) return m; body.template = k.toLowerCase(); return s; });
     text = text.replace(/(^|\s)#([\w./-]+)/g, (_, s, p) => { body.parent = p; return s; });
     text = text.replace(/(^|\s)!(low|med(?:ium)?|high|crit(?:ical)?)\b/gi, (_, s, p) => { body.priority = PRIORITIES.find((x) => x.toLowerCase().startsWith(p.toLowerCase().slice(0, 3))); return s; });
     text = text.replace(/(^|\s)\/(issue|task|spike)\b/gi, (_, s, t) => { body.type = t.toLowerCase(); return s; });
     body.title = text.replace(/\s+/g, ' ').trim();
+    return body;
+  }
+
+  async function submitComposer(colId) {
+    const c = colEls.get(colId);
+    const ta = $('.composer textarea', c);
+    const text = ta.value;
+    const body = { column: colId, position: 'top', ...(c.dataset.tpl ? { template: c.dataset.tpl } : {}), ...parseQuick(text) };
     const box = $('.composer', c);
     if (!body.title) { box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake'); return; }
     ta.value = '';
@@ -1977,6 +1984,109 @@
     buildModalBody(m);
   }
 
+  /* ─── create mode: write a whole ticket in the ticket modal, then create it ─── */
+
+  function blankItem(colId) {
+    const t = new Date().toISOString();
+    const fields = {};
+    for (const f of schema().fields) if (f.default !== undefined && f.default !== null) fields[f.key] = f.default;
+    return {
+      id: 'NEW', title: '', description: '', type: 'task', priority: 'Medium', parent: null, columnId: colId, assignee: null,
+      blockedBy: [], properties: {}, fields, cover: 'auto', attachments: [], comments: [], questions: [], needsHuman: null,
+      reactions: {}, version: 0, author: { kind: 'user', name: settings.userName }, createdAt: t, updatedAt: t, flow: [],
+    };
+  }
+
+  function openCreate(colId, { template = null } = {}) {
+    const col = colById(colId);
+    if (!col) return;
+    if (!col.flags.allowCreate) { toast(`"${col.name}" doesn't take new tickets`, { kind: 'error' }); return; }
+    if (col.flags.wipLimit > 0 && col.itemIds.length >= col.flags.wipLimit) { toast(`"${col.name}" is at its WIP limit`, { kind: 'error' }); return; }
+    closePalette();
+    closeModal(true);
+    const root = el(`<div class="scrim"><div class="modal item-modal creating" role="dialog" aria-modal="true">
+      <header class="m-head"><span class="m-type" style="color:var(--accent)">${icon('plus')}</span><span class="m-id">New ticket</span><span class="saved">${icon('check', 'sm')}</span><span class="grow"></span>
+        <button class="pill-btn icon-btn sm" data-a="archive" hidden></button>
+        <button class="pill-btn icon-btn sm" data-a="close" title="Close">${icon('x')}</button></header>
+      <div class="m-frame"><nav class="m-rail" hidden></nav><div class="m-main"></div><aside class="m-side"></aside></div>
+      <div class="m-save"><span class="dot"></span><span class="txt"></span><span class="grow"></span>
+        <button class="btn ghost sm" data-draft="discard">Cancel</button><button class="btn primary sm" data-draft="save" title="Create|Create the ticket (Ctrl+Enter)">${icon('plus', 'sm')}Create</button></div>
+      <footer class="m-foot"></footer></div></div>`);
+    document.body.append(root);
+    syncScrimmed();
+    const m = { kind: 'item', create: { columnId: colId, template: null }, id: 'NEW', root, modal: $('.modal', root), item: blankItem(colId), archived: false, rail: false, tab: 'comments', editingDesc: false, staged: [], draft: {}, baseVersion: 0 };
+    state.modal = m;
+    m.enter = pick('enter');
+    m.modal.classList.add('entering');
+    m.refresh = () => { fillModal(m); renderSaveBar(m); };
+    m.switchTo = async (nid) => { closeModal(true); openItem(nid); };
+    wireModalShell(m);
+    buildModalBody(m);
+    // template chips above the title
+    const tpls = state.board.ticketTemplates || [];
+    if (tpls.length) {
+      const row = el(`<div class="create-tpls">${tpls.map((t) => `<button class="tpl-chip" data-tpl="${esc(t.key)}" title="${esc(t.label)}|${esc(t.help || 'Start from this template')}">${icon(t.icon || t.type || 'task', 'sm')}${esc(t.label)}</button>`).join('')}</div>`);
+      $('.m-main', root).prepend(row);
+      row.onclick = (e) => { const b = e.target.closest('[data-tpl]'); if (b) applyTemplateToDraft(m, b.dataset.tpl); };
+    }
+    if (template) applyTemplateToDraft(m, template);
+    renderSaveBar(m);
+    const title = $('.m-title', root);
+    title.placeholder = 'Title — quick syntax works: #parent !high /issue';
+    setTimeout(() => title.focus(), 60);
+    // Ctrl+Enter anywhere in the modal creates it (the description box keeps Ctrl+Enter for itself)
+    m.modal.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.target.closest('.desc-edit, .fmd')) { e.preventDefault(); $('.m-title', root).blur(); saveDraft(m); }
+    });
+  }
+
+  // Fill from a template without overwriting anything the user already set.
+  function applyTemplateToDraft(m, key) {
+    const t = (state.board.ticketTemplates || []).find((x) => x.key === key);
+    if (!t) return;
+    m.create.template = t.key;
+    const d = m.draft;
+    const patch = {};
+    for (const k of ['type', 'priority', 'parent', 'description']) if (t[k] && !(k in d)) patch[k] = t[k];
+    if (t.title && !d.title) patch.title = t.title;
+    if (t.column && !d.column && colById(t.column)) patch.column = colById(t.column).id;
+    const fields = {};
+    for (const [k, v] of Object.entries(t.fields || {})) if (!(d.fields && k in d.fields)) fields[k] = v;
+    if (Object.keys(fields).length) patch.fields = fields;
+    $$('.create-tpls .tpl-chip', m.root).forEach((b) => b.classList.toggle('on', b.dataset.tpl === t.key));
+    editItem(m, patch);
+  }
+
+  async function createFromDraft(m) {
+    const d = draftView(m);
+    // read the title box directly too: Create can be pressed while it still has focus
+    const q = parseQuick($('.m-title', m.root)?.value || d.title);
+    const err = (msg) => {
+      let box = $('.create-err', m.root);
+      if (!box) { box = el('<div class="create-err"></div>'); $('.m-main', m.root).prepend(box); }
+      box.innerHTML = `${icon('x', 'sm')}<span></span>`;
+      $('span', box).textContent = msg;
+    };
+    if (!q.title) { err('Give it a title'); $('.m-title', m.root).focus(); return; }
+    const fields = Object.fromEntries(Object.entries(d.fields || {}).filter(([, v]) => v !== null && v !== '' && !(Array.isArray(v) && !v.length)));
+    const body = {
+      title: q.title, column: d.columnId, position: 'top',
+      type: q.type || d.type, priority: q.priority || d.priority, parent: q.parent || d.parent || undefined,
+      description: d.description || undefined, assignee: d.assignee || undefined,
+      blockedBy: d.blockedBy?.length ? d.blockedBy : undefined,
+      ...(Object.keys(fields).length ? { fields } : {}),
+      ...(Object.keys(d.properties || {}).length ? { properties: d.properties } : {}),
+      ...(q.template || m.create.template ? { template: q.template || m.create.template } : {}),
+    };
+    try {
+      const it = await api('POST', B('/items'), body);
+      m.draft = {};
+      toast(`Created ${it.id}`, { icon: 'plus', kind: 'ok', timeout: 2000 });
+      await loadBoard(state.boardId);
+      m.switchTo(it.id);
+    } catch (e) { err(e.message); }
+  }
+
   function wireModalShell(m) {
     const { root } = m;
     root.addEventListener('pointerdown', (e) => { root._down = e.target === root; });
@@ -2134,8 +2244,8 @@
   }
 
   function editItem(m, body) {
-    if (settings.saveMode === 'instant' || m.kind !== 'item') return patchItem(m.id, body);
-    if (m.baseVersion == null) m.baseVersion = m.item.version;
+    if (!m.create && (settings.saveMode === 'instant' || m.kind !== 'item')) return patchItem(m.id, body);
+    if (m.baseVersion == null) m.baseVersion = m.item.version || 0;
     for (const [k, v] of Object.entries(body)) {
       if (k === 'properties' || k === 'fields') m.draft[k] = { ...(m.draft[k] || {}), ...v };
       else m.draft[k] = v;
@@ -2163,6 +2273,12 @@
     const bar = $('.m-save', m.root);
     if (!bar) return;
     const names = isDirty(m) ? draftLabels(m) : [];
+    if (m.create) {
+      bar.hidden = false;
+      const col = colById(draftView(m).columnId);
+      $('.txt', bar).innerHTML = `New ticket in <b>${esc(col?.name || '')}</b>${names.length ? ` · ${esc(names.filter((n) => n !== 'column').join(', '))}` : ''}`;
+      return;
+    }
     const was = !bar.hidden;
     bar.hidden = !names.length;
     if (!names.length) return;
@@ -2183,6 +2299,7 @@
   }
 
   async function saveDraft(m) {
+    if (m.create) return createFromDraft(m);
     if (!isDirty(m)) return;
     const body = { ...m.draft };
     m.draft = {};
@@ -2193,6 +2310,7 @@
   }
 
   function discardDraft(m) {
+    if (m.create) { m.draft = {}; closeModal(); return; }
     m.draft = {};
     m.baseVersion = null;
     renderSaveBar(m);
@@ -2337,7 +2455,7 @@
     const focus = document.activeElement;
     m.modal.style.setProperty('--type-c', TYPE_VAR[it.type]);
     $('.m-type', root).innerHTML = icon(it.type);
-    $('.m-id', root).textContent = it.id;
+    $('.m-id', root).textContent = m.create ? 'New ticket' : it.id;
     $('[data-a="archive"]', root).hidden = m.archived;
 
     const title = $('.m-title', main);
@@ -2555,7 +2673,7 @@
     const work = [];
     // Lease, Blocked by and Blocks read as one-line rows (label left, value right), like boolean fields.
     // A held lease opens into a card underneath for the timer and live status.
-    work.push(lease
+    if (!m.create) work.push(lease
       ? `<div class="field"><div class="row-line"><div class="lbl">${icon('clock', 'sm')}Lease</div><span class="row-val">${esc(lease.claimant)}${m.archived ? '' : `<button class="mini-x" data-act="revoke" title="Revoke lease|Take the ticket back from this agent">${icon('x', 'sm')}</button>`}</span></div>
         <div class="lease-box">${ringHTML(lease)}<div style="min-width:0"><div class="who">${esc(lease.claimant)}</div><div class="left" data-left="${esc(lease.expiresAt)}"></div></div>${lease.status ? `<div class="lstatus">${esc(lease.status)}</div>` : ''}</div></div>`
       : `<div class="field inline"><div class="lbl">${icon('clock', 'sm')}Lease</div>${m.archived ? '<span class="row-val empty">—</span>' : `<button class="row-btn" data-act="claim" title="Hold|Lease it yourself — agents can't change it until you release it">${icon('lock', 'sm')}Hold</button>`}</div>`);
@@ -3870,7 +3988,7 @@
     const b = state.board;
     const A = 'Actions';
     const cmds = [
-      ...(b ? b.columns.filter((c) => c.flags.allowCreate).map((c) => ({ section: A, label: `New ticket in ${c.name}`, icon: 'plus', run: () => openComposer(c.id) })) : []),
+      ...(b ? b.columns.filter((c) => c.flags.allowCreate).map((c) => ({ section: A, label: `New ticket in ${c.name}`, icon: 'plus', run: () => openCreate(c.id) })) : []),
       { section: A, label: 'Needs you', icon: 'ask', hint: String(needsIds().length), run: () => { const ids = needsIds(); if (ids.length) openItem(ids[0], cardEls.get(ids[0]), { rail: true }); } },
       { section: A, label: 'Inbox', icon: 'bell', run: openInbox },
       { section: A, label: 'While you were away', icon: 'sparkle', run: openCatchup },
