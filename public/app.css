@@ -1379,3 +1379,14 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .cmt.is-explain > div > .md { padding-left: 10px; border-left: 2px solid color-mix(in oklab, var(--accent-2) 55%, transparent); }
 .why-box { margin-top: 8px; }
 .m-ask .rv-body, .m-ask .rv-notes .md { font-weight: 400; }
+
+/* long review explanations: clamped with a fade, "See more" to expand */
+.rv-clamp { position: relative; max-height: 11.5em; overflow: hidden; transition: max-height .35s cubic-bezier(.22, 1, .36, 1); }
+.rv-clamp.open { max-height: none; }
+.rv-clamp.clamped:not(.open) { -webkit-mask-image: linear-gradient(#000 calc(100% - 3em), transparent); mask-image: linear-gradient(#000 calc(100% - 3em), transparent); }
+.see-more { display: inline-flex; align-items: center; gap: 5px; margin: -4px 0 10px; padding: 3px 9px 3px 6px; border: 0; border-radius: 99px; background: none; color: var(--accent); font: 600 12px var(--font); cursor: pointer; }
+.see-more:hover { background: color-mix(in oklab, var(--accent) 10%, transparent); }
+.see-more .i { transition: rotate .2s; }
+.see-more.up .i { rotate: 180deg; }
+.rv-clamp .rv-body, .rv-clamp .rv-notes { margin-bottom: 0; }
+.rv-clamp + .tbox, .rv-clamp + .see-more + .tbox { margin-top: 12px; }

@@ -2243,6 +2243,24 @@
     ? tboxHTML({ ph: 'Feedback, or a question for “Ask why”…', okIcon: 'send', okTitle: 'Request changes (Ctrl+Enter)', tools: `<button class="btn primary sm" data-r="approve">${icon('check', 'sm')}Approve</button><button class="btn ghost sm" data-r="why" title="Ask why|${esc(q.raisedBy)} explains on the card — nothing else changes and the review stays open">${icon('ask', 'sm')}Ask why</button>` })
     : tboxHTML({ ph: 'Reply…', okIcon: 'send', okTitle: 'Reply & resolve (Ctrl+Enter)', tools: `<button class="tb-btn" data-r="resolve" title="Resolve|Mark this question answered without replying">${icon('check')}</button>` })}</div>`;
         }).join('');
+        // Long explanations collapse to a few lines; "See more" only when they actually overflow.
+        m.openNotes ||= new Set();
+        for (const clamp of $$('.rv-clamp', slot)) {
+          const qid = clamp.closest('.m-ask').dataset.q;
+          if (m.openNotes.has(qid)) { clamp.classList.add('open'); continue; }
+          requestAnimationFrame(() => {
+            if (clamp.scrollHeight <= clamp.clientHeight + 4) return;
+            clamp.classList.add('clamped');
+            const more = el(`<button class="see-more">${icon('chev', 'sm')}<span>See more</span></button>`);
+            more.onclick = () => {
+              const open = clamp.classList.toggle('open');
+              if (open) m.openNotes.add(qid); else m.openNotes.delete(qid);
+              $('span', more).textContent = open ? 'See less' : 'See more';
+              more.classList.toggle('up', open);
+            };
+            clamp.after(more);
+          });
+        }
         for (const card of $$('.m-ask', slot)) {
           const box = $('.tbox', card);
           const qid = card.dataset.q || undefined;
@@ -2359,10 +2377,10 @@
   // The agent's explanation in full: its four parts when it gave them, else its whole review comment.
   function reviewNotesHTML(it, q) {
     if (q.notes && Object.keys(q.notes).length > (q.notes.changed && Object.keys(q.notes).length === 1 ? 1 : 0)) {
-      return `<div class="rv-notes">${REVIEW_LABELS.filter(([k]) => q.notes[k]).map(([k, label, ic]) => `<div class="rv-part"><div class="rv-label">${icon(ic, 'sm')}${label}</div><div class="md">${md(q.notes[k])}</div></div>`).join('')}</div>`;
+      return `<div class="rv-clamp"><div class="rv-notes">${REVIEW_LABELS.filter(([k]) => q.notes[k]).map(([k, label, ic]) => `<div class="rv-part"><div class="rv-label">${icon(ic, 'sm')}${label}</div><div class="md">${md(q.notes[k])}</div></div>`).join('')}</div></div>`;
     }
     const full = q.notes?.changed || [...(it.comments || [])].reverse().find((c) => c.author?.name === q.raisedBy && c.body && c.body.startsWith(q.reason.slice(0, 60)))?.body;
-    return `<div class="md rv-body">${md(full || q.reason)}</div>`;
+    return `<div class="rv-clamp"><div class="md rv-body">${md(full || q.reason)}</div></div>`;
   }
   // "Ask why": a reply-only question — the agent explains on the card and changes nothing else.
   async function askWhy(id, text, replyTo = null, who = null) {
