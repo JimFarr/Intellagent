@@ -303,6 +303,8 @@ function normalizeBoard(b) {
   b.digest = Array.isArray(b.digest) ? b.digest : [];
   b.master = isObj(b.master) ? b.master : null;
   b.ticketTemplates = Array.isArray(b.ticketTemplates) ? b.ticketTemplates : [];
+  b.requests = Array.isArray(b.requests) ? b.requests : [];
+  b.coordinator = b.coordinator || null;
   b.schema = { builtins: normBuiltins(b.schema?.builtins, true), fields: Array.isArray(b.schema?.fields) ? b.schema.fields : [] };
   for (const it of Object.values(b.items)) {
     it.fields = isObj(it.fields) ? it.fields : {}; it.cover = it.cover || 'auto'; it.assignee = it.assignee || null;
@@ -468,6 +470,8 @@ function createBoard(d, actor) {
     directives: str(d.directives ?? tpl.directives ?? '', 50_000),
     schema: { builtins: normBuiltins(d.schema?.builtins ?? tpl.schema?.builtins), fields: [] },
     digest: [],
+    requests: [],
+    coordinator: d.coordinator || null,
     columns: [],
     items: {},
   };
@@ -1257,6 +1261,44 @@ function finishSession(ctx, d, actor) {
   });
 }
 
+/* requests: free-form asks from the human to an agent ("let's create some tickets for X"), not tied
+   to a ticket. They go to a chosen agent, else the board's coordinator, else the project's default agent. */
+function requestTarget(ctx, to) {
+  return (to && str(to, 64).trim()) || ctx.board.coordinator || M.defaultAgent || null;
+}
+function createRequest(ctx, d, actor) {
+  const body = str(d.body || '', 20_000).trim();
+  if (!body) fail(400, '"body" is required');
+  const to = requestTarget(ctx, d.to);
+  if (!to) fail(400, 'No agent to send this to: pass "to", or set a coordinator (PATCH /api/boards/<board> { "coordinator": "name" }).', { code: 'NO_AGENT' });
+  return tx(ctx, (events) => {
+    const req = { id: rid('r'), body, to, by: actor, at: now(), status: 'open', replies: [] };
+    (ctx.board.requests ||= []).push(req);
+    if (ctx.board.requests.length > 300) ctx.board.requests.splice(0, ctx.board.requests.length - 300);
+    events.push({ board: ctx.id, type: 'request.created', actor, request: { id: req.id, body: trimChange(body), to }, recipients: [to].filter((n) => n !== actor.name) });
+    return req;
+  });
+}
+function getRequest(ctx, id) {
+  const req = (ctx.board.requests || []).find((x) => x.id === id);
+  if (!req) fail(404, `No request "${id}"`);
+  return req;
+}
+function replyRequest(ctx, id, d, actor) {
+  return tx(ctx, (events) => {
+    const req = getRequest(ctx, id);
+    const body = str(d.body || '', 20_000).trim();
+    if (!body && d.done == null) fail(400, '"body" or "done" is required');
+    if (body) req.replies.push({ id: rid('c'), author: actor, body, at: now() });
+    if (d.done === true) req.status = 'done';
+    if (d.done === false) req.status = 'open';
+    req.updatedAt = now();
+    const to = actor.name === req.to ? [] : [req.to];
+    events.push({ board: ctx.id, type: req.status === 'done' && d.done ? 'request.done' : 'request.replied', actor, request: { id: req.id, body: trimChange(req.body), to: req.to, status: req.status }, ...(body ? { reply: trimChange(body) } : {}), recipients: to });
+    return req;
+  });
+}
+
 const PRIO_RANK = { Critical: 0, High: 1, Medium: 2, Low: 3 };
 
 // "What needs me now?" — everything an (ephemeral) agent needs to decide its next step, in one call.
@@ -1286,6 +1328,7 @@ function workFor(ctx, name) {
     if (rv?.verdict === 'changes' && (rv.requestedBy === name || it.workedBy?.includes(name)) && Date.parse(rv.at) > lastMine(it)) feedback.push(brief(it, { feedback: rv.comment, by: rv.by }));
     if (it.assignee === name && it.columnId !== done && !(l && l.claimant !== name) && !leases.some((x) => x.id === it.id)) assigned.push(brief(it));
   }
+  const requests = (b.requests || []).filter((q) => q.status === 'open' && q.to === name).map((q) => ({ requestId: q.id, request: q.body, from: q.by?.name, at: q.at, replies: q.replies.length }));
   // "Explain" questions addressed to me that I haven't answered since they were asked.
   const explain = [];
   for (const it of items) {
@@ -1305,6 +1348,7 @@ function workFor(ctx, name) {
   const seen = new Set();
   // One suggestion per ticket (renewing is separate: it is just housekeeping).
   const add = (action, it, why, how) => { const k = action === 'renew' ? `renew:${it.id}` : it.id; if (seen.has(k)) return; seen.add(k); next.push({ action, id: it.id, title: it.title, why, call: how }); };
+  for (const q of requests) next.push({ action: 'handle_request', requestId: q.requestId, why: `Request from ${q.from}: ${String(q.request).slice(0, 160)}`, call: `POST /api/boards/${ctx.id}/requests/${q.requestId}/reply { "body": "what you did", "done": true }` });
   for (const x of explain) add('explain', x, `Asked to explain (reply on the card only — change nothing): ${String(x.question).slice(0, 140)}`, `POST /api/boards/${ctx.id}/items/${x.id}/comments { "body": "…" }`);
   for (const x of leases.filter((l) => l.minutesLeft <= M.lease.warningMinutes)) add('renew', x, `Your lease ends in ${x.minutesLeft} min`, `${call(x.id, 'lease')} { "minutes": 30 }`);
   for (const x of feedback) add('address_feedback', x, `Review sent back: ${String(x.feedback || '').slice(0, 120)}`, call(x.id, 'start'));
@@ -1318,7 +1362,7 @@ function workFor(ctx, name) {
     ...(master ? { master: { holder: master.holder, you: master.holder === name, status: master.status || null } } : {}),
     ...(blockedByMaster ? { note: `${master.holder} holds the whole board — you can read, comment and ask, but not change tickets.` } : {}),
     next: blockedByMaster ? [] : next,
-    explain, leases, feedback, answered, waitingOnHuman: waiting, assigned, ready,
+    requests, explain, leases, feedback, answered, waitingOnHuman: waiting, assigned, ready,
   };
 }
 
@@ -1354,12 +1398,12 @@ function briefing(ctx, name, base, via = 'cli') {
   const rules = projectRules();
   const lines = [
     `# You are "${name}" on the ${b.name} board`,
-    `${base}  ·  board id \`${ctx.id}\`  ·  tickets ${b.idPrefix}-1, ${b.idPrefix}-2…  ·  identify every call as "${name}"`,
+    `${base}  ·  board id \`${ctx.id}\`  ·  tickets ${b.idPrefix}-1, ${b.idPrefix}-2…  ·  identify every call as "${name}"${b.coordinator === name ? '  ·  you are this board\'s coordinator: requests come to you' : ''}`,
     '',
     '## What to do next',
     ...(w.note ? [`> ${w.note}`] : []),
     ...(w.next.length
-      ? w.next.map((n, i) => `${i + 1}. **${n.action.replace(/_/g, ' ')} ${n.id}** "${n.title}" — ${n.why}`)
+      ? w.next.map((n, i) => n.requestId ? `${i + 1}. **handle request ${n.requestId}** — ${n.why}` : `${i + 1}. **${n.action.replace(/_/g, ' ')} ${n.id}** "${n.title}" — ${n.why}`)
       : ['Nothing is waiting for you. Ask the human what to work on, or create tickets for work you were given.']),
     ...(w.waitingOnHuman.length ? ['', `Waiting on the human (don't redo these): ${w.waitingOnHuman.map((x) => `${x.id} "${x.question}"`).join('; ')}`] : []),
     '',
@@ -1380,6 +1424,7 @@ function briefing(ctx, name, base, via = 'cli') {
     `- Comment: ${c('comment')}   ·   Ask the human (they answer on the card): ${c('ask')}`,
     `- Finished? Request review in four parts — what changed, why (incl. alternatives you rejected), how to verify, risks/open questions: ${c('review')}`,
     `- React to a comment or card (never wakes anyone): \`intellagent api POST ${P}/items/<ID>/reactions emoji=+1 commentId=<id>\` — 👀 is added for you on comments you were woken for.`,
+    `- Requests (free-form asks like "create tickets for X") arrive as \`handle_request\` in your work: do them, then reply — \`intellagent api POST ${P}/requests/<id>/reply body="what you did, with ticket ids" done=true\`.`,
     '- Asked to *explain* (a comment marked explain, or an "explain" item in your work): answer in a comment and change nothing else — not the code, the ticket, its column or the review.',
     `- Where can this ticket go?: ${c('moves')}`,
     `- End of session (releases everything, posts the digest): ${c('finish')}`,
@@ -1988,7 +2033,7 @@ const SCHEMA = {
     seq: 'integer cursor', ts: 'ISO', board: 'string', hash: 'board hash after the change',
     type: ['item.created', 'item.updated', 'item.moved', 'item.reordered', 'item.archived', 'item.restored', 'comment.added',
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
-      'attention.raised', 'attention.resolved', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
+      'attention.raised', 'attention.resolved', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agents.changed'],
@@ -2142,10 +2187,14 @@ route('POST', '/api/boards', 'Create a board: { name, id?, idPrefix?, template?:
 
 route('GET', '/api/boards/:board', 'Full board JSON + hash', ({ p }) => boardView(getCtx(p.board)));
 
-route('PATCH', '/api/boards/:board', 'Update board: { name?, idPrefix?, directives? }', ({ p, body, actor }) => {
+route('PATCH', '/api/boards/:board', 'Update board: { name?, idPrefix?, directives?, coordinator? (default agent for requests) }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {
     const changes = {};
+    if ('coordinator' in body) {
+      const v = body.coordinator ? str(body.coordinator, 64).trim() : null;
+      if (v !== ctx.board.coordinator) { changes.coordinator = { from: ctx.board.coordinator, to: v }; ctx.board.coordinator = v; }
+    }
     for (const k of ['name', 'idPrefix', 'directives']) {
       if (!(k in body)) continue;
       const v = k === 'idPrefix' ? str(body[k], 8).toUpperCase() : str(body[k], k === 'directives' ? 50_000 : 80);
@@ -2464,6 +2513,12 @@ route('GET', '/api/boards/:board/brief', 'Start here (agents): who you are, what
 });
 route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=7|30: done, cycle time, time per column, waiting on the human, answer time', ({ p, q }) =>
   metrics(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90)));
+route('GET', '/api/boards/:board/requests', 'Requests from the human to agents: ?status=open|done&to=<agent>', ({ p, q }) =>
+  (getCtx(p.board).board.requests || []).filter((x) => (!q.status || x.status === q.status) && (!q.to || x.to === q.to)).slice().reverse());
+route('POST', '/api/boards/:board/requests', 'Ask an agent something not tied to a ticket: { body, to? } (to defaults to the board coordinator)', ({ p, body, actor }) =>
+  created(createRequest(getCtx(p.board), body, actor)));
+route('POST', '/api/boards/:board/requests/:id/reply', 'Reply to a request: { body?, done? } — agents: say what you did and pass "done": true', ({ p, body, actor }) =>
+  replyRequest(getCtx(p.board), p.id, body, actor));
 route('GET', '/api/boards/:board/work', 'What needs you now (agent): next actions, your leases, answered questions, review feedback, assigned and ready tickets. ?agent= to look at another agent', ({ p, q, actor }) =>
   workFor(getCtx(p.board), q.agent || actor.name));
 route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move this ticket, and why not elsewhere', ({ p, actor }) => {
@@ -2672,7 +2727,7 @@ const server = http.createServer(async (req, res) => {
     checkAuth(req, q, actor, u.pathname);
     const bm = /^\/api\/boards\/([^/]+)(?:\/(.*))?$/.exec(u.pathname);
     const gctx = bm && (boards.get(bm[1]) || boards.get(slug(decodeURIComponent(bm[1]))));
-    if (req.method !== 'GET' && gctx && !/(^|\/)(comments|attention|digest|master|finish|reactions)(\/|$)/.test(bm[2] || '')) {
+    if (req.method !== 'GET' && gctx && !/(^|\/)(comments|attention|digest|master|finish|reactions|requests)(\/|$)/.test(bm[2] || '')) {
       guardBoard(gctx, actor);
     }
     if (actor.kind === 'agent' && u.pathname.startsWith('/api')) touch(actor.name, `${req.method} ${u.pathname}`);

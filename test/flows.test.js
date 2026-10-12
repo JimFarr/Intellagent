@@ -175,6 +175,27 @@ describe('agent flows', () => {
     await s.ok('POST', `${B}/finish`, {}, { agent: 'holder' });
   });
 
+  it('requests go to the chosen agent, else the coordinator, and top its work until done', async () => {
+    assert.equal((await s.api('POST', `${B}/requests`, { body: 'make tickets for search' }, USER)).body.code, 'NO_AGENT');
+    await s.ok('PATCH', B, { coordinator: 'coord' }, USER);
+    const { seq } = await s.ok('GET', '/api/app');
+    const req = await s.ok('POST', `${B}/requests`, { body: "let's create some tickets for search" }, USER);
+    assert.equal(req.to, 'coord');
+    const [ev] = (await s.ok('GET', `/api/events?since=${seq}&for=coord&types=request.created`)).events;
+    assert.equal(ev.request.id, req.id);
+    let w = await work({ agent: 'coord' });
+    assert.equal(w.next[0].action, 'handle_request');
+    assert.match(await s.ok('GET', `${B}/brief`, undefined, { agent: 'coord' }), /coordinator/);
+    await s.ok('POST', `${B}/requests/${req.id}/reply`, { body: 'Created T-90 and T-91', done: true }, { agent: 'coord' });
+    w = await work({ agent: 'coord' });
+    assert.equal(w.requests.length, 0);
+    const [listed] = await s.ok('GET', `${B}/requests`);
+    assert.equal(listed.status, 'done');
+    assert.equal(listed.replies[0].body, 'Created T-90 and T-91');
+    const direct = await s.ok('POST', `${B}/requests`, { body: 'ping', to: 'ada' }, USER);
+    assert.equal(direct.to, 'ada');
+  });
+
   it('transitions explain where a ticket can go', async () => {
     const it = await mk({ title: 'where to' });
     const t = await s.ok('GET', `${B}/items/${it.id}/transitions`, undefined, A);
