@@ -2692,6 +2692,13 @@
               await api('POST', I(m.id, '/review/decision'), { verdict: approve ? 'approve' : 'changes', comment: text });
               pulseSaved();
               toast(approve ? `Approved ${m.id}` : `Sent ${m.id} back`, { kind: approve ? 'ok' : '', icon: approve ? 'check' : 'restore' });
+              // Approving is the last thing done with a ticket: back to the board (or on to the next
+              // ticket that needs you, when working through the rail). Sending back keeps it open.
+              if (approve && state.modal === m) {
+                const next = m.rail ? needsIds().filter((x) => x !== m.id) : [];
+                m.draft = {};
+                if (next.length) m.switchTo(next[0]); else closeModal(true);
+              }
               scheduleRefresh(0);
             } catch (e) { toast(e.message, { kind: 'error' }); }
           };
