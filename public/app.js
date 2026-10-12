@@ -77,6 +77,7 @@
     target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
     play: '<path d="M7 4.5v15l12-7.5z"/>',
     pause: '<path d="M8 5v14M16 5v14"/>',
+    smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.3 2.2 2 3.5 2s2.5-.7 3.5-2M9 9.5h.01M15 9.5h.01"/>',
     terminal: '<path d="M4 17l6-5-6-5M12 19h8"/>',
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
@@ -1331,6 +1332,8 @@
     const ck = checklist(it.description);
     if (s.checklist && ck.total) meta.push(`<span class="m" title="Checklist|${ck.done} of ${ck.total} done">${icon('checks', 'sm')}${ck.done}/${ck.total}</span>`);
     if (s.listeners && ls?.length) meta.push(`<span class="m listen" title="Listening|${esc(ls.join(', '))} ${ls.length > 1 ? 'get' : 'gets'} events about this ticket">${icon('radio', 'sm')}<span class="stack-av">${ls.slice(0, 3).map((n) => avatar({ kind: 'agent', name: n })).join('')}</span>${ls.length > 3 ? `+${ls.length - 3}` : ''}</span>`);
+    const rx = Object.entries(it.reactions || {}).filter(([, w]) => w.length);
+    if (rx.length) meta.push(`<span class="c-reacts" title="Reactions|${esc(rx.map(([e, w]) => `${e} ${w.join(', ')}`).join(' · '))}">${rx.slice(0, 3).map(([e, w]) => `<span>${e}${w.length > 1 ? `<b>${w.length}</b>` : ''}</span>`).join('')}</span>`);
     const hasMeta = meta.length > 0;
     if (s.author) meta.push('<span class="grow"></span>', avatar(it.author));
     const desc = s.description && shown('description') && it.description ? `<p class="c-desc">${esc(stripMd(it.description).slice(0, 220))}</p>` : '';
@@ -2225,6 +2228,8 @@
     if (first) requestAnimationFrame(() => autosize(title));
 
     const col = colById(it.columnId);
+    const rx = $('.m-reacts', main) || (() => { const d = el('<div class="m-reacts"></div>'); $('.m-sub', main).after(d); wireReactions(d, m.id); return d; })();
+    rx.innerHTML = reactionsHTML(it.reactions, { add: !m.archived });
     $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${esc(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}`;
 
     // needs-you banner
@@ -2306,10 +2311,11 @@
 
     $('.c-n', main).textContent = it.comments.length;
     const cmts = $('.cmts', main);
-    const sig = `${it.id}:${it.comments.length}`;
+    const sig = `${it.id}:${it.comments.map((c) => `${c.id}${JSON.stringify(c.reactions || {})}`).join('|')}`;
     if (cmts.dataset.sig !== sig) {
       cmts.dataset.sig = sig;
-      cmts.innerHTML = it.comments.map((c) => `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${esc(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(c.author.name)} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}</div></div>`).join('');
+      cmts.innerHTML = it.comments.map((c) => `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${esc(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(c.author.name)} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}${reactionsHTML(c.reactions, { cid: c.id, add: !m.archived })}</div></div>`).join('');
+      if (!cmts._reactWired) { cmts._reactWired = true; wireReactions(cmts, m.id); }
       cmts.onclick = (e) => {
         const b = e.target.closest('[data-why]');
         if (!b || b.closest('.cmt').querySelector('.why-box')) return;
@@ -2574,6 +2580,41 @@
     return [...s].filter(Boolean);
   }
 
+  /* ─── reactions: emoji on cards and comments ─── */
+
+  const REACT_SET = ['👍', '👀', '🎉', '❤️', '🚀', '🤔', '✅', '😄'];
+  // Chips for a reactions map; mine are highlighted. data-react carries the emoji, data-cid the comment.
+  function reactionsHTML(reactions, { cid = '', add = true, compact = false } = {}) {
+    const entries = Object.entries(reactions || {}).filter(([, who]) => who.length);
+    if (!entries.length && !add) return '';
+    const me = settings.userName;
+    return `<div class="reacts ${compact ? 'compact' : ''}">${entries.map(([e, who]) => `<button class="react ${who.includes(me) ? 'mine' : ''}" data-react="${esc(e)}" data-cid="${esc(cid)}" title="${esc(e)}|${esc(who.join(', '))}"><span>${e}</span><b>${who.length}</b></button>`).join('')}${add ? `<button class="react add" data-react-add data-cid="${esc(cid)}" title="React|Add an emoji — agents see it, it never wakes them">${icon('smile', 'sm')}</button>` : ''}</div>`;
+  }
+  function reactPicker(anchor, onPick) {
+    $$('.react-pick').forEach((x) => x.remove());
+    const pick = el(`<div class="react-pick">${REACT_SET.map((e) => `<button data-e="${e}">${e}</button>`).join('')}</div>`);
+    document.body.append(pick);
+    const r = anchor.getBoundingClientRect();
+    pick.style.left = `${Math.min(r.left, innerWidth - pick.offsetWidth - 8)}px`;
+    pick.style.top = `${r.top - pick.offsetHeight - 6 < 8 ? r.bottom + 6 : r.top - pick.offsetHeight - 6}px`;
+    const close = (e) => { if (!pick.contains(e.target)) { pick.remove(); document.removeEventListener('pointerdown', close, true); } };
+    setTimeout(() => document.addEventListener('pointerdown', close, true));
+    pick.onclick = (e) => { const b = e.target.closest('[data-e]'); if (!b) return; pick.remove(); document.removeEventListener('pointerdown', close, true); onPick(b.dataset.e); };
+  }
+  async function toggleReaction(itemId, emoji, commentId) {
+    try { await api('POST', I(itemId, '/reactions'), { emoji, toggle: true, ...(commentId ? { commentId } : {}) }); scheduleRefresh(0); }
+    catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+  // One delegated handler for reaction chips and the add button inside a container.
+  function wireReactions(root, itemId) {
+    root.addEventListener('click', (e) => {
+      const add = e.target.closest('[data-react-add]');
+      if (add) { e.stopPropagation(); reactPicker(add, (emoji) => toggleReaction(itemId, emoji, add.dataset.cid || null)); return; }
+      const chip = e.target.closest('[data-react]');
+      if (chip) { e.stopPropagation(); toggleReaction(itemId, chip.dataset.react, chip.dataset.cid || null); }
+    });
+  }
+
   /* ─── @mention suggestions in comment-style text boxes ─── */
 
   // Where the caret sits inside a textarea, in viewport pixels (mirror-div technique).
@@ -2807,6 +2848,8 @@
       case 'master.expired': return `${b(ev.holder)}'s board hold expired`;
       case 'master.status': return `${b(ev.holder)}: ${html ? esc(ev.status || '—') : ev.status || '—'}`;
       case 'review.requested': return `${who} asked you to review ${b(id)}`;
+      case 'reaction.added': return `${who} reacted ${ev.emoji} on ${b(id)}`;
+      case 'reaction.removed': return `${who} removed ${ev.emoji} on ${b(id)}`;
       case 'review.approved': return `${who} approved ${b(id)}`;
       case 'review.changes_requested': return `${who} sent ${b(id)} back${ev.feedback ? `: ${html ? esc(ev.feedback) : ev.feedback}` : ''}`;
       case 'digest.added': return `${who} posted to the digest`;
@@ -2838,7 +2881,7 @@
     if (on) { scheduleRefresh(0); refreshPresence(); }
   }
 
-  const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status', 'master.status', 'master.renewed', 'agent.status', 'agent.run.finished']);
+  const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status', 'master.status', 'master.renewed', 'agent.status', 'agent.run.finished', 'reaction.added', 'reaction.removed']);
   function onEvent(ev) {
     if (ev.type === 'hello') return;
     if (ev.type === 'presence.changed' || (ev.type?.startsWith('lease.') && ev.type !== 'lease.status')) refreshPresence();

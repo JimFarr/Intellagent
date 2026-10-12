@@ -299,6 +299,11 @@ async function waitCmd() {
   const agent = agentName(f);
   const events = await nextEvents({ agent, types: f.types, timeoutSec: Number(f.timeout) || 0, listen: listenScope(f) });
   if (!events.length) { console.log('(no events before timeout)'); process.exit(2); }
+  // The agent is about to read these: mark comments as seen (👀) so the human knows.
+  const url = baseUrl(readManifest(findManifest()));
+  await Promise.all(events.filter((e) => e.type === 'comment.added' && e.comment?.id).map((e) => fetch(`${url}/api/boards/${e.board}/items/${e.itemId}/reactions`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'X-Agent': agent }, body: JSON.stringify({ emoji: '👀', commentId: e.comment.id }),
+  }).catch(() => {})));
   console.log(f.json ? JSON.stringify(events, null, 2) : events.map(eventLine).join('\n'));
 }
 

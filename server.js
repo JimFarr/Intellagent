@@ -556,7 +556,7 @@ function recipientsFor(item, actor, extra = []) {
 }
 
 // Housekeeping events never wake anyone (a status line from one agent must not wake the others).
-const QUIET_TYPES = new Set(['lease.status', 'lease.renewed', 'item.reordered']);
+const QUIET_TYPES = new Set(['lease.status', 'lease.renewed', 'item.reordered', 'reaction.added', 'reaction.removed']);
 function itemEvent(ctx, type, item, actor, extra = {}) {
   const { mentions = [], ...rest } = extra;
   if (QUIET_TYPES.has(type)) {
@@ -1049,6 +1049,38 @@ function resolveAttention(ctx, id, d, actor) {
   });
 }
 
+/* reactions: emoji on a card or a comment. They never wake anyone and are allowed even while others
+   hold the ticket or the board — they're acknowledgements, not work. */
+const EMOJI_NAMES = {
+  eyes: '👀', '+1': '👍', thumbsup: '👍', '-1': '👎', thumbsdown: '👎', tada: '🎉', heart: '❤️', rocket: '🚀', thinking: '🤔',
+  check: '✅', white_check_mark: '✅', smile: '😄', laugh: '😄', fire: '🔥', warning: '⚠️', pray: '🙏', bulb: '💡', hourglass: '⏳', clap: '👏', ok: '👌',
+};
+function normEmoji(v) {
+  const raw = String(v ?? '').trim();
+  const e = EMOJI_NAMES[raw.toLowerCase().replace(/^:|:$/g, '')] || raw;
+  if (!e || e.length > 16 || !/\p{Extended_Pictographic}/u.test(e)) fail(400, `"emoji" must be an emoji or one of: ${Object.keys(EMOJI_NAMES).join(', ')}`, { code: 'BAD_EMOJI' });
+  return e;
+}
+// add: true adds, false removes, 'toggle' flips. Returns the target's reactions.
+function react(ctx, id, d, actor, add = true) {
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    const emoji = normEmoji(d.emoji);
+    const comment = d.commentId ? item.comments.find((c) => c.id === d.commentId) : null;
+    if (d.commentId && !comment) fail(404, `No comment "${d.commentId}" on ${item.id}`);
+    const target = comment || item;
+    const reactions = (target.reactions ||= {});
+    const who = reactions[emoji] || [];
+    const has = who.includes(actor.name);
+    const on = add === 'toggle' ? !has : add;
+    if (on === has) return reactions;
+    reactions[emoji] = on ? [...who, actor.name] : who.filter((n) => n !== actor.name);
+    if (!reactions[emoji].length) delete reactions[emoji];
+    events.push(itemEvent(ctx, on ? 'reaction.added' : 'reaction.removed', item, actor, { emoji, ...(comment ? { commentId: comment.id } : {}) }));
+    return reactions;
+  });
+}
+
 // Asking never needs a lease: anyone working near a ticket may ask about it. Questions stack up;
 // each gets an id and is answered on its own.
 function askHuman(ctx, id, reason, actor) {
@@ -1347,6 +1379,7 @@ function briefing(ctx, name, base, via = 'cli') {
     `- Say what you're doing (shows live on the card): ${c('status')}`,
     `- Comment: ${c('comment')}   ·   Ask the human (they answer on the card): ${c('ask')}`,
     `- Finished? Request review in four parts — what changed, why (incl. alternatives you rejected), how to verify, risks/open questions: ${c('review')}`,
+    `- React to a comment or card (never wakes anyone): \`intellagent api POST ${P}/items/<ID>/reactions emoji=+1 commentId=<id>\` — 👀 is added for you on comments you were woken for.`,
     '- Asked to *explain* (a comment marked explain, or an "explain" item in your work): answer in a comment and change nothing else — not the code, the ticket, its column or the review.',
     `- Where can this ticket go?: ${c('moves')}`,
     `- End of session (releases everything, posts the digest): ${c('finish')}`,
@@ -1955,7 +1988,7 @@ const SCHEMA = {
     seq: 'integer cursor', ts: 'ISO', board: 'string', hash: 'board hash after the change',
     type: ['item.created', 'item.updated', 'item.moved', 'item.reordered', 'item.archived', 'item.restored', 'comment.added',
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
-      'attention.raised', 'attention.resolved', 'review.requested', 'review.approved', 'review.changes_requested', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
+      'attention.raised', 'attention.resolved', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agents.changed'],
@@ -2446,6 +2479,11 @@ route('POST', '/api/boards/:board/items/:id/review/decision', 'Human: decide a r
 route('POST', '/api/boards/:board/finish', 'End your session: release all your leases (and the board hold), optionally post the digest { summary?, items? }', ({ p, body, actor }) =>
   finishSession(getCtx(p.board), body, actor));
 
+route('POST', '/api/boards/:board/items/:id/reactions', 'React with an emoji: { emoji ("👀" or "eyes", "+1", "tada"…), commentId? (else the card), toggle? }', ({ p, body, actor }) =>
+  ({ reactions: react(getCtx(p.board), p.id, body, actor, body.toggle ? 'toggle' : true) }));
+route('DELETE', '/api/boards/:board/items/:id/reactions', 'Remove your reaction: { emoji, commentId? }', ({ p, body, q, actor }) =>
+  ({ reactions: react(getCtx(p.board), p.id, { ...q, ...body }, actor, false) }));
+
 route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason } — allowed even while others hold leases', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const { item, questionId } = askHuman(ctx, p.id, body.reason, actor);
@@ -2634,7 +2672,7 @@ const server = http.createServer(async (req, res) => {
     checkAuth(req, q, actor, u.pathname);
     const bm = /^\/api\/boards\/([^/]+)(?:\/(.*))?$/.exec(u.pathname);
     const gctx = bm && (boards.get(bm[1]) || boards.get(slug(decodeURIComponent(bm[1]))));
-    if (req.method !== 'GET' && gctx && !/(^|\/)(comments|attention|digest|master|finish)(\/|$)/.test(bm[2] || '')) {
+    if (req.method !== 'GET' && gctx && !/(^|\/)(comments|attention|digest|master|finish|reactions)(\/|$)/.test(bm[2] || '')) {
       guardBoard(gctx, actor);
     }
     if (actor.kind === 'agent' && u.pathname.startsWith('/api')) touch(actor.name, `${req.method} ${u.pathname}`);
@@ -2700,6 +2738,13 @@ standing = require('./lib/agents').createAgents({
   cwd: PROJECT_ROOT,
   env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
   emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
+  // A run starting means the agent has the comments in front of it: mark them seen with 👀.
+  onRunStart: (name, events) => {
+    for (const e of events) {
+      if (e.type !== 'comment.added' || !e.comment?.id || !boards.has(e.board)) continue;
+      try { react(boards.get(e.board), e.itemId, { emoji: '👀', commentId: e.comment.id }, { kind: 'agent', name }); } catch { /* comment gone */ }
+    }
+  },
   onRunEnd: (name) => {
     for (const ctx of boards.values()) {
       if (Object.values(ctx.board.items).some((it) => activeLease(it)?.claimant === name)) finishSession(ctx, {}, { kind: 'agent', name });

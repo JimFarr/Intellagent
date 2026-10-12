@@ -108,6 +108,8 @@ const TOOLS = [
   ['release_board', 'Release the whole board (do this before spawning helper agents that use ticket leases).', { board }, [],
     (a) => ['DELETE', `/api/boards/${b(a)}/master`]],
   ['release_lease', 'Release your lease.', { board, id }, ['id'], (a) => ['DELETE', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease`]],
+  ['react', 'React with an emoji on a card or a comment (never wakes anyone). Use 👀 to show you read a comment.', { board, id, emoji: S('string', 'Emoji, or a name: eyes, +1, tada, rocket, thinking, check, heart…'), commentId: S('string', 'Comment id (omit to react to the card)'), remove: S('boolean', 'Remove your reaction instead') }, ['id', 'emoji'],
+    (a) => [a.remove ? 'DELETE' : 'POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/reactions`, pick(a, ['emoji', 'commentId'])]],
   ['ask_human', 'Flag the item as needing the human, with a question.', { board, id, reason: S('string', 'Your question') }, ['id', 'reason'],
     (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/attention`, { reason: a.reason }]],
   ['archive_items', 'Archive items (never deleted).', { board, ids: S('array', 'Item ids', { items: { type: 'string' } }), reason: S('string', 'Why') }, ['ids'],

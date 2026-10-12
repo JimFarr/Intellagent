@@ -44,6 +44,8 @@ describe('standing agents', () => {
     await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('bot: handled')), 8000, 'bot reply');
     await until(async () => (await agentState(s, 'bot')).status === 'idle', 4000, 'bot idle');
     assert.equal((await agentState(s, 'bot')).lastRun.code, 0);
+    const asked = (await s.ok('GET', `${B}/items/${it.id}`)).comments.find((c) => c.body === '@bot please look');
+    assert.deepEqual(asked.reactions, { '👀': ['bot'] }, 'the comment it was woken for is marked seen');
   });
 
   it('retries a failing agent, then flags it and waits for the human', async () => {

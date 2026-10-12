@@ -154,6 +154,27 @@ describe('agent flows', () => {
     assert.ok(!w.explain.some((x) => x.id === it.id), 'answered');
   });
 
+  it('reactions: on cards and comments, by name or emoji, never waking anyone, allowed while held', async () => {
+    const it = await mk({ title: 'react to me' });
+    const c = await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'nice work @ada' }, USER);
+    await s.ok('POST', `${B}/items/${it.id}/start`, {}, { agent: 'holder' });
+    const { seq } = await s.ok('GET', '/api/app');
+    const r1 = await s.ok('POST', `${B}/items/${it.id}/reactions`, { emoji: 'eyes', commentId: c.id }, A);
+    assert.deepEqual(r1.reactions, { '👀': ['ada'] }, 'allowed although someone else holds the ticket');
+    await s.ok('POST', `${B}/items/${it.id}/reactions`, { emoji: '🎉' }, USER);
+    await s.ok('POST', `${B}/items/${it.id}/reactions`, { emoji: '+1', commentId: c.id }, A);
+    const full = await s.ok('GET', `${B}/items/${it.id}`);
+    assert.deepEqual(full.reactions, { '🎉': ['James'] });
+    assert.deepEqual(full.comments.find((x) => x.id === c.id).reactions, { '👀': ['ada'], '👍': ['ada'] });
+    const evs = (await s.ok('GET', `/api/events?since=${seq}&types=reaction.*`)).events;
+    assert.equal(evs.length, 3);
+    assert.ok(evs.every((e) => e.recipients.length === 0), 'reactions never wake anyone');
+    await s.ok('DELETE', `${B}/items/${it.id}/reactions`, { emoji: 'eyes', commentId: c.id }, A);
+    assert.deepEqual((await s.ok('GET', `${B}/items/${it.id}`)).comments.find((x) => x.id === c.id).reactions, { '👍': ['ada'] });
+    assert.equal((await s.api('POST', `${B}/items/${it.id}/reactions`, { emoji: 'banana-split' }, A)).body.code, 'BAD_EMOJI');
+    await s.ok('POST', `${B}/finish`, {}, { agent: 'holder' });
+  });
+
   it('transitions explain where a ticket can go', async () => {
     const it = await mk({ title: 'where to' });
     const t = await s.ok('GET', `${B}/items/${it.id}/transitions`, undefined, A);
