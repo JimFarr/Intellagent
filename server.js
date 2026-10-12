@@ -2652,6 +2652,20 @@ route('POST', '/api/agents/:name/resume', 'Human: resume a paused or failed agen
 route('POST', '/api/agents/:name/run', 'Human: start a run now: { note? }', ({ p, body, actor }) => { humanOnly(actor); return standing.runNow(p.name, body.note); });
 
 route('GET', '/api/presence', 'Agents seen by this instance, online state, leases, subscriptions', () => presenceView());
+// Forget an offline agent: it leaves the agents list (its profile stays, and it reappears if it calls again).
+route('DELETE', '/api/presence/:name', 'Human: forget an offline agent (not standing agents, not while it holds leases)', ({ p, actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Only the human can forget agents', { code: 'HUMAN_ONLY' });
+  const name = p.name;
+  const v = presenceView().find((x) => x.name === name);
+  if (!v) fail(404, `No agent "${name}" in the list`);
+  if (standing?.list().agents.some((a) => a.name === name)) fail(409, `${name} is a standing agent — remove it with: intellagent agents remove ${name}`, { code: 'STANDING_AGENT' });
+  if (v.online) fail(409, `${name} is online right now`, { code: 'ONLINE' });
+  if (v.leases.length) fail(409, `${name} still holds ${v.leases.map((l) => l.id).join(', ')} — revoke those leases first`, { code: 'HOLDS_LEASES' });
+  presence.delete(name);
+  savePresenceSoon();
+  emit({ type: 'presence.changed', actor, forgot: name, online: [...presence.values()].filter(isOnline).map((x) => x.name) });
+  return { forgot: name };
+});
 route('GET', '/api/permissions/me', 'What you are allowed to do (from the manifest)', ({ actor }) => ({
   name: actor.name, kind: actor.kind, permissions: actor.kind === 'agent' ? permsFor(actor.name) : null,
   tokenRequired: actor.kind === 'user' ? !!M.auth.userToken : !!M.auth.agentTokens?.[actor.name] || !!M.auth.requireAgentTokens,

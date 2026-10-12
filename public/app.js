@@ -3211,12 +3211,22 @@
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
       const subs = p.subscriptions.map((s) => `<span class="mini-chip" title="${esc(JSON.stringify(s.filter))}">${icon('bell', 'sm')}${esc(s.label || Object.entries(s.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join('');
       return `<div class="agent-row ${p.online || sa ? '' : 'off'}" data-agent="${esc(p.name)}" style="animation-delay:${i * 40}ms">${avatar({ kind: 'agent', name: p.name }, 'lg')}
-        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(p.name)}</div><div class="sub" title="${esc(p.lastAction || '')}">${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(p.lastAction)}` : ''}</div></div>
+        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(p.name)}${!p.online && !sa && !p.leases.length ? `<button class="forget" data-forget="${esc(p.name)}" title="Forget|Remove from this list — it reappears if it connects again">${icon('x', 'sm')}Forget</button>` : ''}</div><div class="sub" title="${esc(p.lastAction || '')}">${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(p.lastAction)}` : ''}</div></div>
         ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}</div>`;
     }).join('') : `<div class="empty-note">${icon('bot')}</div>`;
     body.onclick = async (e) => {
       const sb = e.target.closest('[data-standing]');
       if (sb) { e.stopPropagation(); standingAction(sb); return; }
+      const fg = e.target.closest('[data-forget]');
+      if (fg) {
+        e.stopPropagation();
+        const row = fg.closest('.agent-row');
+        try {
+          await api('DELETE', `/api/presence/${encodeURIComponent(fg.dataset.forget)}`);
+          row.animate([{ opacity: 1, translate: '0 0' }, { opacity: 0, translate: '12px 0' }], { duration: 220, easing: 'ease-in', fill: 'forwards' }).onfinish = () => refreshPresence();
+        } catch (err) { toast(err.message, { kind: 'error' }); }
+        return;
+      }
       const o = e.target.closest('[data-open]');
       if (!o) { const a = e.target.closest('[data-agent]'); if (a && !e.target.closest('.avatar')) openAgent(a.dataset.agent); return; }
       if (o.dataset.board !== state.boardId) await loadBoard(o.dataset.board);

@@ -242,6 +242,15 @@ describe('board API', () => {
     assert.equal((await s.ok('GET', `/api/subscriptions/${sub.id}/next?timeout=1&peek=true`)).events.length, 0);
   });
 
+  test('forgetting offline agents', async () => {
+    const it = await mk({ title: 'forget me' });
+    await s.ok('POST', `${B}/items/${it.id}/lease`, {}, { agent: 'ghost' });
+    assert.equal((await s.api('DELETE', '/api/presence/ghost', undefined, { agent: 'other' })).status, 403, 'human only');
+    const busy = await s.api('DELETE', '/api/presence/ghost', undefined, USER);
+    assert.ok(['ONLINE', 'HOLDS_LEASES'].includes(busy.body.code), 'not while online or holding a lease');
+    assert.equal((await s.api('DELETE', '/api/presence/nobody', undefined, USER)).status, 404);
+  });
+
   test('cross-origin writes are refused', async () => {
     const r = await fetch(`${s.base}${B}/items`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example', 'x-user': 'James' }, body: '{"title":"x"}' });
     assert.equal(r.status, 403);

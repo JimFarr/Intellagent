@@ -1462,3 +1462,8 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 /* headroom for lifted drop targets and focus rings: the board clips vertically (it scrolls sideways) */
 .board { padding-top: 14px; margin-top: -8px; }
+
+/* agents: forget an offline agent */
+.agent-row .forget { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px 2px 5px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
+.agent-row:hover .forget, .agent-row .forget:focus-visible { opacity: 1; }
+.agent-row .forget:hover { background: color-mix(in oklab, var(--danger) 12%, transparent); color: var(--danger); }
