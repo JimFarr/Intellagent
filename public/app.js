@@ -69,6 +69,8 @@
     inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
     play: '<path d="M7 4.5v15l12-7.5z"/>',
+    pause: '<path d="M8 5v14M16 5v14"/>',
+    terminal: '<path d="M4 17l6-5-6-5M12 19h8"/>',
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
     text: '<path d="M4 7V4h16v3M9 20h6M12 4v16"/>',
@@ -99,7 +101,8 @@
     const kind = (p?.kind || actor?.kind) === 'user' ? 'user' : 'agent';
     const color = p?.color || `hsl(${hue(name)} 62% 56%)`;
     const style = `--av:${esc(color)}${p?.image ? `;background-image:url(&quot;${esc(p.image)}&quot;)` : ''}`;
-    return `<span class="avatar ${kind} ${p?.image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}" style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${p?.image ? '' : esc(p?.glyph || initials(name))}</span>`;
+    const run = state.standing[name]?.status;
+    return `<span class="avatar ${kind} ${p?.image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}"${run && run !== 'idle' ? ` data-run="${run}"` : ''} style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${p?.image ? '' : esc(p?.glyph || initials(name))}</span>`;
   }
 
   /* ═════════════════════════ themes + settings ═════════════════════════ */
@@ -339,7 +342,7 @@
 
   const state = {
     app: { name: 'Intellagent' }, boards: [], boardId: null, board: null, hash: null, seq: 0, offset: 0, archivedCount: 0,
-    presence: [], profiles: {}, listeners: {}, listenersSig: '', inbox: [], bulk: false, selected: new Set(), query: '', expanded: new Set(), folded: new Set(),
+    presence: [], standing: {}, profiles: {}, listeners: {}, listenersSig: '', inbox: [], bulk: false, selected: new Set(), query: '', expanded: new Set(), folded: new Set(),
     modal: null, live: false, refreshing: false, refreshAgain: false,
   };
 
@@ -597,7 +600,16 @@
   }
 
   async function refreshPresence() {
-    try { state.presence = await api('GET', '/api/presence'); } catch { return; }
+    try {
+      const [pres, st] = await Promise.all([api('GET', '/api/presence'), api('GET', '/api/agents')]);
+      state.presence = pres;
+      state.standing = Object.fromEntries(st.agents.map((a) => [a.name, a]));
+    } catch { return; }
+    // run-state dots on every avatar already on screen (cards only re-render when they change)
+    for (const av of $$('.avatar[data-name]')) {
+      const run = state.standing[av.dataset.name]?.status;
+      if (run && run !== 'idle') av.dataset.run = run; else delete av.dataset.run;
+    }
     renderPresenceButton();
     if ($('#agentsDrawer')) fillAgents($('#agentsDrawer .drawer-body'));
   }
@@ -2288,6 +2300,11 @@
       case 'board.external-edit': return 'Board file changed on disk';
       case 'lease.status': return `${b(ev.claimant)} on ${b(id)}: ${html ? esc(ev.status || '—') : ev.status || '—'}`;
       case 'item.assigned': return `${who} assigned ${b(id)} to ${b(ev.assignee || 'nobody')}`;
+      case 'agent.run.started': return `${b(ev.agent)} woke up${ev.items?.length ? ` for ${ev.items.map(b).join(', ')}` : ''}`;
+      case 'agent.run.finished': return ev.code === 0 ? `${b(ev.agent)} finished a run` : `${b(ev.agent)}'s run failed (${ev.code}) — retrying`;
+      case 'agent.failed': return `${b(ev.agent)} keeps failing — paused until you resume it`;
+      case 'agent.status': return `${b(ev.agent)} is ${RUN_LABEL[ev.status] || ev.status}`;
+      case 'agents.changed': return ev.error ? `agents.json: ${ev.error}` : 'Standing agents updated';
       case 'master.claimed': return `${b(ev.holder)} is holding the whole board`;
       case 'master.renewed': return `${b(ev.holder)} renewed the board hold`;
       case 'master.released': return `${b(ev.holder)} released the board`;
@@ -2324,11 +2341,12 @@
     if (on) { scheduleRefresh(0); refreshPresence(); }
   }
 
-  const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status', 'master.status', 'master.renewed']);
+  const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status', 'master.status', 'master.renewed', 'agent.status', 'agent.run.finished']);
   function onEvent(ev) {
     if (ev.type === 'hello') return;
     if (ev.type === 'presence.changed' || (ev.type?.startsWith('lease.') && ev.type !== 'lease.status')) refreshPresence();
     if (ev.type === 'presence.changed') scheduleListeners();
+    if (ev.type?.startsWith('agent.') || ev.type === 'agents.changed') refreshPresence();
     if (ev.board && ev.itemId) {
       if (document.hidden) { if (newsworthy(ev)) { noteUnseen(ev); saveSeen(); } }
       else if (ev.board === state.boardId) seenFor(ev.board).seq = ev.seq;
@@ -2348,7 +2366,11 @@
     if (ev.actor?.kind === 'user' && ev.type !== 'comment.added') return;
     if (QUIET.has(ev.type)) return;
     const important = ev.type === 'attention.raised' || (ev.type === 'comment.added' && ev.mentions?.some((n) => n.toLowerCase() === settings.userName.toLowerCase()));
-    if (settings.toasts && ev.board === state.boardId) {
+    if (ev.type === 'agent.failed') {
+      toast(describe(ev), { kind: 'needs', icon: 'bot', action: 'Log', onAction: () => showRunLog(ev.agent), onClick: () => openAgent(ev.agent), timeout: 9000 });
+      return;
+    }
+    if (settings.toasts && (ev.board === state.boardId || (!ev.board && ev.type.startsWith('agent')))) {
       toast(describe(ev), { actor: ev.actor, kind: important ? 'needs' : '', onClick: ev.itemId ? () => openItem(ev.itemId, cardEls.get(ev.itemId), { rail: ev.type === 'attention.raised' }) : null, timeout: important ? 7000 : 3800 });
     }
     if (settings.sound) blip(important);
@@ -2461,17 +2483,48 @@
     fillAgents(body);
     refreshPresence();
   }
+  const RUN_LABEL = { running: 'running', queued: 'queued', retrying: 'retrying', throttled: 'throttled', failed: 'failed — needs you', paused: 'paused', idle: 'idle' };
+  // Controls for a standing agent (one the board runs itself, from agents.json).
+  function standingControls(a) {
+    const btn = (act, ic, label, tip) => `<button class="btn sm ghost" data-standing="${act}" data-name="${esc(a.name)}" title="${tip}">${icon(ic, 'sm')}<span>${label}</span></button>`;
+    return `<div class="standing-ctl">
+      <span class="run-state" data-run="${a.status}">${esc(RUN_LABEL[a.status] || a.status)}${a.queued ? ` · ${a.queued} waiting` : ''}</span>
+      ${a.status === 'paused' || a.status === 'failed' ? btn('resume', 'play', 'Resume', 'Resume|Clear failures and run any waiting events') : btn('pause', 'pause', 'Pause', 'Pause|The current run finishes; new events wait')}
+      ${btn('run', 'sparkle', 'Run now', 'Run now|Start a run with whatever is waiting, or just to check the board')}
+      ${btn('log', 'terminal', 'Log', 'Last run|Output of the most recent run')}</div>`;
+  }
+  async function standingAction(btn) {
+    const { standing: act, name } = btn.dataset;
+    if (act === 'log') return showRunLog(name);
+    try { await api('POST', `/api/agents/${encodeURIComponent(name)}/${act}`, {}); await refreshPresence(); }
+    catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+  async function showRunLog(name) {
+    const body = openDrawer('runLogDrawer', `${name} · last run`, 'terminal');
+    body.innerHTML = '<pre class="run-log">…</pre>';
+    try {
+      const r = await api('GET', `/api/agents/${encodeURIComponent(name)}/log`);
+      $('.run-log', body).textContent = r.log || 'No runs yet.';
+      $('.run-log', body).scrollTop = 1e9;
+    } catch (e) { $('.run-log', body).textContent = e.message; }
+  }
+
   function fillAgents(body) {
-    const rows = state.presence;
+    const seen = new Set(state.presence.map((p) => p.name));
+    const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
+      .sort((a, b) => Number(!!state.standing[b.name]) - Number(!!state.standing[a.name]));
     body.innerHTML = rows.length ? rows.map((p, i) => {
-      const mode = p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : 'offline';
+      const sa = state.standing[p.name];
+      const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
       const subs = p.subscriptions.map((s) => `<span class="mini-chip" title="${esc(JSON.stringify(s.filter))}">${icon('bell', 'sm')}${esc(s.label || Object.entries(s.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join('');
-      return `<div class="agent-row ${p.online ? '' : 'off'}" data-agent="${esc(p.name)}" style="animation-delay:${i * 40}ms">${avatar({ kind: 'agent', name: p.name }, 'lg')}
+      return `<div class="agent-row ${p.online || sa ? '' : 'off'}" data-agent="${esc(p.name)}" style="animation-delay:${i * 40}ms">${avatar({ kind: 'agent', name: p.name }, 'lg')}
         <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(p.name)}</div><div class="sub" title="${esc(p.lastAction || '')}">${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(p.lastAction)}` : ''}</div></div>
-        ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}</div>`;
+        ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}</div>`;
     }).join('') : `<div class="empty-note">${icon('bot')}</div>`;
     body.onclick = async (e) => {
+      const sb = e.target.closest('[data-standing]');
+      if (sb) { e.stopPropagation(); standingAction(sb); return; }
       const o = e.target.closest('[data-open]');
       if (!o) { const a = e.target.closest('[data-agent]'); if (a && !e.target.closest('.avatar')) openAgent(a.dataset.agent); return; }
       if (o.dataset.board !== state.boardId) await loadBoard(o.dataset.board);
@@ -2706,6 +2759,13 @@
 
   /* ═════════════════════════ agent profile ═════════════════════════ */
 
+  function standingSection(a) {
+    const l = a.lastRun;
+    const listen = typeof a.listen === 'string' ? a.listen : Object.entries(a.listen).map(([k, v]) => `${k}=${v}`).join(' ');
+    const meta = `wakes on ${esc(listen)} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
+    return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div></div>`;
+  }
+
   async function openAgent(name) {
     const body = openDrawer('agentDrawer', name, 'bot');
     const draw = (activity = null) => {
@@ -2717,7 +2777,8 @@
       const mode = pres ? (pres.connections.stream ? 'stream' : pres.connections.waiting ? 'polling' : pres.online ? 'active' : 'offline') : 'never seen';
       body.innerHTML = `<div class="agent-hero">${avatar({ kind: p.kind || 'agent', name }, 'xl')}<div style="min-width:0"><div class="ah-name">${esc(p.label || name)}</div>
           <div class="ah-sub"><span class="status-dot ${pres?.online ? 'on' : ''}"></span><span>${esc(name)}</span><span>· ${mode}</span>${pres?.lastSeen ? `<span>· ${rel(pres.lastSeen)}</span>` : ''}</div></div></div>
-        ${p.description ? `<div class="md ah-desc">${md(p.description)}</div>` : ''}
+        ${p.description || state.standing[name]?.description ? `<div class="md ah-desc">${md(p.description || state.standing[name].description)}</div>` : ''}
+        ${state.standing[name] ? standingSection(state.standing[name]) : ''}
         ${section('Holding', 'clock', (pres?.leases || []).map((l) => chip(l.id, 'clock')).join(''))}
         ${section('Assigned', 'user', items.filter((i) => i.assignee === name).map((i) => chip(i.id, i.type)).join(''))}
         ${section('Listening to', 'radio', Object.entries(state.listeners).filter(([, ns]) => ns.includes(name)).map(([id]) => chip(id, 'radio')).join(''))}
@@ -2726,7 +2787,11 @@
           <div class="ah-act">${activity == null ? '' : activity.length ? activity.map((ev) => `<div class="act">${icon(eventIcon(ev.type), 'sm')}<div>${describe(ev, true)}</div><time>${rel(ev.ts)}</time></div>`).join('') : `<div class="empty-note">${icon('activity')}</div>`}</div></div>`;
     };
     draw();
-    body.onclick = (e) => { const o = e.target.closest('[data-open]'); if (o) openItem(o.dataset.open, cardEls.get(o.dataset.open)); };
+    body.onclick = (e) => {
+      const sb = e.target.closest('[data-standing]');
+      if (sb) { standingAction(sb).then(() => draw()); return; }
+      const o = e.target.closest('[data-open]'); if (o) openItem(o.dataset.open, cardEls.get(o.dataset.open));
+    };
     try {
       const r = await api('GET', `/api/events?since=0&limit=30&tail=true&actor=${encodeURIComponent(name)}`);
       if ($('#agentDrawer')) draw(r.events.slice().reverse());

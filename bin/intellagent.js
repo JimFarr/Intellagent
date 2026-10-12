@@ -9,6 +9,8 @@
  *   intellagent api <METHOD> <path> [json | @file | -]
  *   intellagent mcp                     MCP server over stdio
  *   intellagent hook install | post-commit | sync-ci
+ *   intellagent agents [add|remove|pause|resume|run|log] standing agents the board wakes up itself
+ *   intellagent autostart on|off|status  start this board when you log in
  */
 'use strict';
 const fs = require('fs');
@@ -225,7 +227,7 @@ async function nextEvents({ agent, types, timeoutSec, quiet, listen = { scope: '
   }
 }
 
-const eventLine = (e) => `#${e.seq} ${e.type}${e.itemId ? ` ${e.itemId}` : ''}${e.item?.title ? ` "${e.item.title}"` : ''} by ${e.actor?.name || '?'}${e.reply ? ` — reply: ${e.reply}` : e.comment?.body ? ` — ${e.comment.body}` : e.reason ? ` — ${e.reason}` : ''}`;
+const { eventLine } = require('../lib/agents');
 
 async function waitCmd() {
   const f = flags(rest);
@@ -275,6 +277,114 @@ async function watchCmd() {
   }
 }
 
+/* ── standing agents: .intellagent/agents.json, run by the board server ── */
+
+const agentsFile = (mp) => path.join(path.dirname(mp), readManifest(mp)?.agentsFile || 'agents.json');
+function readAgents(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch { return { defaults: {}, agents: {} }; }
+}
+
+// The CLI acts as the human here (it runs on the human's machine, with the local manifest).
+async function asHuman(method, p, body) {
+  const mp = requireManifest();
+  const m = readManifest(mp);
+  const url = baseUrl(m);
+  const headers = { 'content-type': 'application/json', 'x-user': os.userInfo().username, ...(m.auth?.userToken ? { authorization: `Bearer ${m.auth.userToken}` } : {}) };
+  let r;
+  try { r = await fetch(url + p, { method, headers, body: body ? JSON.stringify(body) : undefined }); }
+  catch { console.error(`The board isn't running (${url}). Start it with: intellagent start`); process.exit(1); }
+  const j = await r.json();
+  if (!r.ok) { console.error(j.error || r.status); process.exit(1); }
+  return j;
+}
+
+const ago = (t) => { if (!t) return '—'; const m = Math.round((Date.now() - Date.parse(t)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`; };
+
+async function agentsCmd() {
+  const [sub, name] = rest;
+  const f = flags(rest.slice(sub === 'add' ? 2 : 0));
+  const mp = requireManifest();
+  const file = agentsFile(mp);
+  if (!sub || sub === 'list') {
+    const { agents, error } = await asHuman('GET', '/api/agents');
+    if (error) console.log(`⚠ ${error}`);
+    if (!agents.length) { console.log(`No standing agents. Add one:  intellagent agents add builder\n(definitions live in ${file})`); return; }
+    for (const a of agents) {
+      const last = a.lastRun ? `last run ${ago(a.lastRun.endedAt || a.lastRun.startedAt)} (${a.lastRun.code ?? 'running'})` : 'never run';
+      console.log(`${a.name.padEnd(14)} ${a.status.padEnd(10)} ${String(a.queued).padStart(3)} queued  ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs/h  ${last}   listens: ${typeof a.listen === 'string' ? a.listen : JSON.stringify(a.listen)}`);
+    }
+    return;
+  }
+  if (sub === 'add') {
+    if (!name) { console.error('Usage: intellagent agents add <name> [--listen inbox|human|"types=…&column=…"] [--run "<command>"] [--max-runs 20] [--description "…"]'); process.exit(1); }
+    const doc = readAgents(file);
+    doc.agents ||= {};
+    const listen = !f.listen || f.listen === 'inbox' || f.listen === 'human' ? (f.listen || 'inbox') : Object.fromEntries(new URLSearchParams(String(f.listen)));
+    doc.agents[name] = {
+      ...(doc.agents[name] || {}),
+      listen,
+      ...(f.run ? { run: String(f.run) } : {}),
+      ...(f['max-runs'] != null ? { maxRunsPerHour: f['max-runs'] === 'none' ? null : Number(f['max-runs']) } : {}),
+      ...(f.description ? { description: String(f.description) } : {}),
+    };
+    fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+    console.log(`Saved "${name}" to ${file}. The running board picks it up within a few seconds.`);
+    if (!f.run && !doc.defaults?.run) console.log('It runs the default: claude -p (headless). Give it permissions it needs with --run "claude -p --permission-mode acceptEdits …" if required.');
+    return;
+  }
+  if (sub === 'remove') {
+    const doc = readAgents(file);
+    if (!doc.agents?.[name]) { console.error(`No agent "${name}" in ${file}`); process.exit(1); }
+    delete doc.agents[name];
+    fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+    console.log(`Removed "${name}".`);
+    return;
+  }
+  if (['pause', 'resume', 'run'].includes(sub)) {
+    const a = await asHuman('POST', `/api/agents/${encodeURIComponent(name)}/${sub}`, sub === 'run' && f.note ? { note: String(f.note) } : {});
+    console.log(`${a.name}: ${a.status}`);
+    return;
+  }
+  if (sub === 'log') {
+    const { log, file: lf } = await asHuman('GET', `/api/agents/${encodeURIComponent(name)}/log`);
+    if (lf) console.log(`── ${lf}`);
+    process.stdout.write(log || '(no runs yet)\n');
+    return;
+  }
+  console.error(`Unknown: agents ${sub}`); process.exit(1);
+}
+
+/* ── autostart: bring the board (and its standing agents) back after a reboot ── */
+
+function autostart() {
+  const [sub = 'status'] = rest;
+  const mp = requireManifest();
+  const dir = path.basename(path.dirname(mp)) === '.intellagent' ? path.dirname(path.dirname(mp)) : path.dirname(mp);
+  const project = path.basename(dir) || 'board';
+  const id = `intellagent-${project.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  if (process.platform !== 'win32') {
+    const line = `@reboot cd "${dir}" && "${process.execPath}" "${__filename}" start`;
+    console.log(sub === 'on' ? `Add this line with \`crontab -e\` (or a launchd/systemd unit):\n\n  ${line}\n` : 'Autostart is managed by your crontab/launchd/systemd on this OS.');
+    return;
+  }
+  const startup = path.join(process.env.APPDATA, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
+  const file = path.join(startup, `${id}.vbs`);
+  if (sub === 'on') {
+    const q = (x) => `""${x}""`; // VBScript: a quote inside a string is doubled
+    const vbs = [
+      `' Starts the Intellagent board for ${dir} at login (hidden). Remove with: intellagent autostart off`,
+      'Set sh = CreateObject("WScript.Shell")',
+      `sh.CurrentDirectory = "${dir}"`,
+      `sh.Run "${q(process.execPath)} ${q(__filename)} start", 0, False`,
+    ].join('\r\n');
+    fs.writeFileSync(file, vbs);
+    console.log(`On: the board starts hidden when you log in.\n  ${file}`);
+  } else if (sub === 'off') {
+    if (fs.existsSync(file)) fs.rmSync(file);
+    console.log('Off.');
+  } else console.log(fs.existsSync(file) ? `On  (${file})` : 'Off  — turn on with: intellagent autostart on');
+}
+
 const HELP = `intellagent — a kanban for you and your agents
 
   init [dir]       scaffold .intellagent/ here   --template --name --prefix --port --mcp --agent --claude --demo
@@ -291,12 +401,19 @@ const HELP = `intellagent — a kanban for you and your agents
                    or --filter "types=item.created&column=Ready" (any /api/events filter)
   mcp              MCP server over stdio
   hook ...         git: install | post-commit | sync-ci
+
+  agents           standing agents the board wakes up itself (defined in .intellagent/agents.json)
+    add NAME       --listen inbox|human|"types=…&column=…"  --run "<command>"  --max-runs N|none
+    pause | resume | run | log | remove NAME
+  autostart on|off start this board (and its agents) when you log in
 `;
 
 const commands = {
   init, start, status, docs, templates, skill,
   open: () => { const u = baseUrl(); if (!u) { console.error(NO_BOARD); process.exit(3); } openUrl(u); },
   wait: waitCmd,
+  agents: agentsCmd,
+  autostart,
   watch: watchCmd,
   api: () => forward('cli.js', rest),
   mcp: () => forward('mcp.js', rest),

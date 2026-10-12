@@ -1155,6 +1155,7 @@ function matchesFilter(event, filter) {
 }
 
 const sseClients = new Set();
+let standing = null; // standing agents (lib/agents.js), started at boot
 const waiters = new Set();
 
 function emit(ev) {
@@ -1165,6 +1166,7 @@ function emit(ev) {
   if (recent.length > RECENT_MAX) recent.splice(0, recent.length - RECENT_MAX);
   for (const c of sseClients) if (matchesFilter(e, c.filter)) sseSend(c.res, e);
   for (const w of [...waiters]) if (matchesFilter(e, w.filter)) w.check();
+  standing?.onEvent(e);
   return e;
 }
 
@@ -1343,8 +1345,13 @@ const warned = new Set();
 setInterval(() => {
   for (const ctx of boards.values()) {
     const ms = ctx.board.master;
-    if (ms?.expiresAt && Date.parse(ms.expiresAt) <= Date.now()) {
-      tx(ctx, (events) => { ctx.board.master = null; events.push({ board: ctx.id, type: 'master.expired', actor: SYSTEM, holder: ms.holder, recipients: [ms.holder] }); });
+    // An open-ended master lease ends when its holder has gone quiet (crashed, PC restarted) —
+    // unless it is a standing agent that is just between runs.
+    const idleMin = M.masterIdleMinutes ?? 120;
+    const seen = ms && Date.parse(presence.get(ms.holder)?.lastSeen || ms.since || ms.claimedAt || 0);
+    const idle = ms && ms.kind === 'agent' && !ms.expiresAt && idleMin && Date.now() - seen > idleMin * 60_000 && !standing?.isRunning(ms.holder);
+    if ((ms?.expiresAt && Date.parse(ms.expiresAt) <= Date.now()) || idle) {
+      tx(ctx, (events) => { ctx.board.master = null; events.push({ board: ctx.id, type: 'master.expired', actor: SYSTEM, holder: ms.holder, recipients: [ms.holder], ...(idle ? { reason: `idle for ${idleMin} minutes` } : {}) }); });
     }
     const expired = [];
     for (const item of Object.values(ctx.board.items)) {
@@ -1427,7 +1434,8 @@ const SCHEMA = {
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
       'attention.raised', 'attention.resolved', 'review.requested', 'digest.added', 'schema.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
-      'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status'],
+      'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
+      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agents.changed'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
     changes: '{ [field | "properties.<key>"]: { from, to } }?', item: 'snapshot { id,title,type,priority,columnId,column,parent,claimant,needsHuman }?',
     recipients: 'string[] — agents/users this event concerns (leaseholder and past leaseholders, asker, agent author, assignee, commenters, master-lease holder, @mentions)',
@@ -1932,6 +1940,26 @@ function listenersFor(ctx) {
 }
 route('GET', '/api/boards/:board/listeners', 'Agents listening to each item: { itemId: [agent names] }', ({ p }) => listenersFor(getCtx(p.board)));
 
+/* standing agents: defined in agents.json next to the manifest; the API only observes and steers them */
+const humanOnly = (actor) => { if (actor.kind !== 'user') fail(403, 'Only the human can control standing agents'); };
+route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run', () => standing.list());
+route('GET', '/api/agents/:name', 'One standing agent', ({ p }) => standing.get(p.name));
+route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=20000', ({ p, q }) => {
+  const a = standing.get(p.name);
+  const f = a.lastRun?.log;
+  if (!f || !fs.existsSync(f)) return { log: '' };
+  const size = fs.statSync(f).size;
+  const n = clamp(Number(q.bytes) || 20000, 1000, 500_000);
+  const fd = fs.openSync(f, 'r');
+  const buf = Buffer.alloc(Math.min(n, size));
+  fs.readSync(fd, buf, 0, buf.length, size - buf.length);
+  fs.closeSync(fd);
+  return { file: f, truncated: size > n, log: buf.toString('utf8') };
+});
+route('POST', '/api/agents/:name/pause', 'Human: pause (current run finishes; events keep queueing)', ({ p, actor }) => { humanOnly(actor); return standing.pause(p.name); });
+route('POST', '/api/agents/:name/resume', 'Human: resume a paused or failed agent', ({ p, actor }) => { humanOnly(actor); return standing.unpause(p.name); });
+route('POST', '/api/agents/:name/run', 'Human: start a run now: { note? }', ({ p, body, actor }) => { humanOnly(actor); return standing.runNow(p.name, body.note); });
+
 route('GET', '/api/presence', 'Agents seen by this instance, online state, leases, subscriptions', () => presenceView());
 route('GET', '/api/permissions/me', 'What you are allowed to do (from the manifest)', ({ actor }) => ({
   name: actor.name, kind: actor.kind, permissions: actor.kind === 'agent' ? permsFor(actor.name) : null,
@@ -2046,6 +2074,14 @@ for (const d of fs.readdirSync(BOARDS_DIR)) {
 }
 if (!boards.size) seed();
 checkPresence();
+standing = require('./lib/agents').createAgents({
+  file: path.join(path.dirname(MANIFEST_PATH), M.agentsFile || 'agents.json'),
+  stateFile: path.join(DATA, 'agents.state.json'),
+  logDir: path.join(DATA, 'agent-runs'),
+  cwd: PROJECT_ROOT,
+  env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
+  emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
+});
 
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE') console.error(`Port ${M.port} is in use. Set "port" in ${MANIFEST_PATH} or INTELLAGENT_PORT.`);
@@ -2062,6 +2098,7 @@ server.listen(M.port, M.host, () => {
 });
 
 const shutdown = () => {
+  standing?.stop();
   writeFileAtomic(PRESENCE_FILE, JSON.stringify({ updatedAt: now(), agents: Object.fromEntries(presence) }, null, 2));
   process.exit(0);
 };

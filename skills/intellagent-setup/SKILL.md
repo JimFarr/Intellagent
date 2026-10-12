@@ -70,7 +70,7 @@ Collect candidates from the agreed source and de-duplicate them. If there are mo
 
 - In a git repo, offer `intellagent hook install` (links commits mentioning ticket IDs).
 - If you will be the only agent working this board, take the master lease: `POST /api/boards/main/master { "status": "…" }` (release it before spawning helpers).
-- Explain how answers on cards reach an agent: `intellagent wait --agent <name>` run in the background during a session, or `intellagent watch --agent <name> --claude` for unattended work.
+- Explain how answers on cards reach an agent: `intellagent wait --agent <name>` in the background during a session, or a **standing agent** for unattended work — offer `intellagent agents add <name>` (and `--listen human` for a coordinator) plus `intellagent autostart on` so the board and its agents come back after a reboot. Ask before adding either.
 
 ## 10. Hand over
 

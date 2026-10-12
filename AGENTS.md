@@ -125,10 +125,31 @@ The ticket glows on the board. The human's answer arrives as an `attention.resol
 **What not to post.** Keep cards and the digest readable: no step-by-step progress logs, nothing git already shows (diffs, file lists), no restating the ticket. Post decisions, blockers, results and how to verify.
 
 ### Getting woken up
-You only see board events when you look. Two ways to make answers on cards reach you:
+You only see board events when you look. Ways to make answers on cards reach you:
 - **During a session:** run `intellagent wait --agent <you>` as a **background** command. It blocks until something arrives in your inbox, prints it and exits — your shell tool notifies you. It remembers its place, so nothing is missed between runs. Re-arm it after handling the events.
-- **Unattended:** the human runs `intellagent watch --agent <you> --claude` (or `-- <any command>`). Each inbox event batch starts a fresh headless run with the events on stdin.
-- **Coordinating several agents:** add `--human` to either command to hear about *everything* the human does on the board (new tickets, comments, moves), not just your inbox — then delegate with `assignee` or a comment @mentioning a worker. `--filter "types=item.created&column=Ready"` takes any event filter.
+- **Standing agents (unattended, survives reboots):** the board itself starts a short headless run whenever events arrive for an agent defined in `.intellagent/agents.json`. Agents are disposable; the board keeps the queue. Details below.
+- **Ad hoc:** `intellagent watch --agent <you> --claude` (or `-- <any command>`) does the same from a terminal you keep open.
+- **Coordinating several agents:** add `--human` to `wait`/`watch` (or `"listen": "human"` for a standing agent) to hear about *everything* the human does on the board, not just your inbox — then delegate with `assignee` or a comment @mentioning a worker. `--filter "types=item.created&column=Ready"` takes any event filter.
+
+### Standing agents
+```jsonc
+// .intellagent/agents.json — the human's file; commands only ever come from here, never from the API
+{
+  "defaults": { "maxRunsPerHour": 20, "maxFailures": 3, "timeoutMinutes": 60 },
+  "agents": {
+    "builder":     { "listen": "inbox", "description": "Implements tickets from Ready." },
+    "coordinator": { "listen": "human", "run": "claude -p --permission-mode acceptEdits \"Handle the Intellagent events on stdin.\"" }
+  }
+}
+```
+- `listen`: `inbox` (default — events addressed to the agent), `human` (everything the human does) or an event filter object.
+- `run`: the command (default `claude -p …`). It gets the events as a prompt on stdin, `INTELLAGENT_AGENT`, `INTELLAGENT_URL` and `INTELLAGENT_EVENTS` (JSON file) in its environment, and runs in the project folder.
+- **One run per agent at a time**; events that arrive meanwhile go into the next run.
+- A run that fails, times out or is cut off by a restart is **retried automatically** with the same events (the prompt says it was interrupted — check for half-finished work). After `maxFailures` in a row the agent is **flagged failed** and waits for the human.
+- `maxRunsPerHour`: `null` = no limit.
+- Each run starts with no memory: **everything worth keeping goes on the card.**
+- `intellagent agents` lists them; `agents add|pause|resume|run|log|remove <name>`. `GET /api/agents` shows status, queue and the last run; pause/resume/run are human-only. `intellagent autostart on` starts the board (and so its agents) at login.
+- An open-ended master lease ends by itself after `masterIdleMinutes` (manifest, default 120) without activity from its holder, unless the holder is a standing agent mid-run.
 
 Your inbox already includes tickets you created, leased (now or before), commented on, were assigned or @mentioned on — and, while you hold the master lease, every ticket on the board.
 
@@ -237,7 +258,7 @@ Asked to "set up Intellagent here"? Follow this. **Stop and ask the human at the
 6. ✋ **Show the human** the proposed fields, rules and column changes in one message; apply only what they approve (`POST /schema/fields`, `PUT /directives`).
 7. **Introduce yourself:** `PATCH /api/profiles/me` with a colour, glyph, label and a one-paragraph description of your role.
 8. ✋ **Seed tickets** from the agreed source. Show the list first if there are more than ~10. Then create them with sensible `type`, `priority`, `parent` groups, description checklists and `blockedBy` links. Keep the first batch under ~25; mention what you left out.
-9. **Wire up:** in a git repo, offer `intellagent hook install`. If you will be the only agent, take the master lease. Tell the human how answers reach you: `intellagent wait` in the background while you work, or `intellagent watch` for unattended work.
+9. **Wire up:** in a git repo, offer `intellagent hook install`. If you will be the only agent, take the master lease. Tell the human how answers reach you: `intellagent wait` in the background while you work, or offer a standing agent (`intellagent agents add <name>`) and `intellagent autostart on` for unattended work.
 10. **Hand over:** post a digest entry describing the setup, raise *needs you* on anything still uncertain, and tell the human the URL (`intellagent open`).
 
 Only touch `.intellagent/`, `.mcp.json`, `CLAUDE.md` and `.git/hooks/` — and only the ones the human agreed to.

@@ -1066,3 +1066,21 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .proj-rules summary::-webkit-details-marker { display: none; }
 .proj-rules summary span { margin-left: auto; font: 10.5px var(--mono); color: var(--muted); }
 .proj-rules .md { margin-top: 10px; font-size: 13px; }
+
+/* standing agents: run state on avatars and in the agents panel */
+.avatar[data-run] { position: relative; overflow: visible; }
+.avatar[data-run]::after { content: ''; position: absolute; right: -3px; bottom: -3px; width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--panel, var(--bg)); background: var(--muted); }
+.avatar[data-run="running"]::after { background: var(--accent); animation: run-pulse 1.4s ease-in-out infinite; }
+.avatar[data-run="queued"]::after, .avatar[data-run="retrying"]::after, .avatar[data-run="throttled"]::after { background: #f2a541; }
+.avatar[data-run="failed"]::after { background: #ff5d73; }
+.avatar.xl[data-run]::after { width: 14px; height: 14px; right: -2px; bottom: -2px; }
+@keyframes run-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 30%, transparent); } }
+.standing-ctl { grid-column: 1 / -1; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; margin-top: 6px; }
+.standing-ctl .run-state { font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-right: auto; display: inline-flex; align-items: center; gap: 6px; }
+.standing-ctl .run-state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.standing-ctl .run-state[data-run="running"] { color: var(--accent); }
+.standing-ctl .run-state[data-run="failed"] { color: #ff5d73; }
+.standing-ctl .run-state[data-run="queued"], .standing-ctl .run-state[data-run="retrying"], .standing-ctl .run-state[data-run="throttled"] { color: #f2a541; }
+.standing-meta { font: 11.5px var(--mono); color: var(--muted); margin-top: 6px; }
+.run-log { margin: 0; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; background: var(--hover); border-radius: 12px; padding: 12px; max-height: calc(100vh - 140px); overflow: auto; }
+@media (prefers-reduced-motion: reduce) { .avatar[data-run="running"]::after { animation: none; } }
