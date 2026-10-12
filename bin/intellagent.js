@@ -152,6 +152,30 @@ function openBoard(mp = requireManifest()) {
   openUrl(t ? `${u}/#token=${t}` : u);
 }
 
+// Give an existing board (made before tokens, or with --no-token) the human's sign-in token, so only
+// requests that carry it can act as the human. --rotate replaces an existing one.
+function tokenCmd() {
+  const mp = requireManifest();
+  const dir = path.dirname(mp);
+  const file = path.join(dir, 'local.json');
+  let local = {};
+  try { local = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { /* none yet */ }
+  const f = flags(rest);
+  if (local.userToken && !f.rotate) {
+    console.log(`This board already has a user token (${path.relative(process.cwd(), file) || file}).\n  intellagent open           signs the browser in\n  intellagent token --rotate replaces it (signs every browser out)`);
+    return;
+  }
+  local.userToken = crypto.randomBytes(18).toString('base64url');
+  fs.writeFileSync(file, `${JSON.stringify(local, null, 2)}\n`);
+  // keep it out of git, wherever the manifest lives
+  const gi = path.join(dir, '.gitignore');
+  const cur = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';
+  if (!/^\/?local\.json\s*$/m.test(cur)) fs.writeFileSync(gi, `${cur}${cur && !cur.endsWith('\n') ? '\n' : ''}local.json\n`);
+  console.log(`${f.rotate ? 'New' : 'Created a'} user token in ${file} (git-ignored).`);
+  console.log('From now on only requests carrying it act as you: the CLI uses it automatically, agents never get it.');
+  console.log('The board reads it when it starts:  intellagent stop  then  intellagent start  — then  intellagent open  to sign in.');
+}
+
 function requireManifest() {
   const m = findManifest();
   if (!m) { console.error('No .intellagent/ found here or in any parent folder. Run: intellagent init'); process.exit(1); }
@@ -483,7 +507,8 @@ const HELP = `intellagent — a kanban for you and your agents
   start            run this project's board      --open --background
   stop             stop a board started in the background
   brief            what an agent needs to start: next steps, columns, templates, rules, calls   --agent --via cli|mcp|http
-  open             open the board in a browser
+  open             open the board in a browser (signed in, if the board has a user token)
+  token [--rotate] give this board a user token so only you can act as the human (older boards)
   status           where it is and whether it's running
   docs             print the agent guide
   api M PATH [b]   call the API as an agent      (INTELLAGENT_AGENT=name; body: key=value… | json | @file | -)
@@ -504,6 +529,7 @@ const HELP = `intellagent — a kanban for you and your agents
 const commands = {
   init, start, stop, status, docs, templates, skill, brief,
   open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
+  token: tokenCmd,
   wait: waitCmd,
   agents: agentsCmd,
   autostart,
