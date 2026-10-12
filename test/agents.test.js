@@ -205,6 +205,9 @@ describe('standing agents pick up work already on the board', () => {
       assert.deepEqual((await started('maker'))[0].items, [owned.id], 'assigned work wakes its agent');
       const deskItems = (await started('desk'))[0].items;
       assert.ok(deskItems.includes(loose.id) && !deskItems.includes(owned.id), 'the receptionist sees unassigned tickets only');
+      const deskWork = await s.ok('GET', `${B}/work?agent=desk`);
+      assert.deepEqual(deskWork.triage.map((x) => x.id), [loose.id], 'its brief lists the same tickets');
+      assert.equal((await s.ok('GET', `${B}/work?agent=idle`)).triage, undefined, 'other agents have no triage list');
       await until(async () => (await agentState(s, 'maker')).status === 'idle' && (await agentState(s, 'desk')).status === 'idle', 4000, 'idle');
       assert.equal((await agentState(s, 'maker')).lastRun.why, 'work.pending');
       await new Promise((r) => setTimeout(r, 1200));
