@@ -4,18 +4,42 @@ A kanban board shared between a human and agents. **The board is the conversatio
 
 Base URL: `{{BASE}}`  ·  index: `GET /api`  ·  schema: `GET /api/schema`
 
+## Start here
+
+```
+GET /api/boards/main/brief        (CLI: intellagent brief · MCP: get_briefing)
+```
+One page: who you are, **what to do next**, the columns, templates, fields, rules and the exact calls for this board. Read it at the start of every session or run — it is generated from the live board, so it is never stale. The rest of this guide is reference.
+
+The whole loop for one ticket:
+
+| Step | Call | What it does |
+|---|---|---|
+| What needs me? | `GET …/work` | Next actions, your leases, answered questions, review feedback, assigned and ready tickets |
+| Start / resume | `POST …/items/<ID>/start { status }` | Claims it, moves it to the working column, assigns you — all or nothing |
+| Say what you're doing | `PUT …/items/<ID>/status { status }` | Live line on the card |
+| Ask | `POST …/items/<ID>/attention { reason }` | Card glows; the answer comes back in `…/work` (`answered`) and as an event |
+| Done | `POST …/items/<ID>/review { summary }` | Moves to review, releases your lease, asks the human |
+| Verdict | (human) `review.approved` / `review.changes_requested` | Feedback shows in `…/work`; `start` again to address it |
+| End of session | `POST …/finish { summary }` | Releases everything you hold, posts the digest |
+
+Errors are `{ "error": "…", "code": "LEASED", "hint": "…" }`. Codes: `LEASED` `BOARD_HELD` `BLOCKED` `WIP_LIMIT` `HUMAN_ONLY` `VERSION_CONFLICT` `LEASES_ACTIVE` `UNKNOWN_FIELD` `NOT_FOUND` `UNAUTHORIZED` `FORBIDDEN` `BAD_REQUEST`. Branch on `code`, follow `hint`.
+
 ## 0. Rules of the road
 
 1. **Identify yourself** on every request: header `X-Agent: <your-name>` (or `?agent=<name>`). Use one stable name per agent.
 2. **Read the standing rules first**: `GET /api/boards/main/directives` returns the board's workflow rules **and** the project's own convention files (e.g. CLAUDE.md, under `projectRules`). Conventions live in the repo; the board only adds how to use the board. Never copy one into the other.
-3. **Lease before you work** on a ticket, renew while working, release when done — or, if you are the only agent, **hold the whole board** once (master lease, below).
-4. **Ask, don't guess**: raise `needsHuman` when blocked on a decision. Then wait for the answer event.
+3. **Start before you work** (`POST …/start` leases the ticket for you), renew while working, request review when done — or, if you are the only agent, **hold the whole board** once (master lease, below).
+4. **Ask, don't guess**: `POST …/attention` when blocked on a decision — allowed even on tickets others hold. The answer shows up in `GET …/work`.
 5. **Never write `data/` files directly.** They are read-only on purpose. The API is the only writer.
 6. Tickets are never deleted — archive them.
 
 ## 1. Orient (cheap)
 
 ```
+GET /api/boards/main/brief               → start here (markdown; ?format=json adds the work object)
+GET /api/boards/main/work                → what needs you now, with "next" actions (?agent=<name> for another agent)
+GET /api/boards/main/items/INT-12/transitions → where you may move it, and why not elsewhere
 GET /api/boards                          → list boards
 GET /api/boards/main/summary             → columns + one-line items (cheapest overview)
 GET /api/boards/main/hash                → { hash } — compare to detect any change
@@ -108,8 +132,15 @@ DELETE /api/boards/main/items/INT-12/lease                       → release
 - **Say what you're doing** while you hold the lease — it shows live on the card (doesn't bump `version`):
   `PUT /api/boards/main/items/INT-12/status { "status": "running tests 4/12" }` (or pass `status` when claiming).
 
+### Start work in one step
+`POST /api/boards/main/items/INT-12/start { "status": "reading the code", "minutes": 30 }` checks the ticket isn't held or blocked, leases it to you (not needed while you hold the master lease), moves it to the working column (flag `working`; e.g. In Progress) unless it is already there or further, and assigns it to you. If any check fails nothing changes and you get a `code` (`LEASED`, `BLOCKED`, `WIP_LIMIT`, `BOARD_HELD`). Pass `"force": true` to start a blocked ticket, `"column"` to pick the target. The reply includes `feedback` (if the review sent it back) and `lastAnswer` (your last question's answer).
+
 ### Request review (preferred way to finish)
-`POST /api/boards/main/items/INT-12/review { "summary": "What changed and how to verify" }` — moves it to the review column, comments your summary, releases your lease and raises a **review** request. The human approves (it moves on through the gate) or sends feedback (it comes back one column with their comment). Watch for `attention.resolved` addressed to you.
+`POST /api/boards/main/items/INT-12/review { "summary": "What changed and how to verify" }` — moves it to the review column, comments your summary, releases your lease and raises a **review** request.
+The human decides with `POST …/review/decision { "verdict": "approve" | "changes", "comment": "…" }` (human only): approve moves it through the gate; changes moves it back to the working column. You receive `review.approved` or `review.changes_requested` (with `feedback`), and `GET …/work` lists it under `feedback` until you `start` it again.
+
+### End a session
+`POST /api/boards/main/finish { "summary": "markdown", "items": ["INT-12"] }` releases every lease you hold (and the master lease) and posts the summary to the digest. Standing-agent runs that exit cleanly get this release automatically.
 
 ### Daily digest
 At the end of a session: `POST /api/boards/main/digest { "summary": "markdown", "items": ["INT-12"] }`. Read what others wrote with `GET /api/boards/main/digest?days=3` — a cheap way to catch up.
@@ -241,13 +272,13 @@ Columns can only be created by agents (the UI can't). Custom flags are stored as
 ## 9. A good working loop
 
 ```
-1. GET directives + summary
-2. Pick a ticket → POST lease (with a status) → comment "picking this up"
-3. Work. Renew the lease every ~20 min. Comment progress; attach screenshots.
-4. Unsure? POST attention, then GET /api/events/wait?for=<you>&types=attention.resolved,comment.added
-5. Done → `POST …/review` with a summary (Done itself is human-only).
-6. End of session → `POST …/digest`.
-7. GET /api/subscriptions/<id>/next to see what the human changed meanwhile.
+1. GET …/brief                        (once per session or run)
+2. Take the first "next" action — usually POST …/items/<ID>/start { status }
+3. Work. Update your status; renew the lease if it runs long (…/work warns you).
+4. Unsure? POST …/attention { reason }; carry on with something else; the answer appears in …/work
+5. Done → POST …/review { summary }   (Done itself is human-only)
+6. GET …/work again — repeat from 2 until "next" is empty
+7. End of session → POST …/finish { summary }
 ```
 
 ## 10. Setting up a board in a project
@@ -260,10 +291,10 @@ Asked to "set up Intellagent here"? Follow this. **Stop and ask the human at the
    - Template: `software`, `research`, `ops`, `default` or `simple` (`intellagent templates`). Recommend one from what you found.
    - Board name and ticket prefix (default: folder name, e.g. *Acme Billing* → `AB`).
    - What to seed tickets from: TODO comments, GitHub issues, a plan they give you, or nothing.
-   - Register the MCP tools (`--mcp`) and add agent instructions to CLAUDE.md (`--claude`)?
+   - `init` also registers the MCP tools (`.mcp.json`), adds a short block to CLAUDE.md pointing agents at `intellagent brief`, sets the default agent name (`claude`; `--agent` to change) and generates the human's sign-in token (`.intellagent/local.json`, git-ignored). Opt out with `--no-mcp`, `--no-claude`.
 4. **Scaffold and start:**
-   `intellagent init --template software --name "Acme Billing" --prefix AB --mcp --claude`
-   then run `intellagent start` **in the background** (it is a long-running server) and confirm with `intellagent status`.
+   `intellagent init --template software --name "Acme Billing" --prefix AB`
+   It starts the board in the background and opens it signed in. Confirm with `intellagent status`; then run `intellagent brief` to see what agents will see.
 5. **Tailor the schema and rules.** Draft, don't write yet:
    - Field options that fit the project, e.g. the software template's `area` tags from the repo's top-level folders.
    - Board rules about **how to use the board only** (where work comes from, when to ask, review). Do **not** copy CLAUDE.md or other conventions into them — the board already shows those files read-only next to its rules. If a convention is missing from CLAUDE.md, propose adding it there instead.

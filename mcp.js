@@ -6,11 +6,12 @@
  */
 'use strict';
 
-const { baseUrl, tokenFor, NO_BOARD } = require('./lib/locate');
+const { baseUrl, tokenFor, defaultAgent, NO_BOARD } = require('./lib/locate');
 
 const BASE = baseUrl(); // nearest .intellagent/ manifest from the working directory, or INTELLAGENT_URL
-// Agent name: INTELLAGENT_AGENT, else the MCP client's own name (e.g. "claude-code"), set during initialize.
-let AGENT = process.env.INTELLAGENT_AGENT || 'mcp-agent';
+// Agent name: INTELLAGENT_AGENT, else the project's default agent (manifest), else the MCP client's own name.
+// The project default keeps one identity whether the agent uses the CLI or these tools.
+let AGENT = process.env.INTELLAGENT_AGENT || defaultAgent() || 'mcp-agent';
 const BOARD = process.env.INTELLAGENT_BOARD || 'main';
 const VERSION = '1.0.0';
 
@@ -41,7 +42,14 @@ const q = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== u
 const pick = (a, keys) => Object.fromEntries(keys.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
 
 const TOOLS = [
-  ['get_docs', 'Read the agent guide. Call this first.', {}, [], () => ['GET', '/api/docs']],
+  ['get_briefing', 'START HERE. Who you are, what to do next, the columns, templates, fields, rules and which tools to use.', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/brief?via=mcp`]],
+  ['get_my_work', 'What needs you now: next actions, your leases, answered questions, review feedback, assigned and ready tickets.', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/work`]],
+  ['start_work', 'Start or resume a ticket in one step: claims it, moves it to the working column, assigns you, sets your status. Also the way to resume after an answer or review feedback.', { board, id, status: S('string', 'What you are about to do'), minutes: S('number', 'Lease length'), column: S('string', 'Override the target column'), force: S('boolean', 'Start even if blocked') }, ['id'],
+    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/start`, pick(a, ['status', 'minutes', 'column', 'force'])]],
+  ['get_transitions', 'Where you can move a ticket, and why not elsewhere.', { board, id }, ['id'], (a) => ['GET', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/transitions`]],
+  ['finish_session', 'End your session: releases all your leases and the board hold, posts your digest summary.', { board, summary: S('string', 'Markdown: what you did, what is left'), items: S('array', 'Ticket ids it covers', { items: { type: 'string' } }) }, [],
+    (a) => ['POST', `/api/boards/${b(a)}/finish`, pick(a, ['summary', 'items'])]],
+  ['get_docs', 'The full agent guide (get_briefing is usually enough).', {}, [], () => ['GET', '/api/docs']],
   ['get_schema', 'Data model, event types, filter keys, search operators.', {}, [], () => ['GET', '/api/schema']],
   ['list_boards', 'List boards.', {}, [], () => ['GET', '/api/boards']],
   ['create_board', 'Create a new kanban board.', { name: S('string', 'Board name'), idPrefix: S('string', 'Item id prefix, e.g. REF'), template: S('string', 'default | simple | empty'), columns: S('array', 'Optional column definitions', { items: { type: 'object' } }), directives: S('string', 'Standing rules (markdown)') }, ['name'],
@@ -54,8 +62,8 @@ const TOOLS = [
     (a) => ['PATCH', `/api/boards/${b(a)}/columns/${encodeURIComponent(a.column)}`, pick(a, ['name', 'color', 'icon', 'position', 'flags'])]],
   ['list_column_items', 'Items in a column, in order.', { board, column, full: S('boolean', 'Return full items') }, ['column'],
     (a) => ['GET', `/api/boards/${b(a)}/columns/${encodeURIComponent(a.column)}/items?${q({ full: a.full })}`]],
-  ['create_item', 'Create a work item. Pass template (see list_ticket_templates) to start from a preset; your values override it.', { board, column, template: S('string', 'Ticket template key, e.g. bug'), ...itemFields, needsHuman: S('string', 'Ask the human something right away') }, ['title'],
-    (a) => ['POST', `/api/boards/${b(a)}/items`, pick(a, ['column', 'template', 'title', 'description', 'type', 'priority', 'parent', 'properties', 'fields', 'blockedBy', 'needsHuman'])]],
+  ['create_item', 'Create a work item. Pass template (see list_ticket_templates) to start from a preset; your values override it.', { board, column, template: S('string', 'Ticket template key, e.g. bug'), assignee: S('string', 'Hand it to an agent'), ...itemFields, needsHuman: S('string', 'Ask the human something right away') }, ['title'],
+    (a) => ['POST', `/api/boards/${b(a)}/items`, pick(a, ['column', 'template', 'title', 'description', 'type', 'priority', 'parent', 'assignee', 'properties', 'fields', 'blockedBy', 'needsHuman'])]],
   ['list_ticket_templates', 'Ticket templates on this board (presets for new tickets).', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/ticket-templates`]],
   ['define_ticket_template', 'Add a ticket template, or change one (same label/key).', { board, label: S('string', 'e.g. Bug'), key: S('string', 'Optional; derived from label'), help: S('string', 'Hint shown on the chip'), type: S('string', 'issue | task | spike'), priority: S('string', 'Low | Medium | High | Critical'), parent: S('string', 'Parent group'), column: S('string', 'Column it starts in'), title: S('string', 'Prefilled title'), description: S('string', 'Markdown, e.g. a checklist'), fields: S('object', 'Field values'), properties: S('object', 'Property values') }, ['label'],
     async (a, call) => {
@@ -144,13 +152,13 @@ async function handle(msg) {
   try {
     if (method === 'initialize') {
       const client = params?.clientInfo?.name;
-      if (!process.env.INTELLAGENT_AGENT && client) AGENT = String(client).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 64);
+      if (!process.env.INTELLAGENT_AGENT && !defaultAgent() && client) AGENT = String(client).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 64);
       return send({ jsonrpc: '2.0', id: rid, result: {
         protocolVersion: params?.protocolVersion || '2025-06-18',
         capabilities: { tools: {} },
         serverInfo: { name: 'intellagent', version: VERSION },
         instructions: BASE
-          ? `Kanban shared with the human at ${BASE}. You are "${AGENT}". Call get_directives and board_summary before working; working alone, take the master lease (claim_board); otherwise lease items you work on; use ask_human when blocked.`
+          ? `Kanban shared with the human at ${BASE}. You are "${AGENT}". Call get_briefing first: it says what to do next, how this board works and which tools to use. Work a ticket with start_work → set_status → request_review; ask_human when unsure; finish_session at the end.`
           : NO_BOARD,
       } });
     }

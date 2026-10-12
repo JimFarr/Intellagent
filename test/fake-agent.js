@@ -10,7 +10,7 @@ process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
   if (mode === 'fail') process.exit(1);
   if (mode === 'slow') await new Promise((r) => setTimeout(r, Number(arg) || 1000));
   const events = JSON.parse(require('fs').readFileSync(process.env.INTELLAGENT_EVENTS, 'utf8'));
-  const tag = /interrupted/.test(prompt) ? ' (resumed after interruption)' : '';
+  const tag = /did not finish/.test(prompt) ? ' (resumed after interruption)' : '';
   for (const id of new Set(events.map((e) => e.itemId).filter(Boolean))) {
     await fetch(`${process.env.INTELLAGENT_URL}/api/boards/main/items/${id}/comments`, {
       method: 'POST',

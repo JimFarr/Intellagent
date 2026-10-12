@@ -348,6 +348,15 @@
 
   const TOKEN_KEY = 'intellagent.token';
   const AUTH = { token: (() => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } })() };
+  // `intellagent open` passes the user token in the fragment (#token=…): keep it, then drop it from the address bar.
+  {
+    const m = /^#token=([\w-]+)/.exec(location.hash);
+    if (m) {
+      AUTH.token = m[1];
+      try { localStorage.setItem(TOKEN_KEY, m[1]); } catch { /* private mode */ }
+      history.replaceState(null, '', location.pathname);
+    }
+  }
 
   async function api(method, url, body) {
     const res = await fetch(url, {
@@ -1923,12 +1932,9 @@
           const ta = $('textarea', box);
           const text = ta.value.trim();
           if (!approve && !text) { ta.focus(); return; }
-          const cols = state.board.columns;
-          const idx = cols.findIndex((c) => c.id === m.item.columnId);
-          const target = approve ? (cols.slice(idx + 1).find((c) => c.flags.humanOnlyIn) || cols[idx + 1]) : cols[idx - 1];
           try {
-            await api('DELETE', I(m.id, '/attention'), { reply: text || 'Approved ✓' });
-            if (target) await api('POST', I(m.id, '/move'), { column: target.id, position: 'top' });
+            // One step on the server: verdict recorded, comment posted, moved on (or back), agent told.
+            await api('POST', I(m.id, '/review/decision'), { verdict: approve ? 'approve' : 'changes', comment: text });
             pulseSaved();
             toast(approve ? `Approved ${m.id}` : `Sent ${m.id} back`, { kind: approve ? 'ok' : '', icon: approve ? 'check' : 'restore' });
             scheduleRefresh(0);
@@ -2332,6 +2338,8 @@
       case 'master.expired': return `${b(ev.holder)}'s board hold expired`;
       case 'master.status': return `${b(ev.holder)}: ${html ? esc(ev.status || '—') : ev.status || '—'}`;
       case 'review.requested': return `${who} asked you to review ${b(id)}`;
+      case 'review.approved': return `${who} approved ${b(id)}`;
+      case 'review.changes_requested': return `${who} sent ${b(id)} back${ev.feedback ? `: ${html ? esc(ev.feedback) : ev.feedback}` : ''}`;
       case 'digest.added': return `${who} posted to the digest`;
       case 'item.unblocked': return `${b(id)} is unblocked (${b(ev.resolvedBy)} done)`;
       case 'app.renamed': return `${who} renamed the app to ${b(ev.to)}`;
@@ -2574,7 +2582,8 @@
     if (tokenPrompt) return tokenPrompt;
     tokenPrompt = new Promise((resolve) => {
       const root = el(`<div class="scrim" style="z-index:700"><div class="modal token-modal pop">${icon('lock', 'big')}<div style="font:700 16px var(--display)">${esc(state.app.name)}</div>
-        <div class="row2"><input class="inp" type="password" placeholder="Access token" autocomplete="off"><button class="btn primary">${icon('check')}</button></div></div></div>`);
+        <div class="row2"><input class="inp" type="password" placeholder="Access token" autocomplete="off"><button class="btn primary">${icon('check')}</button></div>
+        <div class="token-hint">Run <code>intellagent open</code> in the project to sign in, or paste <code>userToken</code> from <code>.intellagent/local.json</code></div></div></div>`);
       document.body.append(root);
       syncScrimmed();
       const inp = $('input', root);

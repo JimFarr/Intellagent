@@ -13,13 +13,13 @@
  */
 'use strict';
 const fs = require('fs');
-const { baseUrl, tokenFor, NO_BOARD } = require('./lib/locate');
+const { baseUrl, tokenFor, defaultAgent, NO_BOARD } = require('./lib/locate');
 
 const [method = 'GET', rawPath = '/api', ...args] = process.argv.slice(2);
 // Git Bash (MSYS) rewrites "/api/x" into "C:/Program Files/Git/api/x" — undo that, and allow "api/x" without a slash.
 const path = `/${rawPath.replace(/^[A-Za-z]:[\\/].*?(?=[\\/](api|files)\b)/, '').replace(/\\/g, '/').replace(/^\/+/, '')}`;
 const base = baseUrl();
-const agent = process.env.INTELLAGENT_AGENT || 'cli-agent';
+const agent = defaultAgent() || 'cli-agent';
 const token = tokenFor(agent);
 
 function fromPairs(pairs) {

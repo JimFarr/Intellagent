@@ -29,16 +29,16 @@ Ask the user in a single round (use the AskUserQuestion tool if available, max 4
 1. **Template** — run `intellagent templates`; recommend `software`, `research` or `ops` based on step 2.
 2. **Name and ticket prefix** — default to the folder name and its initials.
 3. **Seed tickets from** — TODO comments / GitHub issues / a plan they paste / nothing for now.
-4. **Wiring** — register MCP tools (`--mcp`) and append agent instructions to CLAUDE.md (`--claude`)?
+4. **Wiring** — by default `init` registers the MCP tools (`.mcp.json`), appends a short block to CLAUDE.md that points agents at `intellagent brief`, and names the default agent `claude`. Ask only if they want to opt out (`--no-mcp`, `--no-claude`) or use another agent name (`--agent`).
 
 ## 4. Scaffold and start
 
 ```
-intellagent init --template <t> --name "<name>" --prefix <PFX> [--mcp] [--claude]
-intellagent start            # run in the BACKGROUND — it is a long-running server
-intellagent status           # confirm it is running; note the URL
-intellagent docs             # read the full agent guide before going further
+intellagent init --template <t> --name "<name>" --prefix <PFX>
+intellagent status           # it is already running in the background; note the URL
+intellagent brief            # exactly what agents will see: next steps, columns, templates, calls
 ```
+`init` starts the board in the background, opens it signed in for the user, and writes the user's token to `.intellagent/local.json` (git-ignored). Don't open or print that file.
 
 ## 5. Draft the tailoring (don't write yet)
 
@@ -74,7 +74,7 @@ Collect candidates from the agreed source and de-duplicate them. If there are mo
 
 ## 10. Hand over
 
-- `POST /api/boards/main/digest` summarising what you set up.
+- `POST /api/boards/main/finish { "summary": "…" }` summarising what you set up (it also releases anything you hold).
 - Raise *needs you* (`POST /items/<id>/attention`) on anything you were unsure about — on the card, not only in chat, so the answer stays with the work.
 - Tell the user the board URL (or run `intellagent open`), what was created, and how to use it: answer questions on cards, approve reviews, edit standing rules.
 

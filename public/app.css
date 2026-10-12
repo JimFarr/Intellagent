@@ -1118,3 +1118,6 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .tcard .tparent { width: 120px; height: 26px; font-size: 12px; }
 .tcard .tdesc { resize: vertical; min-height: 64px; font: 12.5px/1.5 var(--mono); }
 .tcard .tfields { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.token-hint { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
+.token-hint code { font: 11.5px var(--mono); color: var(--text); }

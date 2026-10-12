@@ -47,6 +47,8 @@ function loadManifest() {
     permissions: m.permissions || {},
   };
   if (process.env.INTELLAGENT_PORT) merged.port = Number(process.env.INTELLAGENT_PORT);
+  // local.json next to the manifest (git-ignored) carries machine-local secrets, e.g. the user token.
+  try { const local = JSON.parse(fs.readFileSync(path.join(path.dirname(MANIFEST_PATH), 'local.json'), 'utf8')); if (local.userToken) merged.auth.userToken = local.userToken; } catch { /* none */ }
   merged.dataDir = path.resolve(path.dirname(MANIFEST_PATH), merged.dataDir);
   return merged;
 }
@@ -69,8 +71,16 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const SYSTEM = { kind: 'system', name: 'intellagent' };
 
+// Every error carries a machine-readable `code` (agents branch on it) and often a `hint` (what to do instead).
+const DEFAULT_CODE = { 400: 'BAD_REQUEST', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 404: 'NOT_FOUND', 409: 'CONFLICT', 410: 'ARCHIVED', 413: 'TOO_LARGE', 423: 'LOCKED' };
 class HttpError extends Error {
-  constructor(status, message, extra) { super(message); this.status = status; this.extra = extra; }
+  constructor(status, message, extra) {
+    super(message);
+    this.status = status;
+    const { code, ...rest } = extra || {};
+    this.code = code || DEFAULT_CODE[status] || 'ERROR';
+    this.extra = Object.keys(rest).length ? rest : undefined;
+  }
 }
 const fail = (status, message, extra) => { throw new HttpError(status, message, extra); };
 
@@ -543,8 +553,13 @@ function recipientsFor(item, actor, extra = []) {
   return [...s];
 }
 
+// Housekeeping events never wake anyone (a status line from one agent must not wake the others).
+const QUIET_TYPES = new Set(['lease.status', 'lease.renewed', 'item.reordered']);
 function itemEvent(ctx, type, item, actor, extra = {}) {
   const { mentions = [], ...rest } = extra;
+  if (QUIET_TYPES.has(type)) {
+    return { board: ctx.id, type, actor, itemId: item.id, columnId: item.columnId, item: snapshot(ctx, item), recipients: [], ...rest };
+  }
   return {
     board: ctx.id, type, actor, itemId: item.id, columnId: item.columnId,
     // The master-lease holder works every ticket without leasing it, so it hears about all of them.
@@ -578,7 +593,7 @@ const activeMaster = (ctx) => {
 function guardBoard(ctx, actor) {
   const m = activeMaster(ctx);
   if (m && actor.kind === 'agent' && m.holder !== actor.name) {
-    fail(423, `Board "${ctx.id}" is held by ${m.holder} (master lease). You can still comment, ask the human, or post to the digest.`, { master: m });
+    fail(423, `Board "${ctx.id}" is held by ${m.holder} (master lease). You can still comment, ask the human, or post to the digest.`, { code: 'BOARD_HELD', hint: 'Comment, ask (POST …/attention) or wait for master.released', master: m });
   }
 }
 
@@ -588,7 +603,7 @@ function claimMaster(ctx, d, actor) {
     if (cur && cur.holder !== actor.name && !(d.force && actor.kind === 'user')) fail(409, `Board is already held by ${cur.holder}`, { master: cur });
     const others = Object.values(ctx.board.items).map((it) => activeLease(it)).filter((l) => l && l.claimant !== actor.name);
     if (others.length && !(d.force && actor.kind === 'user')) {
-      fail(409, `Other leases are active (${[...new Set(others.map((l) => l.claimant))].join(', ')}). Wait for them to be released.`, { leases: others });
+      fail(409, `Other leases are active (${[...new Set(others.map((l) => l.claimant))].join(', ')}). Wait for them to be released.`, { code: 'LEASES_ACTIVE', hint: 'They must finish (POST …/finish) or a human can force it', leases: others });
     }
     const minutes = Number(d.minutes) > 0 ? clamp(Number(d.minutes), 1, 60 * 24 * 30) : null;
     const renew = !!cur && cur.holder === actor.name;
@@ -620,12 +635,12 @@ function guardWrite(ctx, item, actor) {
   checkColumnPerm(ctx, actor, [item.columnId]);
   const l = activeLease(item);
   if (l && actor.kind === 'agent' && l.claimant !== actor.name) {
-    fail(423, `${item.id} is leased by ${l.claimant} until ${l.expiresAt}`, { lease: l });
+    fail(423, `${item.id} is leased by ${l.claimant} until ${l.expiresAt}`, { code: 'LEASED', hint: 'Pick another ticket, comment on this one, or wait for lease.released', lease: l });
   }
 }
 
 function checkWip(col) {
-  if (col.flags.wipLimit > 0 && col.itemIds.length >= col.flags.wipLimit) fail(409, `"${col.name}" is at its WIP limit (${col.flags.wipLimit})`);
+  if (col.flags.wipLimit > 0 && col.itemIds.length >= col.flags.wipLimit) fail(409, `"${col.name}" is at its WIP limit (${col.flags.wipLimit})`, { code: 'WIP_LIMIT', hint: `Finish something in "${col.name}" first` });
 }
 
 function resolveIndex(list, pos) {
@@ -770,6 +785,7 @@ function createItem(ctx, d, actor) {
     col.itemIds.splice(resolveIndex(col.itemIds, positionOf(d)), 0, id);
     for (const a of arr(d.attachments)) item.attachments.push(saveAttachment(ctx, item, a, actor));
     events.push(itemEvent(ctx, 'item.created', item, actor));
+    if (item.assignee) events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: item.assignee, from: null, mentions: [item.assignee] }));
     if (item.needsHuman) events.push(itemEvent(ctx, 'attention.raised', item, actor, { reason: item.needsHuman.reason }));
     return item;
   });
@@ -783,7 +799,7 @@ function moveInto(ctx, item, colRef, position, actor, events) {
   if (cross) {
     if (!from.flags.allowMoveOut) fail(403, `Items cannot leave "${from.name}"`);
     if (!to.flags.allowMoveIn) fail(403, `"${to.name}" does not accept moved items`);
-    if (actor.kind !== 'user' && to.flags.humanOnlyIn) fail(403, `Only a human can move items into "${to.name}". Move it to the column before and ask for review.`);
+    if (actor.kind !== 'user' && to.flags.humanOnlyIn) fail(403, `Only a human can move items into "${to.name}". Move it to the column before and ask for review.`, { code: 'HUMAN_ONLY', hint: 'POST …/items/<id>/review { summary }' });
     if (actor.kind !== 'user' && from.flags.humanOnlyOut) fail(403, `Only a human can move items out of "${from.name}"`);
     checkColumnPerm(ctx, actor, [to.id]);
     checkWip(to);
@@ -814,7 +830,7 @@ function trimChange(v) { return typeof v === 'string' && v.length > 400 ? `${v.s
 
 function applyPatch(ctx, item, p, actor, events) {
   const unknown = Object.keys(p).filter((k) => !PATCHABLE.includes(k));
-  if (unknown.length) fail(400, `Unknown field(s): ${unknown.join(', ')}. Patchable: ${PATCHABLE.join(', ')}. Put custom data in "properties". Leases use /lease, comments use /comments.`);
+  if (unknown.length) fail(400, `Unknown field(s): ${unknown.join(', ')}. Patchable: ${PATCHABLE.join(', ')}. Put custom data in "properties". Leases use /lease, comments use /comments.`, { code: 'UNKNOWN_FIELD' });
   guardWrite(ctx, item, actor);
   if (actor.kind === 'user') {
     const bi = ctx.board.schema.builtins;
@@ -822,7 +838,7 @@ function applyPatch(ctx, item, p, actor, events) {
       if (k in p && bi[k].ui !== 'edit') fail(403, `"${bi[k].label}" is read-only in the UI`);
     }
   }
-  if (p.version != null && Number(p.version) !== item.version) fail(409, `Version conflict: ${item.id} is at version ${item.version}. Re-read and retry.`, { item });
+  if (p.version != null && Number(p.version) !== item.version) fail(409, `Version conflict: ${item.id} is at version ${item.version}. Re-read and retry.`, { code: 'VERSION_CONFLICT', hint: 'GET the item, re-apply your change, retry with its version', item });
 
   const b = ctx.board;
   const changes = {};
@@ -912,7 +928,7 @@ function claimLease(ctx, id, d, actor) {
     const minutes = clamp(Number(d.minutes) || M.lease.defaultMinutes, 1, M.lease.maxMinutes);
     const cur = activeLease(item);
     if (cur && cur.claimant !== claimant && !(d.force && actor.kind === 'user')) {
-      fail(409, `${item.id} is already leased by ${cur.claimant} until ${cur.expiresAt}`, { lease: cur });
+      fail(409, `${item.id} is already leased by ${cur.claimant} until ${cur.expiresAt}`, { code: 'LEASED', hint: 'Pick another ticket (GET …/work)', lease: cur });
     }
     const renew = !!cur && cur.claimant === claimant;
     if (!(item.workedBy || []).includes(claimant)) item.workedBy = [...(item.workedBy || []), claimant].slice(-5);
@@ -978,6 +994,301 @@ function resolveAttention(ctx, id, d, actor) {
     events.push(itemEvent(ctx, 'attention.resolved', item, actor, { raisedBy: prev.raisedBy, reason: prev.reason, reply: reply?.body ?? null, mentions: [prev.raisedBy] }));
     return item;
   });
+}
+
+// Asking never needs a lease: anyone working near a ticket may ask about it. A newer question
+// replaces an open one (the old one is kept in `waits`).
+function askHuman(ctx, id, reason, actor) {
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    const prev = item.needsHuman;
+    if (prev) closeWait(item, prev, actor);
+    item.needsHuman = parseNeedsHuman({ reason: reason || 'Needs input' }, actor);
+    item.version++;
+    item.updatedAt = now();
+    events.push(itemEvent(ctx, 'attention.raised', item, actor, { reason: item.needsHuman.reason, ...(prev ? { replaced: prev.reason } : {}) }));
+    return item;
+  });
+}
+
+/* ───── structured agent flows: pickup/working columns, transitions, start, decide, finish, work ───── */
+
+// Where agents pick up work and where work happens. Flags win; names are the fallback.
+function pickupColumns(ctx) {
+  const cols = ctx.board.columns;
+  const flagged = cols.filter((c) => c.flags.pickup);
+  if (flagged.length) return flagged;
+  const named = cols.filter((c) => /^(ready|to ?do|todo|next|up next|selected)$/i.test(c.name));
+  return named.length ? named : cols.slice(0, 1);
+}
+function workingColumn(ctx) {
+  const cols = ctx.board.columns;
+  return cols.find((c) => c.flags.working) || cols.find((c) => /progress|doing|investigating|mitigating|working|active/i.test(c.name))
+    || cols[cols.indexOf(pickupColumns(ctx).at(-1)) + 1] || null;
+}
+
+// Why `actor` cannot move `item` into `to` (null = allowed). Mirrors moveInto without changing anything.
+function moveBlocker(ctx, item, to, actor) {
+  const from = ctx.board.columns.find((c) => c.id === item.columnId);
+  if (!from || from.id === to.id) return null;
+  if (!from.flags.allowMoveOut) return { code: 'LOCKED_COLUMN', reason: `Items cannot leave "${from.name}"` };
+  if (!to.flags.allowMoveIn) return { code: 'LOCKED_COLUMN', reason: `"${to.name}" does not accept moved items` };
+  if (actor.kind !== 'user' && to.flags.humanOnlyIn) return { code: 'HUMAN_ONLY', reason: `Only a human can move items into "${to.name}"`, hint: 'Request review instead' };
+  if (actor.kind !== 'user' && from.flags.humanOnlyOut) return { code: 'HUMAN_ONLY', reason: `Only a human can move items out of "${from.name}"` };
+  if (to.flags.wipLimit > 0 && to.itemIds.length >= to.flags.wipLimit) return { code: 'WIP_LIMIT', reason: `"${to.name}" is at its WIP limit (${to.flags.wipLimit})` };
+  const perms = actor.kind === 'agent' ? permsFor(actor.name) : null;
+  if (perms?.readOnly) return { code: 'FORBIDDEN', reason: 'You are read-only on this board' };
+  if (perms?.columns && !perms.columns.some((c) => [to.id, to.name.toLowerCase()].includes(String(c).toLowerCase()))) return { code: 'FORBIDDEN', reason: `You may not change items in "${to.name}"` };
+  return null;
+}
+
+function transitions(ctx, item, actor) {
+  const l = activeLease(item);
+  const m = activeMaster(ctx);
+  const locked = actor.kind === 'agent' && ((l && l.claimant !== actor.name) || (m && m.holder !== actor.name));
+  return {
+    id: item.id, column: ctx.board.columns.find((c) => c.id === item.columnId)?.name,
+    ...(locked ? { lockedBy: l && l.claimant !== actor.name ? l.claimant : m.holder } : {}),
+    moves: ctx.board.columns.filter((c) => c.id !== item.columnId).map((c) => {
+      const why = locked ? { code: 'LEASED', reason: `Held by ${l && l.claimant !== actor.name ? l.claimant : m.holder}` } : moveBlocker(ctx, item, c, actor);
+      return { column: c.name, id: c.id, allowed: !why, ...(why || {}) };
+    }),
+    review: reviewColumn(ctx)?.name || null,
+  };
+}
+
+function makeLease(item, claimant, minutes, status, cur) {
+  const renew = !!cur && cur.claimant === claimant;
+  if (!(item.workedBy || []).includes(claimant)) item.workedBy = [...(item.workedBy || []), claimant].slice(-5);
+  item.lease = {
+    claimant,
+    leasedAt: renew ? cur.leasedAt : now(),
+    expiresAt: new Date(Date.now() + minutes * 60_000).toISOString(),
+    minutes,
+    renewals: renew ? (cur.renewals || 0) + 1 : 0,
+    ...(renew && cur.status ? { status: cur.status, statusAt: cur.statusAt } : {}),
+    ...(status ? { status: str(status, 140), statusAt: now() } : {}),
+  };
+  return renew;
+}
+
+// Start (or resume) work in one step: checks, lease, move to the working column, status, assignee.
+// Either everything happens or nothing does.
+function startWork(ctx, id, d, actor) {
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    guardBoard(ctx, actor);
+    checkColumnPerm(ctx, actor, [item.columnId]);
+    const cur = activeLease(item);
+    if (cur && cur.claimant !== actor.name) fail(423, `${item.id} is leased by ${cur.claimant} until ${cur.expiresAt}`, { code: 'LEASED', hint: 'Pick another ticket (GET …/work)', lease: cur });
+    const open = openBlockersOf(ctx, item);
+    if (open.length && !d.force) fail(409, `${item.id} is blocked by ${open.join(', ')}`, { code: 'BLOCKED', hint: 'Work on a blocker first, or pass "force": true', blockedBy: open });
+    const cols = ctx.board.columns;
+    const work = workingColumn(ctx);
+    const target = d.column ? findColumn(ctx.board, d.column)
+      : work && cols.indexOf(work) > cols.findIndex((c) => c.id === item.columnId) ? work
+        : item.review?.verdict === 'changes' && work ? work : null;
+    let moved = null;
+    if (target && target.id !== item.columnId) { moveInto(ctx, item, target.id, 'top', actor, events); moved = target.name; }
+    const master = activeMaster(ctx);
+    const holdsBoard = master && master.holder === actor.name;
+    if (!holdsBoard) {
+      const minutes = clamp(Number(d.minutes) || M.lease.defaultMinutes, 1, M.lease.maxMinutes);
+      const renew = makeLease(item, actor.name, minutes, d.status, cur);
+      events.push(itemEvent(ctx, renew ? 'lease.renewed' : 'lease.claimed', item, actor, { claimant: actor.name, expiresAt: item.lease.expiresAt, via: 'start' }));
+    } else if (!(item.workedBy || []).includes(actor.name)) item.workedBy = [...(item.workedBy || []), actor.name].slice(-5);
+    if (!item.assignee && actor.kind === 'agent') {
+      item.assignee = actor.name;
+      events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: actor.name, from: null }));
+    }
+    item.version++;
+    item.updatedAt = now();
+    const lastWait = (item.waits || []).filter((w) => w.raisedBy === actor.name).at(-1);
+    return {
+      item: itemView(ctx, item), movedTo: moved, lease: item.lease, holdsBoard: !!holdsBoard,
+      ...(item.review?.verdict === 'changes' ? { feedback: item.review.comment || null } : {}),
+      ...(lastWait ? { lastAnswer: replyAfter(item, lastWait) } : {}),
+      next: `Work, then POST /api/boards/${ctx.id}/items/${item.id}/review { "summary": "what changed and how to verify" }. Renew with POST …/lease if it takes longer than ${item.lease?.minutes || 'the lease'} minutes.`,
+    };
+  });
+}
+
+// The human's reply to a closed question: the first comment they wrote after it was asked.
+function replyAfter(item, w) {
+  const c = (item.comments || []).find((x) => x.author?.kind === 'user' && x.createdAt >= w.raisedAt);
+  return c ? c.body : null;
+}
+
+// Human verdict on a review, in one step. approve: through the gate; changes: back to the working column.
+function decideReview(ctx, id, d, actor) {
+  if (actor.kind !== 'user') fail(403, 'Only the human decides reviews', { code: 'HUMAN_ONLY' });
+  const verdict = d.verdict === 'approve' || d.verdict === 'approved' ? 'approve' : d.verdict === 'changes' ? 'changes' : fail(400, '"verdict" must be "approve" or "changes"');
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    const prev = item.needsHuman;
+    const requestedBy = prev?.raisedBy || item.workedBy?.at(-1) || null;
+    const comment = str(d.comment || '', 20_000).trim();
+    if (verdict === 'changes' && !comment) fail(400, 'Say what needs to change in "comment"');
+    if (comment || verdict === 'approve') item.comments.push({ id: rid('c'), author: actor, body: comment || 'Approved ✓', createdAt: now() });
+    if (prev) { item.needsHuman = null; closeWait(item, prev, actor); }
+    const cols = ctx.board.columns;
+    const idx = cols.findIndex((c) => c.id === item.columnId);
+    const target = d.column ? findColumn(ctx.board, d.column)
+      : verdict === 'approve' ? (cols.slice(idx + 1).find((c) => c.flags.humanOnlyIn) || cols[idx + 1])
+        : (workingColumn(ctx) && cols.indexOf(workingColumn(ctx)) < idx ? workingColumn(ctx) : cols[idx - 1]);
+    if (target && target.id !== item.columnId) moveInto(ctx, item, target.id, 'top', actor, events);
+    item.review = { verdict, comment: comment || null, by: actor.name, at: now(), requestedBy };
+    item.version++;
+    item.updatedAt = now();
+    const who = [requestedBy, ...(item.workedBy || [])].filter(Boolean);
+    events.push(itemEvent(ctx, 'attention.resolved', item, actor, { raisedBy: prev?.raisedBy || null, reason: prev?.reason || null, kind: 'review', verdict, reply: comment || 'Approved ✓', mentions: who }));
+    events.push(itemEvent(ctx, verdict === 'approve' ? 'review.approved' : 'review.changes_requested', item, actor, { verdict, feedback: comment || null, mentions: who }));
+    return item;
+  });
+}
+
+// End of a session: release every lease (and the board hold) you have, optionally posting the digest.
+function finishSession(ctx, d, actor) {
+  return tx(ctx, (events) => {
+    const released = [];
+    for (const item of Object.values(ctx.board.items)) {
+      const l = activeLease(item);
+      if (!l || l.claimant !== actor.name) continue;
+      item.lease = null;
+      item.version++;
+      released.push(item.id);
+      events.push(itemEvent(ctx, 'lease.released', item, actor, { claimant: actor.name, reason: 'session finished' }));
+    }
+    const m = activeMaster(ctx);
+    const board = !!m && m.holder === actor.name;
+    if (board) { ctx.board.master = null; events.push({ board: ctx.id, type: 'master.released', actor, holder: actor.name }); }
+    let digest = null;
+    if (String(d.summary || '').trim()) {
+      digest = { id: rid('d'), date: new Date().toLocaleDateString('en-CA'), ts: now(), author: actor, summary: str(d.summary, 20_000), items: arr(d.items).map((x) => String(x).toUpperCase()).slice(0, 50) };
+      ctx.board.digest.push(digest);
+      if (ctx.board.digest.length > 500) ctx.board.digest.splice(0, ctx.board.digest.length - 500);
+      events.push({ board: ctx.id, type: 'digest.added', actor, entry: { id: digest.id, summary: trimChange(digest.summary) } });
+    }
+    return { released, releasedBoard: board, digest: digest ? digest.id : null };
+  });
+}
+
+const PRIO_RANK = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+
+// "What needs me now?" — everything an (ephemeral) agent needs to decide its next step, in one call.
+function workFor(ctx, name) {
+  const b = ctx.board;
+  const items = b.columns.flatMap((c) => c.itemIds.map((id) => b.items[id]).filter(Boolean));
+  const done = doneColumnId(ctx);
+  const colName = (it) => b.columns.find((c) => c.id === it.columnId)?.name;
+  const brief = (it, extra = {}) => ({ id: it.id, title: it.title, column: colName(it), priority: it.priority, type: it.type, ...extra });
+  const lastMine = (it) => Math.max(0, ...(it.comments || []).filter((c) => c.author?.name === name).map((c) => Date.parse(c.createdAt)),
+    it.lease?.claimant === name ? Date.parse(it.lease.leasedAt) : 0);
+  const master = activeMaster(ctx);
+  const leases = [];
+  const answered = [];
+  const feedback = [];
+  const waiting = [];
+  const assigned = [];
+  for (const it of items) {
+    const l = activeLease(it);
+    if (l?.claimant === name) leases.push(brief(it, { expiresAt: l.expiresAt, minutesLeft: Math.max(0, Math.round((Date.parse(l.expiresAt) - Date.now()) / 60000)), status: l.status || null }));
+    if (it.needsHuman?.raisedBy === name) { waiting.push(brief(it, { question: it.needsHuman.reason, kind: it.needsHuman.kind, since: it.needsHuman.raisedAt })); continue; }
+    const w = (it.waits || []).filter((x) => x.raisedBy === name && x.kind !== 'review').at(-1);
+    if (w && Date.parse(w.resolvedAt) > lastMine(it) && it.columnId !== done) answered.push(brief(it, { question: w.reason || null, answer: replyAfter(it, w), answeredBy: w.by }));
+    const rv = it.review;
+    if (rv?.verdict === 'changes' && (rv.requestedBy === name || it.workedBy?.includes(name)) && Date.parse(rv.at) > lastMine(it)) feedback.push(brief(it, { feedback: rv.comment, by: rv.by }));
+    if (it.assignee === name && it.columnId !== done && !(l && l.claimant !== name) && !leases.some((x) => x.id === it.id)) assigned.push(brief(it));
+  }
+  const pick = new Set(pickupColumns(ctx).map((c) => c.id));
+  const ready = items.filter((it) => pick.has(it.columnId) && !activeLease(it) && !it.needsHuman && (!it.assignee || it.assignee === name) && !openBlockersOf(ctx, it).length)
+    .sort((a, c) => PRIO_RANK[a.priority] - PRIO_RANK[c.priority]).slice(0, 5).map((it) => brief(it));
+  const call = (id, what) => `POST /api/boards/${ctx.id}/items/${id}/${what}`;
+  const next = [];
+  const seen = new Set();
+  // One suggestion per ticket (renewing is separate: it is just housekeeping).
+  const add = (action, it, why, how) => { const k = action === 'renew' ? `renew:${it.id}` : it.id; if (seen.has(k)) return; seen.add(k); next.push({ action, id: it.id, title: it.title, why, call: how }); };
+  for (const x of leases.filter((l) => l.minutesLeft <= M.lease.warningMinutes)) add('renew', x, `Your lease ends in ${x.minutesLeft} min`, `${call(x.id, 'lease')} { "minutes": 30 }`);
+  for (const x of feedback) add('address_feedback', x, `Review sent back: ${String(x.feedback || '').slice(0, 120)}`, call(x.id, 'start'));
+  for (const x of answered) add('resume', x, `Your question was answered: ${String(x.answer || '').slice(0, 120)}`, call(x.id, 'start'));
+  for (const x of leases) add('continue', x, x.status ? `You were: ${x.status}` : 'You hold this lease', `${call(x.id, 'review')} { "summary": "…" } when done`);
+  for (const x of assigned) add('start', x, 'Assigned to you', call(x.id, 'start'));
+  if (!next.length || next.every((n) => n.action === 'renew')) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
+  const blockedByMaster = master && master.holder !== name;
+  return {
+    agent: name, board: ctx.id,
+    ...(master ? { master: { holder: master.holder, you: master.holder === name, status: master.status || null } } : {}),
+    ...(blockedByMaster ? { note: `${master.holder} holds the whole board — you can read, comment and ask, but not change tickets.` } : {}),
+    next: blockedByMaster ? [] : next,
+    leases, feedback, answered, waitingOnHuman: waiting, assigned, ready,
+  };
+}
+
+// One page an agent reads first: who it is, what to do next, how this board works, and the exact calls.
+// via: cli (intellagent api …) | mcp (tool names) | http (raw requests).
+function briefing(ctx, name, base, via = 'cli') {
+  const b = ctx.board;
+  const w = workFor(ctx, name);
+  const P = `/api/boards/${ctx.id}`;
+  const cli = (m, path, args = '') => `intellagent api ${m} ${path}${args ? ` ${args}` : ''}`;
+  const call = {
+    work: { cli: cli('GET', `${P}/work`), mcp: 'get_my_work', http: `GET ${P}/work` },
+    create: { cli: cli('POST', `${P}/items`, `title="…" template=${b.ticketTemplates[0]?.key || 'bug'} priority=High`), mcp: 'create_item { title, template?, … }', http: `POST ${P}/items { title, template?, column?, type?, priority?, parent?, fields? }` },
+    start: { cli: cli('POST', `${P}/items/<ID>/start`, 'status="what you are doing"'), mcp: 'start_work { id, status }', http: `POST ${P}/items/<ID>/start { status }` },
+    status: { cli: cli('PUT', `${P}/items/<ID>/status`, 'status="running tests"'), mcp: 'set_status { id, status }', http: `PUT ${P}/items/<ID>/status { status }` },
+    comment: { cli: cli('POST', `${P}/items/<ID>/comments`, 'body="…"'), mcp: 'add_comment { id, body }', http: `POST ${P}/items/<ID>/comments { body }` },
+    ask: { cli: cli('POST', `${P}/items/<ID>/attention`, 'reason="your question"'), mcp: 'ask_human { id, reason }', http: `POST ${P}/items/<ID>/attention { reason }` },
+    review: { cli: cli('POST', `${P}/items/<ID>/review`, 'summary="what changed, how to verify"'), mcp: 'request_review { id, summary }', http: `POST ${P}/items/<ID>/review { summary }` },
+    moves: { cli: cli('GET', `${P}/items/<ID>/transitions`), mcp: 'get_transitions { id }', http: `GET ${P}/items/<ID>/transitions` },
+    finish: { cli: cli('POST', `${P}/finish`, 'summary="what you did today"'), mcp: 'finish_session { summary }', http: `POST ${P}/finish { summary }` },
+  };
+  const c = (k) => `\`${call[k][via] || call[k].cli}\``;
+  const flagsOf = (col) => {
+    const f = col.flags;
+    const pick = pickupColumns(ctx).includes(col);
+    return [
+      pick ? 'pick up work here' : '', workingColumn(ctx) === col ? 'work in progress (start moves tickets here)' : '',
+      reviewColumn(ctx) === col ? 'review (request review moves tickets here)' : '',
+      f.allowCreate ? 'new tickets OK' : '', f.humanOnlyIn ? 'only the human moves tickets in' : '', f.humanOnlyOut ? 'only the human moves tickets out' : '',
+      f.wipLimit ? `max ${f.wipLimit}` : '',
+    ].filter(Boolean).join(' · ');
+  };
+  const rules = projectRules();
+  const lines = [
+    `# You are "${name}" on the ${b.name} board`,
+    `${base}  ·  board id \`${ctx.id}\`  ·  tickets ${b.idPrefix}-1, ${b.idPrefix}-2…  ·  identify every call as "${name}"`,
+    '',
+    '## What to do next',
+    ...(w.note ? [`> ${w.note}`] : []),
+    ...(w.next.length
+      ? w.next.map((n, i) => `${i + 1}. **${n.action.replace(/_/g, ' ')} ${n.id}** "${n.title}" — ${n.why}`)
+      : ['Nothing is waiting for you. Ask the human what to work on, or create tickets for work you were given.']),
+    ...(w.waitingOnHuman.length ? ['', `Waiting on the human (don't redo these): ${w.waitingOnHuman.map((x) => `${x.id} "${x.question}"`).join('; ')}`] : []),
+    '',
+    '## Columns (left to right)',
+    ...b.columns.map((col) => `- **${col.name}** (${col.itemIds.length})${flagsOf(col) ? ` — ${flagsOf(col)}` : ''}`),
+    ...(b.ticketTemplates.length ? ['', '## Ticket templates (prefer these when creating)', ...b.ticketTemplates.map((t) => `- \`${t.key}\` ${t.label}${t.help ? ` — ${t.help}` : ''}${t.type ? ` (${t.type}${t.priority ? `, ${t.priority}` : ''})` : ''}`)] : []),
+    ...(b.schema.fields.length ? ['', '## Ticket fields (set with fields.<key>=…)', ...b.schema.fields.map((f) => `- \`${f.key}\` ${f.type}${f.options?.length ? `: ${f.options.map((o) => o.value).join(' | ')}` : ''}${f.ui === 'read' ? ' (only agents set it)' : ''}${f.help ? ` — ${f.help}` : ''}`)] : []),
+    '',
+    '## Board rules',
+    b.directives?.trim() || '(none yet)',
+    ...(rules.length ? ['', `Project conventions are in ${rules.map((x) => `\`${x.file}\``).join(', ')} — follow them; the board rules only cover how to use the board.`] : []),
+    '',
+    '## The calls you need',
+    `- Your work, any time: ${c('work')}`,
+    `- Create a ticket: ${c('create')}`,
+    `- Start or resume a ticket (claims it, moves it to ${workingColumn(ctx)?.name || 'the working column'}, assigns you): ${c('start')}`,
+    `- Say what you're doing (shows live on the card): ${c('status')}`,
+    `- Comment: ${c('comment')}   ·   Ask the human (they answer on the card): ${c('ask')}`,
+    `- Finished? Request review (the human approves or sends it back): ${c('review')}`,
+    `- Where can this ticket go?: ${c('moves')}`,
+    `- End of session (releases everything, posts the digest): ${c('finish')}`,
+    '',
+    'Errors return `{ error, code, hint }` — branch on `code` (LEASED, BOARD_HELD, BLOCKED, WIP_LIMIT, HUMAN_ONLY, VERSION_CONFLICT…) and follow `hint`.',
+    `Only the human moves tickets into ${b.columns.filter((x) => x.flags.humanOnlyIn).map((x) => x.name).join(', ') || 'gated columns'}. Never edit files under .intellagent/data.`,
+    `Full guide: ${base}/api/docs`,
+  ];
+  return lines.join('\n');
 }
 
 function archiveItems(ctx, ids, actor, reason = null) {
@@ -1153,7 +1464,14 @@ let seq = 0;
 
 (function loadEvents() {
   if (!fs.existsSync(EVENTS_FILE)) return;
-  if (fs.statSync(EVENTS_FILE).size > 20 * 1024 * 1024) {
+  const size = fs.statSync(EVENTS_FILE).size;
+  if (size > 20 * 1024 * 1024) {
+    // Keep numbering going: every agent's saved cursor refers to it.
+    const fd = fs.openSync(EVENTS_FILE, 'r');
+    const buf = Buffer.alloc(Math.min(size, 256 * 1024));
+    fs.readSync(fd, buf, 0, buf.length, size - buf.length);
+    fs.closeSync(fd);
+    for (const l of buf.toString('utf8').split('\n').reverse()) { try { seq = JSON.parse(l).seq; break; } catch { /* partial line */ } }
     fs.renameSync(EVENTS_FILE, path.join(DATA, `events-${Date.now()}.jsonl`));
     return;
   }
@@ -1242,7 +1560,10 @@ function emit(ev) {
 
 function sseSend(res, e) { res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`); }
 
+// A cursor from before a data reset can be ahead of the log; treat it as "now" instead of waiting forever.
+const clampSince = (n) => (Number.isFinite(n) && n <= seq ? n : seq);
 function longPoll(res, { filter, since, timeout, limit = 100, agent, onDeliver, tail = false }) {
+  since = clampSince(since);
   const collect = () => {
     const hits = recent.filter((e) => e.seq > since && matchesFilter(e, filter));
     return tail ? hits.slice(-limit) : hits.slice(0, limit);
@@ -1503,7 +1824,7 @@ const SCHEMA = {
     seq: 'integer cursor', ts: 'ISO', board: 'string', hash: 'board hash after the change',
     type: ['item.created', 'item.updated', 'item.moved', 'item.reordered', 'item.archived', 'item.restored', 'comment.added',
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
-      'attention.raised', 'attention.resolved', 'review.requested', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
+      'attention.raised', 'attention.resolved', 'review.requested', 'review.approved', 'review.changes_requested', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agents.changed'],
@@ -1964,9 +2285,29 @@ route('POST', '/api/boards/:board/digest', 'Append to today\'s digest: { summary
   }));
 });
 
-route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason }', ({ p, body, actor }) => {
+route('GET', '/api/boards/:board/brief', 'Start here (agents): who you are, what to do next, how this board works, the exact calls. ?via=cli|mcp|http &format=json', ({ req, p, q, actor }) => {
   const ctx = getCtx(p.board);
-  return itemView(ctx, updateItem(ctx, p.id, { needsHuman: { reason: body.reason || 'Needs input' } }, { ...actor, kind: actor.kind === 'agent' ? 'agent' : actor.kind }));
+  const text = briefing(ctx, q.agent || actor.name, `http://${req.headers.host}`, ['cli', 'mcp', 'http'].includes(q.via) ? q.via : 'cli');
+  return q.format === 'json' ? { brief: text, work: workFor(ctx, q.agent || actor.name) } : text;
+});
+route('GET', '/api/boards/:board/work', 'What needs you now (agent): next actions, your leases, answered questions, review feedback, assigned and ready tickets. ?agent= to look at another agent', ({ p, q, actor }) =>
+  workFor(getCtx(p.board), q.agent || actor.name));
+route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move this ticket, and why not elsewhere', ({ p, actor }) => {
+  const ctx = getCtx(p.board);
+  return transitions(ctx, getItem(ctx, p.id), actor);
+});
+route('POST', '/api/boards/:board/items/:id/start', 'Start or resume work in one step: lease + move to the working column + status + assign. { status?, minutes?, column?, force? }', ({ p, body, actor }) =>
+  startWork(getCtx(p.board), p.id, body, actor));
+route('POST', '/api/boards/:board/items/:id/review/decision', 'Human: decide a review { verdict: "approve"|"changes", comment?, column? }', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  return itemView(ctx, decideReview(ctx, p.id, body, actor));
+});
+route('POST', '/api/boards/:board/finish', 'End your session: release all your leases (and the board hold), optionally post the digest { summary?, items? }', ({ p, body, actor }) =>
+  finishSession(getCtx(p.board), body, actor));
+
+route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason } — allowed even while others hold leases', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  return itemView(ctx, askHuman(ctx, p.id, body.reason, actor));
 });
 route('DELETE', '/api/boards/:board/items/:id/attention', 'Resolve: { reply? } (reply becomes a comment)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
@@ -2127,8 +2468,9 @@ const server = http.createServer(async (req, res) => {
     const actor = actorOf(req, q);
     checkAuth(req, q, actor, u.pathname);
     const bm = /^\/api\/boards\/([^/]+)(?:\/(.*))?$/.exec(u.pathname);
-    if (req.method !== 'GET' && bm && boards.has(bm[1]) && !/(^|\/)(comments|attention|digest|master)(\/|$)/.test(bm[2] || '')) {
-      guardBoard(boards.get(bm[1]), actor);
+    const gctx = bm && (boards.get(bm[1]) || boards.get(slug(decodeURIComponent(bm[1]))));
+    if (req.method !== 'GET' && gctx && !/(^|\/)(comments|attention|digest|master|finish)(\/|$)/.test(bm[2] || '')) {
+      guardBoard(gctx, actor);
     }
     if (actor.kind === 'agent' && u.pathname.startsWith('/api')) touch(actor.name, `${req.method} ${u.pathname}`);
     const out = await m.r.handler({ req, res, p: m.params, q, body, actor });
@@ -2139,7 +2481,7 @@ const server = http.createServer(async (req, res) => {
     if (res.headersSent) { res.end(); return; }
     const status = e.status || 500;
     if (status === 500) console.error(e);
-    reply(res, status, { error: e.message, status, ...(e.extra || {}) });
+    reply(res, status, { error: e.message, code: e.code || (status === 500 ? 'INTERNAL' : 'ERROR'), status, ...(e.extra || {}) });
   }
 });
 
@@ -2186,6 +2528,11 @@ standing = require('./lib/agents').createAgents({
   cwd: PROJECT_ROOT,
   env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
   emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
+  onRunEnd: (name) => {
+    for (const ctx of boards.values()) {
+      if (Object.values(ctx.board.items).some((it) => activeLease(it)?.claimant === name)) finishSession(ctx, {}, { kind: 'agent', name });
+    }
+  },
 });
 
 server.on('error', (e) => {
@@ -2200,9 +2547,11 @@ server.listen(M.port, M.host, () => {
   console.log(`  board   ${base}`);
   console.log(`  agents  ${base}/api/docs`);
   console.log(`  data    ${DATA}\n`);
+  try { fs.writeFileSync(path.join(DATA, 'server.pid'), String(process.pid)); } catch { /* read-only data dir */ }
 });
 
 const shutdown = () => {
+  try { fs.rmSync(path.join(DATA, 'server.pid')); } catch { /* gone */ }
   standing?.stop();
   writeFileAtomic(PRESENCE_FILE, JSON.stringify({ updatedAt: now(), agents: Object.fromEntries(presence) }, null, 2));
   process.exit(0);

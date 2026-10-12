@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /*
  * intellagent — global command.
- *   intellagent init [dir] [--template software] [--name "My App"] [--prefix APP] [--port 7421] [--mcp] [--agent name] [--claude] [--demo]
+ *   intellagent init [dir] [--template software] [--name "My App"] [--prefix APP] [--port 7421] [--agent claude] [--no-mcp] [--no-claude] [--no-start]
+ *   intellagent brief [--agent name]    everything an agent needs to start working
  *   intellagent templates               list board templates
  *   intellagent skill install [--project] install the /intellagent-setup skill for Claude Code
  *   intellagent start [--open]          run the board for the nearest .intellagent/ folder
@@ -18,7 +19,8 @@ const path = require('path');
 const net = require('net');
 const { spawn } = require('child_process');
 const os = require('os');
-const { findManifest, readManifest, baseUrl, NO_BOARD } = require('../lib/locate');
+const { findManifest, readManifest, baseUrl, defaultAgent, userToken, NO_BOARD } = require('../lib/locate');
+const crypto = require('crypto');
 const TEMPLATES = require('../lib/templates');
 
 const ROOT = path.join(__dirname, '..');
@@ -52,10 +54,15 @@ const prefixFrom = (name) => {
   return p.toUpperCase().slice(0, 5) || 'INT';
 };
 
-function agentPrompt(url, board = 'main') {
-  return `This project has an Intellagent kanban at ${url} (board "${board}") that I use to coordinate work with you.
-Before working, read ${url}/api/docs and follow it. Identify yourself with the header "X-Agent: <your-name>".
-From a shell you can use: intellagent api GET /api/boards/${board}/summary`;
+// What goes into CLAUDE.md: short, and it points at `intellagent brief`, which carries everything else
+// (so the instructions never go stale when the board changes).
+function agentPrompt(url, agent, board = 'main') {
+  return `Work in this project is tracked on an Intellagent board (${url}, board "${board}"). The board is how the human steers you: tickets, answers and reviews arrive there.
+
+- **Before starting work, and whenever asked to check the board, run \`intellagent brief\`** (MCP: \`get_briefing\`). It says who you are, what to do next, how the board works and the exact commands.
+- You are **${agent}** by default (set INTELLAGENT_AGENT to use another name; keep it stable).
+- Work a ticket with \`start\` → \`status\` → \`review\`; ask the human on the card when unsure; \`finish\` at the end of a session. Never edit files in .intellagent/data.
+- If the board isn't running: \`intellagent start\` in the background.`;
 }
 
 async function init() {
@@ -68,6 +75,8 @@ async function init() {
   const template = String(f.template || 'default');
   if (!TEMPLATES[template]) { console.error(`Unknown template "${template}". Available: ${Object.keys(TEMPLATES).join(', ')}`); process.exit(1); }
   const port = Number(f.port) || await freePort(7420);
+  const agent = String(f.agent || 'claude');
+  const userToken = f['no-token'] ? null : crypto.randomBytes(18).toString('base64url');
   const manifest = {
     appName: 'Intellagent',
     boardName: name,
@@ -82,36 +91,65 @@ async function init() {
     presenceTimeoutSeconds: 90,
     readonlyData: true,
     backups: 10,
+    // Your token lives in local.json (not committed): only requests that carry it act as you.
     auth: { userToken: null, agentTokens: {}, requireAgentTokens: false },
+    defaultAgent: agent,
     permissions: {},
   };
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  if (userToken) fs.writeFileSync(path.join(folder, 'local.json'), `${JSON.stringify({ userToken }, null, 2)}\n`);
   fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\n');
   const url = `http://127.0.0.1:${port}`;
-  fs.writeFileSync(path.join(folder, 'README.md'), `# ${name} · Intellagent board\n\nStart it with \`intellagent start\` (from anywhere inside this project), then open ${url}.\n\n## Prompt for agents\n\n\`\`\`\n${agentPrompt(url)}\n\`\`\`\n`);
+  fs.writeFileSync(path.join(folder, 'README.md'), `# ${name} · Intellagent board\n\n- \`intellagent start\` runs it (from anywhere in this project); \`intellagent open\` opens it signed in; \`intellagent stop\` stops it.\n- \`intellagent brief\` shows an agent everything it needs.\n- \`local.json\` holds your user token (git-ignored). Only requests with it act as you; \`intellagent open\` signs the browser in.\n\n## Agent instructions\n\n${agentPrompt(url, agent)}\n`);
+  fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\nlocal.json\n');
   console.log(`\n  ✓ ${path.relative(process.cwd(), manifestPath) || manifestPath}`);
   console.log(`    board "${name}" · ${TEMPLATES[template].label} template · tickets ${manifest.idPrefix}-1, ${manifest.idPrefix}-2… · port ${port}`);
 
-  if (f.mcp) {
+  if (!f['no-mcp']) {
     const mcpPath = path.join(dir, '.mcp.json');
     let mcp = {};
     try { mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf8')); } catch { /* new file */ }
     mcp.mcpServers = mcp.mcpServers || {};
-    mcp.mcpServers.intellagent = {
-      command: 'node', args: [path.join(ROOT, 'mcp.js').replace(/\\/g, '/')],
-      ...(f.agent ? { env: { INTELLAGENT_AGENT: String(f.agent) } } : {}),
-    };
+    mcp.mcpServers.intellagent = { command: 'node', args: [path.join(ROOT, 'mcp.js').replace(/\\/g, '/')] };
     fs.writeFileSync(mcpPath, `${JSON.stringify(mcp, null, 2)}\n`);
     console.log('  ✓ .mcp.json  (intellagent MCP tools)');
   }
-  if (f.claude) {
+  if (!f['no-claude']) {
     const md = path.join(dir, 'CLAUDE.md');
-    const block = `\n## Intellagent board\n\n${agentPrompt(url)}\n`;
+    const block = `\n## Intellagent board\n\n${agentPrompt(url, agent)}\n`;
     const cur = fs.existsSync(md) ? fs.readFileSync(md, 'utf8') : '';
     if (!cur.includes('## Intellagent board')) { fs.writeFileSync(md, cur + block); console.log('  ✓ CLAUDE.md  (agent instructions appended)'); }
   }
-  console.log(`\n  Next:  intellagent start --open\n`);
+  if (f['no-start']) { console.log('\n  Next:  intellagent start --open\n'); return; }
+  await startBackground(manifestPath, url);
+  console.log(`\n  ✓ running at ${url}${f['no-open'] ? '' : ' — opening it signed in'}`);
+  if (!f['no-open']) openBoard(manifestPath);
+  console.log(`\n  Tell your agent: "check the board" — it runs \`intellagent brief\` and takes it from there.`);
+  console.log('  Back after a reboot: intellagent autostart on\n');
+}
+
+// Starts the server detached (logs to .intellagent/data/server.log) and waits until it answers.
+async function startBackground(mp, url) {
+  if (await alive(url)) return;
+  const data = path.join(path.dirname(mp), 'data');
+  fs.mkdirSync(data, { recursive: true });
+  const log = fs.openSync(path.join(data, 'server.log'), 'a');
+  const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+    cwd: path.dirname(mp), detached: true, windowsHide: true, stdio: ['ignore', log, log],
+    env: { ...process.env, INTELLAGENT_MANIFEST: mp },
+  });
+  child.unref();
+  for (let i = 0; i < 50; i++) { if (await alive(url)) return; await new Promise((res) => setTimeout(res, 100)); }
+  console.error(`The board did not start; see ${path.join(data, 'server.log')}`);
+  process.exit(1);
+}
+
+// Opens the board; the user token rides in the URL fragment (never sent to the server or logged).
+function openBoard(mp = requireManifest()) {
+  const u = baseUrl(readManifest(mp));
+  const t = userToken(mp);
+  openUrl(t ? `${u}/#token=${t}` : u);
 }
 
 function requireManifest() {
@@ -133,10 +171,37 @@ async function start() {
   const f = flags(rest);
   const mp = requireManifest();
   const url = baseUrl(readManifest(mp));
-  if (await alive(url)) { console.log(`Already running at ${url}`); if (f.open) openUrl(url); return; }
+  if (await alive(url)) { console.log(`Already running at ${url}`); if (f.open) openBoard(mp); return; }
+  if (f.background) { await startBackground(mp, url); console.log(`Running at ${url} (logs: .intellagent/data/server.log)`); if (f.open) openBoard(mp); return; }
   process.env.INTELLAGENT_MANIFEST = mp;
-  if (f.open) setTimeout(() => openUrl(url), 700);
+  if (f.open) setTimeout(() => openBoard(mp), 700);
   require(path.join(ROOT, 'server.js'));
+}
+
+async function stop() {
+  const mp = requireManifest();
+  const pidFile = path.join(path.dirname(mp), 'data', 'server.pid');
+  let pid = null;
+  try { pid = Number(fs.readFileSync(pidFile, 'utf8')); } catch { /* not started by us */ }
+  if (!pid) { console.log('Not running (no server.pid).'); return; }
+  try { process.kill(pid); console.log('Stopped.'); } catch { console.log('Not running.'); }
+  try { fs.rmSync(pidFile); } catch { /* gone */ }
+}
+
+// Everything an agent needs to start, from the board itself (so it is never stale).
+async function brief() {
+  const f = flags(rest);
+  const mp = requireManifest();
+  const m = readManifest(mp);
+  const url = baseUrl(m);
+  const agent = String(f.agent || defaultAgent(m) || 'agent');
+  const board = String(f.board || m.defaultBoard || 'main');
+  const { tokenFor } = require('../lib/locate');
+  const tok = tokenFor(agent);
+  let r;
+  try { r = await fetch(`${url}/api/boards/${board}/brief?via=${f.via || 'cli'}`, { headers: { 'X-Agent': agent, ...(tok ? { Authorization: `Bearer ${tok}` } : {}) } }); }
+  catch { console.error(`The board isn't running (${url}). Start it in the background: intellagent start --background`); process.exit(1); }
+  process.stdout.write(`${await r.text()}\n`);
 }
 
 async function status() {
@@ -188,7 +253,7 @@ function skill() {
 /* ── wait / watch: make the board able to wake an agent ── */
 
 function agentName(f) {
-  const a = f.agent || process.env.INTELLAGENT_AGENT;
+  const a = f.agent || defaultAgent();
   if (!a) { console.error('Pass --agent <name> or set INTELLAGENT_AGENT.'); process.exit(1); }
   return String(a);
 }
@@ -289,7 +354,8 @@ async function asHuman(method, p, body) {
   const mp = requireManifest();
   const m = readManifest(mp);
   const url = baseUrl(m);
-  const headers = { 'content-type': 'application/json', 'x-user': os.userInfo().username, ...(m.auth?.userToken ? { authorization: `Bearer ${m.auth.userToken}` } : {}) };
+  const t = userToken(mp);
+  const headers = { 'content-type': 'application/json', 'x-user': os.userInfo().username, ...(t ? { authorization: `Bearer ${t}` } : {}) };
   let r;
   try { r = await fetch(url + p, { method, headers, body: body ? JSON.stringify(body) : undefined }); }
   catch { console.error(`The board isn't running (${url}). Start it with: intellagent start`); process.exit(1); }
@@ -387,10 +453,13 @@ function autostart() {
 
 const HELP = `intellagent — a kanban for you and your agents
 
-  init [dir]       scaffold .intellagent/ here   --template --name --prefix --port --mcp --agent --claude --demo
+  init [dir]       set up a board here, start it, open it   --template --name --prefix --port --agent (default claude)
+                   also adds the MCP tools (.mcp.json) and CLAUDE.md instructions; opt out: --no-mcp --no-claude --no-start --no-token
   templates        list board templates (software, research, ops, ...)
   skill install    add the /intellagent-setup skill to Claude Code   [--project]
-  start            run this project's board      --open
+  start            run this project's board      --open --background
+  stop             stop a board started in the background
+  brief            what an agent needs to start: next steps, columns, templates, rules, calls   --agent --via cli|mcp|http
   open             open the board in a browser
   status           where it is and whether it's running
   docs             print the agent guide
@@ -409,8 +478,8 @@ const HELP = `intellagent — a kanban for you and your agents
 `;
 
 const commands = {
-  init, start, status, docs, templates, skill,
-  open: () => { const u = baseUrl(); if (!u) { console.error(NO_BOARD); process.exit(3); } openUrl(u); },
+  init, start, stop, status, docs, templates, skill, brief,
+  open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
   wait: waitCmd,
   agents: agentsCmd,
   autostart,

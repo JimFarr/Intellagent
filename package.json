@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/api.test.js test/agents.test.js"
+    "test": "node --test test/api.test.js test/agents.test.js test/flows.test.js"
   },
   "engines": {
     "node": ">=18"
