@@ -14,6 +14,13 @@
   const initials = (n) => String(n).split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
   const tagColor = (p) => `hsl(${hue(p)} 72% 62%)`;
   const tilt = (id) => (((hashStr(id) % 1000) / 1000) - 0.5) * 2.6;
+  // Each card gets its own decoration placement, stable per ticket: a slot (0–3), a spot along the top
+  // edge (18–82%) and a small extra angle, so tape, pins and clips don't line up like stamps.
+  const decoVars = (id) => {
+    const h = hashStr(`${id}~deco`);
+    return `--deco-slot:${h % 4};--deco-x:${18 + ((h >>> 3) % 65)}%;--deco-r:${((h >>> 9) % 15) - 7}deg`;
+  };
+  const decoSlot = (id) => hashStr(`${id}~deco`) % 4;
   const nowMs = () => Date.now() + state.offset;
   const reduced = () => settings.motion === 'reduced';
   const autosize = (ta) => { if (!ta) return; ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; };
@@ -177,7 +184,7 @@
       { card: 8, col: 14, modal: 16, ctl: 8, tape: 'none', cards: 'clean', typeInd: 'dot', attn: 'glow', enter: 'rise', lanes: 'outline', chips: 'tag', bg: 'aurora', titleW: 500, display: "'Inter'" },
       '.col-name { font-weight: 500; font-size: 13px; color: var(--muted); } .c-title { font-size: 13.5px; }'),
     paper: T('Paper', 'light', ['#f3efe6', '#ece6d9', '#fbf8f2', '#2b2a26', '#7b756a', '#d9d1c0', '#b4532a', '#2f6f62', '#b4362a', '#2f5d8a', '#b98a1b', '#3d7a4a', '#c06a2b', '#b4362a', '#e8d9bd', '#d9e4d6', '#efd3c8'],
-      { md: 'paper', card: 2, col: 4, modal: 6, ctl: 4, shadow: 'flat', tape: 'corner', cards: 'clean', typeInd: 'top', attn: 'ribbon', enter: 'fade', lanes: 'lane', chips: 'outline', heads: 'caps', bg: 'none', display: "'Fraunces', serif", colAlpha: 90 },
+      { md: 'paper', card: 2, col: 4, modal: 6, ctl: 4, shadow: 'flat', tape: 'corner', cards: 'clean', typeInd: 'top', attn: 'ribbon', enter: 'fade', lanes: 'lane', chips: 'outline', heads: 'caps', bg: 'doodles', display: "'Fraunces', serif", colAlpha: 90 },
       '.c-title { font-family: var(--display); font-size: 15.5px; } .board { background-image: repeating-linear-gradient(transparent 0 27px, color-mix(in oklab, var(--accent-2) 9%, transparent) 27px 28px); background-size: auto; } .col-name { font-style: italic; }'),
     brutalist: T('Brutalist', 'light', ['#f4f1ea', '#ffffff', '#ffffff', '#111111', '#555555', '#111111', '#ff4d00', '#0047ff', '#ff2e2e', '#0047ff', '#ffcc00', '#00a651', '#ff8a00', '#ff2e2e', '#ffcc00', '#0047ff', '#ff4d00'],
       { md: 'grid', card: 0, col: 0, modal: 0, ctl: 0, bw: 2, shadow: 'hard', tape: 'none', cards: 'clean', typeInd: 'top', attn: 'outline', enter: 'pop', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, avatar: 'square', titleW: 700, font: "'Space Grotesk'", display: "'Space Grotesk'", colAlpha: 100 },
@@ -225,7 +232,7 @@
       { card: 18, col: 28, modal: 30, ctl: 14, bw: 1, cards: 'glass', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'zoom', lanes: 'glass', chips: 'pill', bg: 'mesh', texture: false, md: 'clean', avStyle: 'gem', titleW: 600, display: "'Outfit'", colAlpha: 40 },
       '.column, .card, .modal, .drawer, .pill-btn, .search input { box-shadow: inset 0 1px 0 rgb(255 255 255 / .9), inset 0 0 0 1px rgb(255 255 255 / .35), 0 18px 40px -26px rgb(30 50 140 / .45); } .modal, .drawer { background: rgb(255 255 255 / .72); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); } .pill-btn { background: rgb(255 255 255 / .55); } .btn.primary { background: linear-gradient(180deg, #5a83ff, #2f5cf5); border-radius: 999px; box-shadow: inset 0 1px 0 rgb(255 255 255 / .45), 0 8px 18px -8px rgb(47 92 245 / .6); } .app-name { background: linear-gradient(90deg, #3d6bff, #ff5aa6); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }'),
     pop: T('Pop', 'light', ['#fff5e4', '#ffffff', '#ffffff', '#141414', '#5b5550', '#141414', '#ff4f8b', '#2bb5ff', '#ff5a5a', '#4d78ff', '#ffc21f', '#19b36b', '#ff8a1f', '#ff3b3b', '#ffd6e5', '#cdeeff', '#fff0b8'],
-      { card: 12, col: 18, modal: 18, ctl: 12, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, md: 'grid', avStyle: 'stamp', titleW: 700, font: "'Space Grotesk'", display: "'Space Grotesk'", colAlpha: 100 },
+      { card: 12, col: 18, modal: 18, ctl: 12, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'confetti', texture: false, md: 'grid', avStyle: 'stamp', titleW: 700, font: "'Space Grotesk'", display: "'Space Grotesk'", colAlpha: 100 },
       '.column { border: 2.5px solid #141414; box-shadow: 5px 5px 0 #141414; } .column:nth-child(5n+1) { background: #ffd9e6; } .column:nth-child(5n+2) { background: #d4efff; } .column:nth-child(5n+3) { background: #fff1b8; } .column:nth-child(5n+4) { background: #dcf5e3; } .column:nth-child(5n) { background: #e9e0ff; } .card { border: 2px solid #141414; box-shadow: 3px 3px 0 #141414; transition: translate .15s, box-shadow .15s; } .card:hover { translate: -2px -2px; box-shadow: 5px 5px 0 #141414; } .pill-btn, .search input, .btn { border: 2px solid #141414; box-shadow: 2px 2px 0 #141414; } .btn.primary { background: #ff4f8b; color: #141414; } .chip { border: 1.5px solid #141414; } .app-name { color: #141414; font-weight: 800; }'),
     aqua: T('Aqua', 'light', ['#dde6ef', '#eef3f8', '#ffffff', '#1d2b3a', '#5f7286', '#b9c8d8', '#1f86ff', '#7cc63d', '#ff5266', '#1f86ff', '#ffaa1f', '#4fb83a', '#ff8a2a', '#e8394f', '#bfe2ff', '#d8f5c4', '#e8dcff'],
       { card: 12, col: 16, modal: 18, ctl: 10, bw: 1, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'outline', enter: 'pop', lanes: 'solid', chips: 'pill', bg: 'none', texture: false, md: 'clean', avStyle: 'gem', titleW: 600, display: "'Outfit'", colAlpha: 100 },
@@ -256,7 +263,7 @@
   for (const [k, v] of Object.entries(DROP_STYLE)) if (THEMES[k]) THEMES[k].style.drop ??= v;
   // Organic themes lean on their colour fields: let the background blobs come through more.
   for (const [k, o] of [['moss', '.62'], ['clay', '.7'], ['tide', '.75'], ['bloom', '.6'], ['cloud', '.8'], ['liquid', '.95']]) if (THEMES[k]) THEMES[k].vars['fx-o'] = o;
-  const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['stars', 'Stars'], ['mesh', 'Mesh'], ['none', 'None']];
+  const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['stars', 'Stars'], ['mesh', 'Mesh'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['topo', 'Topo'], ['confetti', 'Confetti'], ['halftone', 'Halftone'], ['none', 'None']];
   const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES.intellagent).style });
   // A user setting of "theme" (or unset) defers to the theme's own choice.
   const pick = (k) => (settings[k] != null && settings[k] !== 'theme' ? settings[k] : themeStyle()[k]);
@@ -1041,6 +1048,8 @@
     const inGroup = !!c.closest('.group');
     c.dataset.type = it.type;
     c.style.setProperty('--tilt', `${tilt(it.id)}deg`);
+    for (const kv of decoVars(it.id).split(';')) { const [k, v] = kv.split(':'); c.style.setProperty(k, v); }
+    c.dataset.slot = decoSlot(it.id);
     c.classList.toggle('needs', !!it.needsHuman);
     const nq = it.questions?.length || (it.needsHuman ? 1 : 0);
     $('.c-ask', c).textContent = nq > 1 ? `?${nq}` : '?';
@@ -3165,7 +3174,7 @@
   const SAMPLE_IMG = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b7bff"/><stop offset="1" stop-color="#2fe0c4"/></linearGradient></defs><rect width="320" height="180" fill="url(#s)"/><circle cx="240" cy="52" r="22" fill="#fff" opacity=".85"/><path d="M0 150 L70 92 L120 128 L190 70 L320 160 V180 H0Z" fill="#1d2035" opacity=".55"/></svg>')}`;
   const demoLease = () => ({ claimant: 'claude-builder', expiresAt: new Date(nowMs() + 18 * 60000).toISOString(), minutes: 30, status: 'running tests 4/12' });
   function previewCard(it, { lease = null, blockers = [], listeners = [], needs = false, inGroup = false, si = null } = {}) {
-    return `<article class="card ${needs ? 'needs' : ''}" data-type="${it.type}" style="--tilt:${tilt(it.id)}deg${si != null ? `;--si:${si}` : ''}"><i class="tape"></i><div class="c-body">${cardHTML(it, lease, blockers, inGroup, listeners)}</div><span class="c-check">${icon('check')}</span><span class="c-ask">?</span></article>`;
+    return `<article class="card ${needs ? 'needs' : ''}" data-type="${it.type}" data-slot="${decoSlot(it.id)}" style="--tilt:${tilt(it.id)}deg;${decoVars(it.id)}${si != null ? `;--si:${si}` : ''}"><i class="tape"></i><div class="c-body">${cardHTML(it, lease, blockers, inGroup, listeners)}</div><span class="c-check">${icon('check')}</span><span class="c-ask">?</span></article>`;
   }
   function previewStage(kind) {
     const col = (name, color, inner, n) => `<section class="column pv-col" style="--col:${color}"><header class="col-head"><span class="col-dot"></span><h2 class="col-name">${name}</h2><span class="col-count">${n}</span></header><div class="list">${inner}</div></section>`;
