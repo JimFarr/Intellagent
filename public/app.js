@@ -112,7 +112,7 @@
   const STYLE = {
     card: 12, col: 20, modal: 22, ctl: 10, bw: 1, colAlpha: 84, titleW: 600,
     shadow: 'soft', // soft | flat | hard | glow
-    cards: 'sticky', // sticky | clean
+    cards: 'sticky', // sticky | clean | elevated | outline | glass | index
     tape: 'tape', // tape | pin | clip | corner | none
     md: 'clean', // markdown look: clean | grid | paper | terminal
     attn: 'orbit', // needs-you styling: orbit | glow | bar | outline | ribbon
@@ -126,6 +126,7 @@
     corner: null, // px kept clear in each card's top-right (auto: 16 when the fold decoration is on)
     avatars: 'color', // color | accent | ink
     avStyle: 'gem', // avatar look: gem | flat | tint | ring | pebble | stamp
+    drop: 'ring', // a column a ticket is dragged over: ring | tint | lift | spotlight | dashed | pulse
     colColor: 'own', // own | accent | ink — column dots and rules
   };
   const T = (label, mode, c, style = {}, css = '') => ({
@@ -217,6 +218,18 @@
     bloom: T('Bloom', 'dark', ['#170f1c', '#1f1526', '#271b30', '#f3e8f4', '#a08aa8', '#3a2a44', '#e58ad6', '#f6c453', '#ff7a9a', '#9d8cff', '#f6c453', '#7fd6a0', '#f2a05c', '#ff5f7e', '#5b1e5a', '#3a1d63', '#6b4a12'],
       { card: 22, col: 32, modal: 32, ctl: 14, bw: 1, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'orbit', enter: 'zoom', lanes: 'glass', chips: 'pill', bg: 'blobs', texture: true, avatar: 'round', md: 'clean', titleW: 600, display: "'Fraunces'", colAlpha: 70 },
       '.card { border-radius: 34px 6px 34px 6px; border-color: rgb(229 138 214 / .18); background: radial-gradient(120% 100% at 100% 0%, rgb(229 138 214 / .14), transparent 60%), linear-gradient(150deg, #2e2038, #231a2b); box-shadow: 0 14px 28px -16px rgb(0 0 0 / .85); } .card:nth-child(2n) { border-radius: 6px 34px 6px 34px; background: radial-gradient(120% 100% at 0% 0%, rgb(246 196 83 / .10), transparent 60%), linear-gradient(150deg, #2e2038, #231a2b); } .card:hover { box-shadow: 0 20px 40px -16px rgb(229 138 214 / .45), 0 0 0 1px rgb(246 196 83 / .3); } .column { border-radius: 90px 90px 30px 30px / 60px 60px 30px 30px; border-color: rgb(229 138 214 / .14); background: linear-gradient(180deg, rgb(58 30 70 / .55), rgb(31 21 38 / .7)); } .col-head { padding-top: 22px; justify-content: center; } .col-name { font-family: var(--display); font-style: italic; font-weight: 600; } .app-name { background: linear-gradient(90deg, #e58ad6, #f6c453); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; } .btn.primary { background: linear-gradient(135deg, #e58ad6, #b56ae0); color: #1b0f20; border-radius: 18px 4px 18px 4px; }'),
+    cloud: T('Cloud', 'light', ['#f1efea', '#ebe8e1', '#fbfaf7', '#2f2d35', '#8b8792', '#e3dfd7', '#8d82d6', '#e39aa6', '#e2898c', '#7fa6d6', '#dfb465', '#78b692', '#e0a36c', '#d66f6e', '#ddd7f6', '#f7d9de', '#d3ebde'],
+      { card: 18, col: 26, modal: 28, ctl: 14, bw: 1, cards: 'elevated', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'solid', chips: 'pill', bg: 'blobs', texture: false, md: 'clean', avStyle: 'tint', titleW: 600, display: "'Outfit'", colAlpha: 100 },
+      '.column { background: linear-gradient(180deg, #edeae3, #e8e4dc); border-color: transparent; } .card { padding: 14px 15px 12px; } .c-title { font-size: 14.5px; letter-spacing: -.005em; } .col-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; } .btn.primary { background: #2f2d35; color: #fbfaf7; } .app-name { color: #2f2d35; }'),
+    liquid: T('Liquid', 'light', ['#dfe6f6', '#ffffff', '#ffffff', '#111733', '#5a6482', '#cdd6ec', '#3d6bff', '#ff5aa6', '#ff5d73', '#3d6bff', '#ffb020', '#22c08a', '#ff8a3d', '#ef4058', '#7aa0ff', '#ff9bd2', '#7cf0d6'],
+      { card: 18, col: 28, modal: 30, ctl: 14, bw: 1, cards: 'glass', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'zoom', lanes: 'glass', chips: 'pill', bg: 'mesh', texture: false, md: 'clean', avStyle: 'gem', titleW: 600, display: "'Outfit'", colAlpha: 40 },
+      '.column, .card, .modal, .drawer, .pill-btn, .search input { box-shadow: inset 0 1px 0 rgb(255 255 255 / .9), inset 0 0 0 1px rgb(255 255 255 / .35), 0 18px 40px -26px rgb(30 50 140 / .45); } .modal, .drawer { background: rgb(255 255 255 / .72); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); } .pill-btn { background: rgb(255 255 255 / .55); } .btn.primary { background: linear-gradient(180deg, #5a83ff, #2f5cf5); border-radius: 999px; box-shadow: inset 0 1px 0 rgb(255 255 255 / .45), 0 8px 18px -8px rgb(47 92 245 / .6); } .app-name { background: linear-gradient(90deg, #3d6bff, #ff5aa6); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }'),
+    pop: T('Pop', 'light', ['#fff5e4', '#ffffff', '#ffffff', '#141414', '#5b5550', '#141414', '#ff4f8b', '#2bb5ff', '#ff5a5a', '#4d78ff', '#ffc21f', '#19b36b', '#ff8a1f', '#ff3b3b', '#ffd6e5', '#cdeeff', '#fff0b8'],
+      { card: 12, col: 18, modal: 18, ctl: 12, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, md: 'grid', avStyle: 'stamp', titleW: 700, font: "'Space Grotesk'", display: "'Space Grotesk'", colAlpha: 100 },
+      '.column { border: 2.5px solid #141414; box-shadow: 5px 5px 0 #141414; } .column:nth-child(5n+1) { background: #ffd9e6; } .column:nth-child(5n+2) { background: #d4efff; } .column:nth-child(5n+3) { background: #fff1b8; } .column:nth-child(5n+4) { background: #dcf5e3; } .column:nth-child(5n) { background: #e9e0ff; } .card { border: 2px solid #141414; box-shadow: 3px 3px 0 #141414; transition: translate .15s, box-shadow .15s; } .card:hover { translate: -2px -2px; box-shadow: 5px 5px 0 #141414; } .pill-btn, .search input, .btn { border: 2px solid #141414; box-shadow: 2px 2px 0 #141414; } .btn.primary { background: #ff4f8b; color: #141414; } .chip { border: 1.5px solid #141414; } .app-name { color: #141414; font-weight: 800; }'),
+    aqua: T('Aqua', 'light', ['#dde6ef', '#eef3f8', '#ffffff', '#1d2b3a', '#5f7286', '#b9c8d8', '#1f86ff', '#7cc63d', '#ff5266', '#1f86ff', '#ffaa1f', '#4fb83a', '#ff8a2a', '#e8394f', '#bfe2ff', '#d8f5c4', '#e8dcff'],
+      { card: 12, col: 16, modal: 18, ctl: 10, bw: 1, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'outline', enter: 'pop', lanes: 'solid', chips: 'pill', bg: 'none', texture: false, md: 'clean', avStyle: 'gem', titleW: 600, display: "'Outfit'", colAlpha: 100 },
+      '.bg-layer { background: repeating-linear-gradient(0deg, #e6edf4 0 2px, #f2f6fa 2px 4px); } .pill-btn, .btn { border-radius: 999px; } .column { background: linear-gradient(180deg, #f7fafd, #e9f0f7); border: 1px solid #b6c6d8; box-shadow: inset 0 1px 0 #fff, 0 10px 24px -16px rgb(40 70 110 / .5); } .col-head { margin: 6px 6px 8px; padding: 9px 12px; border-radius: 10px; background: linear-gradient(180deg, #ffffff 0%, #e4eef8 49%, #d3e2f2 50%, #e8f1fa 100%); border: 1px solid #b6c6d8; box-shadow: inset 0 1px 0 #fff; } .card { background: linear-gradient(180deg, #ffffff 0%, #fbfdff 48%, #f2f7fc 52%, #ffffff 100%); border-color: #c4d2e1; box-shadow: inset 0 1px 0 #fff, 0 4px 10px -6px rgb(40 70 110 / .45); } .btn.primary { background: linear-gradient(180deg, #b9e1ff 0%, #4aa6ff 48%, #1f86ff 52%, #7cc7ff 100%); border: 1px solid #1b63c4; color: #fff; text-shadow: 0 -1px 0 rgb(0 40 100 / .4); box-shadow: inset 0 1px 0 rgb(255 255 255 / .6), 0 3px 8px -3px rgb(20 90 200 / .6); } .pill-btn { background: linear-gradient(180deg, #ffffff, #e3ebf4); border-color: #b6c6d8; } .app-name { color: #1f86ff; text-shadow: 0 1px 0 #fff; }'),
     iridescent: T('Iridescent', 'dark', ['#07070b', '#0e0e15', '#13131c', '#f1f0ff', '#8d8ba8', '#24233a', '#c084fc', '#5eead4', '#fb7185', '#60a5fa', '#fcd34d', '#4ade80', '#fb923c', '#f43f5e', '#7c3aed', '#06b6d4', '#ec4899'],
       { card: 14, col: 20, modal: 22, ctl: 12, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'orbit', enter: 'zoom', lanes: 'outline', chips: 'outline', bg: 'aurora', texture: true },
       '.card { border: 1px solid transparent; background: linear-gradient(var(--surface), var(--surface)) padding-box, conic-gradient(from 210deg, #c084fc, #5eead4, #60a5fa, #f472b6, #fcd34d, #c084fc) border-box; } .card:hover { box-shadow: 0 18px 40px -16px rgb(192 132 252 / .5), 0 0 24px -10px rgb(94 234 212 / .5); } .column { border-color: rgb(255 255 255 / .07); background: rgb(14 14 21 / .55); } .app-name { background: linear-gradient(90deg, #c084fc, #5eead4, #f472b6); -webkit-background-clip: text; background-clip: text; } .btn.primary { background: linear-gradient(120deg, #c084fc, #60a5fa, #5eead4); }'),
@@ -232,8 +245,17 @@
     clay: 'pebble', tide: 'tint', bloom: 'gem', iridescent: 'gem', riso: 'stamp',
   };
   for (const [k, v] of Object.entries(AV_STYLE)) if (THEMES[k]) THEMES[k].style.avStyle ??= v;
+  // …and what a column does when a ticket is dragged over it.
+  const DROP_STYLE = {
+    vision: 'tint', tide: 'tint', iridescent: 'tint', liquid: 'tint', cloud: 'tint', daylight: 'tint', latte: 'tint',
+    soft: 'lift', dusk: 'lift', clay: 'lift', pop: 'lift', brutalist: 'lift', bauhaus: 'lift', riso: 'lift', aqua: 'lift',
+    blueprint: 'dashed', phosphor: 'dashed', swiss: 'dashed', paper: 'dashed', graphite: 'dashed',
+    moss: 'spotlight', midnight: 'spotlight', tokyo: 'spotlight', slate: 'spotlight',
+    bloom: 'pulse', dracula: 'pulse', mocha: 'pulse', cork: 'pulse',
+  };
+  for (const [k, v] of Object.entries(DROP_STYLE)) if (THEMES[k]) THEMES[k].style.drop ??= v;
   // Organic themes lean on their colour fields: let the background blobs come through more.
-  for (const [k, o] of [['moss', '.62'], ['clay', '.7'], ['tide', '.75'], ['bloom', '.6']]) if (THEMES[k]) THEMES[k].vars['fx-o'] = o;
+  for (const [k, o] of [['moss', '.62'], ['clay', '.7'], ['tide', '.75'], ['bloom', '.6'], ['cloud', '.8'], ['liquid', '.95']]) if (THEMES[k]) THEMES[k].vars['fx-o'] = o;
   const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['stars', 'Stars'], ['mesh', 'Mesh'], ['none', 'None']];
   const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES.intellagent).style });
   // A user setting of "theme" (or unset) defers to the theme's own choice.
@@ -242,7 +264,7 @@
   const KEY = 'intellagent.settings.v1';
   const DEFAULTS = {
     theme: matchMedia('(prefers-color-scheme: light)').matches ? 'daylight' : 'intellagent',
-    v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme',
+    v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme', drop: 'theme',
     density: 'cozy', colw: 300, ageDays: '7',
     motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full',
     stub: { id: true, type: true, priority: true, parent: true, author: true, lease: true, comments: true, attachments: true, blocked: true, properties: false, description: false, thumbnail: true, fields: true, assignee: true, status: true, checklist: true, listeners: true },
@@ -279,7 +301,7 @@
     Object.assign(r.dataset, {
       theme: settings.theme in THEMES ? settings.theme : 'intellagent', mode: t.mode, glow: t.glow ? '1' : '',
       shadow: st.shadow, typeind: st.typeInd, chips: st.chips, heads: st.heads, avatar: st.avatar,
-      tape: pick('tape'), cards: pick('cards'), attn: pick('attn'), enter: pick('enter'), lanes: pick('lanes'), bg: pick('bg'), md: pick('md'), avstyle: pick('avStyle'),
+      tape: pick('tape'), cards: pick('cards'), attn: pick('attn'), enter: pick('enter'), lanes: pick('lanes'), bg: pick('bg'), md: pick('md'), avstyle: pick('avStyle'), drop: pick('drop'),
       density: settings.density,
     });
     const texture = settings.texture === 'theme' || settings.texture == null ? st.texture : settings.texture === 'on' || settings.texture === true;
@@ -298,10 +320,16 @@
     meta.content = t.vars.bg;
     stars.sync();
   }
-  function switchTheme(name, x = innerWidth / 2, y = 0) {
-    const apply = () => { settings.theme = name; saveSettings(); };
+  function switchTheme(name, x = innerWidth / 2, y = 0, after = null) {
+    const apply = () => { settings.theme = name; saveSettings(); after?.(); };
     if (!document.startViewTransition || reduced()) { apply(); return; }
+    // The new snapshot starts as a zero-size circle (CSS), so nothing flashes before the reveal begins.
+    const root = document.documentElement;
+    root.style.setProperty('--vt-x', `${x}px`);
+    root.style.setProperty('--vt-y', `${y}px`);
+    root.classList.add('theme-reveal');
     const vt = document.startViewTransition(apply);
+    vt.finished.finally(() => root.classList.remove('theme-reveal'));
     vt.ready.then(() => {
       const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
       document.documentElement.animate({ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] },
@@ -1115,7 +1143,11 @@
     const desc = s.description && shown('description') && it.description ? `<p class="c-desc">${esc(stripMd(it.description).slice(0, 220))}</p>` : '';
     const img = stub('cover') ? coverOf(it) : null;
     const thumb = img ? `<div class="c-thumb"><img src="${esc(img.url)}" alt="" loading="lazy" draggable="false"></div>` : '';
-    return `<div class="c-top">${top.join('')}</div><h3 class="c-title">${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(lease.claimant)} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
+    // Without an ID and with nothing else on the top row, the row would hold a lone type icon:
+    // drop it and lead the title with the icon instead, so the title sits at the top.
+    const onlyType = !s.id && top.length - top.indexOf('<span class="grow"></span>') === 1;
+    const lead = onlyType && stub('type') ? `<span class="c-type inline" title="${TYPE_TIPS[it.type]}">${icon(it.type, 'sm')}</span>` : '';
+    return `${onlyType ? '' : `<div class="c-top">${top.join('')}</div>`}<h3 class="c-title ${lead ? 'has-lead' : ''}">${lead}${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(lease.claimant)} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
   }
 
   function tickRings(root = document) {
@@ -1266,6 +1298,9 @@
     before.delete(d.card);
     if (target) target.el.parentNode.insertBefore(d.card, target.el);
     else list.appendChild(d.card);
+    if (d.targetCol !== colEl.dataset.id && !reduced()) {
+      d.card.animate([{ opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1 }], { duration: 420, easing: 'cubic-bezier(.22, 1, .36, 1)' });
+    }
     d.targetCol = colEl.dataset.id;
     d.beforeId = target ? target.firstId : null;
     flip(before, { flights: false });
@@ -3214,14 +3249,15 @@
           ${previewStage('style')}</div>
         <h3>Style</h3>
         <div class="choices">
-        ${opt('cards', 'Cards', [['sticky', 'Sticky', 'Tinted sticky notes, slightly tilted'], ['clean', 'Clean', 'Flat cards with a type marker']])}
+        ${opt('cards', 'Cards', [['sticky', 'Sticky', 'Tinted sticky notes, slightly tilted'], ['clean', 'Clean', 'Flat cards with a type marker'], ['elevated', 'Raised', 'Borderless, lifted on layered soft shadows'], ['outline', 'Line', 'Transparent with a fine outline'], ['glass', 'Glass', 'Frosted, see-through cards'], ['index', 'Index', 'Ruled index cards with a type-coloured header rule']])}
         ${opt('tape', 'Decoration', [['tape', 'Tape', 'A strip of tape on sticky notes'], ['pin', 'Pin', 'A push-pin at the top'], ['clip', 'Clip', 'A binder clip on the edge'], ['corner', 'Fold', 'A folded top corner'], ['none', 'None', 'No decoration']])}
         ${opt('attn', 'Needs you', [['orbit', 'Orbit', 'Spinning ring and a bouncing badge'], ['glow', 'Glow', 'A soft breathing halo'], ['bar', 'Bar', 'Accent edge and tint — calm'], ['outline', 'Outline', 'A solid outline and small badge'], ['ribbon', 'Ribbon', 'A bookmark tab on the card']])}
         ${opt('enter', 'Opening', [['rise', 'Rise', 'Fades in with a small lift'], ['sheet', 'Sheet', 'Slides in from the right as a side panel'], ['fade', 'Fade', 'A quick cross-fade'], ['pop', 'Pop', 'Snaps in with a little bounce'], ['zoom', 'Zoom', 'Grows out of the ticket']])}
         ${opt('lanes', 'Columns', [['glass', 'Glass', 'Translucent panels'], ['solid', 'Solid', 'Opaque panels'], ['outline', 'Outline', 'Bordered, see-through'], ['lane', 'Lanes', 'No panels — dividers between lanes']])}
         ${opt('texture', 'Texture', [['on', 'On', 'Film grain and dotted board'], ['off', 'Off', 'Plain surfaces']])}
+        ${opt('drop', 'Drop target', [['ring', 'Ring', 'An outline glow in the column colour'], ['tint', 'Tint', 'The column floods with its colour'], ['lift', 'Lift', 'The column rises to meet the card'], ['spotlight', 'Spot', 'Other columns dim; the target lights up'], ['dashed', 'Dashed', 'A technical dashed outline'], ['pulse', 'Pulse', 'A gentle breathing glow']])}
         ${opt('avStyle', 'Avatars', [['gem', 'Gem', 'Glossy colour with depth'], ['flat', 'Flat', 'Solid colour'], ['tint', 'Tint', 'Soft colour fill, coloured initials'], ['ring', 'Ring', 'Outline only'], ['pebble', 'Pebble', 'Organic, slightly irregular stone'], ['stamp', 'Stamp', 'Printed, with an offset shadow']])}
-        ${opt('md', 'Markdown', [['clean', 'Clean', 'Hairline rows, small-caps headers, soft code blocks'], ['grid', 'Grid', 'Ruled cells and strong rules — structured'], ['paper', 'Paper', 'Editorial: serif headings, double-ruled tables, pull quotes'], ['terminal', 'Terminal', 'Monospace, dashed rules, inverted headers']])}
+        ${opt('md', 'Markdown', [['clean', 'Clean', 'Hairline rows, small-caps headers, soft code blocks'], ['grid', 'Grid', 'Ruled cells and strong rules — structured'], ['paper', 'Paper', 'Editorial: serif headings, double-ruled tables, pull quotes'], ['terminal', 'Terminal', 'Monospace, dashed rules, inverted headers'], ['notebook', 'Notebook', 'Ruled paper, margin line, handwritten headings'], ['ledger', 'Ledger', 'Green-bar rows, tabular figures, accountant rules']])}
         </div>
         <h3>Layout</h3>
         <div class="choices">
@@ -3462,7 +3498,7 @@
         return;
       }
       const th = e.target.closest("[data-pick-theme]");
-      if (th) { switchTheme(th.dataset.pickTheme, e.clientX, e.clientY); setTimeout(() => show('look', true), 30); return; }
+      if (th) { switchTheme(th.dataset.pickTheme, e.clientX, e.clientY, () => show('look', true)); return; }
       const bg = e.target.closest('[data-bgfx]');
       if (bg) { settings.bg = bg.dataset.bgfx; saveSettings(); show('look', true); return; }
       const rs = e.target.closest('[data-reset]');
