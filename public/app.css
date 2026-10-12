@@ -136,7 +136,7 @@ body.scrimmed .topbar, body.scrimmed .board, body.scrimmed .bg-layer, body.scrim
 .logo { width: 32px; height: 32px; display: grid; place-items: center; cursor: pointer; filter: drop-shadow(0 6px 14px color-mix(in oklab, var(--accent) 45%, transparent)); transition: transform .5s var(--spring); }
 .logo:hover { transform: rotate(-8deg) scale(1.08); }
 .logo svg { width: 32px; height: 32px; }
-.app-name { font: 700 19px/1 var(--display); letter-spacing: -.015em; white-space: nowrap; background: linear-gradient(100deg, var(--text) 30%, color-mix(in oklab, var(--accent) 70%, var(--text))); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.app-name { font: 700 19px/1.2 var(--display); padding-bottom: .12em; margin-bottom: -.12em; letter-spacing: -.015em; white-space: nowrap; background: linear-gradient(100deg, var(--text) 30%, color-mix(in oklab, var(--accent) 70%, var(--text))); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
 .pill-btn {
   height: 34px; padding: 0 11px; border-radius: var(--r-ctl); border: var(--bw) solid color-mix(in oklab, var(--border) 85%, transparent);
