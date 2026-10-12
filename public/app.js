@@ -948,7 +948,7 @@
       if (run && run !== 'idle') av.dataset.run = run; else delete av.dataset.run;
     }
     renderPresenceButton();
-    if ($('#agentsDrawer')) fillAgents($('#agentsDrawer .drawer-body'));
+    if ($('#agentsDrawer') && !$('#agentsDrawer .add-agent')) fillAgents($('#agentsDrawer .drawer-body')); // never wipe a half-filled form
   }
 
   function boardMenu(anchor) {
@@ -3405,17 +3405,26 @@
   }
   const RUN_LABEL = { running: 'running', queued: 'queued', retrying: 'retrying', throttled: 'throttled', failed: 'failed — needs you', paused: 'paused', idle: 'idle' };
   // Controls for a standing agent (one the board runs itself, from agents.json).
+  const LISTEN_LABEL = { inbox: 'its inbox', human: 'everything you do', 'new-tickets': 'new tickets' };
+  const listenLabel = (l) => [].concat(l || 'inbox').map((x) => (typeof x === 'string' ? LISTEN_LABEL[x] || x : Object.entries(x).map(([k, v]) => `${k}=${v}`).join(' '))).join(' + ');
+
   function standingControls(a) {
     const btn = (act, ic, label, tip) => `<button class="btn sm ghost" data-standing="${act}" data-name="${esc(a.name)}" title="${tip}">${icon(ic, 'sm')}<span>${label}</span></button>`;
     return `<div class="standing-ctl">
       <span class="run-state" data-run="${a.status}">${esc(RUN_LABEL[a.status] || a.status)}${a.queued ? ` · ${a.queued} waiting` : ''}</span>
       ${a.status === 'paused' || a.status === 'failed' ? btn('resume', 'play', 'Resume', 'Resume|Clear failures and run any waiting events') : btn('pause', 'pause', 'Pause', 'Pause|The current run finishes; new events wait')}
       ${btn('run', 'sparkle', 'Run now', 'Run now|Start a run with whatever is waiting, or just to check the board')}
-      ${btn('log', 'terminal', 'Log', 'Last run|Output of the most recent run')}</div>`;
+      ${btn('log', 'terminal', 'Log', 'Last run|Output of the most recent run')}
+      ${btn('remove', 'x', 'Remove', 'Remove|Delete this standing agent from agents.json — its tickets and history stay')}</div>`;
   }
   async function standingAction(btn) {
     const { standing: act, name } = btn.dataset;
     if (act === 'log') return showRunLog(name);
+    if (act === 'remove') {
+      if (btn.dataset.armed !== '1') { btn.dataset.armed = '1'; $('span', btn).textContent = 'Click to confirm'; setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; $('span', btn).textContent = 'Remove'; } }, 3000); return; }
+      try { await api('DELETE', `/api/agents/${encodeURIComponent(name)}`); toast(`Removed ${name}`, { icon: 'bot', timeout: 2200 }); refreshPresence(); } catch (e) { toast(e.message, { kind: 'error' }); }
+      return;
+    }
     try { await api('POST', `/api/agents/${encodeURIComponent(name)}/${act}`, {}); await refreshPresence(); }
     catch (e) { toast(e.message, { kind: 'error' }); }
   }
@@ -3439,13 +3448,68 @@
     } catch (e) { toast(e.message, { kind: 'error' }); }
   }
 
+  /* ─── add a standing agent: name + role + permissions (never a raw command) ─── */
+  let rolesCache = null;
+  async function addAgentForm(host) {
+    rolesCache ||= await api('GET', '/api/agents/roles');
+    const { roles, perms } = rolesCache;
+    let role = 'builder';
+    let chosen = new Set(roles[role].perms);
+    const f = el(`<div class="add-agent">
+      <div class="aa-row"><input class="inp" data-aa-name placeholder="Name, e.g. builder" spellcheck="false" maxlength="64"></div>
+      <div class="aa-label">Role</div>
+      <div class="aa-roles">${Object.entries(roles).map(([k, v]) => `<button class="aa-role" data-role="${k}">${icon(v.icon || 'bot')}<b>${esc(v.label)}</b><span>${esc(v.description)}</span></button>`).join('')}</div>
+      <div class="aa-label">Allowed to</div>
+      <div class="aa-perms">${Object.entries(perms).map(([k, label]) => `<button class="toggle-chip" data-perm="${k}">${esc(label)}</button>`).join('')}<span class="aa-note">plus the board itself, always</span></div>
+      <div class="aa-label">Description</div>
+      <textarea class="inp aa-desc" rows="2" data-aa-desc></textarea>
+      <label class="aa-coord" hidden><input type="checkbox" data-aa-coord checked> Make it this board's coordinator (requests go to it)</label>
+      <div class="aa-foot"><span class="aa-hint">It runs headless Claude Code when something is for it — needs <code>claude</code> installed and signed in.</span><span class="grow"></span><button class="btn ghost sm" data-aa-cancel>Cancel</button><button class="btn primary sm" data-aa-add>${icon('plus', 'sm')}Add agent</button></div>
+    </div>`);
+    host.replaceWith(f);
+    const paint = () => {
+      $$('.aa-role', f).forEach((b) => b.classList.toggle('on', b.dataset.role === role));
+      $$('[data-perm]', f).forEach((b) => b.classList.toggle('on', chosen.has(b.dataset.perm)));
+      $('.aa-coord', f).hidden = role !== 'coordinator';
+    };
+    const pickRole = (k) => {
+      const desc = $('[data-aa-desc]', f);
+      if (!desc.value || desc.value === roles[role].description) desc.value = roles[k].description;
+      role = k;
+      chosen = new Set(roles[k].perms);
+      const name = $('[data-aa-name]', f);
+      if (!name.value || Object.keys(roles).includes(name.value)) name.value = k;
+      paint();
+    };
+    pickRole('builder');
+    f.addEventListener('click', async (e) => {
+      const rb = e.target.closest('[data-role]');
+      if (rb) { pickRole(rb.dataset.role); return; }
+      const pb = e.target.closest('[data-perm]');
+      if (pb) { if (chosen.has(pb.dataset.perm)) chosen.delete(pb.dataset.perm); else chosen.add(pb.dataset.perm); paint(); return; }
+      if (e.target.closest('[data-aa-cancel]')) { fillAgents($('#agentsDrawer .drawer-body')); return; }
+      if (e.target.closest('[data-aa-add]')) {
+        const name = $('[data-aa-name]', f).value.trim();
+        try {
+          await api('POST', `/api/agents?board=${encodeURIComponent(state.boardId)}`, { name, role, perms: [...chosen], description: $('[data-aa-desc]', f).value.trim(), coordinator: role === 'coordinator' && $('[data-aa-coord]', f).checked });
+          if (role === 'coordinator' && $('[data-aa-coord]', f).checked) state.board.coordinator = name;
+          toast(`${name} is on call`, { icon: 'bot', kind: 'ok', timeout: 2500 });
+          await refreshPresence();
+          if ($('#agentsDrawer')) fillAgents($('#agentsDrawer .drawer-body'));
+        } catch (err) { toast(err.message, { kind: 'error' }); }
+      }
+    });
+    setTimeout(() => $('[data-aa-name]', f).select(), 50);
+  }
+
   function fillAgents(body) {
     const seen = new Set(state.presence.map((p) => p.name));
     const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
       .sort((a, b) => Number(!!state.standing[b.name]) - Number(!!state.standing[a.name]));
     const coord = state.board?.coordinator || null;
     const coordRow = `<div class="coord-row"><div class="cr-label"><span>Coordinator</span><span class="sr-auto">gets “Ask an agent” requests by default</span></div><button class="dd" data-coord>${coord ? `${avatar({ name: coord })}${esc(coord)}` : '<span class="v ph">None</span>'}${icon('chev', 'sm')}</button></div>`;
-    body.innerHTML = coordRow + (rows.length ? rows.map((p, i) => {
+    const addBtn = '<button class="add-agent-btn" data-add-agent>＋ Add standing agent</button>';
+    body.innerHTML = coordRow + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
@@ -3461,6 +3525,9 @@
         menu(co, [{ label: 'None', icon: 'x', run: () => setCoordinator(null) }, ...agentChoices().map((n) => ({ label: n, avatar: { name: n }, cls: n === coord ? 'on' : '', run: () => setCoordinator(n) }))], { search: true });
         return;
       }
+      const aa = e.target.closest('[data-add-agent]');
+      if (aa) { e.stopPropagation(); addAgentForm(aa); return; }
+      if (e.target.closest('.add-agent')) return;
       const mk = e.target.closest('[data-make-coord]');
       if (mk) { e.stopPropagation(); setCoordinator(mk.dataset.makeCoord); return; }
       const sb = e.target.closest('[data-standing]');
@@ -3713,7 +3780,7 @@
 
   function standingSection(a) {
     const l = a.lastRun;
-    const listen = typeof a.listen === 'string' ? a.listen : Object.entries(a.listen).map(([k, v]) => `${k}=${v}`).join(' ');
+    const listen = listenLabel(a.listen);
     const meta = `wakes on ${esc(listen)} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
     return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div></div>`;
   }

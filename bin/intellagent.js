@@ -391,9 +391,16 @@ async function agentsCmd() {
     const doc = readAgents(file);
     doc.agents ||= {};
     const listen = !f.listen || f.listen === 'inbox' || f.listen === 'human' ? (f.listen || 'inbox') : Object.fromEntries(new URLSearchParams(String(f.listen)));
+    const { ROLES, PERMS } = require('../lib/agents');
+    if (f.role && !ROLES[f.role]) { console.error(`Unknown role "${f.role}". Roles: ${Object.keys(ROLES).join(', ')}`); process.exit(1); }
+    const perms = f.allow ? String(f.allow).split(',').map((x) => x.trim()).filter(Boolean) : null;
+    const badPerms = (perms || []).filter((k) => !PERMS[k]);
+    if (badPerms.length) { console.error(`Unknown permission(s): ${badPerms.join(', ')}. Use: ${Object.keys(PERMS).join(', ')}`); process.exit(1); }
     doc.agents[name] = {
       ...(doc.agents[name] || {}),
-      listen,
+      ...(f.role ? { role: String(f.role) } : {}),
+      ...(perms ? { perms } : {}),
+      ...(f.listen || !f.role ? { listen } : {}),
       ...(f.run ? { run: String(f.run) } : {}),
       ...(f['max-runs'] != null ? { maxRunsPerHour: f['max-runs'] === 'none' ? null : Number(f['max-runs']) } : {}),
       ...(f.throttle != null ? { throttleMinutes: Number(f.throttle) } : {}),
@@ -405,7 +412,7 @@ async function agentsCmd() {
     const exe = String(doc.agents[name].run || doc.defaults?.run || 'claude').trim().match(/^"([^"]+)"|^(\S+)/).slice(1).find(Boolean);
     const found = require('child_process').spawnSync(process.platform === 'win32' ? 'where' : 'which', [exe], { stdio: 'ignore' }).status === 0;
     if (!found) console.log(`⚠ "${exe}" is not on PATH, so runs will fail. ${exe === 'claude' ? 'Install Claude Code (https://claude.com/claude-code) and sign in once by running `claude`.' : 'Install it or use a full path in --run.'}`);
-    if (!f.run && !doc.defaults?.run) console.log('It runs the default: claude -p (headless). Give it permissions it needs with --run "claude -p --permission-mode acceptEdits …" if required.');
+    if (!f.run && !f.role && !perms && !doc.defaults?.run) console.log('Tip: give it a role (--role coordinator|builder|reviewer|researcher|writer) or permissions (--allow edit,test,build,git,web,read) so its runs can do their job.');
     return;
   }
   if (sub === 'remove') {
@@ -482,7 +489,8 @@ const HELP = `intellagent — a kanban for you and your agents
   hook ...         git: install | post-commit | sync-ci
 
   agents           standing agents the board wakes up itself (defined in .intellagent/agents.json)
-    add NAME       --listen inbox|human|"types=…&column=…"  --run "<command>"  --max-runs N|none  --throttle MIN
+    add NAME       --role coordinator|builder|reviewer|researcher|writer  --allow edit,test,build,git,web,read
+                   --listen inbox|human|"types=…&column=…"  --max-runs N|none  --throttle MIN  --run "<command>" (overrides role)
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 `;

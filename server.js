@@ -2634,6 +2634,20 @@ route('GET', '/api/boards/:board/listeners', 'Agents listening to each item: { i
 /* standing agents: defined in agents.json next to the manifest; the API only observes and steers them */
 const humanOnly = (actor) => { if (actor.kind !== 'user') fail(403, 'Only the human can control standing agents'); };
 route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run', () => standing.list());
+route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents', () => {
+  const { ROLES, PERMS } = require('./lib/agents');
+  return { roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: Object.fromEntries(Object.entries(PERMS).map(([k, v]) => [k, v.label])) };
+});
+route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, description?, listen?, throttleMinutes?, maxRunsPerHour?, coordinator? } — permissions from the fixed list, never a command', ({ body, actor, q }) => {
+  humanOnly(actor);
+  const a = standing.define(body.name, body);
+  if (body.coordinator) {
+    const ctx = getCtx(q.board || M.defaultBoard);
+    tx(ctx, (events) => { ctx.board.coordinator = a.name; events.push({ board: ctx.id, type: 'board.updated', actor, changes: { coordinator: { to: a.name } } }); });
+  }
+  return created(a);
+});
+route('DELETE', '/api/agents/:name', 'Human: remove a standing agent', ({ p, actor }) => { humanOnly(actor); return standing.remove(p.name); });
 route('GET', '/api/agents/:name', 'One standing agent', ({ p }) => standing.get(p.name));
 route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=20000', ({ p, q }) => {
   const a = standing.get(p.name);

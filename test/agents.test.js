@@ -96,11 +96,40 @@ describe('standing agents', () => {
     assert.ok((await comments(s, it.id)).includes('calm: handled 3 event(s)'));
   });
 
+  it('roles: defined through the API from a role and permissions, never a raw command', async () => {
+    const roles = await s.ok('GET', '/api/agents/roles');
+    assert.ok(roles.roles.builder && roles.perms.test);
+    assert.equal((await s.api('POST', '/api/agents', { name: 'bob', role: 'builder' })).status, 403, 'human only');
+    assert.equal((await s.api('POST', '/api/agents', { name: 'bob', role: 'wizard' }, USER)).status, 400);
+    assert.equal((await s.api('POST', '/api/agents', { name: 'bob', perms: ['rm -rf'] }, USER)).status, 400);
+    const a = await s.ok('POST', '/api/agents', { name: 'bob', role: 'builder', perms: ['edit', 'test'], run: 'evil --command' }, USER);
+    assert.match(a.run, /^claude -p .*--allowedTools .*"Bash\(npm test:\*\)"/);
+    assert.ok(!a.run.includes('evil'), 'a run command from the API is ignored');
+    assert.equal(a.role, 'builder');
+    await s.ok('POST', '/api/agents', { name: 'lead', role: 'coordinator', coordinator: true }, USER);
+    assert.equal((await s.ok('GET', B)).board.coordinator, 'lead');
+    await s.ok('DELETE', '/api/agents/bob', undefined, USER);
+    await s.ok('DELETE', '/api/agents/lead', undefined, USER);
+    assert.ok(!(await s.ok('GET', '/api/agents')).agents.some((x) => x.name === 'bob'));
+  });
+
   it('paused agents queue events; resuming runs them', async () => {
     assert.equal((await agentState(s, 'coord')).status, 'paused');
     await s.ok('POST', `${B}/items`, { title: 'for the coordinator', column: 'Backlog' }, USER);
     await new Promise((r) => setTimeout(r, 500));
     assert.ok((await agentState(s, 'coord')).queued >= 1);
+  });
+});
+
+describe('coordinator role', () => {
+  it('wakes on tickets the human creates, without being assigned', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { triager: { role: 'coordinator', run: run('ok') } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'unassigned new ticket', column: 'Backlog' }, USER);
+      await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('triager:')), 8000, 'coordinator triage run');
+      const brief = (await s.ok('GET', '/api/agents/triager')).listen;
+      assert.deepEqual(brief, ['inbox', 'new-tickets']);
+    } finally { await s.stop(); }
   });
 });
 
