@@ -1,0 +1,13 @@
+{
+  "defaults": {},
+  "agents": {
+    "coordinator": {
+      "role": "coordinator",
+      "description": "Triages James's new tickets and requests for Intellagent: fills fields, priority and acceptance checklists, groups them, and assigns work (design work to designer)."
+    },
+    "designer": {
+      "role": "designer",
+      "description": "Owns Intellagent's look and feel: themes, CSS, layout and motion. Takes design tickets and explains the choices in its review."
+    }
+  }
+}
