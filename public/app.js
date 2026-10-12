@@ -787,21 +787,17 @@
       <button class="pill-btn master-btn" id="masterBtn" hidden></button>
       <button class="pill-btn needs-btn" id="needsBtn" title="Needs you|Tickets where an agent is waiting for your answer" hidden>${icon('ask')}<span id="needsCount"></span></button>
       <button class="pill-btn catch-btn" id="catchBtn" title="While you were away|Tickets agents changed since you last looked" hidden>${icon('sparkle')}<span id="catchCount"></span></button>
-      <button class="pill-btn icon-btn" id="inboxBtn" title="Inbox|Everything addressed to you — mentions, replies, questions and handoffs">${icon('bell')}<span class="badge" hidden></span></button>
-      <button class="pill-btn icon-btn" id="digestBtn" title="Digest|Daily end-of-session summaries from agents and you">${icon('news')}<span class="dot" hidden></span></button>
-      <button class="pill-btn icon-btn" id="rulesBtn" title="Standing rules|Instructions every agent reads before it starts work">${icon('pin')}<span class="dot" hidden></span></button>
-      <button class="pill-btn agents-btn" id="agentsBtn" title="Agents|Who is connected, what they hold and what they listen to"><span class="stack-av" id="agentAvs"></span><span id="agentCount"></span></button>
+      <button class="pill-btn hub-btn agents-btn" id="hubBtn" title="Agents & inbox|Ask an agent, your inbox, the digest, agents, standing rules, flow and the archive"><span class="stack-av" id="agentAvs"></span><span id="agentCount"></span><span class="badge" hidden></span><span class="dot" hidden></span></button>
       <button class="pill-btn icon-btn" id="bulkBtn" title="Select|Pick several tickets to move, re-prioritise or archive">${icon('checks')}</button>
       <button class="pill-btn icon-btn" id="settingsBtn" title="Settings|Themes, card contents, ticket fields and alerts">${icon('sliders')}</button>`;
     $('#boardBtn').onclick = (e) => boardMenu(e.currentTarget);
     $('#search').oninput = (e) => { state.query = e.target.value; applyFilter(); };
     $('#masterBtn').onclick = (e) => masterMenu(e.currentTarget);
     $('#needsBtn').onclick = () => { const ids = needsIds(); if (ids.length) openItem(ids[0], cardEls.get(ids[0]), { rail: true }); };
-    $('#rulesBtn').onclick = openRules;
+
     $('#catchBtn').onclick = openCatchup;
-    $('#digestBtn').onclick = openDigest;
-    $('#inboxBtn').onclick = openInbox;
-    $('#agentsBtn').onclick = openAgents;
+    // Unread inbox first; otherwise straight to asking an agent.
+    $('#hubBtn').onclick = () => (state.inbox.some(isUnread) ? openInbox() : openRequests());
     $('#bulkBtn').onclick = () => setBulk(!state.bulk);
     $('#settingsBtn').onclick = () => openSettings();
     $('.logo').onclick = (e) => {
@@ -895,7 +891,6 @@
     const needs = needsIds().length;
     $('#needsBtn').hidden = !needs;
     $('#needsCount').textContent = needs;
-    $('#rulesBtn .dot').hidden = !state.board.directives?.trim();
     const ms = activeMaster();
     const mb = $('#masterBtn');
     mb.hidden = !ms;
@@ -904,7 +899,7 @@
       mb.dataset.tip = `Board held by ${ms.holder}|Working alone — other agents can only comment or ask${ms.expiresAt ? ` · until ${new Date(ms.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}. Click to release.`;
     }
     const lastDigest = state.board.digest?.[state.board.digest.length - 1]?.ts || '';
-    $('#digestBtn .dot').hidden = !lastDigest || lastDigest <= (digestSeen[state.boardId] || '');
+    $('#hubBtn .dot').hidden = !lastDigest || lastDigest <= (digestSeen[state.boardId] || '');
     $('#bulkBtn').classList.toggle('on', state.bulk);
     renderPresenceButton();
     $('#build').innerHTML = `<span class="live-dot ${state.live ? 'on' : ''}" title="${state.live ? 'Live' : 'Reconnecting'}"></span>
@@ -1031,7 +1026,6 @@
           seenGroups.add(n.key);
           updateGroup(node, n);
           const inner = $('.group-cards', node);
-          inner.dataset.n = n.ids.length;
           n.ids.forEach((id, j) => {
             const c = ensureCard(id);
             seenCards.add(id);
@@ -1054,22 +1048,77 @@
   }
 
   const SPRING = 'cubic-bezier(.2,.9,.25,1.12)';
+  // Opening/closing a stack is a deliberate gesture: calm ease-in-out, no overshoot, for the stack and its neighbours.
+  const EASE_IO = 'cubic-bezier(.65,0,.35,1)';
+  const MORPH_MS = 420;
+  let morphNext = null;
   function flip(before, { flights = true } = {}) {
+    const mo = morphNext;
+    morphNext = null;
     if (reduced()) return;
+    // A FLIP still in flight would skew the new measurement; the snapshot already holds where it is now.
+    for (const node of before.keys()) for (const an of node.getAnimations()) if (an.id === 'flip') an.cancel();
+    const own = mo && $('.group-cards', mo.g);
     for (const [node, a] of before) {
-      if (!node.isConnected) continue;
+      if (!node.isConnected || (own && node.parentNode === own)) continue;
       const r = node.getBoundingClientRect();
       const dx = a.r.left - r.left;
       const dy = a.r.top - r.top;
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
       const newCol = node.closest('.column')?.dataset.id;
       if (flights && a.col && newCol && a.col !== newCol) { fly(node, a.r, r); continue; }
-      node.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0px 0px' }], { duration: 520, easing: SPRING });
+      node.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0px 0px' }], mo ? { id: 'flip', duration: MORPH_MS, easing: EASE_IO } : { id: 'flip', duration: 520, easing: SPRING });
     }
+    if (mo) morphStack(mo, before);
     for (const node of [...cardEls.values(), ...groupEls.values()]) {
       if (before.has(node) || !node.isConnected || !node.getBoundingClientRect().width) continue;
       node.animate([{ opacity: 0, scale: 0.86 }, { opacity: 1, scale: 1 }], { duration: 420, easing: SPRING });
     }
+  }
+
+  // Stack open/close. Every card travels from the box it was drawn in to its new one (position AND size, since
+  // the back sheets borrow the front card's box), driven by transform only. Back cards keep their content
+  // hidden while moving and reveal it once they are nearly in place; on close it goes first. The tray
+  // grows/shrinks with the cards. Interrupting mid-way starts from wherever things are on screen.
+  const stackFaces = (c) => [...c.children].filter((x) => x.matches('.c-body, .tape, .c-ask, .c-check'));
+  const stackLook = (g) => new Map([...$('.group-cards', g).children].map((c) => [c, { o: +getComputedStyle(c).opacity, f: +getComputedStyle($('.c-body', c) || c).opacity }]));
+  function morphStack({ g, opening, was }, before) {
+    const cards = [...$('.group-cards', g).children];
+    const faces = stackFaces;
+    for (const c of cards) for (const x of [c, ...faces(c), $('.g-bg', g)]) for (const an of x.getAnimations()) if (an.id === 'morph') an.cancel();
+    const ends = cards.map((c) => c.getBoundingClientRect());
+    const opts = (delay = 0, extra = {}) => ({ id: 'morph', duration: MORPH_MS, delay, easing: EASE_IO, fill: 'backwards', ...extra });
+    let last = 0;
+    cards.forEach((c, i) => {
+      const a = before.get(c)?.r;
+      const r = ends[i];
+      if (!a || !r.width || !r.height || !a.width) return;
+      // End transform is the CSS one (stacked offset or none): a pure scale s + translateY ty about the centre.
+      const m = new DOMMatrix(getComputedStyle(c).transform === 'none' ? undefined : getComputedStyle(c).transform);
+      const s = m.a || 1, ty = m.f;
+      const lw = r.width / s, lh = r.height / s;
+      const dx = a.left + a.width / 2 - (r.left + r.width / 2), dy = a.top + a.height / 2 - (r.top + r.height / 2 - ty);
+      const delay = opening ? Math.min(i, 5) * 24 : Math.min(cards.length - 1 - i, 5) * 16;
+      last = Math.max(last, delay);
+      c.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${a.width / lw}, ${a.height / lh})` }, { transform: `translate(0px, ${ty}px) scale(${s}, ${s})` }], opts(delay));
+      const w = was?.get(c), o = +getComputedStyle(c).opacity;
+      if (!w) return;
+      if (Math.abs(w.o - o) > 0.01) c.animate([{ opacity: w.o }, { opacity: o }], opts(delay, { easing: opening ? 'cubic-bezier(.3,0,.2,1)' : 'cubic-bezier(.6,0,.9,.4)' }));
+      const fs = faces(c);
+      const fo = +getComputedStyle($('.c-body', c) || c).opacity;
+      if (fs.length && Math.abs(w.f - fo) > 0.01) {
+        // Reveal over the last 45% of the trip; hide over the first 30%.
+        const k = opening ? [{ opacity: w.f }, { opacity: w.f, offset: 0.55, easing: 'ease-out' }, { opacity: fo }] : [{ opacity: w.f, easing: 'ease-in' }, { opacity: fo, offset: 0.3 }, { opacity: fo }];
+        for (const x of fs) x.animate(k, opts(delay, { easing: 'linear' }));
+      }
+    });
+    const ga = before.get(g)?.r;
+    if (ga) {
+      const dh = g.getBoundingClientRect().height - ga.height;
+      if (Math.abs(dh) > 1) $('.g-bg', g).animate([{ bottom: `${dh - 6}px` }, { bottom: '-6px' }], opts());
+    }
+    clearTimeout(g._morphT);
+    g._morphT = setTimeout(() => delete g.dataset.morph, MORPH_MS + last + 40);
   }
 
   // Cross-column moves fly a ghost above everything so overflow clipping never hides the trip.
@@ -1196,7 +1245,7 @@
   function ensureGroup(key) {
     let g = groupEls.get(key);
     if (g) return g;
-    g = el(`<section class="group" data-key="${esc(key)}"><button class="group-head"><span class="g-dot"></span><span class="g-name"></span><span class="g-count"></span><span class="grow"></span>${icon('chev', 'g-chev')}</button><div class="group-cards"></div></section>`);
+    g = el(`<section class="group" data-key="${esc(key)}"><button class="group-head"><span class="g-dot"></span><span class="g-name"></span><span class="g-count"></span><span class="grow"></span>${icon('chev', 'g-chev')}</button><i class="g-bg"></i><div class="group-cards"></div></section>`);
     $('.group-head', g).onclick = () => toggleGroup(key);
     $('.group-cards', g).addEventListener('click', () => { if (g.classList.contains('stack') && !g.classList.contains('open')) toggleGroup(key); });
     groupEls.set(key, g);
@@ -1208,11 +1257,20 @@
     g.style.setProperty('--tagc', tagColor(n.parent));
     $('.g-name', g).textContent = n.parent;
     $('.g-count', g).textContent = n.ids.length;
+    const open = mode === 'stack' ? state.expanded.has(n.key) : !state.folded.has(n.key);
+    const head = $('.group-head', g);
+    head.setAttribute('aria-expanded', open);
+    head.dataset.tip = `#${n.parent} · ${n.ids.length} tickets|${mode === 'stack' ? (open ? 'Click to stack them again' : 'Click to fan the stack out') : (open ? 'Click to fold' : 'Click to unfold')}`;
   }
   function toggleGroup(key) {
-    const set = settings.grouping === 'stack' ? state.expanded : state.folded;
+    const stack = settings.grouping === 'stack';
+    const set = stack ? state.expanded : state.folded;
     if (set.has(key)) set.delete(key); else set.add(key);
+    const g = groupEls.get(key);
+    // Freeze the CSS transitions and note how things look now (mid-flight too) before the class flips.
+    if (stack && g?.isConnected && !reduced()) { morphNext = { g, opening: set.has(key), was: stackLook(g) }; g.dataset.morph = ''; }
     render();
+    if (morphNext) { morphNext = null; delete g.dataset.morph; }
   }
 
   /* ─── cards ─── */
@@ -2851,6 +2909,9 @@
       case 'review.requested': return `${who} asked you to review ${b(id)}`;
       case 'reaction.added': return `${who} reacted ${ev.emoji} on ${b(id)}`;
       case 'reaction.removed': return `${who} removed ${ev.emoji} on ${b(id)}`;
+      case 'request.created': return `${who} asked ${b(ev.request?.to)}: ${html ? esc(String(ev.request?.body || '').slice(0, 80)) : String(ev.request?.body || '').slice(0, 80)}`;
+      case 'request.replied': return `${who} replied to a request${ev.reply ? `: ${html ? esc(ev.reply.slice(0, 80)) : ev.reply.slice(0, 80)}` : ''}`;
+      case 'request.done': return `${who} finished a request${ev.reply ? `: ${html ? esc(ev.reply.slice(0, 80)) : ev.reply.slice(0, 80)}` : ''}`;
       case 'review.approved': return `${who} approved ${b(id)}`;
       case 'review.changes_requested': return `${who} sent ${b(id)} back${ev.feedback ? `: ${html ? esc(ev.feedback) : ev.feedback}` : ''}`;
       case 'digest.added': return `${who} posted to the digest`;
@@ -2887,6 +2948,7 @@
     if (ev.type === 'hello') return;
     if (ev.type === 'presence.changed' || (ev.type?.startsWith('lease.') && ev.type !== 'lease.status')) refreshPresence();
     if (ev.type === 'presence.changed') scheduleListeners();
+    if (ev.type?.startsWith('request.')) $('#requestsDrawer .drawer-body')?._reload?.();
     if (/^(item\.moved|item\.archived|attention\.|review\.)/.test(ev.type || '')) loadMetrics();
     if (ev.type?.startsWith('agent.') || ev.type === 'agents.changed') refreshPresence();
     if (ev.board && ev.itemId) {
@@ -2908,6 +2970,10 @@
     if (ev.actor?.kind === 'user' && ev.type !== 'comment.added') return;
     if (QUIET.has(ev.type)) return;
     const important = ev.type === 'attention.raised' || (ev.type === 'comment.added' && ev.mentions?.some((n) => n.toLowerCase() === settings.userName.toLowerCase()));
+    if ((ev.type === 'request.replied' || ev.type === 'request.done') && ev.actor?.kind === 'agent') {
+      toast(describe(ev), { actor: ev.actor, onClick: () => openRequests(), timeout: 6000 });
+      return;
+    }
     if (ev.type === 'agent.failed') {
       toast(describe(ev), { kind: 'needs', icon: 'bot', action: 'Log', onAction: () => showRunLog(ev.agent), onClick: () => openAgent(ev.agent), timeout: 9000 });
       return;
@@ -2953,6 +3019,7 @@
 
   // Each page: [page id, label, icon, opener]. Sub-pages (an agent's profile, a run log) light up their parent.
   const HUB = [
+    ['requestsDrawer', 'Ask an agent', 'send', () => openRequests()],
     ['inboxDrawer', 'Inbox', 'bell', () => openInbox()],
     ['catchDrawer', 'While you were away', 'sparkle', () => openCatchup()],
     ['digestDrawer', 'Digest', 'news', () => openDigest()],
@@ -2996,6 +3063,60 @@
     return $('.drawer-body', pane);
   }
   function closeDrawers() { if (state.modal?.kind === 'hub') closeModal(); }
+
+  /* ─── requests: free-form asks to an agent (default: the board's coordinator) ─── */
+  const agentChoices = () => [...new Set([...Object.keys(state.standing || {}), ...state.presence.map((p) => p.name), ...Object.keys(state.profiles).filter((n) => state.profiles[n]?.kind !== 'user')])].filter((n) => n && n !== settings.userName);
+  async function openRequests() {
+    const body = openDrawer('requestsDrawer', 'Ask an agent', 'send');
+    let to = state.board.coordinator || '';
+    let list = [];
+    const toLabel = () => (to ? `${avatar({ name: to })}${esc(to)}${to === state.board.coordinator ? ' <span class="muted">· coordinator</span>' : ''}` : '<span class="muted">Choose an agent</span>');
+    body.innerHTML = `<div class="req-compose">
+        <div class="req-to"><span class="muted">To</span><button class="dd" data-req-to>${toLabel()}${icon('chev', 'sm')}</button></div>
+        ${tboxHTML({ ph: 'e.g. “Let’s create tickets for the search feature” — @mention to loop someone in', okIcon: 'send', okTitle: 'Send (Ctrl+Enter)', rows: 3 })}
+      </div><div class="req-list"></div>`;
+    const draw = () => {
+      const box = $('.req-list', body);
+      if (!box) return;
+      box.innerHTML = list.length ? list.map((q) => `<div class="req ${q.status}">
+          <div class="req-head">${avatar(q.by)}<b>${esc(q.by?.name)}</b>${icon('chev', 'to')}${avatar({ name: q.to })}<b>${esc(q.to)}</b><span class="muted">${rel(q.at)}</span><span class="grow"></span>
+            <span class="chip req-status ${q.status}">${q.status === 'done' ? `${icon('check', 'sm')}Done` : 'Open'}</span>
+            <button class="btn ghost sm" data-req-toggle="${esc(q.id)}" title="${q.status === 'done' ? 'Reopen' : 'Mark done'}">${icon(q.status === 'done' ? 'restore' : 'check', 'sm')}</button></div>
+          <div class="md">${md(q.body)}</div>
+          ${q.replies.map((x) => `<div class="req-reply">${avatar(x.author)}<div><div class="cmt-head"><b>${esc(x.author?.name)}</b><span>${rel(x.at)}</span></div><div class="md">${md(x.body)}</div></div></div>`).join('')}
+        </div>`).join('') : `<div class="empty-note">${icon('send')}</div>`;
+    };
+    const load = async () => { try { list = await api('GET', B('/requests')); draw(); } catch { /* offline */ } };
+    body._reload = load;
+    const ta = $('.req-compose textarea', body);
+    const send = async () => {
+      const text = ta.value.trim();
+      if (!text) { ta.focus(); return; }
+      if (!to) { toast('Choose an agent first (or set a coordinator in Settings › Board)', { kind: 'error' }); return; }
+      try {
+        await api('POST', B('/requests'), { body: text, to });
+        ta.value = '';
+        autosize(ta);
+        toast(`Sent to ${to}`, { icon: 'send', kind: 'ok', timeout: 2000 });
+        load();
+      } catch (e) { toast(e.message, { kind: 'error' }); }
+    };
+    wireTbox($('.req-compose .tbox', body), send);
+    body.addEventListener('click', async (e) => {
+      const pickTo = e.target.closest('[data-req-to]');
+      if (pickTo) {
+        menu(pickTo, agentChoices().map((n) => ({ label: n, avatar: { name: n }, hint: n === state.board.coordinator ? 'coordinator' : '', cls: n === to ? 'on' : '', run: () => { to = n; pickTo.innerHTML = `${toLabel()}${icon('chev', 'sm')}`; } })), { search: true });
+        return;
+      }
+      const tg = e.target.closest('[data-req-toggle]');
+      if (tg) {
+        const q = list.find((x) => x.id === tg.dataset.reqToggle);
+        try { await api('POST', B(`/requests/${q.id}/reply`), { done: q.status !== 'done' }); load(); } catch (err) { toast(err.message, { kind: 'error' }); }
+      }
+    });
+    load();
+    setTimeout(() => ta.focus(), 250);
+  }
 
   function openRules() {
     const body = openDrawer('rulesDrawer', 'Standing rules', 'pin');
@@ -3254,7 +3375,7 @@
     renderInboxBtn();
   }
   function renderInboxBtn() {
-    const badge = $('#inboxBtn .badge');
+    const badge = $('#hubBtn .badge');
     if (!badge) return;
     const n = state.inbox.filter(isUnread).length;
     badge.hidden = !n;
@@ -3407,6 +3528,7 @@
       activeMaster()
         ? { section: A, label: `Release the board (${activeMaster().holder})`, icon: 'x', run: () => api('DELETE', B('/master')).then(() => scheduleRefresh(0), (e) => toast(e.message, { kind: 'error' })) }
         : { section: A, label: 'Hold the whole board', icon: 'lock', hint: 'master lease', run: () => api('POST', B('/master'), { force: true }).then(() => scheduleRefresh(0), (e) => toast(e.message, { kind: 'error' })) },
+      { section: A, label: 'Ask an agent…', icon: 'send', hint: state.board?.coordinator || '', run: openRequests },
       { section: A, label: 'Agents', icon: 'bot', run: openAgents },
       { section: A, label: 'Archive', icon: 'archive', run: openArchive },
       { section: A, label: 'Select mode', icon: 'checks', run: () => setBulk(!state.bulk) },
@@ -3587,7 +3709,7 @@
     const items = ['Login form', 'Session cookie', 'Refresh endpoint'].map((title, i) => sampleItem({ ...bare, id: `DEMO-${i + 1}`, title, type: i === 2 ? 'issue' : 'task', priority: ['Medium', 'Low', 'High'][i], parent: 'auth' }));
     const inner = settings.grouping === 'off'
       ? items.map((it) => previewCard(it)).join('')
-      : `<section class="group ${settings.grouping}" style="--tagc:${tagColor('auth')}"><button class="group-head"><span class="g-dot"></span><span class="g-name">auth</span><span class="g-count">3</span><span class="grow"></span>${icon('chev', 'g-chev')}</button><div class="group-cards" data-n="3">${items.map((it, i) => previewCard(it, { inGroup: true, si: i })).join('')}</div></section>`;
+      : `<section class="group ${settings.grouping}" style="--tagc:${tagColor('auth')}"><button class="group-head"><span class="g-dot"></span><span class="g-name">auth</span><span class="g-count">3</span><span class="grow"></span>${icon('chev', 'g-chev')}</button><i class="g-bg"></i><div class="group-cards">${items.map((it, i) => previewCard(it, { inGroup: true, si: i })).join('')}</div></section>`;
     return `<div class="pv-stage">${col('Ready', '#5aa9e6', inner, 3)}</div>`;
   }
 
@@ -3680,6 +3802,7 @@
     if (t === 'board') {
       const me = state.profiles[settings.userName] || {};
       return `<h3>Parent groups</h3>
+        <div class="choice-row"><div class="cr-label"><span>Coordinator</span><span class="sr-auto">gets requests by default</span></div><button class="dd" data-coord>${state.board?.coordinator ? `${avatar({ name: state.board.coordinator })}${esc(state.board.coordinator)}` : '<span class="v ph">None</span>'}${icon('chev', 'sm')}</button></div>
         ${choiceRow('metrics', 'Metrics strip', [['on', 'Show', 'Done, cycle time and how long agents wait on you, under the top bar'], ['off', 'Hide', 'No metrics strip']], settings.metrics ? 'on' : 'off')}
         ${choiceRow('grouping', 'Grouping', [['off', 'Off', 'Show every ticket separately'], ['list', 'List', 'Group tickets sharing a parent under a heading'], ['stack', 'Stack', 'Pile tickets sharing a parent — click to fan out']], settings.grouping)}
         ${previewStage('grouping')}
@@ -3908,6 +4031,12 @@
       if (th) { switchTheme(th.dataset.pickTheme, e.clientX, e.clientY, () => show('look', true)); return; }
       const bg = e.target.closest('[data-bgfx]');
       if (bg) { settings.bg = bg.dataset.bgfx; saveSettings(); show('look', true); return; }
+      const co = e.target.closest('[data-coord]');
+      if (co) {
+        const set = (v) => api('PATCH', B(''), { coordinator: v }).then(() => { pulseSaved(); state.board.coordinator = v; show(t, true); }, (err) => toast(err.message, { kind: 'error' }));
+        menu(co, [{ label: 'None', icon: 'x', run: () => set(null) }, ...agentChoices().map((n) => ({ label: n, avatar: { name: n }, cls: n === state.board.coordinator ? 'on' : '', run: () => set(n) }))], { search: true });
+        return;
+      }
       const rs = e.target.closest('[data-reset]');
       if (rs) { settings[rs.dataset.reset] = 'theme'; saveSettings(); pulseSaved(); show(t, true); return; }
       const sb = e.target.closest('.seg[data-set] button, .opt-grid[data-set] button');

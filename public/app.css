@@ -9,6 +9,7 @@
   --gap: 10px;
   --spring: cubic-bezier(.2, .9, .25, 1.15);
   --ease: cubic-bezier(.22, 1, .36, 1);
+  --ease-io: cubic-bezier(.65, 0, .35, 1);
   --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --display: 'Outfit', var(--font);
   --mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
@@ -378,25 +379,40 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .reduced .card.needs::after, .reduced .c-ask { animation: none; }
 
 /* ───────── groups (parent tags) ───────── */
-.group { --tagc: var(--accent); position: relative; border-radius: 14px; }
-.group-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: color-mix(in oklab, var(--tagc) 70%, var(--text)); font: 600 11.5px var(--mono); padding: 2px 4px 6px; cursor: pointer; text-align: left; }
-.group-head .g-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--tagc); }
+/* The tag colour marks the group (dot, name, tray edge) but never carries text: counts are neutral chips
+   built from --text/--muted, so they read on every theme and any hue. */
+.group { --tagc: var(--accent); position: relative; border-radius: 14px; isolation: isolate; }
+.group-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: color-mix(in oklab, var(--tagc) 55%, var(--text)); font: 600 11.5px var(--mono); padding: 2px 4px 6px; cursor: pointer; text-align: left; border-radius: 8px; }
+.group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.group-head .g-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--tagc); flex: none; }
 .group-head .g-name::before { content: '#'; opacity: .5; }
-.group-head .g-count { color: var(--muted); font-weight: 500; }
-.group-head .g-chev { width: 13px; height: 13px; color: var(--muted); transition: rotate .3s var(--spring); }
+.g-count { display: inline-grid; place-items: center; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 99px; font: 600 10px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); background: color-mix(in oklab, var(--text) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--text) 7%, transparent); transition: color .2s, background-color .2s; }
+.group-head:hover .g-count { color: var(--text); background: color-mix(in oklab, var(--text) 12%, transparent); }
+.group-head .g-chev { width: 13px; height: 13px; color: var(--muted); transition: rotate .42s var(--ease-io); }
 .group-cards { position: relative; display: flex; flex-direction: column; gap: var(--gap); }
 .group.list { padding: 6px 6px 8px 8px; background: color-mix(in oklab, var(--tagc) 7%, transparent); box-shadow: inset 2px 0 0 color-mix(in oklab, var(--tagc) 65%, transparent); }
 .group.list.folded .group-cards { display: none; }
 .group.list.folded .g-chev { rotate: -90deg; }
+.g-bg { display: none; }
+/* Stack: an open stack is a tinted tray drawn around (not inside) the cards, so opening never changes
+   their width or nudges the header; the tray fades in while the cards fan out. */
+.group.stack .g-bg { display: block; position: absolute; inset: -4px -6px -6px; z-index: -1; border-radius: 14px; pointer-events: none; opacity: 0; transition: opacity .42s var(--ease-io);
+  background: color-mix(in oklab, var(--tagc) 7%, transparent); box-shadow: inset 2px 0 0 color-mix(in oklab, var(--tagc) 65%, transparent); }
+.group.stack.open .g-bg { opacity: 1; }
 .group.stack .group-head .g-chev { rotate: -90deg; }
 .group.stack.open .group-head .g-chev { rotate: 0deg; }
-.group.stack.open { padding: 6px 6px 8px 8px; background: color-mix(in oklab, var(--tagc) 7%, transparent); }
-.group.stack:not(.open) .group-cards { display: grid; padding-bottom: 16px; cursor: pointer; }
-.group.stack:not(.open) .group-cards > .card { grid-area: 1 / 1; pointer-events: none; transform: translateY(calc(min(var(--si), 3) * 7px)) scale(calc(1 - min(var(--si), 3) * .04)); z-index: calc(20 - var(--si)); }
+/* Collapsed: the first card in front, two sheets peeking below it. Sheets take the front card's box
+   (absolute), so the pile has one height and its edges stay even whatever the tickets contain. */
+.group.stack:not(.open) .group-cards { display: block; padding-bottom: 14px; cursor: pointer; }
+.group.stack:not(.open) .group-cards > .card { pointer-events: none; transform: translateY(calc(min(var(--si), 2) * 7px)) scale(calc(1 - min(var(--si), 2) * .04)); z-index: calc(20 - var(--si));
+  transition: box-shadow .25s, background-color .45s, border-color .45s, opacity .3s, filter .3s, transform .34s var(--ease); }
+.group.stack:not(.open) .group-cards > .card:not(:first-child) { position: absolute; inset: 0 0 14px; }
 .group.stack:not(.open) .group-cards > .card:nth-child(n+4) { opacity: 0; }
-.group.stack:not(.open) .group-cards > .card:not(:first-child) .c-body { opacity: 0; transition: opacity .2s; }
-.group.stack:not(.open):hover .group-cards > .card { transform: translateY(calc(min(var(--si), 3) * 11px)) scale(calc(1 - min(var(--si), 3) * .035)) rotate(calc(var(--si) * 1.6deg)); }
-.group.stack:not(.open) .group-cards::after { content: attr(data-n); position: absolute; right: 8px; bottom: 0; z-index: 30; font: 700 10.5px var(--mono); color: #fff; background: var(--tagc); padding: 2px 7px; border-radius: 99px; box-shadow: 0 4px 10px -3px color-mix(in oklab, var(--tagc) 70%, transparent); }
+.group.stack:not(.open) .group-cards > .card:not(:first-child) > :is(.c-body, .tape, .c-ask, .c-check) { opacity: 0; }
+.group.stack:not(.open):hover .group-cards > .card { transform: translateY(calc(min(var(--si), 2) * 10px)) scale(calc(1 - min(var(--si), 2) * .035)); }
+/* While a stack opens or closes, JS drives every card frame by frame; CSS transitions would fight it. */
+.group[data-morph] .group-cards > .card, .group[data-morph] .group-cards > .card > * { transition: none !important; }
+.reduced .group .g-bg, .reduced .group-head .g-chev { transition: none; }
 
 /* ───────── controls ───────── */
 .btn { height: 32px; padding: 0 12px; border-radius: var(--r-ctl); border: var(--bw) solid var(--border); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font: 500 13px var(--font); transition: background .2s, border-color .2s, transform .15s var(--spring), filter .2s, color .2s; white-space: nowrap; text-decoration: none; color: var(--text); }
@@ -1425,3 +1441,24 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .hub .hub-back .back { rotate: 90deg; }
 .hub .drawer-body { padding: 4px 0 8px; overflow: visible; }
 .hub .set-nav button { white-space: nowrap; }
+
+/* hub button: agents, inbox badge and digest dot in one */
+.hub-btn { position: relative; gap: 6px; }
+.hub-btn .badge { position: absolute; top: -5px; right: -5px; }
+/* requests */
+.req-compose { display: grid; gap: 8px; margin-bottom: 18px; }
+.req-to { display: flex; align-items: center; gap: 10px; }
+.req-to .dd { flex: 1; }
+.muted { color: var(--muted); }
+.req-list { display: grid; gap: 10px; }
+.req { padding: 12px 14px; border-radius: calc(var(--r-ctl) + 4px); background: var(--hover); border: 1px solid transparent; }
+.req.open { border-color: color-mix(in oklab, var(--accent) 30%, transparent); }
+.req.done { opacity: .78; }
+.req-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12.5px; }
+.req-head .to { rotate: -90deg; opacity: .5; }
+.req-status.open { color: var(--accent); }
+.req-status.done { color: var(--ok); }
+.req-reply { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent); }
+
+/* headroom for lifted drop targets and focus rings: the board clips vertically (it scrolls sideways) */
+.board { padding-top: 14px; margin-top: -8px; }
