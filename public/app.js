@@ -218,7 +218,7 @@
       '.card { border-radius: 28px 14px 30px 12px / 16px 30px 14px 28px; border-color: rgb(163 209 108 / .14); background: radial-gradient(140% 120% at 0% 0%, rgb(163 209 108 / .10), transparent 55%), linear-gradient(165deg, #233024, #1a231b); box-shadow: 0 12px 26px -14px rgb(0 0 0 / .85), inset 0 1px 0 rgb(226 195 107 / .10); } .card:nth-child(3n+2) { border-radius: 14px 30px 16px 26px / 28px 14px 30px 16px; } .card:nth-child(3n) { border-radius: 30px 18px 24px 14px / 14px 26px 18px 30px; } .card:hover { box-shadow: 0 18px 36px -14px rgb(0 0 0 / .9), 0 0 0 1px rgb(163 209 108 / .35), 0 0 30px -10px rgb(163 209 108 / .35); } .column { border-radius: 46px 34px 52px 30px / 34px 52px 30px 46px; border-color: rgb(163 209 108 / .10); background: linear-gradient(180deg, rgb(32 44 30 / .88), rgb(22 30 22 / .82)); } .col-head { border-bottom: 1px dashed rgb(226 195 107 / .18); } .col-name { font-family: var(--display); font-weight: 600; letter-spacing: .01em; color: #e9e2c4; } .app-name { color: #e2c36b; } .btn.primary { background: linear-gradient(140deg, #b5dc7c, #6fae58); color: #10160f; border-radius: 22px 12px 22px 12px; }'),
     clay: T('Clay', 'light', ['#ede2d3', '#e5d6c2', '#f6eee2', '#3b2a22', '#8a7362', '#d8c4ab', '#c2603f', '#6f8f68', '#c2603f', '#5f7f9a', '#d49a3a', '#6f8f68', '#d08a3a', '#b8432e', '#e7b49a', '#c9d3b4', '#f0cf9e'],
       { card: 20, col: 32, modal: 32, ctl: 16, bw: 0, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'outline', enter: 'rise', lanes: 'solid', chips: 'pill', bg: 'blobs', texture: true, grain: '.12', avatar: 'round', md: 'paper', titleW: 600, display: "'Bricolage Grotesque'", colAlpha: 100 },
-      '.column { border-radius: 120px 120px 34px 34px / 70px 70px 34px 34px; background: linear-gradient(178deg, #ecdfcd, #e1cfb8); box-shadow: inset 0 3px 0 rgb(255 255 255 / .6), inset 0 -14px 28px -18px rgb(120 70 40 / .3), 0 22px 38px -26px rgb(110 70 40 / .5); } .col-head { padding-top: 26px; justify-content: center; } .col-name { font-weight: 700; color: #6a3a26; } .card { border-radius: 26px 18px 28px 16px / 18px 28px 16px 26px; background: radial-gradient(120% 90% at 20% 0%, #fcf7ef, #f0e3d1); box-shadow: inset 0 1px 0 rgb(255 255 255 / .95), inset 0 -3px 0 rgb(194 96 63 / .10), 0 12px 20px -12px rgb(110 60 30 / .5); } .card:nth-child(2n) { border-radius: 18px 28px 16px 26px / 28px 16px 26px 18px; background: radial-gradient(120% 90% at 80% 0%, #fbf3ea, #ecdcc6); } .card:nth-child(3n) { background: radial-gradient(120% 90% at 30% 0%, #f6f4e8, #e3e2cf); } .card:hover { box-shadow: inset 0 1px 0 #fff, inset 0 -3px 0 rgb(194 96 63 / .18), 0 18px 28px -14px rgb(110 60 30 / .55); } .search input, .inp, .tbox { background: #f3e9db; box-shadow: inset 0 2px 5px rgb(120 70 40 / .16); border-color: transparent; } .btn.primary { background: linear-gradient(150deg, #d27a56, #b3532f); border-radius: 999px; box-shadow: inset 0 1px 0 rgb(255 255 255 / .3), 0 6px 14px -6px rgb(160 70 40 / .6); } .app-name { color: #b3532f; }'),
+      '.column { border-radius: 120px 120px 34px 34px / 46px 46px 34px 34px; background: linear-gradient(178deg, #ecdfcd, #e1cfb8); box-shadow: inset 0 3px 0 rgb(255 255 255 / .6), inset 0 -14px 28px -18px rgb(120 70 40 / .3), 0 22px 38px -26px rgb(110 70 40 / .5); } .col-head { padding-top: 26px; justify-content: center; } .col-name { font-weight: 700; color: #6a3a26; } .card { border-radius: 26px 18px 28px 16px / 18px 28px 16px 26px; background: radial-gradient(120% 90% at 20% 0%, #fcf7ef, #f0e3d1); box-shadow: inset 0 1px 0 rgb(255 255 255 / .95), inset 0 -3px 0 rgb(194 96 63 / .10), 0 12px 20px -12px rgb(110 60 30 / .5); } .card:nth-child(2n) { border-radius: 18px 28px 16px 26px / 28px 16px 26px 18px; background: radial-gradient(120% 90% at 80% 0%, #fbf3ea, #ecdcc6); } .card:nth-child(3n) { background: radial-gradient(120% 90% at 30% 0%, #f6f4e8, #e3e2cf); } .card:hover { box-shadow: inset 0 1px 0 #fff, inset 0 -3px 0 rgb(194 96 63 / .18), 0 18px 28px -14px rgb(110 60 30 / .55); } .search input, .inp, .tbox { background: #f3e9db; box-shadow: inset 0 2px 5px rgb(120 70 40 / .16); border-color: transparent; } .btn.primary { background: linear-gradient(150deg, #d27a56, #b3532f); border-radius: 999px; box-shadow: inset 0 1px 0 rgb(255 255 255 / .3), 0 6px 14px -6px rgb(160 70 40 / .6); } .app-name { color: #b3532f; }'),
     tide: T('Tide', 'light', ['#e4eef0', '#d6e6e9', '#f4fafa', '#173b44', '#5f8088', '#c3d9dd', '#0f7a86', '#ff7f6b', '#ff7f6b', '#2f8fb8', '#e8b04a', '#2fae8f', '#f09a4a', '#e35a4f', '#a8dde0', '#ffd1c4', '#c7e7d9'],
       { card: 22, col: 28, modal: 28, ctl: 14, bw: 1, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'glass', chips: 'pill', bg: 'mesh', texture: false, avatar: 'round', md: 'clean', titleW: 600, display: "'Outfit'", colAlpha: 62 },
       '.column { border-radius: 34px; border-color: rgb(255 255 255 / .75); box-shadow: 0 22px 44px -30px rgb(15 90 100 / .5); } .col-head { position: relative; } .col-head::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: -6px; height: 9px; background: radial-gradient(circle at 8px -3px, transparent 7px, var(--col, var(--accent)) 7.5px, var(--col, var(--accent)) 9px, transparent 9.5px) 0 0 / 16px 9px repeat-x; opacity: .55; } .card { border-radius: 26px 26px 26px 6px; border-color: rgb(255 255 255 / .95); background: linear-gradient(170deg, rgb(255 255 255 / .95), rgb(232 246 246 / .88)); box-shadow: 0 10px 22px -12px rgb(15 90 100 / .45), inset 0 -2px 0 rgb(15 122 134 / .08); } .card:nth-child(2n) { border-radius: 26px 26px 6px 26px; } .card:hover { box-shadow: 0 16px 30px -12px rgb(15 90 100 / .5), 0 0 0 1px rgb(15 122 134 / .3); } .btn.primary { background: linear-gradient(135deg, #0f7a86, #2f8fb8); border-radius: 999px; } .app-name { color: #0f7a86; }'),
@@ -2238,9 +2238,9 @@
         slot.innerHTML = qs.map((q, i) => {
           const isReview = q.kind === 'review';
           return `<div class="m-ask ${isReview ? 'is-review' : ''}" data-q="${esc(q.id || '')}" data-kind="${isReview ? 'review' : 'question'}"><div class="ask-head">${icon(isReview ? 'eye' : 'ask')}${avatar({ kind: 'agent', name: q.raisedBy })}<b>${esc(q.raisedBy)}</b><span>${rel(q.raisedAt)}</span>${isReview ? '<span class="chip review-chip">Review</span>' : qs.length > 1 ? `<span class="q-count">${i + 1}/${qs.length}</span>` : ''}</div>
-          <div class="md">${md(q.reason)}</div>
+          ${isReview ? reviewNotesHTML(it, q) : `<div class="md">${md(q.reason)}</div>`}
           ${isReview
-    ? tboxHTML({ ph: 'Feedback…', okIcon: 'send', okTitle: 'Request changes (Ctrl+Enter)', tools: `<button class="btn primary sm" data-r="approve">${icon('check', 'sm')}Approve</button>` })
+    ? tboxHTML({ ph: 'Feedback, or a question for “Ask why”…', okIcon: 'send', okTitle: 'Request changes (Ctrl+Enter)', tools: `<button class="btn primary sm" data-r="approve">${icon('check', 'sm')}Approve</button><button class="btn ghost sm" data-r="why" title="Ask why|${esc(q.raisedBy)} explains on the card — nothing else changes and the review stays open">${icon('ask', 'sm')}Ask why</button>` })
     : tboxHTML({ ph: 'Reply…', okIcon: 'send', okTitle: 'Reply & resolve (Ctrl+Enter)', tools: `<button class="tb-btn" data-r="resolve" title="Resolve|Mark this question answered without replying">${icon('check')}</button>` })}</div>`;
         }).join('');
         for (const card of $$('.m-ask', slot)) {
@@ -2267,6 +2267,7 @@
           if (card.dataset.kind === 'review') {
             wireTbox(box, () => review(false));
             $('[data-r="approve"]', card).onclick = () => review(true);
+            $('[data-r="why"]', card).onclick = () => { const ta = $('textarea', box); askWhy(m.id, ta.value.trim()).then((ok) => { if (ok) ta.value = ''; }); };
           } else {
             wireTbox(box, () => resolve(true));
             $('[data-r="resolve"]', card).onclick = () => resolve(false);
@@ -2290,7 +2291,16 @@
     const sig = `${it.id}:${it.comments.length}`;
     if (cmts.dataset.sig !== sig) {
       cmts.dataset.sig = sig;
-      cmts.innerHTML = it.comments.map((c) => `<div class="cmt">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${esc(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span></div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}</div></div>`).join('');
+      cmts.innerHTML = it.comments.map((c) => `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${esc(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(c.author.name)} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}</div></div>`).join('');
+      cmts.onclick = (e) => {
+        const b = e.target.closest('[data-why]');
+        if (!b || b.closest('.cmt').querySelector('.why-box')) return;
+        const box = el(`<div class="why-box">${tboxHTML({ ph: `What should ${esc(b.dataset.who)} explain? (Enter to send, empty = “why this approach?”)`, okIcon: 'send', okTitle: 'Ask (Ctrl+Enter)', rows: 1 })}</div>`);
+        b.closest('.cmt').lastElementChild.append(box);
+        const ta = $('textarea', box);
+        wireTbox($('.tbox', box), () => askWhy(m.id, ta.value.trim(), b.dataset.why, b.dataset.who).then((ok) => ok && box.remove()), { escape: () => box.remove(), submitOnEnter: true });
+        ta.focus();
+      };
     }
 
     fillSide(m);
@@ -2344,6 +2354,26 @@
   }
 
   /* ─── side panel (schema-driven) ─── */
+
+  const REVIEW_LABELS = [['changed', 'What changed', 'pencil'], ['why', 'Why', 'sparkle'], ['verify', 'How to verify', 'check'], ['risks', 'Risks & open questions', 'flag']];
+  // The agent's explanation in full: its four parts when it gave them, else its whole review comment.
+  function reviewNotesHTML(it, q) {
+    if (q.notes && Object.keys(q.notes).length > (q.notes.changed && Object.keys(q.notes).length === 1 ? 1 : 0)) {
+      return `<div class="rv-notes">${REVIEW_LABELS.filter(([k]) => q.notes[k]).map(([k, label, ic]) => `<div class="rv-part"><div class="rv-label">${icon(ic, 'sm')}${label}</div><div class="md">${md(q.notes[k])}</div></div>`).join('')}</div>`;
+    }
+    const full = q.notes?.changed || [...(it.comments || [])].reverse().find((c) => c.author?.name === q.raisedBy && c.body && c.body.startsWith(q.reason.slice(0, 60)))?.body;
+    return `<div class="md rv-body">${md(full || q.reason)}</div>`;
+  }
+  // "Ask why": a reply-only question — the agent explains on the card and changes nothing else.
+  async function askWhy(id, text, replyTo = null, who = null) {
+    const body = text || 'Can you explain your reasoning here — why this approach, and what you considered instead?';
+    try {
+      await api('POST', I(id, '/comments'), { body: who && !/(^|\s)@/.test(body) ? `@${who} ${body}` : body, intent: 'explain', ...(replyTo ? { replyTo } : {}) });
+      toast(`Asked ${who || 'the agent'} to explain`, { icon: 'ask', kind: 'ok', timeout: 2500 });
+      scheduleRefresh(0);
+      return true;
+    } catch (e) { toast(e.message, { kind: 'error' }); return false; }
+  }
 
   function fillSide(m) {
     const side = $('.m-side', m.root);

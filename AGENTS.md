@@ -19,7 +19,8 @@ The whole loop for one ticket:
 | Start / resume | `POST …/items/<ID>/start { status }` | Claims it, moves it to the working column, assigns you — all or nothing |
 | Say what you're doing | `PUT …/items/<ID>/status { status }` | Live line on the card |
 | Ask | `POST …/items/<ID>/attention { reason }` | Card glows; the answer comes back in `…/work` (`answered`) and as an event |
-| Done | `POST …/items/<ID>/review { summary }` | Moves to review, releases your lease, asks the human |
+| Done | `POST …/items/<ID>/review { changed, why, verify, risks }` | Moves to review, releases your lease, asks the human — explain in four parts |
+| Asked to explain | a comment with `intent: "explain"` (also first in `…/work`) | Answer in a comment; change nothing else |
 | Verdict | (human) `review.approved` / `review.changes_requested` | Feedback shows in `…/work`; `start` again to address it |
 | End of session | `POST …/finish { summary }` | Releases everything you hold, posts the digest |
 
@@ -134,6 +135,10 @@ DELETE /api/boards/main/items/INT-12/lease                       → release
 
 ### Start work in one step
 `POST /api/boards/main/items/INT-12/start { "status": "reading the code", "minutes": 30 }` checks the ticket isn't held or blocked, leases it to you (not needed while you hold the master lease), moves it to the working column (flag `working`; e.g. In Progress) unless it is already there or further, and assigns it to you. If any check fails nothing changes and you get a `code` (`LEASED`, `BLOCKED`, `WIP_LIMIT`, `BOARD_HELD`). Pass `"force": true` to start a blocked ticket, `"column"` to pick the target. The reply includes `feedback` (if the review sent it back) and `lastAnswer` (your last question's answer).
+
+### Explaining your work
+Reviews explain themselves in four parts: `changed` (what changed), `why` (the reasoning, and alternatives you rejected), `verify` (how the human can check it) and `risks` (risks and open questions). The review card shows each part in full. A single `summary` still works.
+When the human wants more, they **Ask why** — a comment with `intent: "explain"`, addressed to you if it @mentions you or, if not, to whoever requested the review or last worked the ticket. It arrives as an `[EXPLAIN ONLY]` event and tops your `…/work`. Answer in a comment and change nothing else: not the code, the ticket, its column or the review — the review stays open while they read your answer.
 
 ### Request review (preferred way to finish)
 `POST /api/boards/main/items/INT-12/review { "summary": "What changed and how to verify" }` — moves it to the review column, comments your summary, releases your lease and raises a **review** request.

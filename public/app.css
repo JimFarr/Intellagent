@@ -62,7 +62,7 @@ button { font: inherit; color: inherit; }
 /* blur applies instantly — animating a blur over the whole board costs a repaint every frame */
 .board, .column { contain: layout style; }
 .card { contain: layout style; }
-body.scrimmed .topbar, body.scrimmed .board, body.scrimmed .bg-layer, body.scrimmed .build { filter: blur(6px) saturate(1.08); }
+body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimmed .bg-layer, body.scrimmed .build { filter: blur(6px) saturate(1.08); }
 
 /* ───────── animated backgrounds ───────── */
 .bg-layer { position: fixed; inset: 0; z-index: -2; overflow: hidden; background: var(--bg); transition: background-color .5s; }
@@ -1365,3 +1365,17 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 :root[data-tape="corner"] .card[data-slot="1"] .tape { width: 18px; height: 18px; }
 :root[data-tape="corner"] .card[data-slot="2"] .tape { width: 26px; height: 26px; }
 /* sticky notes lose their tape tilt link when the slot sets its own angle */
+
+/* review explanations: the agent's four parts, each in full */
+.rv-notes { display: grid; gap: 10px; margin: 2px 0 12px; }
+.rv-part { padding: 9px 12px; border-radius: calc(var(--r-ctl) + 2px); background: color-mix(in oklab, var(--text) 4%, transparent); }
+.rv-label { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.rv-body { margin-bottom: 12px; }
+/* "Ask why" on agent comments, and explain questions in the thread */
+.cmt-why { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
+.cmt:hover .cmt-why, .cmt-why:focus-visible { opacity: 1; }
+.cmt-why:hover { background: var(--hover); color: var(--accent); }
+.explain-chip { font-size: 10px; padding: 1px 7px; background: color-mix(in oklab, var(--accent-2) 16%, transparent); color: var(--accent-2); }
+.cmt.is-explain > div > .md { padding-left: 10px; border-left: 2px solid color-mix(in oklab, var(--accent-2) 55%, transparent); }
+.why-box { margin-top: 8px; }
+.m-ask .rv-body, .m-ask .rv-notes .md { font-weight: 400; }

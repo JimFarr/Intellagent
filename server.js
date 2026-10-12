@@ -750,6 +750,8 @@ function reviewColumn(ctx) {
   return gate > 0 ? cols[gate - 1] : null;
 }
 
+const REVIEW_PARTS = [['changed', 'What changed'], ['why', 'Why'], ['verify', 'How to verify'], ['risks', 'Risks and open questions']];
+
 function requestReview(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
@@ -757,14 +759,23 @@ function requestReview(ctx, id, d, actor) {
     if (!col) fail(400, 'No review column. Flag one with { "flags": { "review": true } } or pass "column".');
     guardWrite(ctx, item, actor);
     if (item.columnId !== col.id) moveInto(ctx, item, col.id, 'top', actor, events);
-    const summary = str(d.summary || '', 20_000).trim();
-    if (summary) item.comments.push({ id: rid('c'), author: actor, body: summary, createdAt: now() });
+    // A review explains itself in four parts (what changed / why / how to verify / risks); a plain
+    // summary still works. The parts become one readable comment and travel with the review question.
+    const part = (k) => str(d[k] || '', 8000).trim();
+    const notes = Object.fromEntries(REVIEW_PARTS.map(([k]) => [k, part(k)]).filter(([, v]) => v));
+    let summary = str(d.summary || '', 20_000).trim();
+    if (Object.keys(notes).length) {
+      summary = [summary, ...REVIEW_PARTS.filter(([k]) => notes[k]).map(([k, label]) => `**${label}**\n${notes[k]}`)].filter(Boolean).join('\n\n');
+    }
+    if (summary) item.comments.push({ id: rid('c'), author: actor, body: summary, createdAt: now(), ...(Object.keys(notes).length ? { review: notes } : {}) });
     const lease = item.lease;
     if (lease && lease.claimant === actor.name) item.lease = null;
     syncNeeds(item);
     item.questions = item.questions.filter((q) => q.kind !== 'review');
     // The review card shows this text: keep the summary's whole first paragraph, not a clipped line.
-    const rq = parseNeedsHuman({ reason: str(d.reason || (summary ? summary.split(/\n\s*\n/)[0] : 'Ready for review'), 2000), kind: 'review' }, actor);
+    const rq = parseNeedsHuman({ reason: str(d.reason || notes.changed?.split(/\n\s*\n/)[0] || (summary ? summary.split(/\n\s*\n/)[0] : 'Ready for review'), 2000), kind: 'review' }, actor);
+    if (Object.keys(notes).length) rq.notes = notes;
+    else if (summary) rq.notes = { changed: summary };
     item.version++;
     item.updatedAt = now();
     if (lease && !item.lease) events.push(itemEvent(ctx, 'lease.released', item, actor, { claimant: lease.claimant, reason: 'review requested' }));
@@ -942,12 +953,20 @@ function addComment(ctx, id, d, actor) {
     const item = getItem(ctx, id);
     const atts = arr(d.attachments).map((a) => saveAttachment(ctx, item, a, actor));
     if (!String(d.body || '').trim() && !atts.length) fail(400, '"body" or "attachments" is required');
-    const c = { id: rid('c'), author: actor, body: str(d.body, 20_000), createdAt: now(), ...(atts.length ? { attachments: atts } : {}) };
+    // intent "explain": a reply-only question — the agent answers on the card and changes nothing else.
+    // Without an @mention it goes to whoever worked the ticket last.
+    const intent = d.intent === 'explain' ? 'explain' : null;
+    const c = { id: rid('c'), author: actor, body: str(d.body, 20_000), createdAt: now(), ...(atts.length ? { attachments: atts } : {}), ...(intent ? { intent } : {}), ...(d.replyTo ? { replyTo: str(d.replyTo, 40) } : {}) };
     item.comments.push(c);
     item.version++;
     item.updatedAt = c.createdAt;
     const mentions = [...c.body.matchAll(/(?:^|\s)@([\w.-]+)/g)].map((m) => m[1]);
-    events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(c.body), attachments: atts.length }, mentions }));
+    if (intent && !mentions.length) {
+      const target = (d.replyTo && item.comments.find((x) => x.id === d.replyTo)?.author) || null;
+      const who = target?.kind === 'agent' ? target.name : item.questions?.find((q) => q.kind === 'review')?.raisedBy || item.workedBy?.at(-1) || item.assignee;
+      if (who) mentions.push(who);
+    }
+    events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(c.body), attachments: atts.length, ...(intent ? { intent } : {}) }, mentions, ...(intent ? { intent } : {}) }));
     return c;
   });
 }
@@ -1235,6 +1254,17 @@ function workFor(ctx, name) {
     if (rv?.verdict === 'changes' && (rv.requestedBy === name || it.workedBy?.includes(name)) && Date.parse(rv.at) > lastMine(it)) feedback.push(brief(it, { feedback: rv.comment, by: rv.by }));
     if (it.assignee === name && it.columnId !== done && !(l && l.claimant !== name) && !leases.some((x) => x.id === it.id)) assigned.push(brief(it));
   }
+  // "Explain" questions addressed to me that I haven't answered since they were asked.
+  const explain = [];
+  for (const it of items) {
+    const asks = (it.comments || []).filter((c) => c.intent === 'explain');
+    for (const c of asks) {
+      const addressed = [...c.body.matchAll(/(?:^|\s)@([\w.-]+)/g)].some((m) => m[1] === name)
+        || (!/(?:^|\s)@[\w.-]+/.test(c.body) && [it.questions?.find((q) => q.kind === 'review')?.raisedBy, it.workedBy?.at(-1), it.assignee].includes(name));
+      const answered = (it.comments || []).some((x) => x.author?.name === name && x.createdAt > c.createdAt);
+      if (addressed && !answered) explain.push(brief(it, { question: c.body, commentId: c.id }));
+    }
+  }
   const pick = new Set(pickupColumns(ctx).map((c) => c.id));
   const ready = items.filter((it) => pick.has(it.columnId) && !activeLease(it) && !it.needsHuman && (!it.assignee || it.assignee === name) && !openBlockersOf(ctx, it).length)
     .sort((a, c) => PRIO_RANK[a.priority] - PRIO_RANK[c.priority]).slice(0, 5).map((it) => brief(it));
@@ -1243,6 +1273,7 @@ function workFor(ctx, name) {
   const seen = new Set();
   // One suggestion per ticket (renewing is separate: it is just housekeeping).
   const add = (action, it, why, how) => { const k = action === 'renew' ? `renew:${it.id}` : it.id; if (seen.has(k)) return; seen.add(k); next.push({ action, id: it.id, title: it.title, why, call: how }); };
+  for (const x of explain) add('explain', x, `Asked to explain (reply on the card only — change nothing): ${String(x.question).slice(0, 140)}`, `POST /api/boards/${ctx.id}/items/${x.id}/comments { "body": "…" }`);
   for (const x of leases.filter((l) => l.minutesLeft <= M.lease.warningMinutes)) add('renew', x, `Your lease ends in ${x.minutesLeft} min`, `${call(x.id, 'lease')} { "minutes": 30 }`);
   for (const x of feedback) add('address_feedback', x, `Review sent back: ${String(x.feedback || '').slice(0, 120)}`, call(x.id, 'start'));
   for (const x of answered) add('resume', x, `Your question was answered: ${String(x.answer || '').slice(0, 120)}`, call(x.id, 'start'));
@@ -1255,7 +1286,7 @@ function workFor(ctx, name) {
     ...(master ? { master: { holder: master.holder, you: master.holder === name, status: master.status || null } } : {}),
     ...(blockedByMaster ? { note: `${master.holder} holds the whole board — you can read, comment and ask, but not change tickets.` } : {}),
     next: blockedByMaster ? [] : next,
-    leases, feedback, answered, waitingOnHuman: waiting, assigned, ready,
+    explain, leases, feedback, answered, waitingOnHuman: waiting, assigned, ready,
   };
 }
 
@@ -1273,7 +1304,7 @@ function briefing(ctx, name, base, via = 'cli') {
     status: { cli: cli('PUT', `${P}/items/<ID>/status`, 'status="running tests"'), mcp: 'set_status { id, status }', http: `PUT ${P}/items/<ID>/status { status }` },
     comment: { cli: cli('POST', `${P}/items/<ID>/comments`, 'body="…"'), mcp: 'add_comment { id, body }', http: `POST ${P}/items/<ID>/comments { body }` },
     ask: { cli: cli('POST', `${P}/items/<ID>/attention`, 'reason="your question"'), mcp: 'ask_human { id, reason }', http: `POST ${P}/items/<ID>/attention { reason }` },
-    review: { cli: cli('POST', `${P}/items/<ID>/review`, 'summary="what changed, how to verify"'), mcp: 'request_review { id, summary }', http: `POST ${P}/items/<ID>/review { summary }` },
+    review: { cli: cli('POST', `${P}/items/<ID>/review`, 'changed="…" why="…" verify="…" risks="…"'), mcp: 'request_review { id, changed, why, verify, risks }', http: `POST ${P}/items/<ID>/review { changed, why, verify, risks }` },
     moves: { cli: cli('GET', `${P}/items/<ID>/transitions`), mcp: 'get_transitions { id }', http: `GET ${P}/items/<ID>/transitions` },
     finish: { cli: cli('POST', `${P}/finish`, 'summary="what you did today"'), mcp: 'finish_session { summary }', http: `POST ${P}/finish { summary }` },
   };
@@ -1315,7 +1346,8 @@ function briefing(ctx, name, base, via = 'cli') {
     `- Start or resume a ticket (claims it, moves it to ${workingColumn(ctx)?.name || 'the working column'}, assigns you): ${c('start')}`,
     `- Say what you're doing (shows live on the card): ${c('status')}`,
     `- Comment: ${c('comment')}   ·   Ask the human (they answer on the card): ${c('ask')}`,
-    `- Finished? Request review (the human approves or sends it back): ${c('review')}`,
+    `- Finished? Request review in four parts — what changed, why (incl. alternatives you rejected), how to verify, risks/open questions: ${c('review')}`,
+    '- Asked to *explain* (a comment marked explain, or an "explain" item in your work): answer in a comment and change nothing else — not the code, the ticket, its column or the review.',
     `- Where can this ticket go?: ${c('moves')}`,
     `- End of session (releases everything, posts the digest): ${c('finish')}`,
     '',

@@ -123,6 +123,37 @@ describe('agent flows', () => {
     assert.equal((await s.ok('GET', `${B}/metrics?days=30`)).perDay.length, 30);
   });
 
+  it('a review explains itself in four parts, carried on the review question', async () => {
+    const it = await mk({ title: 'explained review' });
+    await s.ok('POST', `${B}/items/${it.id}/start`, {}, A);
+    await s.ok('POST', `${B}/items/${it.id}/review`, { changed: 'Cached the session lookup.', why: 'It ran on every request; a TTL cache was simpler than Redis.', verify: 'npm test; hit /me twice.', risks: 'Stale roles for up to 60s.' }, A);
+    const full = await s.ok('GET', `${B}/items/${it.id}`);
+    const q = full.questions.find((x) => x.kind === 'review');
+    assert.equal(q.reason, 'Cached the session lookup.');
+    assert.deepEqual(Object.keys(q.notes), ['changed', 'why', 'verify', 'risks']);
+    assert.match(full.comments.at(-1).body, /\*\*Why\*\*\nIt ran on every request/);
+  });
+
+  it('"explain" questions reach whoever did the work, without changing anything', async () => {
+    const it = await mk({ title: 'why like this?' });
+    await s.ok('POST', `${B}/items/${it.id}/start`, {}, A);
+    await s.ok('POST', `${B}/items/${it.id}/review`, { changed: 'x', why: 'y', verify: 'z' }, A);
+    const before = await s.ok('GET', `${B}/items/${it.id}`);
+    const { seq } = await s.ok('GET', '/api/app');
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'Why not use the existing cache?', intent: 'explain' }, USER);
+    const [ev] = (await s.ok('GET', `/api/events?since=${seq}&for=ada&types=comment.added`)).events;
+    assert.equal(ev.intent, 'explain', 'addressed to the agent that asked for review');
+    const after = await s.ok('GET', `${B}/items/${it.id}`);
+    assert.equal(after.columnId, before.columnId);
+    assert.equal(after.questions.length, before.questions.length, 'the review stays open');
+    let w = await work();
+    assert.equal(w.next[0].action, 'explain');
+    assert.equal(w.next[0].id, it.id);
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'The existing cache is per-process.' }, A);
+    w = await work();
+    assert.ok(!w.explain.some((x) => x.id === it.id), 'answered');
+  });
+
   it('transitions explain where a ticket can go', async () => {
     const it = await mk({ title: 'where to' });
     const t = await s.ok('GET', `${B}/items/${it.id}/transitions`, undefined, A);
