@@ -395,6 +395,10 @@ async function agentsCmd() {
     };
     fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
     console.log(`Saved "${name}" to ${file}. The running board picks it up within a few seconds.`);
+    // A missing command would only show up as failed runs: check it now.
+    const exe = String(doc.agents[name].run || doc.defaults?.run || 'claude').trim().match(/^"([^"]+)"|^(\S+)/).slice(1).find(Boolean);
+    const found = require('child_process').spawnSync(process.platform === 'win32' ? 'where' : 'which', [exe], { stdio: 'ignore' }).status === 0;
+    if (!found) console.log(`⚠ "${exe}" is not on PATH, so runs will fail. ${exe === 'claude' ? 'Install Claude Code (https://claude.com/claude-code) and sign in once by running `claude`.' : 'Install it or use a full path in --run.'}`);
     if (!f.run && !doc.defaults?.run) console.log('It runs the default: claude -p (headless). Give it permissions it needs with --run "claude -p --permission-mode acceptEdits …" if required.');
     return;
   }
