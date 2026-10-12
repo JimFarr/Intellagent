@@ -217,3 +217,31 @@ describe('standing agents pick up work already on the board', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('model tiers', () => {
+  it('model reaches a claude run as --model; an explicit --model or a non-claude run is left alone; the receptionist sees the team', async () => {
+    const s = await startServer({ agents: { defaults: { ...fast, model: 'sonnet' }, agents: {
+      desk: { role: 'coordinator', enabled: false, run: run('ok') },
+      junior: { role: 'builder', model: 'haiku', enabled: false, description: 'small tickets' },
+      mid: { role: 'builder', enabled: false },
+      pinned: { run: 'claude -p "x" --model opus', model: 'haiku', enabled: false },
+      scripted: { run: run('ok'), model: 'haiku', enabled: false },
+    } } });
+    try {
+      const a = async (n) => s.ok('GET', `/api/agents/${n}`);
+      const j = await a('junior');
+      assert.match(j.run, / --model haiku$/);
+      assert.equal(j.tier, 'junior');
+      assert.match((await a('mid')).run, / --model sonnet$/, 'defaults.model applies');
+      assert.equal((await a('pinned')).run, 'claude -p "x" --model opus', 'an explicit --model wins');
+      assert.doesNotMatch((await a('scripted')).run, /--model/, 'non-claude runs are left alone');
+      assert.equal((await s.api('POST', '/api/agents', { name: 'evil', role: 'builder', model: 'haiku; rm -rf /' }, USER)).status, 400);
+      await s.ok('POST', '/api/agents', { name: 'senior', role: 'builder', model: 'opus' }, USER);
+      assert.match((await a('senior')).run, / --model opus$/);
+      const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'desk' })).body;
+      const text = typeof brief === 'string' ? brief : brief.markdown;
+      assert.match(text, /Agents you can route to/);
+      assert.match(text, /\*\*junior\*\* · builder · haiku \(junior\)/);
+    } finally { await s.stop(); }
+  });
+});

@@ -412,16 +412,17 @@ async function agentsCmd() {
     if (!agents.length) { console.log(`No standing agents. Add one:  intellagent agents add builder\n(definitions live in ${file})`); return; }
     for (const a of agents) {
       const last = a.lastRun ? `last run ${ago(a.lastRun.endedAt || a.lastRun.startedAt)} (${a.lastRun.code ?? 'running'})${a.lastRun.why ? ` for ${a.lastRun.why}` : ''}` : 'never run';
-      console.log(`${a.name.padEnd(14)} ${a.status.padEnd(10)} ${String(a.queued).padStart(3)} queued  ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs/h  ${last}   listens: ${typeof a.listen === 'string' ? a.listen : JSON.stringify(a.listen)}${a.pickup ? `  pickup: ${a.pickup}` : ''}`);
+      console.log(`${a.name.padEnd(14)} ${a.status.padEnd(10)} ${String(a.queued).padStart(3)} queued  ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs/h  ${last}   ${a.model ? `model: ${a.model}${a.tier ? ` (${a.tier})` : ''}  ` : ''}listens: ${typeof a.listen === 'string' ? a.listen : JSON.stringify(a.listen)}${a.pickup ? `  pickup: ${a.pickup}` : ''}`);
     }
     return;
   }
   if (sub === 'add') {
-    if (!name) { console.error('Usage: intellagent agents add <name> [--listen addressed|inbox|human|new-tickets|"types=…"] [--run "<command>"] [--max-runs 20] [--description "…"]'); process.exit(1); }
+    if (!name) { console.error('Usage: intellagent agents add <name> [--listen addressed|inbox|human|new-tickets|"types=…"] [--run "<command>"] [--max-runs 20] [--model haiku|sonnet|opus] [--description "…"]'); process.exit(1); }
     const doc = readAgents(file);
     doc.agents ||= {};
     const listen = !f.listen || ['addressed', 'inbox', 'human', 'new-tickets'].includes(f.listen) ? (f.listen || 'addressed') : Object.fromEntries(new URLSearchParams(String(f.listen)));
     const { ROLES, PERMS } = require('../lib/agents');
+    if (f.model && !/^[\w.:-]{1,64}$/.test(String(f.model))) { console.error('--model: a plain name like haiku, sonnet or opus'); process.exit(1); }
     if (f.role && !ROLES[f.role]) { console.error(`Unknown role "${f.role}". Roles: ${Object.keys(ROLES).join(', ')}`); process.exit(1); }
     const perms = f.allow ? String(f.allow).split(',').map((x) => x.trim()).filter(Boolean) : null;
     const badPerms = (perms || []).filter((k) => !PERMS[k]);
@@ -434,6 +435,7 @@ async function agentsCmd() {
       ...(f.run ? { run: String(f.run) } : {}),
       ...(f['max-runs'] != null ? { maxRunsPerHour: f['max-runs'] === 'none' ? null : Number(f['max-runs']) } : {}),
       ...(f.throttle != null ? { throttleMinutes: Number(f.throttle) } : {}),
+      ...(f.model ? { model: String(f.model) } : {}),
       ...(f.description ? { description: String(f.description) } : {}),
     };
     fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
@@ -522,6 +524,7 @@ const HELP = `intellagent — a kanban for you and your agents
   agents           standing agents the board wakes up itself (defined in .intellagent/agents.json)
     add NAME       --role coordinator|builder|reviewer|researcher|writer  --allow edit,test,build,git,web,read
                    --listen addressed|inbox|human|new-tickets|"types=…"  --max-runs N|none  --throttle MIN  --run "<command>" (overrides role)
+                   --model haiku|sonnet|opus  (junior / mid / senior; the receptionist routes by it)
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 `;

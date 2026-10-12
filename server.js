@@ -1644,6 +1644,15 @@ function briefing(ctx, name, base, via = 'cli') {
       : ['Nothing is waiting for you. Ask the human what to work on, or create tickets for work you were given.']),
     ...(w.waitingOnHuman.length ? ['', `Waiting on the human (don't redo these): ${w.waitingOnHuman.map((x) => `${x.id} "${x.question}"`).join('; ')}`] : []),
     ...(() => {
+      // The receptionist routes work: show it the team with role, model tier and what each does.
+      const isCoord = name === b.coordinator || standing?.list().agents.find((a) => a.name === name)?.role === 'coordinator';
+      const team = isCoord ? standing.list().agents.filter((a) => a.name !== name) : [];
+      if (!team.length) return [];
+      return ['', '## Agents you can route to (set "assignee")',
+        ...team.map((a) => `- **${a.name}**${a.role ? ` · ${a.role}` : ''}${a.model ? ` · ${a.model}${a.tier ? ` (${a.tier})` : ''}` : ''}${a.enabled ? '' : ' · paused'}${a.description ? ` — ${a.description}` : ''}`),
+        'Route by tier when agents have models: **junior** (haiku) gets small, well-specified tickets; **mid** (sonnet) normal features and bugs; **senior** (opus) risky or cross-cutting work and anything with risk: high. Match the role first (a designer gets design work), then the tier.'];
+    })(),
+    ...(() => {
       const g = grantsOf(name);
       if (!g.length) return [];
       const how = {
@@ -2973,7 +2982,7 @@ route('GET', '/api/agents/roles', 'Roles and permissions available for standing 
   const { ROLES, PERMS } = require('./lib/agents');
   return { roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: Object.fromEntries(Object.entries(PERMS).map(([k, v]) => [k, v.label])) };
 });
-route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, description?, listen?, throttleMinutes?, maxRunsPerHour?, coordinator? } — permissions from the fixed list, never a command', ({ body, actor, q }) => {
+route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, model?, description?, listen?, throttleMinutes?, maxRunsPerHour?, coordinator? } — permissions from the fixed list, never a command', ({ body, actor, q }) => {
   humanOnly(actor);
   const a = standing.define(body.name, body);
   if (body.coordinator) {

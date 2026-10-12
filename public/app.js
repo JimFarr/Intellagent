@@ -3828,6 +3828,8 @@
       <div class="aa-roles">${Object.entries(roles).map(([k, v]) => `<button class="aa-role" data-role="${k}">${icon(v.icon || 'bot')}<b>${esc(v.label)}</b><span>${esc(v.description)}</span></button>`).join('')}</div>
       <div class="aa-label">Allowed to</div>
       <div class="aa-perms">${Object.entries(perms).map(([k, label]) => `<button class="toggle-chip" data-perm="${k}">${esc(label)}</button>`).join('')}<span class="aa-note">plus the board itself, always</span></div>
+      <div class="aa-label">Model</div>
+      <div class="aa-perms aa-models">${[['', 'Default'], ['haiku', 'Haiku · junior'], ['sonnet', 'Sonnet · mid'], ['opus', 'Opus · senior']].map(([k, l]) => `<button class="toggle-chip ${k ? '' : 'on'}" data-model="${k}">${l}</button>`).join('')}<span class="aa-note">the receptionist routes small tickets to juniors, risky ones to seniors</span></div>
       <div class="aa-label">Description</div>
       <textarea class="inp aa-desc" rows="2" data-aa-desc></textarea>
       <label class="aa-coord" hidden><input type="checkbox" data-aa-coord checked> Make it this board's coordinator (requests go to it)</label>
@@ -3852,13 +3854,15 @@
     f.addEventListener('click', async (e) => {
       const rb = e.target.closest('[data-role]');
       if (rb) { pickRole(rb.dataset.role); return; }
+      const mb = e.target.closest('[data-model]');
+      if (mb) { $$('[data-model]', f).forEach((b) => b.classList.toggle('on', b === mb)); return; }
       const pb = e.target.closest('[data-perm]');
       if (pb) { if (chosen.has(pb.dataset.perm)) chosen.delete(pb.dataset.perm); else chosen.add(pb.dataset.perm); paint(); return; }
       if (e.target.closest('[data-aa-cancel]')) { fillAgents($('#agentsDrawer .drawer-body')); return; }
       if (e.target.closest('[data-aa-add]')) {
         const name = $('[data-aa-name]', f).value.trim();
         try {
-          await api('POST', `/api/agents?board=${encodeURIComponent(state.boardId)}`, { name, role, perms: [...chosen], description: $('[data-aa-desc]', f).value.trim(), coordinator: role === 'coordinator' && $('[data-aa-coord]', f).checked });
+          await api('POST', `/api/agents?board=${encodeURIComponent(state.boardId)}`, { name, role, perms: [...chosen], model: $('[data-model].on', f)?.dataset.model || null, description: $('[data-aa-desc]', f).value.trim(), coordinator: role === 'coordinator' && $('[data-aa-coord]', f).checked });
           if (role === 'coordinator' && $('[data-aa-coord]', f).checked) state.board.coordinator = name;
           toast(`${name} is on call`, { icon: 'bot', kind: 'ok', timeout: 2500 });
           await refreshPresence();
@@ -4149,7 +4153,7 @@
     const l = a.lastRun;
     const listen = listenLabel(a.listen);
     const why = l?.why ? ` for ${esc(l.why.replace('work.pending', 'work waiting on the board'))}` : '';
-    const meta = `wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
+    const meta = `${a.model ? `runs on <b>${esc(a.model)}</b>${a.tier ? ` (${a.tier})` : ''} · ` : ''}wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
     return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div></div>`;
   }
 
