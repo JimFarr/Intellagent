@@ -3974,6 +3974,7 @@
         <button data-tab="cards">${icon('card')}Cards</button>
         <button data-tab="board">${icon('board')}Board</button>
         <button data-tab="fields">${icon('layers')}Fields</button>
+        <button data-tab="columns">${icon('board')}Columns</button>
         <button data-tab="templates">${icon('copy')}Templates</button>
         <button data-tab="notify">${icon('bell')}Alerts</button>
         <button data-tab="about">${icon('info')}About</button>
@@ -4002,7 +4003,7 @@
     // Live data (schema, profiles) changed elsewhere: redraw quietly unless the user is typing in the pane.
     m.refresh = () => {
       const typing = pane.contains(document.activeElement) && document.activeElement.matches('input, textarea');
-      if (['fields', 'board', 'templates'].includes(m.tab) && !typing) show(m.tab, true);
+      if (['fields', 'board', 'templates', 'columns'].includes(m.tab) && !typing) show(m.tab, true);
     };
     show(tab);
   }
@@ -4171,6 +4172,7 @@
     }
     if (t === 'fields') return fieldsPane();
     if (t === 'templates') return templatesPane();
+    if (t === 'columns') return columnsPane();
     if (t === 'notify') {
       const perm = 'Notification' in window ? Notification.permission : 'unsupported';
       return `<h3>Alerts</h3>
@@ -4236,6 +4238,66 @@
     return `<h3>${esc(state.board?.name || '')} · ticket templates</h3>
       ${cards || `<div class="empty-note">${icon('copy')}</div>`}
       <div class="fadd"><input class="inp" data-newtpl placeholder="New template, e.g. Bug"><button class="btn primary sm" data-tpladd>${icon('plus', 'sm')}Add</button></div>`;
+  }
+
+  /* ─── columns: rename, colour, icon, flags, reorder, add; delete only when empty ─── */
+  const COL_FLAGS = [
+    ['allowCreate', 'New tickets', 'New tickets can be created here'],
+    ['pickup', 'Pick-up', 'Agents pick up work from here'],
+    ['working', 'In progress', 'Where "start" moves tickets'],
+    ['review', 'Review', 'Where "request review" moves tickets'],
+    ['humanOnlyIn', 'Only you move in', 'Agents can\'t move tickets into this column (an approval gate)'],
+    ['humanOnlyOut', 'Only you move out', 'Agents can\'t move tickets out of this column'],
+    ['releaseLeaseOnEnter', 'Release on enter', 'Entering this column releases the ticket\'s lease'],
+  ];
+  const COL_ICONS = ['inbox', 'target', 'play', 'eye', 'check', 'flag', 'clock', 'ask', 'layers', 'sparkle', 'lock', 'archive', 'bot', 'pin'];
+  function columnsPane() {
+    const cols = state.board?.columns || [];
+    return `<h3>${esc(state.board?.name || '')} · columns</h3>
+      ${cols.map((c, i) => `<div class="fcard ccard" data-col="${esc(c.id)}">
+        <div class="srow"><button class="ficon icon-pick" data-cicon title="Icon">${icon(ICONS[c.icon] ? c.icon : 'board')}</button><button class="sw-btn ccolor" data-ccolor style="--c:${esc(c.color)}" title="Colour"></button><input class="inp lab" data-cname value="${esc(c.name)}"><span class="ccount" title="Tickets in this column">${c.itemIds.length}</span>
+          <button class="icon-x" data-cmove="-1" ${i === 0 ? 'disabled' : ''} title="Move left">${icon('chev', 'cleft')}</button><button class="icon-x" data-cmove="1" ${i === cols.length - 1 ? 'disabled' : ''} title="Move right">${icon('chev', 'cright')}</button>
+          <button class="icon-x" data-cdel ${c.itemIds.length ? 'disabled' : ''} title="${c.itemIds.length ? 'Delete|Move or archive its tickets first' : 'Delete column'}">${icon('x', 'sm')}</button></div>
+        <div class="cflags">${COL_FLAGS.map(([k, label, tip]) => `<button class="toggle-chip ${c.flags[k] ? 'on' : ''}" data-cflag="${k}" title="${esc(label)}|${esc(tip)}">${esc(label)}</button>`).join('')}
+          <label class="cnum" title="WIP limit|Hard cap on tickets in this column (0 = none)">WIP <input class="inp num" type="number" min="0" data-cwip value="${c.flags.wipLimit || 0}"></label>
+          <label class="cnum" title="Auto-archive|Archive tickets that sit here this many days (0 = never)">archive after <input class="inp num" type="number" min="0" data-carch value="${c.flags.autoArchiveAfterDays || 0}"> d</label></div>
+      </div>`).join('')}
+      <div class="fadd"><input class="inp" data-newcol placeholder="New column, e.g. QA"><button class="btn primary sm" data-coladd>${icon('plus', 'sm')}Add</button></div>`;
+  }
+  async function columnCall(method, id, body) {
+    try { await api(method, B(`/columns${id ? `/${encodeURIComponent(id)}` : ''}`), body); pulseSaved(); scheduleRefresh(0); }
+    catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+  function wireColumns(pane) {
+    const colOf = (n) => state.board.columns.find((c) => c.id === n.closest('[data-col]')?.dataset.col);
+    pane.addEventListener('click', (e) => {
+      const c = colOf(e.target);
+      const fl = e.target.closest('[data-cflag]');
+      if (fl && c) { fl.classList.toggle('on'); columnCall('PATCH', c.id, { flags: { [fl.dataset.cflag]: fl.classList.contains('on') } }); return; }
+      const mv = e.target.closest('[data-cmove]');
+      if (mv && c) { const i = state.board.columns.indexOf(c); columnCall('PATCH', c.id, { position: i + Number(mv.dataset.cmove) }); return; }
+      const cc = e.target.closest('[data-ccolor]');
+      if (cc && c) { menu(cc, SWATCHES.map((col) => ({ label: col, color: col, run: () => columnCall('PATCH', c.id, { color: col }) }))); return; }
+      const ci = e.target.closest('[data-cicon]');
+      if (ci && c) { menu(ci, COL_ICONS.map((n) => ({ label: n, icon: n, cls: n === c.icon ? 'on' : '', run: () => columnCall('PATCH', c.id, { icon: n }) }))); return; }
+      if (e.target.closest('[data-cdel]') && c && !c.itemIds.length) { columnCall('DELETE', c.id); return; }
+      if (e.target.closest('[data-coladd]')) addColumn();
+    });
+    pane.addEventListener('change', (e) => {
+      const c = colOf(e.target);
+      if (!c) return;
+      if (e.target.matches('[data-cname]')) { const v = e.target.value.trim(); if (v) columnCall('PATCH', c.id, { name: v }); else e.target.value = c.name; }
+      if (e.target.matches('[data-cwip]')) columnCall('PATCH', c.id, { flags: { wipLimit: Math.max(0, Number(e.target.value) || 0) } });
+      if (e.target.matches('[data-carch]')) columnCall('PATCH', c.id, { flags: { autoArchiveAfterDays: Math.max(0, Number(e.target.value) || 0) } });
+    });
+    pane.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('[data-newcol]')) addColumn(); });
+    const addColumn = async () => {
+      const inp = $('[data-newcol]', pane);
+      const name = inp.value.trim();
+      if (!name) { inp.focus(); return; }
+      await columnCall('POST', null, { name, color: SWATCHES[state.board.columns.length % SWATCHES.length], icon: 'layers', position: Math.max(0, state.board.columns.length - 1) });
+      inp.value = '';
+    };
   }
 
   async function templateCall(method, key, body) {
@@ -4371,6 +4433,7 @@
   function wirePane(t, pane, show) {
     if (t === 'fields' && !pane._fieldsWired) { pane._fieldsWired = true; wireFields(pane); }
     if (t === 'templates' && !pane._tplWired) { pane._tplWired = true; wireTemplates(pane); }
+    if (t === 'columns' && !pane._colWired) { pane._colWired = true; wireColumns(pane); }
     pane.onclick = async (e) => {
       const uc = e.target.closest('[data-ucolor]');
       if (uc) { try { await api('PATCH', '/api/profiles/me', { color: uc.dataset.ucolor || null }); pulseSaved(); } catch (err) { toast(err.message, { kind: 'error' }); } return; }

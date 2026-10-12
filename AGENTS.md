@@ -281,7 +281,7 @@ PATCH /api/app                            { "name": "Acme Ops" }
 GET   /api/presence                       → who is connected, their leases and subscriptions
 ```
 
-Columns can only be created by agents (the UI can't). Custom flags are stored as-is.
+The human edits columns in Settings › Columns (rename, colour, icon, flags, order, add; delete only when empty). Custom flags are stored as-is; `pickup` and `working` tell agents where work starts and happens.
 
 ## 8. Shell tips
 
