@@ -798,7 +798,8 @@
       <button class="pill-btn master-btn" id="masterBtn" hidden></button>
       <button class="pill-btn needs-btn" id="needsBtn" title="Needs you|Tickets where an agent is waiting for your answer" hidden>${icon('ask')}<span id="needsCount"></span></button>
       <button class="pill-btn catch-btn" id="catchBtn" title="While you were away|Tickets agents changed since you last looked" hidden>${icon('sparkle')}<span id="catchCount"></span></button>
-      <button class="pill-btn hub-btn agents-btn" id="hubBtn" title="Agents & inbox|Ask an agent, your inbox, the digest, agents, standing rules, flow and the archive"><span class="stack-av" id="agentAvs"></span><span id="agentCount"></span><span class="badge" hidden></span><span class="dot" hidden></span></button>
+      <label class="search ask-field" id="askField" title="Ask an agent|Plan work, create tickets, explain a blocker — anything not tied to one ticket · A"><span class="ask-av" id="askAv"></span><input id="askIn" readonly autocomplete="off" aria-haspopup="dialog" aria-label="Ask an agent"><kbd>A</kbd><i class="ask-dot" hidden></i></label>
+      <button class="pill-btn hub-btn agents-btn" id="hubBtn" data-tip="Agents & inbox|Your inbox, the digest, agents, standing rules, flow and the archive"><span class="stack-av" id="agentAvs"></span><span id="agentCount"></span><span class="badge" hidden></span><span class="dot" hidden></span></button>
       <button class="pill-btn icon-btn" id="bulkBtn" title="Select|Pick several tickets to move, re-prioritise or archive">${icon('checks')}</button>
       <button class="pill-btn icon-btn" id="settingsBtn" title="Settings|Themes, card contents, ticket fields and alerts">${icon('sliders')}</button>`;
     $('#boardBtn').onclick = (e) => boardMenu(e.currentTarget);
@@ -807,8 +808,10 @@
     $('#needsBtn').onclick = () => { const ids = needsIds(); if (ids.length) openItem(ids[0], cardEls.get(ids[0]), { rail: true }); };
 
     $('#catchBtn').onclick = openCatchup;
-    // Unread inbox first; otherwise straight to asking an agent.
-    $('#hubBtn').onclick = () => (state.inbox.some(isUnread) ? openInbox() : openRequests());
+    wireAskField();
+    // Opens on whatever it is signalling: unread inbox, then a new digest entry, else the agents list
+    // (asking an agent has its own field right beside it).
+    $('#hubBtn').onclick = () => (state.inbox.some(isUnread) ? openInbox() : !$('#hubBtn .dot').hidden ? openDigest() : openAgents());
     $('#bulkBtn').onclick = () => setBulk(!state.bulk);
     $('#settingsBtn').onclick = () => openSettings();
     $('.logo').onclick = (e) => {
@@ -913,14 +916,24 @@
     $('#hubBtn .dot').hidden = !lastDigest || lastDigest <= (digestSeen[state.boardId] || '');
     $('#bulkBtn').classList.toggle('on', state.bulk);
     renderPresenceButton();
+    renderAsk();
     $('#build').innerHTML = `<span class="live-dot ${state.live ? 'on' : ''}" title="${state.live ? 'Live' : 'Reconnecting'}"></span>
       <span title="Build|Version · build · board hash — the hash changes on every board edit">v${esc(state.app.version || '')} · ${esc(state.app.build || '')} · ${esc((state.hash || '').slice(0, 8))}</span>`;
   }
 
   function renderPresenceButton() {
     const online = state.presence.filter((p) => p.online);
-    $('#agentAvs').innerHTML = online.length ? online.slice(0, 3).map((p) => avatar({ kind: 'agent', name: p.name })).join('') : icon('bot');
-    $('#agentCount').innerHTML = online.length ? `<span class="live"></span>${online.length}` : '';
+    // Up to three faces for who's online (a bot glyph when nobody is), "+N" beyond that; the inbox count
+    // and the digest dot are drawn by renderInboxBtn / renderHeader. One summary in the tooltip.
+    const shown = online.length > 3 ? 2 : 3;
+    $('#agentAvs').innerHTML = online.length ? online.slice(0, shown).map((p) => avatar({ kind: 'agent', name: p.name })).join('') : icon('bot');
+    $('#agentCount').textContent = online.length > shown ? `+${online.length - shown}` : '';
+    const btn = $('#hubBtn');
+    const unread = state.inbox.filter(isUnread).length;
+    const bits = [online.length ? `${online.length} online: ${online.slice(0, 4).map((p) => p.name).join(', ')}${online.length > 4 ? '…' : ''}` : 'No agents online',
+      unread ? `${unread} unread in your inbox` : '', !$('.dot', btn).hidden ? 'new digest entry' : ''].filter(Boolean);
+    btn.dataset.tip = `Agents & inbox|${bits.join(' · ')}`;
+    btn.setAttribute('aria-label', `Agents and inbox — ${bits.join(', ')}`);
   }
 
   async function refreshPresence() {
@@ -2969,7 +2982,7 @@
     if (ev.type === 'hello') return;
     if (ev.type === 'presence.changed' || (ev.type?.startsWith('lease.') && ev.type !== 'lease.status')) refreshPresence();
     if (ev.type === 'presence.changed') scheduleListeners();
-    if (ev.type?.startsWith('request.')) $('#requestsDrawer .drawer-body')?._reload?.();
+    if (ev.type?.startsWith('request.')) { $('#requestsDrawer .drawer-body')?._reload?.(); if (ev.board === state.boardId) reloadAsk(); }
     if (/^(item\.moved|item\.archived|attention\.|review\.)/.test(ev.type || '')) loadMetrics();
     if (ev.type?.startsWith('agent.') || ev.type === 'agents.changed') refreshPresence();
     if (ev.board && ev.itemId) {
@@ -2992,7 +3005,8 @@
     if (QUIET.has(ev.type)) return;
     const important = ev.type === 'attention.raised' || (ev.type === 'comment.added' && ev.mentions?.some((n) => n.toLowerCase() === settings.userName.toLowerCase()));
     if ((ev.type === 'request.replied' || ev.type === 'request.done') && ev.actor?.kind === 'agent') {
-      toast(describe(ev), { actor: ev.actor, onClick: () => openRequests(), timeout: 6000 });
+      if (askOpen() && ev.board === state.boardId) return; // the reply is landing in the open thread already
+      toast(describe(ev), { actor: ev.actor, onClick: () => (ev.board === state.boardId ? openAsk() : openRequests()), timeout: 6000 });
       return;
     }
     if (ev.type === 'agent.failed') {
@@ -3137,6 +3151,199 @@
     });
     load();
     setTimeout(() => ta.focus(), 250);
+  }
+
+  /* ─── the Ask field: the same requests, one keystroke away in the top bar ───
+     A quiet field beside the agents button ("Ask recipe-bot…"). Focusing it (click, Tab, or A) unfolds a
+     composer over it, with the recipient as a chip and the last few requests as a short thread underneath.
+     The field itself reports back: the agent's run dot while it works, an accent dot once it has replied. */
+  const ASK_KEY = 'intellagent.ask.v1';
+  const askStore = (() => { try { return JSON.parse(localStorage.getItem(ASK_KEY)) || {}; } catch { return {}; } })();
+  askStore.seen ||= {}; askStore.to ||= {};
+  const saveAsk = () => { try { localStorage.setItem(ASK_KEY, JSON.stringify(askStore)); } catch { /* private mode */ } };
+  const ask = { pop: null, to: {}, draft: {}, closing: null };
+  const askOpen = () => !!ask.pop?.isConnected && !ask.pop.classList.contains('leaving');
+  // Who a new ask goes to: what you picked this session, else the coordinator, else whoever you asked last, else a standing agent.
+  const askTo = () => {
+    const b = state.boardId;
+    return ask.to[b] || state.board?.coordinator || askStore.to[b] || Object.keys(state.standing || {})[0] || '';
+  };
+  const askReqs = () => (state.board?.requests || []).slice().reverse();
+  const agentReplied = (q) => q.replies.filter((r) => r.author?.kind === 'agent');
+  const lastAgentReplyAt = () => askReqs().reduce((m, q) => agentReplied(q).reduce((n, r) => (r.at > n ? r.at : n), m), '');
+  // Newest open request whose agent hasn't answered since it was asked (or since the human last added to it).
+  const askPending = () => askReqs().find((q) => q.status === 'open' && q.replies.at(-1)?.author?.kind !== 'agent');
+
+  function renderAsk() {
+    const f = $('#askField');
+    if (!f || !state.board) return;
+    const to = askTo();
+    const pending = askPending();
+    const unread = (lastAgentReplyAt() || '') > (askStore.seen[state.boardId] || '') && !askOpen();
+    const draft = (ask.draft[state.boardId] || '').trim();
+    const lead = pending ? pending.to : to;
+    $('#askAv').innerHTML = lead ? avatar({ kind: 'agent', name: lead }) : icon('send');
+    const inp = $('#askIn');
+    inp.placeholder = draft ? draft.split('\n')[0]
+      : unread ? `${(askReqs().find((q) => agentReplied(q).length)?.to) || 'An agent'} replied`
+        : pending ? `${pending.to} is on it…`
+          : to ? `Ask ${to}…` : 'Ask an agent…';
+    f.classList.toggle('draft', !!draft);
+    f.classList.toggle('unread', unread);
+    f.classList.toggle('pending', !!pending && !unread && !draft);
+    $('.ask-dot', f).hidden = !unread;
+  }
+
+  async function reloadAsk() {
+    try { state.board.requests = (await api('GET', B('/requests'))).reverse(); } catch { return; }
+    renderAsk();
+    if (askOpen()) { drawAskThread(); markAskSeen(); }
+  }
+  function markAskSeen() {
+    const t = lastAgentReplyAt();
+    if (t && t > (askStore.seen[state.boardId] || '')) { askStore.seen[state.boardId] = t; saveAsk(); }
+  }
+
+  function wireAskField() {
+    const f = $('#askField');
+    const inp = $('#askIn');
+    // Readonly: the field is a doorway; typing happens in the composer that opens over it.
+    inp.addEventListener('focus', () => { if (!ask.suppress) openAsk(); });
+    // Focus left on the field after Esc: Enter / Space / ↓ reopen it, and typing carries straight on.
+    inp.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); openAsk(); return; }
+      if (e.key.length === 1) {
+        e.preventDefault();
+        ask.draft[state.boardId] = (ask.draft[state.boardId] || '') + e.key;
+        openAsk();
+      }
+    });
+    f.addEventListener('pointerdown', (e) => { e.preventDefault(); if (askOpen()) closeAsk(); else openAsk(); });
+  }
+
+  function placeAsk() {
+    const pop = ask.pop;
+    const r = $('#askField').getBoundingClientRect();
+    const narrow = innerWidth < 640;
+    const w = narrow ? innerWidth - 16 : Math.min(460, innerWidth - 16);
+    const left = narrow ? 8 : clamp(r.right - w, 8, innerWidth - w - 8);
+    Object.assign(pop.style, { width: `${w}px`, left: `${left}px`, top: `${Math.max(8, r.top - 4)}px` });
+  }
+
+  function openAsk() {
+    if (!state.board) return;
+    if (askOpen()) { $('textarea', ask.pop).focus(); return; }
+    if (state.modal) closeModal(true);
+    closeMenus();
+    ask.pop?.remove();
+    const examples = ['Create tickets for…', 'What’s blocked, and why?', 'Summarise what changed today'];
+    const pop = el(`<div class="ask-pop" role="dialog" aria-label="Ask an agent">
+      ${tboxHTML({ cls: 'ask-box', ph: '', okIcon: 'send', okTitle: 'Send|Enter · Shift+Enter for a new line', hint: '↵ send', tools: '<button class="ask-to" type="button"></button>' })}
+      <div class="ask-thread"></div>
+      <div class="ask-foot"><button class="ask-all" type="button">All requests${icon('chev', 'sm')}</button><span class="grow"></span><span><kbd>@</kbd> loop someone in</span><span><kbd>Esc</kbd> close</span></div>
+    </div>`);
+    pop._examples = examples;
+    ask.pop = pop;
+    document.body.append(pop);
+    placeAsk();
+    $('#askField').classList.add('open');
+    const ta = $('textarea', pop);
+    ta.value = ask.draft[state.boardId] || '';
+    autosize(ta);
+    const drawTo = () => {
+      const to = askTo();
+      $('.ask-to', pop).innerHTML = to ? `<span class="muted">To</span>${avatar({ kind: 'agent', name: to })}<b>${esc(to)}</b>${icon('chev', 'sm')}` : `<span class="muted">To</span><b class="ph">Choose an agent</b>${icon('chev', 'sm')}`;
+      $('.ask-to', pop).dataset.tip = to === state.board.coordinator ? 'Coordinator|The board’s default agent for asks · click to send to someone else' : 'Recipient|Click to choose another agent';
+      ta.placeholder = to ? `Ask ${to} to plan, create tickets, explain…` : 'Ask an agent…';
+    };
+    const pickTo = () => {
+      const btn = $('.ask-to', pop);
+      const to = askTo();
+      menu(btn, agentChoices().map((n) => ({ label: n, avatar: { kind: 'agent', name: n }, hint: n === state.board.coordinator ? 'coordinator' : state.standing?.[n] ? 'standing' : '', cls: n === to ? 'on' : '', run: () => { ask.to[state.boardId] = n; drawTo(); renderAsk(); ta.focus(); } })),
+        { search: true, placeholder: 'Find or type a name…', onClose: () => setTimeout(() => { if (askOpen() && !pop.contains(document.activeElement)) ta.focus(); }), creatable: (n) => { ask.to[state.boardId] = n; drawTo(); renderAsk(); ta.focus(); } });
+    };
+    pop._pickTo = pickTo;
+    drawTo();
+    drawAskThread();
+    const send = async () => {
+      const text = ta.value.trim();
+      if (!text) { ta.focus(); return; }
+      const to = askTo();
+      if (!to) { pickTo(); return; }
+      pop.classList.add('sending');
+      try {
+        await api('POST', B('/requests'), { body: text, to });
+        ta.value = '';
+        ask.draft[state.boardId] = '';
+        autosize(ta);
+        askStore.to[state.boardId] = to; saveAsk();
+        await reloadAsk();
+      } catch (e) { toast(e.message, { kind: 'error' }); }
+      pop.classList.remove('sending');
+      ta.focus();
+    };
+    wireTbox($('.ask-box', pop), send, { submitOnEnter: true, escape: () => closeAsk(true) });
+    ta.addEventListener('input', () => { ask.draft[state.boardId] = ta.value; });
+    $('.ask-to', pop).onclick = pickTo;
+    $('.ask-all', pop).onclick = () => { closeAsk(); openRequests(); };
+    pop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAsk(true); } });
+    pop.addEventListener('click', (e) => {
+      const ex = e.target.closest('[data-example]');
+      if (ex) { ta.value = ex.dataset.example.replace(/…$/, ' '); ask.draft[state.boardId] = ta.value; autosize(ta); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); return; }
+      if (e.target.closest('a, .avatar')) return;
+      if (e.target.closest('[data-req]')) { closeAsk(); openRequests(); }
+    });
+    const off = (e) => {
+      if (!pop.isConnected) { document.removeEventListener('pointerdown', off, true); return; }
+      if (pop.contains(e.target) || e.target.closest?.('.menu, .mention-pop, #askField')) return;
+      closeAsk();
+    };
+    setTimeout(() => document.addEventListener('pointerdown', off, true));
+    pop._off = off;
+    // Tabbing out of the composer folds it back into the field (the draft is kept).
+    pop.addEventListener('focusout', (e) => { if (e.relatedTarget && !pop.contains(e.relatedTarget) && !e.relatedTarget.closest('.menu, .mention-pop')) closeAsk(); });
+    addEventListener('resize', placeAsk);
+    ta.focus();
+    markAskSeen();
+    renderAsk();
+  }
+
+  function closeAsk(refocus = false) {
+    const pop = ask.pop;
+    if (!pop || pop.classList.contains('leaving')) return;
+    document.removeEventListener('pointerdown', pop._off, true);
+    removeEventListener('resize', placeAsk);
+    closeMenus();
+    pop.classList.add('leaving');
+    $('#askField')?.classList.remove('open');
+    const done = () => { pop.remove(); if (ask.pop === pop) ask.pop = null; renderAsk(); };
+    if (reduced() || matchMedia('(prefers-reduced-motion: reduce)').matches) done(); else setTimeout(done, 140);
+    if (refocus) { ask.suppress = true; $('#askIn').focus(); ask.suppress = false; }
+    else if (pop.contains(document.activeElement)) document.activeElement.blur();
+    renderAsk();
+  }
+
+  function drawAskThread() {
+    const pop = ask.pop;
+    if (!pop) return;
+    const box = $('.ask-thread', pop);
+    const reqs = askReqs().slice(0, 4);
+    const seen = pop._seenAt ??= askStore.seen[state.boardId] || '';
+    if (!reqs.length) {
+      box.innerHTML = `<div class="ask-empty"><span class="muted">Anything that isn’t one ticket — the agent replies here.</span><div class="ask-ex">${pop._examples.map((x) => `<button type="button" data-example="${esc(x)}">${esc(x)}</button>`).join('')}</div></div>`;
+      return;
+    }
+    box.innerHTML = `<div class="ask-sec">Recent</div>${reqs.map((q) => {
+      const r = agentReplied(q).at(-1);
+      const waiting = q.status === 'open' && q.replies.at(-1)?.author?.kind !== 'agent';
+      const fresh = r && r.at > seen;
+      return `<div class="ask-item ${q.status} ${fresh ? 'fresh' : ''}" data-req="${esc(q.id)}" title="Open the thread|All replies, and mark it done">
+        <div class="ai-q"><span class="ai-body">${esc(q.body.split('\n')[0])}</span><span class="ai-meta">${q.status === 'done' ? icon('check', 'sm') : ''}${esc(q.to)} · ${rel(q.at)}</span></div>
+        ${waiting ? `<div class="ai-r wait">${avatar({ kind: 'agent', name: q.to })}<span>${r ? 'Following up' : 'On it'}<i class="ai-dots"><b></b><b></b><b></b></i></span></div>`
+          : r ? `<div class="ai-r">${avatar(r.author)}<div class="md">${md(r.body)}</div></div>` : ''}
+      </div>`;
+    }).join('')}`;
   }
 
   function openRules() {
@@ -3411,6 +3618,7 @@
     const n = state.inbox.filter(isUnread).length;
     badge.hidden = !n;
     badge.textContent = n > 99 ? '99+' : n;
+    renderPresenceButton();
     if ($('#inboxDrawer')) drawInbox($('#inboxDrawer .drawer-body'));
   }
   function markRead(seq) { if (!inboxRead.ids.includes(seq)) { inboxRead.ids.push(seq); inboxRead.ids = inboxRead.ids.slice(-500); saveInbox(); } }
@@ -3559,7 +3767,7 @@
       activeMaster()
         ? { section: A, label: `Release the board (${activeMaster().holder})`, icon: 'x', run: () => api('DELETE', B('/master')).then(() => scheduleRefresh(0), (e) => toast(e.message, { kind: 'error' })) }
         : { section: A, label: 'Hold the whole board', icon: 'lock', hint: 'master lease', run: () => api('POST', B('/master'), { force: true }).then(() => scheduleRefresh(0), (e) => toast(e.message, { kind: 'error' })) },
-      { section: A, label: 'Ask an agent…', icon: 'send', hint: state.board?.coordinator || '', run: openRequests },
+      { section: A, label: 'Ask an agent…', icon: 'send', hint: askTo() || '', run: () => setTimeout(openAsk, 0) },
       { section: A, label: 'Agents', icon: 'bot', run: openAgents },
       { section: A, label: 'Archive', icon: 'archive', run: openArchive },
       { section: A, label: 'Select mode', icon: 'checks', run: () => setBulk(!state.bulk) },
@@ -4166,6 +4374,7 @@
     if (e.key === 'Escape') {
       if ($('.menu')) { closeMenus(); return; }
       if ($('.palette-scrim')) { closePalette(); return; }
+      if (askOpen()) { closeAsk(true); return; }
       if ($('.lightbox')) { $('.lightbox').remove(); return; }
       if (state.modal) { if (typing) e.target.blur(); closeModal(); return; }
       if (state.bulk) { setBulk(false); return; }
@@ -4174,6 +4383,7 @@
     }
     if (typing) return;
     if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
+    if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey && !e.altKey && !state.modal && !$('.palette-scrim')) { e.preventDefault(); openAsk(); }
     const m = state.modal;
     if (m?.kind === 'item' && m.rail && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       const ids = needsIds();
