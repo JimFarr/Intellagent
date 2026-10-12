@@ -1351,6 +1351,7 @@
     c.classList.toggle('aged', age > 0.05);
     c.classList.toggle('review', it.needsHuman?.kind === 'review');
     c.classList.toggle('unseen', !!(state.boardId && seenFor(state.boardId).items[it.id]));
+    markFresh(c, it.id);
     const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), Math.floor(idleDays(it))].join('|');
     if (c._sig === sig) return;
     const changed = c._v != null && c._v !== it.version;
@@ -1359,6 +1360,16 @@
     $('.c-body', c).innerHTML = cardHTML(it, lease, blockers, inGroup);
     tickRings(c);
     if (changed && !c.classList.contains('placeholder')) { c.classList.remove('flash'); void c.offsetWidth; c.classList.add('flash'); }
+  }
+
+  // Tickets that just landed get a themed "new" highlight for a few seconds.
+  const freshUntil = new Map();
+  const FRESH_MS = 4500;
+  function markFresh(c, id) {
+    const left = (freshUntil.get(id) || 0) - Date.now();
+    if (left <= 0 || c.classList.contains('is-new')) return;
+    c.classList.add('is-new');
+    setTimeout(() => { c.classList.remove('is-new'); freshUntil.delete(id); }, left);
   }
 
   function idleDays(it) {
@@ -2995,6 +3006,7 @@
     if (ev.type === 'hello') return;
     if (ev.type === 'presence.changed' || (ev.type?.startsWith('lease.') && ev.type !== 'lease.status')) refreshPresence();
     if (ev.type === 'presence.changed') scheduleListeners();
+    if (ev.type === 'item.created' && ev.itemId) freshUntil.set(ev.itemId, Date.now() + FRESH_MS);
     if (ev.type?.startsWith('request.')) { $('#requestsDrawer .drawer-body')?._reload?.(); if (ev.board === state.boardId) reloadAsk(); }
     if (/^(item\.moved|item\.archived|attention\.|review\.)/.test(ev.type || '')) loadMetrics();
     if (ev.type?.startsWith('agent.') || ev.type === 'agents.changed') refreshPresence();

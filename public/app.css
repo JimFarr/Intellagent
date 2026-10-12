@@ -1658,3 +1658,18 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .aa-desc { resize: vertical; min-height: 54px; }
 .aa-coord { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .aa-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+
+/* a ticket that just landed: an accent ring and a small "new" tag that fade out over a few seconds.
+   Themes can restyle .card.is-new (e.g. Pop uses an offset shadow). */
+.card.is-new { animation: card-new 4.5s cubic-bezier(.4, 0, .2, 1) both; }
+@keyframes card-new {
+  0% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px color-mix(in oklab, var(--accent) 25%, transparent), 0 10px 30px -8px color-mix(in oklab, var(--accent) 55%, transparent); }
+  70% { box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 80%, transparent), 0 0 0 4px color-mix(in oklab, var(--accent) 12%, transparent), var(--card-shadow); }
+  100% { box-shadow: var(--card-shadow); }
+}
+.card.is-new .c-title::after { content: 'new'; margin-left: 7px; padding: 1px 6px; border-radius: 99px; vertical-align: 2px; font: 700 9.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); background: color-mix(in oklab, var(--accent) 15%, transparent); animation: new-tag 4.5s ease both; }
+@keyframes new-tag { 0%, 75% { opacity: 1; } 100% { opacity: 0; } }
+:root[data-theme="pop"] .card.is-new { animation: none; box-shadow: 5px 5px 0 var(--accent); transition: box-shadow 1.2s ease 3s; }
+:root[data-theme="phosphor"] .card.is-new .c-title::after { content: '> new'; background: none; }
+.reduced .card.is-new { animation: none; box-shadow: 0 0 0 2px var(--accent); }
+.reduced .card.is-new .c-title::after { animation: none; }
