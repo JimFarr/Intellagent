@@ -1328,3 +1328,6 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .c-title .c-type.inline { display: inline-flex; vertical-align: -2px; margin-right: 6px; }
 .c-body > .c-title:first-child { margin-top: 0; }
 :root[data-cards="sticky"] .c-body > .c-title:first-child { padding-right: var(--corner, 0px); }
+
+.c-body { display: flow-root; }
+.c-top.float { float: right; margin: -1px 0 4px 10px; gap: 6px; }

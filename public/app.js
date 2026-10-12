@@ -1143,11 +1143,12 @@
     const desc = s.description && shown('description') && it.description ? `<p class="c-desc">${esc(stripMd(it.description).slice(0, 220))}</p>` : '';
     const img = stub('cover') ? coverOf(it) : null;
     const thumb = img ? `<div class="c-thumb"><img src="${esc(img.url)}" alt="" loading="lazy" draggable="false"></div>` : '';
-    // Without an ID and with nothing else on the top row, the row would hold a lone type icon:
-    // drop it and lead the title with the icon instead, so the title sits at the top.
-    const onlyType = !s.id && top.length - top.indexOf('<span class="grow"></span>') === 1;
-    const lead = onlyType && stub('type') ? `<span class="c-type inline" title="${TYPE_TIPS[it.type]}">${icon(it.type, 'sm')}</span>` : '';
-    return `${onlyType ? '' : `<div class="c-top">${top.join('')}</div>`}<h3 class="c-title ${lead ? 'has-lead' : ''}">${lead}${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(lease.claimant)} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
+    // Without an ID the title goes to the top: the type icon leads it, and whatever else was on the
+    // top row (priority, badges, lease timer) floats top-right with the title wrapping beside it.
+    const right = top.slice(top.indexOf('<span class="grow"></span>') + 1);
+    const lead = !s.id && stub('type') ? `<span class="c-type inline" title="${TYPE_TIPS[it.type]}">${icon(it.type, 'sm')}</span>` : '';
+    const head = s.id ? `<div class="c-top">${top.join('')}</div>` : right.length ? `<div class="c-top float">${right.join('')}</div>` : '';
+    return `${head}<h3 class="c-title ${lead ? 'has-lead' : ''}">${lead}${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(lease.claimant)} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
   }
 
   function tickRings(root = document) {
