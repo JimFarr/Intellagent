@@ -387,10 +387,10 @@ async function agentsCmd() {
     return;
   }
   if (sub === 'add') {
-    if (!name) { console.error('Usage: intellagent agents add <name> [--listen inbox|human|"types=…&column=…"] [--run "<command>"] [--max-runs 20] [--description "…"]'); process.exit(1); }
+    if (!name) { console.error('Usage: intellagent agents add <name> [--listen addressed|inbox|human|new-tickets|"types=…"] [--run "<command>"] [--max-runs 20] [--description "…"]'); process.exit(1); }
     const doc = readAgents(file);
     doc.agents ||= {};
-    const listen = !f.listen || f.listen === 'inbox' || f.listen === 'human' ? (f.listen || 'inbox') : Object.fromEntries(new URLSearchParams(String(f.listen)));
+    const listen = !f.listen || ['addressed', 'inbox', 'human', 'new-tickets'].includes(f.listen) ? (f.listen || 'addressed') : Object.fromEntries(new URLSearchParams(String(f.listen)));
     const { ROLES, PERMS } = require('../lib/agents');
     if (f.role && !ROLES[f.role]) { console.error(`Unknown role "${f.role}". Roles: ${Object.keys(ROLES).join(', ')}`); process.exit(1); }
     const perms = f.allow ? String(f.allow).split(',').map((x) => x.trim()).filter(Boolean) : null;
@@ -490,7 +490,7 @@ const HELP = `intellagent — a kanban for you and your agents
 
   agents           standing agents the board wakes up itself (defined in .intellagent/agents.json)
     add NAME       --role coordinator|builder|reviewer|researcher|writer  --allow edit,test,build,git,web,read
-                   --listen inbox|human|"types=…&column=…"  --max-runs N|none  --throttle MIN  --run "<command>" (overrides role)
+                   --listen addressed|inbox|human|new-tickets|"types=…"  --max-runs N|none  --throttle MIN  --run "<command>" (overrides role)
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 `;

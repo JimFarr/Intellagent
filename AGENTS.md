@@ -203,7 +203,7 @@ You only see board events when you look. Ways to make answers on cards reach you
   }
 }
 ```
-- `listen`: `inbox` (default — events addressed to the agent), `human` (everything the human does) or an event filter object.
+- `listen`: `addressed` (default — wakes only when the event is *for* it: an @mention outside code/quotes, an assignment, a lease request or handover, an answer to its question, a verdict on its review, a request), `inbox` (also everything on tickets it worked on or commented on), `human` (everything the human does), `new-tickets` (tickets the human creates), an event filter object, or a list of these. The coordinator role uses `addressed` + `new-tickets`. Events that don't wake it still show in its inbox and `…/work`.
 - `run`: the command (default `claude -p …`). It gets the events as a prompt on stdin, `INTELLAGENT_AGENT`, `INTELLAGENT_URL` and `INTELLAGENT_EVENTS` (JSON file) in its environment, and runs in the project folder.
 - **One run per agent at a time**; events that arrive meanwhile go into the next run.
 - A run that fails, times out or is cut off by a restart is **retried automatically** with the same events (the prompt says it was interrupted — check for half-finished work). After `maxFailures` in a row the agent is **flagged failed** and waits for the human.

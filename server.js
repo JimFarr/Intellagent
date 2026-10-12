@@ -561,15 +561,26 @@ function recipientsFor(item, actor, extra = []) {
 
 // Housekeeping events never wake anyone (a status line from one agent must not wake the others).
 const QUIET_TYPES = new Set(['lease.status', 'lease.renewed', 'item.reordered', 'reaction.added', 'reaction.removed']);
+// @names in markdown that count as mentions: not inside `code`, ``` blocks or > quotes (so talking
+// *about* an agent doesn't wake it).
+function mentionsIn(text) {
+  const plain = String(text || '').replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').split('\n').filter((l) => !/^\s*>/.test(l)).join('\n');
+  return [...new Set([...plain.matchAll(/(?:^|[\s(])@([\w.-]+)/g)].map((m) => m[1].replace(/[.-]+$/, '')))];
+}
+
 function itemEvent(ctx, type, item, actor, extra = {}) {
   const { mentions = [], ...rest } = extra;
   if (QUIET_TYPES.has(type)) {
     return { board: ctx.id, type, actor, itemId: item.id, columnId: item.columnId, item: snapshot(ctx, item), recipients: [], ...rest };
   }
+  const addressed = [...new Set(mentions.filter((n) => n && n !== actor.name))];
   return {
     board: ctx.id, type, actor, itemId: item.id, columnId: item.columnId,
     // The master-lease holder works every ticket without leasing it, so it hears about all of them.
     item: snapshot(ctx, item), recipients: recipientsFor(item, actor, [...mentions, activeMaster(ctx)?.holder].filter((n) => n && n !== actor.name)),
+    // addressed ⊆ recipients: the people this event is *for* (a mention, an assignment, a handover, an answer,
+    // a verdict). Standing agents wake on these; the rest of the recipients just hear about it.
+    ...(addressed.length ? { addressed } : {}),
     ...(mentions.length ? { mentions } : {}), ...rest,
   };
 }
@@ -969,7 +980,7 @@ function addComment(ctx, id, d, actor) {
     item.comments.push(c);
     item.version++;
     item.updatedAt = c.createdAt;
-    const mentions = [...c.body.matchAll(/(?:^|\s)@([\w.-]+)/g)].map((m) => m[1]);
+    const mentions = mentionsIn(c.body);
     if (intent && !mentions.length) {
       const target = (d.replyTo && item.comments.find((x) => x.id === d.replyTo)?.author) || null;
       const who = target?.kind === 'agent' ? target.name : item.questions?.find((q) => q.kind === 'review')?.raisedBy || item.workedBy?.at(-1) || item.assignee;
@@ -1333,7 +1344,7 @@ function createRequest(ctx, d, actor) {
     const req = { id: rid('r'), body, to, by: actor, at: now(), status: 'open', replies: [] };
     (ctx.board.requests ||= []).push(req);
     if (ctx.board.requests.length > 300) ctx.board.requests.splice(0, ctx.board.requests.length - 300);
-    events.push({ board: ctx.id, type: 'request.created', actor, request: { id: req.id, body: trimChange(body), to }, recipients: [to].filter((n) => n !== actor.name) });
+    events.push({ board: ctx.id, type: 'request.created', actor, request: { id: req.id, body: trimChange(body), to }, recipients: [to].filter((n) => n !== actor.name), addressed: [to].filter((n) => n !== actor.name) });
     return req;
   });
 }
@@ -1772,6 +1783,7 @@ function parseFilter(src = {}) {
     columnId: src.columnId || src.column || undefined,
     claimant: src.claimant || undefined,
     for: src.for || undefined,
+    addressed: src.addressed || undefined,
     itemType: src.itemType || undefined,
     parent: src.parent || undefined,
     fields: list(src.fields ?? src.field),
@@ -1812,6 +1824,7 @@ function matchesFilter(event, filter) {
   // lease events carry the claimant directly; item events carry the current leaseholder in the snapshot
   if (filter.claimant && !same(event.claimant, filter.claimant) && !same(event.item?.claimant, filter.claimant)) return false;
   if (filter.for && !(event.recipients || []).some((r) => same(r, filter.for))) return false;
+  if (filter.addressed && !(event.addressed || []).some((r) => same(r, filter.addressed))) return false;
   if (filter.itemType && !same(event.item?.type, filter.itemType)) return false;
   if (filter.parent && !same(event.item?.parent, filter.parent)) return false;
   // "properties" matches any properties.* change; "properties.risk" matches exactly

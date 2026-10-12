@@ -121,6 +121,27 @@ describe('standing agents', () => {
   });
 });
 
+describe('standing agents wake only when addressed', () => {
+  it('a thread participant is not woken by later comments; a mention (outside code) is', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { quiet: { run: run('ok') } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'addressed only', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@quiet first' }, USER);
+      await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('quiet:')), 8000, 'first run');
+      await until(async () => (await agentState(s, 'quiet')).status === 'idle', 4000, 'idle');
+      const runs = (await agentState(s, 'quiet')).runsLastHour;
+      // quiet is now a thread participant: plain comments and code-span mentions must not wake it
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'just chatting here' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'talking about `@quiet` in code' }, USER);
+      await new Promise((res) => setTimeout(res, 900));
+      assert.equal((await agentState(s, 'quiet')).runsLastHour, runs, 'no new run');
+      assert.equal((await agentState(s, 'quiet')).queued, 0);
+      await s.ok('PATCH', `${B}/items/${it.id}`, { assignee: 'quiet' }, USER);
+      await until(async () => (await agentState(s, 'quiet')).runsLastHour > runs, 8000, 'assignment wakes it');
+    } finally { await s.stop(); }
+  });
+});
+
 describe('coordinator role', () => {
   it('wakes on tickets the human creates, without being assigned', async () => {
     const s = await startServer({ agents: { defaults: fast, agents: { triager: { role: 'coordinator', run: run('ok') } } } });
@@ -128,7 +149,7 @@ describe('coordinator role', () => {
       const it = await s.ok('POST', `${B}/items`, { title: 'unassigned new ticket', column: 'Backlog' }, USER);
       await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('triager:')), 8000, 'coordinator triage run');
       const brief = (await s.ok('GET', '/api/agents/triager')).listen;
-      assert.deepEqual(brief, ['inbox', 'new-tickets']);
+      assert.deepEqual(brief, ['addressed', 'new-tickets']);
     } finally { await s.stop(); }
   });
 });

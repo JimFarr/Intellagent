@@ -3430,7 +3430,7 @@
   }
   const RUN_LABEL = { running: 'running', queued: 'queued', retrying: 'retrying', throttled: 'throttled', failed: 'failed — needs you', paused: 'paused', idle: 'idle' };
   // Controls for a standing agent (one the board runs itself, from agents.json).
-  const LISTEN_LABEL = { inbox: 'its inbox', human: 'everything you do', 'new-tickets': 'new tickets' };
+  const LISTEN_LABEL = { addressed: 'mentions & assignments', inbox: 'everything on its tickets', human: 'everything you do', 'new-tickets': 'new tickets' };
   const listenLabel = (l) => [].concat(l || 'inbox').map((x) => (typeof x === 'string' ? LISTEN_LABEL[x] || x : Object.entries(x).map(([k, v]) => `${k}=${v}`).join(' '))).join(' + ');
 
   function standingControls(a) {
