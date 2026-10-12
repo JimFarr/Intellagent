@@ -6,6 +6,38 @@
 // The comment also says whether the prompt reported an interrupted earlier run.
 //   node fake-agent.js flaky-once <marker>   comment through the real CLI, fail the first time, succeed on retry
 const [mode, arg] = process.argv.slice(2);
+//   node fake-agent.js stream [crash-marker]   keep-alive: one process, a turn per stream-json user line; each turn
+//   comments "turn <n> in pid <pid>" on the batch's tickets and answers with a result line. With a marker file
+//   path, the first turn ever crashes the process (to test restart and retry).
+if (mode === 'stream') {
+  const fs = require('fs');
+  const { runContext } = require('../lib/locate');
+  let buf = '';
+  let turns = 0;
+  process.stdin.on('data', async (d) => {
+    buf += d;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i);
+      buf = buf.slice(i + 1);
+      if (!line.trim()) continue;
+      turns++;
+      if (arg && !fs.existsSync(arg)) { fs.writeFileSync(arg, 'crashed'); process.exit(1); }
+      const ctx = runContext();
+      const events = JSON.parse(fs.readFileSync(ctx.events, 'utf8'));
+      for (const id of new Set(events.map((e) => e.itemId).filter(Boolean))) {
+        await fetch(`${process.env.INTELLAGENT_URL}/api/boards/main/items/${id}/comments`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT, ...(ctx.run ? { 'x-intellagent-run': ctx.run } : {}) },
+          body: JSON.stringify({ body: `turn ${turns} in pid ${process.pid}` }),
+        });
+      }
+      process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok' })}\n`);
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
 let prompt = '';
 process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
   if (mode === 'fail') process.exit(1);

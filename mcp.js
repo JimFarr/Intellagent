@@ -169,7 +169,7 @@ async function callTool(name, args = {}) {
   const t = tools.find((x) => x.name === name);
   if (!t) throw new Error(`Unknown tool ${name}`);
   if (!BASE) return { text: NO_BOARD, isError: true };
-  const { INTELLAGENT_RUN: run, INTELLAGENT_BATCH: batch } = process.env;
+  const { run, batch } = require('./lib/locate').runContext();
   const headers = { 'Content-Type': 'application/json', 'X-Agent': AGENT, ...(tokenFor(AGENT) ? { Authorization: `Bearer ${tokenFor(AGENT)}` } : {}), ...(run ? { 'X-Intellagent-Run': run } : {}) };
   // A tool spec may look something up first (e.g. create-or-update), so it can be async and gets a JSON GET helper.
   const getJson = async (m, p) => (await fetch(BASE + p, { method: m, headers })).json();

@@ -52,7 +52,7 @@ function readBody() {
   const M = method.toUpperCase();
   // Inside a standing-agent run: tag calls with the run, and derive an Idempotency-Key from the batch, so
   // a retry that repeats an identical write gets the first reply instead of doing it twice.
-  const { INTELLAGENT_RUN: run, INTELLAGENT_BATCH: batch } = process.env;
+  const { run, batch } = require('./lib/locate').runContext();
   const idemKey = batch && M !== 'GET' ? require('crypto').createHash('sha1').update(`${batch}|${M}|${path}|${body || ''}`).digest('hex') : null;
   const res = await fetch(base + path, {
     method: M,

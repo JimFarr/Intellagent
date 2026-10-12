@@ -245,3 +245,41 @@ describe('model tiers', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('keep-alive standing agents', () => {
+  it('one process serves several wakes as turns, is recycled after recycleAfterRuns, restarts after a crash and stops on pause', async () => {
+    const marker = path.join(require('os').tmpdir(), `ia-crash-${Date.now()}`);
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      keeper: { run: run('stream'), keepAlive: true, recycleAfterRuns: 2 },
+      crashy: { run: run('stream', `"${marker}"`), keepAlive: true },
+    } } });
+    const pidOf = (c) => Number(/pid (\d+)/.exec(c)?.[1]);
+    const mine = async (id, who) => (await comments(s, id)).filter((c) => c.startsWith(`${who}: turn`));
+    const idle = (who) => until(async () => (await agentState(s, who)).status === 'idle', 6000, `${who} idle`);
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'keep-alive', column: 'Backlog' }, USER);
+      for (let n = 1; n <= 3; n++) {
+        await s.ok('POST', `${B}/items/${it.id}/comments`, { body: `@keeper wake ${n}` }, USER);
+        await until(async () => (await mine(it.id, 'keeper')).length === n, 8000, `turn ${n}`);
+        await idle('keeper');
+      }
+      const [t1, t2, t3] = await mine(it.id, 'keeper');
+      assert.match(t1, /turn 1 in/);
+      assert.match(t2, /turn 2 in/);
+      assert.equal(pidOf(t1), pidOf(t2), 'the second wake is a turn in the same process');
+      assert.match(t3, /turn 1 in/, 'recycled after 2 turns: a fresh process');
+      assert.notEqual(pidOf(t3), pidOf(t1));
+      assert.equal((await agentState(s, 'keeper')).session.turns, 1);
+      await s.ok('POST', '/api/agents/keeper/pause', {}, USER);
+      assert.equal((await agentState(s, 'keeper')).session, null, 'pausing stops the session');
+
+      const c = await s.ok('POST', `${B}/items`, { title: 'crash', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${c.id}/comments`, { body: '@crashy go' }, USER);
+      await until(async () => (await mine(c.id, 'crashy')).length === 1, 10000, 'retried in a new process');
+      assert.equal((await agentState(s, 'crashy')).failures, 0);
+    } finally {
+      await s.stop();
+      require('fs').rmSync(marker, { force: true });
+    }
+  });
+});

@@ -12,7 +12,33 @@
   const hashStr = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   const hue = (s) => hashStr(String(s)) % 360;
   const initials = (n) => String(n).split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
-  const tagColor = (p) => `hsl(${hue(p)} 72% 62%)`;
+  // Parent tags take one of eight OKLCH hues spaced around the wheel; lightness and chroma are theme tokens
+  // (--tag-l, --tag-c) so the same tag reads on light and dark. Slots are dealt out board-wide: each name
+  // starts at its hashed slot and moves along only when an earlier name took it, so up to eight parents
+  // never share a colour and a name keeps its colour on chips, groups and menus alike.
+  const TAG_HUES = [25, 70, 115, 160, 205, 250, 295, 340];
+  let tagSlots = new Map(), tagSlotsFor;
+  const tagHome = (p) => hashStr(String(p)) % TAG_HUES.length;
+  function tagSlot(p) {
+    const board = state.board;
+    // Rebuild when the board is replaced, or when an in-place edit brought in a name we haven't dealt yet.
+    if (tagSlotsFor !== board || (!tagSlots.has(p) && Object.values(board?.items || {}).some((it) => it.parent === p))) {
+      tagSlotsFor = board;
+      tagSlots = new Map();
+      const names = [...new Set(Object.values(board?.items || {}).map((it) => it.parent).filter(Boolean))];
+      names.sort((a, b) => tagHome(a) - tagHome(b) || (a < b ? -1 : 1));
+      let used = new Set();
+      for (const n of names) {
+        if (used.size === TAG_HUES.length) used = new Set();
+        let s = tagHome(n);
+        while (used.has(s)) s = (s + 1) % TAG_HUES.length;
+        used.add(s);
+        tagSlots.set(n, s);
+      }
+    }
+    return tagSlots.get(p) ?? tagHome(p);
+  }
+  const tagColor = (p) => `oklch(var(--tag-l) var(--tag-c) ${TAG_HUES[tagSlot(p)]})`;
   const tilt = (id) => (((hashStr(id) % 1000) / 1000) - 0.5) * 2.6;
   // Each card gets its own decoration placement, stable per ticket: a slot (0–3), a spot along the top
   // edge (18–82%) and a small extra angle, so tape, pins and clips don't line up like stamps.
@@ -4153,7 +4179,8 @@
     const l = a.lastRun;
     const listen = listenLabel(a.listen);
     const why = l?.why ? ` for ${esc(l.why.replace('work.pending', 'work waiting on the board'))}` : '';
-    const meta = `${a.model ? `runs on <b>${esc(a.model)}</b>${a.tier ? ` (${a.tier})` : ''} · ` : ''}wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
+    const live = a.keepAlive ? (a.session ? `session alive · turn ${a.session.turns}/${a.session.recycleAfter} · ` : 'keep-alive (starts on next wake) · ') : '';
+    const meta = `${live}${a.model ? `runs on <b>${esc(a.model)}</b>${a.tier ? ` (${a.tier})` : ''} · ` : ''}wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
     return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div></div>`;
   }
 
