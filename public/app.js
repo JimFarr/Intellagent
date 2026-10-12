@@ -2962,6 +2962,10 @@
   }
 
   const paintRange = (r) => r.style.setProperty('--p', `${((r.value - r.min) / (r.max - r.min)) * 100}%`);
+  // A labelled row of equal-width options (settings). opts: [value, label, tip?]
+  const choiceRow = (key, label, opts, val, { themeVal = null, sub = '' } = {}) => `<div class="choice-row">
+      <div class="cr-label"><span>${label}</span>${sub}</div>
+      <div class="opt-grid" data-set="${key}" style="--n:${opts.length}">${opts.map(([v, l, tip]) => `<button class="${v === val ? 'on' : ''} ${v === themeVal ? 'is-theme' : ''}" data-v="${v}"${tip ? ` title="${l}|${tip}${v === themeVal ? ' · the theme\'s choice' : ''}"` : ''}>${l}</button>`).join('')}</div></div>`;
   const seg = (key, opts, val) => `<div class="seg" data-set="${key}">${opts.map(([v, label, tip]) => `<button class="${v === val ? 'on' : ''}" data-v="${v}"${tip ? ` title="${label}|${tip}"` : ''}>${label}</button>`).join('')}</div>`;
   const sw = (key, on) => `<button class="switch ${on ? 'on' : ''}" data-sw="${key}" role="switch" aria-checked="${on}"></button>`;
 
@@ -3063,20 +3067,35 @@
       }).join('');
       const themeBg = themeStyle().bg;
       const bgs = [['theme', `Theme · ${BACKGROUNDS.find(([k]) => k === themeBg)?.[1] || ''}`], ...BACKGROUNDS].map(([k, label]) => `<button class="tile ${(settings.bg || 'theme') === k ? 'on' : ''}" data-bgfx="${k}"><span class="bgpv ${k === 'theme' ? themeBg : k}"></span><span class="nm">${label}</span></button>`).join('');
-      const opt = (key, list) => seg(key, [['theme', 'Theme', 'Use what the current theme chooses'], ...list], settings[key] ?? 'theme');
+      // A style choice: equal-width options, the theme's own pick marked with a dot. Choosing one overrides
+      // the theme; "Theme default" (shown only while overridden) hands the choice back to the theme.
+      const opt = (key, label, list) => {
+        const tv = themeStyle()[key];
+        const themeVal = typeof tv === 'boolean' ? (tv ? 'on' : 'off') : tv; // texture is stored as a boolean
+        const own = settings[key] != null && settings[key] !== 'theme';
+        return choiceRow(key, label, list, own ? settings[key] : themeVal, {
+          themeVal,
+          sub: own ? `<button class="sr-reset" data-reset="${key}" title="Theme default|Use what ${esc(THEMES[settings.theme]?.label || 'the theme')} chooses">${icon('restore', 'sm')}Theme default</button>` : '<span class="sr-auto">from theme</span>',
+        });
+      };
       return `<div class="look-sticky">
           <div class="carousel"><button class="car-nav" data-car="-1" title="Scroll left">${icon('chev', 'car-l')}</button><div class="car-track">${tiles}</div><button class="car-nav" data-car="1" title="Scroll right">${icon('chev', 'car-r')}</button></div>
           ${previewStage('style')}</div>
         <h3>Style</h3>
-        <div class="row"><span>Cards</span>${opt('cards', [['sticky', 'Sticky', 'Tinted sticky notes, slightly tilted'], ['clean', 'Clean', 'Flat cards with a type marker']])}</div>
-        <div class="row"><span>Decoration</span>${opt('tape', [['tape', 'Tape', 'A strip of tape on sticky notes'], ['pin', 'Pin', 'A push-pin at the top'], ['clip', 'Clip', 'A binder clip on the edge'], ['corner', 'Fold', 'A folded top corner'], ['none', 'None', 'No decoration']])}</div>
-        <div class="row"><span>Needs you</span>${opt('attn', [['orbit', 'Orbit', 'Spinning ring and a bouncing badge'], ['glow', 'Glow', 'A soft breathing halo'], ['bar', 'Bar', 'Accent edge and tint — calm'], ['outline', 'Outline', 'A solid outline and small badge'], ['ribbon', 'Ribbon', 'A bookmark tab on the card']])}</div>
-        <div class="row"><span>Opening</span>${opt('enter', [['rise', 'Rise', 'Fades in with a small lift'], ['sheet', 'Sheet', 'Slides in from the right as a side panel'], ['fade', 'Fade', 'A quick cross-fade'], ['pop', 'Pop', 'Snaps in with a little bounce'], ['zoom', 'Zoom', 'Grows out of the ticket']])}</div>
-        <div class="row"><span>Columns</span>${opt('lanes', [['glass', 'Glass', 'Translucent panels'], ['solid', 'Solid', 'Opaque panels'], ['outline', 'Outline', 'Bordered, see-through'], ['lane', 'Lanes', 'No panels — dividers between lanes']])}</div>
-        <div class="row"><span>Texture</span>${opt('texture', [['on', 'On', 'Film grain and dotted board'], ['off', 'Off', 'Plain surfaces']])}</div>
-        <div class="row"><span>Density</span>${seg('density', [['cozy', 'Cozy'], ['compact', 'Compact']], settings.density)}</div>
-        <div class="row"><span>Motion</span>${seg('motion', [['full', 'Full'], ['reduced', 'Reduced']], settings.motion)}</div>
-        <div class="row"><span>Column width</span><input type="range" min="240" max="440" step="10" value="${settings.colw}" data-range="colw"></div>
+        <div class="choices">
+        ${opt('cards', 'Cards', [['sticky', 'Sticky', 'Tinted sticky notes, slightly tilted'], ['clean', 'Clean', 'Flat cards with a type marker']])}
+        ${opt('tape', 'Decoration', [['tape', 'Tape', 'A strip of tape on sticky notes'], ['pin', 'Pin', 'A push-pin at the top'], ['clip', 'Clip', 'A binder clip on the edge'], ['corner', 'Fold', 'A folded top corner'], ['none', 'None', 'No decoration']])}
+        ${opt('attn', 'Needs you', [['orbit', 'Orbit', 'Spinning ring and a bouncing badge'], ['glow', 'Glow', 'A soft breathing halo'], ['bar', 'Bar', 'Accent edge and tint — calm'], ['outline', 'Outline', 'A solid outline and small badge'], ['ribbon', 'Ribbon', 'A bookmark tab on the card']])}
+        ${opt('enter', 'Opening', [['rise', 'Rise', 'Fades in with a small lift'], ['sheet', 'Sheet', 'Slides in from the right as a side panel'], ['fade', 'Fade', 'A quick cross-fade'], ['pop', 'Pop', 'Snaps in with a little bounce'], ['zoom', 'Zoom', 'Grows out of the ticket']])}
+        ${opt('lanes', 'Columns', [['glass', 'Glass', 'Translucent panels'], ['solid', 'Solid', 'Opaque panels'], ['outline', 'Outline', 'Bordered, see-through'], ['lane', 'Lanes', 'No panels — dividers between lanes']])}
+        ${opt('texture', 'Texture', [['on', 'On', 'Film grain and dotted board'], ['off', 'Off', 'Plain surfaces']])}
+        </div>
+        <h3>Layout</h3>
+        <div class="choices">
+        ${choiceRow('density', 'Density', [['cozy', 'Cozy', 'Roomy cards'], ['compact', 'Compact', 'Tighter cards, more on screen']], settings.density)}
+        ${choiceRow('motion', 'Motion', [['full', 'Full', 'All animations'], ['reduced', 'Reduced', 'Only the essentials']], settings.motion)}
+        <div class="choice-row"><div class="cr-label"><span>Column width</span><span class="sr-auto">${settings.colw}px</span></div><input type="range" min="240" max="440" step="10" value="${settings.colw}" data-range="colw"></div>
+        </div>
         <h3>Background</h3><div class="tiles">${bgs}</div>`;
     }
     if (t === 'cards') {
@@ -3085,12 +3104,12 @@
     if (t === 'board') {
       const me = state.profiles[settings.userName] || {};
       return `<h3>Parent groups</h3>
-        <div class="row"><span>Grouping</span>${seg('grouping', [['off', 'Off', 'Show every ticket separately'], ['list', 'List', 'Group tickets sharing a parent under a heading'], ['stack', 'Stack', 'Pile tickets sharing a parent — click to fan out']], settings.grouping)}</div>
+        ${choiceRow('grouping', 'Grouping', [['off', 'Off', 'Show every ticket separately'], ['list', 'List', 'Group tickets sharing a parent under a heading'], ['stack', 'Stack', 'Pile tickets sharing a parent — click to fan out']], settings.grouping)}
         ${previewStage('grouping')}
         <h3>Ticket edits</h3>
-        <div class="row"><span>Apply changes</span>${seg('saveMode', [['accept', 'Save button', 'Edits wait until you press Save'], ['instant', 'Instant', 'Every change applies immediately']], settings.saveMode)}</div>
+        ${choiceRow('saveMode', 'Apply changes', [['accept', 'Save button', 'Edits wait until you press Save'], ['instant', 'Instant', 'Every change applies immediately']], settings.saveMode)}
         <h3>Ageing</h3>
-        <div class="row"><span>Fade untouched tickets after</span>${seg('ageDays', [['0', 'Off', 'Never fade tickets'], ['3', '3d', 'Fully faded after 3 idle days'], ['7', '7d', 'Fully faded after a week'], ['14', '14d', 'Fully faded after two weeks']], String(settings.ageDays))}</div>
+        ${choiceRow('ageDays', 'Fade idle tickets', [['0', 'Off', 'Never fade tickets'], ['3', '3d', 'Fully faded after 3 idle days'], ['7', '7d', 'Fully faded after a week'], ['14', '14d', 'Fully faded after two weeks']], String(settings.ageDays))}
         <h3>You</h3>
         <div class="row"><span>Name</span>${avatar({ kind: 'user', name: settings.userName }, 'lg')}<input class="inp" data-text="userName" value="${esc(settings.userName)}" style="max-width:200px"></div>
         <div class="row"><span>Colour</span><div class="swatches">${SWATCHES.map((c) => `<button class="swatch ${me.color === c ? 'on' : ''}" data-ucolor="${c}" style="--c:${c}"></button>`).join('')}<button class="swatch none ${me.color ? '' : 'on'}" data-ucolor="" title="Automatic">${icon('x', 'sm')}</button></div></div>
@@ -3243,7 +3262,9 @@
       if (th) { switchTheme(th.dataset.pickTheme, e.clientX, e.clientY); setTimeout(() => show('look', true), 30); return; }
       const bg = e.target.closest('[data-bgfx]');
       if (bg) { settings.bg = bg.dataset.bgfx; saveSettings(); show('look', true); return; }
-      const sb = e.target.closest('.seg[data-set] button');
+      const rs = e.target.closest('[data-reset]');
+      if (rs) { settings[rs.dataset.reset] = 'theme'; saveSettings(); pulseSaved(); show(t, true); return; }
+      const sb = e.target.closest('.seg[data-set] button, .opt-grid[data-set] button');
       if (sb) { settings[sb.parentElement.dataset.set] = sb.dataset.v; saveSettings(); pulseSaved(); show(t, true); return; }
       const s = e.target.closest('[data-sw]');
       if (s) {
