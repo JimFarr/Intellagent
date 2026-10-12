@@ -106,6 +106,9 @@ DELETE /api/boards/main/ticket-templates/bug
 ```
 Prefer a template when one fits — tickets then look the same whoever files them. Fields and properties merge key by key; everything else you pass wins.
 
+### Tickets an agent writes up
+The human can file rough notes with **Let the agent write it** (`POST …/items { "title": "…", "agentWrite": true, "explicit": ["priority"] }`). The ticket gets an `agentDraft` marker `{ writer, explicit, original }` and wakes the writer (the board's coordinator), whose `…/work` shows a `write` action. Rewrite the title, description (with an acceptance checklist), type, priority, fields, parent and blockers — but not the keys in `agentDraft.explicit`: the human set those on purpose, and the board answers `409 EXPLICIT` if you touch them. A human edit while the draft is pending adds its keys to `explicit`. Quote the original title and description in a comment, then send `"agentDraft": null` with your rewrite to clear the marker.
+
 Card image: `PATCH … { "cover": "auto" | "none" | "<attachment id>" }` (auto = first image).
 Comments can carry files: `POST …/comments { "body": "see screenshot", "attachments": [{ "path": "C:/abs/shot.png" }] }`.
 

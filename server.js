@@ -842,10 +842,21 @@ function createItem(ctx, d, actor) {
       ...(template ? { template } : {}),
     };
     applyFields(ctx, item, d.fields, actor, null, true);
+    // "Let the agent write it": the coordinator rewrites the ticket from these notes, except the values the
+    // human set on purpose (explicit). The notes are kept so the rewrite can quote them.
+    if (d.agentWrite) {
+      const writer = requestTarget(ctx, d.writer);
+      if (!writer) fail(400, 'No agent to write this ticket: set a coordinator (Agents page) or pass "writer".', { code: 'NO_AGENT' });
+      item.agentDraft = {
+        writer, by: actor.name, at: t,
+        explicit: [...new Set(arr(d.explicit).map((k) => String(k)).filter((k) => /^[\w.-]{1,80}$/.test(k)))].slice(0, 60),
+        original: { title: item.title, description: item.description },
+      };
+    }
     b.items[id] = item;
     col.itemIds.splice(resolveIndex(col.itemIds, positionOf(d)), 0, id);
     for (const a of arr(d.attachments)) item.attachments.push(saveAttachment(ctx, item, a, actor));
-    events.push(itemEvent(ctx, 'item.created', item, actor));
+    events.push(itemEvent(ctx, 'item.created', item, actor, item.agentDraft ? { mentions: [item.agentDraft.writer], draft: true } : {}));
     if (item.assignee) events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: item.assignee, from: null, mentions: [item.assignee] }));
     const q0 = parseNeedsHuman(d.needsHuman, actor);
     if (q0) openQuestion(ctx, item, q0, actor, events);
@@ -890,7 +901,7 @@ function moveInto(ctx, item, colRef, position, actor, events) {
   return false;
 }
 
-const PATCHABLE = ['title', 'description', 'type', 'priority', 'parent', 'blockedBy', 'needsHuman', 'properties', 'replaceProperties', 'fields', 'cover', 'assignee',
+const PATCHABLE = ['title', 'description', 'type', 'priority', 'parent', 'blockedBy', 'needsHuman', 'properties', 'replaceProperties', 'fields', 'cover', 'assignee', 'agentDraft',
   'columnId', 'column', 'position', 'beforeId', 'afterId', 'version'];
 
 function trimChange(v) { return typeof v === 'string' && v.length > 400 ? `${v.slice(0, 400)}…` : v; }
@@ -905,6 +916,17 @@ function applyPatch(ctx, item, p, actor, events) {
       if (k in p && bi[k].ui !== 'edit') fail(403, `"${bi[k].label}" is read-only in the UI`);
     }
   }
+  // While an agent is writing the ticket, the values the human set stay theirs.
+  if (item.agentDraft && actor.kind === 'agent') {
+    const touched = [
+      ...['title', 'description', 'type', 'priority', 'parent', 'blockedBy', 'assignee', 'cover'].filter((k) => k in p),
+      ...Object.keys(isObj(p.fields) ? p.fields : {}).map((k) => `fields.${k}`),
+      ...Object.keys(isObj(p.properties) ? p.properties : {}).map((k) => `properties.${k}`),
+    ];
+    const locked = touched.filter((k) => item.agentDraft.explicit.includes(k));
+    if (locked.length) fail(409, `${item.id}: the human set ${locked.join(', ')} on purpose — leave ${locked.length > 1 ? 'them' : 'it'} as is`, { code: 'EXPLICIT', hint: `Rewrite only what isn't explicit: ${item.agentDraft.explicit.join(', ') || '(nothing is)'} stays. Re-send without those keys.` });
+  }
+  if ('agentDraft' in p && p.agentDraft !== null) fail(400, '"agentDraft" can only be cleared (null) — create the ticket with "agentWrite": true to start one');
   if (p.version != null && Number(p.version) !== item.version) fail(409, `Version conflict: ${item.id} is at version ${item.version}. Re-read and retry.`, { code: 'VERSION_CONFLICT', hint: 'GET the item, re-apply your change, retry with its version', item });
 
   const b = ctx.board;
@@ -952,6 +974,11 @@ function applyPatch(ctx, item, p, actor, events) {
       fail(400, '"cover" must be "auto", "none", or the id of an image attachment on this item');
     }
     set('cover', v);
+  }
+  if (item.agentDraft) {
+    // a human edit while the agent is writing makes those values explicit too
+    if (actor.kind === 'user') item.agentDraft.explicit = [...new Set([...item.agentDraft.explicit, ...Object.keys(changes).filter((k) => k !== 'needsHuman')])];
+    if ('agentDraft' in p) { changes.agentDraft = { from: 'drafting', to: null }; delete item.agentDraft; }
   }
   const moveEvents = [];
   const moving = p.columnId != null || p.column != null || p.position != null || p.beforeId || p.afterId;
@@ -1438,6 +1465,12 @@ function workFor(ctx, name) {
     const l = activeLease(it);
     if (l?.claimant !== name) continue;
     for (const q of it.leaseRequests || []) next.push({ action: 'answer_lease_request', id: it.id, title: it.title, why: `${q.by} asks for it${q.reason ? `: ${q.reason}` : ''}`, call: `POST /api/boards/${ctx.id}/items/${it.id}/lease/handover { "to": "${q.by}" } — or …/lease/decline { "to": "${q.by}", "reason": "…" }` });
+  }
+  for (const it of items) {
+    const dr = it.agentDraft;
+    if (dr?.writer !== name) continue;
+    add('write', brief(it), `Write this ticket from ${dr.by}'s notes${dr.explicit.length ? ` — keep what they set: ${dr.explicit.join(', ')}` : ''}. Quote their original title/description in a comment, then clear the marker`,
+      `PATCH /api/boards/${ctx.id}/items/${it.id} { "title": "…", "description": "…", …, "agentDraft": null }`);
   }
   for (const x of explain) add('explain', x, `Asked to explain (reply on the card only — change nothing): ${String(x.question).slice(0, 140)}`, `POST /api/boards/${ctx.id}/items/${x.id}/comments { "body": "…" }`);
   for (const x of leases.filter((l) => l.minutesLeft <= M.lease.warningMinutes)) add('renew', x, `Your lease ends in ${x.minutesLeft} min`, `${call(x.id, 'lease')} { "minutes": 30 }`);

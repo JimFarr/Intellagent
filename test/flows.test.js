@@ -320,6 +320,25 @@ describe('agent flows', () => {
     assert.ok(r.cursor < 999999);
   });
 
+  it('"let the agent write it": the writer rewrites everything except what the human set on purpose', async () => {
+    const it = await s.ok('POST', `${B}/items`, { title: 'login thing broken??', column: 'Backlog', priority: 'High', agentWrite: true, writer: 'ada', explicit: ['priority'] }, USER);
+    assert.deepEqual(it.agentDraft.explicit, ['priority']);
+    assert.equal(it.agentDraft.original.title, 'login thing broken??');
+    const w = await s.ok('GET', `${B}/work`, undefined, A);
+    assert.ok(w.next.some((n) => n.action === 'write' && n.id === it.id), 'the writer is told to write it');
+    // a human edit while it is pending becomes explicit too
+    await s.ok('PATCH', `${B}/items/${it.id}`, { properties: { estimate: 3 } }, USER);
+    const blocked = await s.api('PATCH', `${B}/items/${it.id}`, { priority: 'Low', type: 'issue' }, A);
+    assert.equal(blocked.status, 409);
+    assert.equal(blocked.body.code, 'EXPLICIT');
+    assert.equal((await s.api('PATCH', `${B}/items/${it.id}`, { properties: { estimate: 8 } }, A)).body.code, 'EXPLICIT');
+    const done = await s.ok('PATCH', `${B}/items/${it.id}`, { title: 'Login fails after password reset', type: 'issue', description: '- [ ] reproduce', agentDraft: null }, A);
+    assert.equal(done.priority, 'High', 'the explicit priority is untouched');
+    assert.equal(done.agentDraft, undefined, 'the marker is cleared');
+    assert.equal((await s.ok('PATCH', `${B}/items/${it.id}`, { priority: 'Low' }, A)).priority, 'Low', 'after the rewrite, normal rules again');
+    assert.equal((await s.api('PATCH', `${B}/items/${it.id}`, { agentDraft: { explicit: [] } }, A)).status, 400);
+  });
+
   it('requests carry pasted files, and the event gives the agent a local path it can open', async () => {
     const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
     const { seq } = await s.ok('GET', '/api/app');

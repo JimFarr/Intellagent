@@ -1460,6 +1460,7 @@
     if (s.attachments && stub('attachments') && it.attachments.length) meta.push(`<span class="m" title="Files|${it.attachments.length} attached">${icon('clip', 'sm')}${it.attachments.length}</span>`);
     const nProps = Object.keys(it.properties || {}).length;
     if (s.properties && shown('properties') && nProps) meta.push(`<span class="m" title="Properties|Free-form data agents attached">${icon('braces', 'sm')}${nProps}</span>`);
+    if (it.agentDraft) meta.push(`<span class="m drafting" title="Being written up|${esc(nameOf(it.agentDraft.writer))} is turning these notes into a full ticket${it.agentDraft.explicit.length ? ` — keeping ${esc(it.agentDraft.explicit.join(', '))}` : ''}">${icon('sparkle', 'sm')}drafting</span>`);
     if (stub('assignee') && it.assignee) meta.push(`<span class="m assn" title="${esc(bi('assignee').label)}|Handed to ${esc(nameOf(it.assignee))} — they get its events">${icon('move', 'sm')}${avatar({ name: it.assignee })}</span>`);
     const ck = checklist(it.description);
     if (s.checklist && ck.total) meta.push(`<span class="m" title="Checklist|${ck.done} of ${ck.total} done">${icon('checks', 'sm')}${ck.done}/${ck.total}</span>`);
@@ -2019,6 +2020,7 @@
         <button class="pill-btn icon-btn sm" data-a="close" title="Close">${icon('x')}</button></header>
       <div class="m-frame"><nav class="m-rail" hidden></nav><div class="m-main"></div><aside class="m-side"></aside></div>
       <div class="m-save"><span class="dot"></span><span class="txt"></span><span class="grow"></span>
+        <button class="agent-write" type="button" aria-pressed="false"></button>
         <button class="btn ghost sm" data-draft="discard">Cancel</button><button class="btn primary sm" data-draft="save" title="Create|Create the ticket (Ctrl+Enter)">${icon('plus', 'sm')}Create</button></div>
       <footer class="m-foot"></footer></div></div>`);
     document.body.append(root);
@@ -2039,6 +2041,18 @@
       row.onclick = (e) => { const b = e.target.closest('[data-tpl]'); if (b) applyTemplateToDraft(m, b.dataset.tpl); };
     }
     if (template) applyTemplateToDraft(m, template);
+    // "Let the agent write it": the coordinator turns these notes into a full ticket, keeping what you set.
+    const aw = $('.agent-write', root);
+    const writer = state.board.coordinator;
+    const drawAw = () => {
+      m.create.agentWrite = !!writer && !!settings.agentWrite;
+      aw.setAttribute('aria-pressed', String(m.create.agentWrite));
+      aw.disabled = !writer;
+      aw.innerHTML = `<i class="sw"></i>${writer ? avatar({ kind: 'agent', name: writer }) : icon('sparkle', 'sm')}<span>Let ${writer ? esc(nameOf(writer)) : 'the agent'} write it</span>`;
+      aw.title = writer ? `Let ${nameOf(writer)} write it|Write rough notes; ${nameOf(writer)} turns them into a full ticket — title, description with a checklist, type, priority, fields — but keeps anything you set here yourself` : 'No coordinator|Choose one on the Agents page to let an agent write tickets';
+    };
+    aw.onclick = () => { settings.agentWrite = !settings.agentWrite; saveSettings(); drawAw(); };
+    drawAw();
     renderSaveBar(m);
     const title = $('.m-title', root);
     title.placeholder = 'Title — quick syntax works: #parent !high /issue';
@@ -2063,7 +2077,10 @@
     for (const [k, v] of Object.entries(t.fields || {})) if (!(d.fields && k in d.fields)) fields[k] = v;
     if (Object.keys(fields).length) patch.fields = fields;
     $$('.create-tpls .tpl-chip', m.root).forEach((b) => b.classList.toggle('on', b.dataset.tpl === t.key));
+    m.create.fromTemplate = new Set([...(m.create.fromTemplate || []), ...Object.keys(patch).filter((k) => k !== 'fields'), ...Object.keys(fields).map((k) => `fields.${k}`)]);
+    m.create.applyingTpl = true;
     editItem(m, patch);
+    m.create.applyingTpl = false;
   }
 
   async function createFromDraft(m) {
@@ -2088,6 +2105,17 @@
       ...(Object.keys(d.properties || {}).length ? { properties: d.properties } : {}),
       ...(q.template || m.create.template ? { template: q.template || m.create.template } : {}),
     };
+    if (m.create.agentWrite) {
+      // explicit = what you set here yourself (not the template's defaults); title and description are the notes
+      const tpl = m.create.fromTemplate || new Set();
+      const keys = [
+        ...Object.keys(d.draft || m.draft).filter((k) => !['title', 'description', 'column', 'columnId', 'position', 'fields', 'properties'].includes(k)),
+        ...Object.keys(m.draft.fields || {}).map((k) => `fields.${k}`),
+        ...Object.keys(m.draft.properties || {}).map((k) => `properties.${k}`),
+      ].filter((k) => !tpl.has(k));
+      for (const k of ['type', 'priority', 'parent']) if (q[k]) keys.push(k); // quick syntax: #parent !high /issue
+      Object.assign(body, { agentWrite: true, explicit: [...new Set(keys)] });
+    }
     m.creating = true;
     m.root.classList.add('busy');
     try {
@@ -2096,7 +2124,7 @@
       m.draft = {};
       // Done: close, and let the board show the new card (it gets the new-ticket highlight).
       if (state.modal === m) closeModal(true);
-      toast(`Created ${it.id}`, { icon: 'plus', kind: 'ok', timeout: 3000, action: 'Open', onAction: () => openItem(it.id) });
+      toast(it.agentDraft ? `Created ${it.id} — ${nameOf(it.agentDraft.writer)} is writing it up` : `Created ${it.id}`, { icon: it.agentDraft ? 'sparkle' : 'plus', kind: 'ok', timeout: 3000, action: 'Open', onAction: () => openItem(it.id) });
       await loadBoard(state.boardId);
     } catch (e) {
       // stay open with everything typed, and say why
@@ -2264,6 +2292,12 @@
   function editItem(m, body) {
     if (!m.create && (settings.saveMode === 'instant' || m.kind !== 'item')) return patchItem(m.id, body);
     if (m.baseVersion == null) m.baseVersion = m.item.version || 0;
+    if (m.create?.fromTemplate && !m.create.applyingTpl) {
+      for (const [k, v] of Object.entries(body)) {
+        if (k === 'fields' || k === 'properties') for (const x of Object.keys(v || {})) m.create.fromTemplate.delete(`${k}.${x}`);
+        else m.create.fromTemplate.delete(k);
+      }
+    }
     for (const [k, v] of Object.entries(body)) {
       if (k === 'properties' || k === 'fields') m.draft[k] = { ...(m.draft[k] || {}), ...v };
       else m.draft[k] = v;

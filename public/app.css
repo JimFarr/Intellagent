@@ -1698,3 +1698,21 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .create-tpls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .create-err { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding: 8px 12px; border-radius: var(--r-ctl); background: color-mix(in oklab, var(--danger) 12%, transparent); color: color-mix(in oklab, var(--danger) 85%, var(--text)); font-size: 13px; }
 .item-modal.creating [data-a="archive"] { display: none !important; }
+
+/* "Let the agent write it" (create mode, INT-41): a quiet switch beside Create, and a chip on cards being written up */
+.agent-write { display: none; }
+.item-modal.creating .agent-write { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px 4px 6px; margin-right: 6px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); font: 500 12px var(--sans, inherit); cursor: pointer; transition: color .2s ease, border-color .2s ease, background-color .2s ease; }
+.agent-write > span:not(.avatar) { white-space: nowrap; }
+@media (max-width: 640px) { .agent-write > span:not(.avatar) { display: none; } }
+.agent-write .avatar { width: 18px; height: 18px; font-size: 10px; }
+.agent-write .sw { position: relative; width: 24px; height: 14px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 35%, transparent); transition: background-color .2s ease; flex: none; }
+.agent-write .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--surface, #fff); transition: transform .2s cubic-bezier(.22, 1, .36, 1); }
+.agent-write[aria-pressed="true"] { color: var(--text); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.agent-write[aria-pressed="true"] .sw { background: var(--accent); }
+.agent-write[aria-pressed="true"] .sw::after { transform: translateX(10px); }
+.agent-write:disabled { opacity: .5; cursor: not-allowed; }
+.agent-write:not(:disabled):hover { color: var(--text); }
+.card .m.drafting { color: var(--accent); }
+.card .m.drafting .i { animation: drafting 2.4s ease-in-out infinite; }
+@keyframes drafting { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .card .m.drafting .i { animation: none; } }
