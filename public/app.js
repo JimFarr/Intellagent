@@ -3127,7 +3127,7 @@
     const send = async () => {
       const text = ta.value.trim();
       if (!text) { ta.focus(); return; }
-      if (!to) { toast('Choose an agent first (or set a coordinator in Settings › Board)', { kind: 'error' }); return; }
+      if (!to) { toast('Choose an agent first (or set a coordinator on the Agents page)', { kind: 'error' }); return; }
       try {
         await api('POST', B('/requests'), { body: text, to });
         ta.value = '';
@@ -3429,20 +3429,40 @@
     } catch (e) { $('.run-log', body).textContent = e.message; }
   }
 
+  // The board's coordinator receives requests (Ask an agent) unless another agent is picked.
+  async function setCoordinator(name) {
+    try {
+      await api('PATCH', B(''), { coordinator: name });
+      state.board.coordinator = name;
+      toast(name ? `${name} is now the coordinator` : 'No coordinator', { icon: 'send', kind: 'ok', timeout: 2200 });
+      if ($('#agentsDrawer')) fillAgents($('#agentsDrawer .drawer-body'));
+    } catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+
   function fillAgents(body) {
     const seen = new Set(state.presence.map((p) => p.name));
     const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
       .sort((a, b) => Number(!!state.standing[b.name]) - Number(!!state.standing[a.name]));
-    body.innerHTML = rows.length ? rows.map((p, i) => {
+    const coord = state.board?.coordinator || null;
+    const coordRow = `<div class="coord-row"><div class="cr-label"><span>Coordinator</span><span class="sr-auto">gets “Ask an agent” requests by default</span></div><button class="dd" data-coord>${coord ? `${avatar({ name: coord })}${esc(coord)}` : '<span class="v ph">None</span>'}${icon('chev', 'sm')}</button></div>`;
+    body.innerHTML = coordRow + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
       const subs = p.subscriptions.map((s) => `<span class="mini-chip" title="${esc(JSON.stringify(s.filter))}">${icon('bell', 'sm')}${esc(s.label || Object.entries(s.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join('');
       return `<div class="agent-row ${p.online || sa ? '' : 'off'}" data-agent="${esc(p.name)}" style="animation-delay:${i * 40}ms">${avatar({ kind: 'agent', name: p.name }, 'lg')}
-        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(p.name)}${!p.online && !sa && !p.leases.length ? `<button class="forget" data-forget="${esc(p.name)}" title="Forget|Remove from this list — it reappears if it connects again">${icon('x', 'sm')}Forget</button>` : ''}</div><div class="sub" title="${esc(p.lastAction || '')}">${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(p.lastAction)}` : ''}</div></div>
-        ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}</div>`;
-    }).join('') : `<div class="empty-note">${icon('bot')}</div>`;
+        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(p.name)}${p.name === coord ? '<span class="chip coord-chip">coordinator</span>' : ''}${!p.online && !sa && !p.leases.length ? `<button class="forget" data-forget="${esc(p.name)}" title="Forget|Remove from this list — it reappears if it connects again">${icon('x', 'sm')}Forget</button>` : ''}</div><div class="sub" title="${esc(p.lastAction || '')}">${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(p.lastAction)}` : ''}</div></div>
+        ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}${p.name !== coord ? `<button class="make-coord" data-make-coord="${esc(p.name)}" title="Make coordinator|Requests go to this agent by default">${icon('send', 'sm')}Make coordinator</button>` : ''}</div>`;
+    }).join('') : `<div class="empty-note">${icon('bot')}</div>`);
     body.onclick = async (e) => {
+      const co = e.target.closest('[data-coord]');
+      if (co) {
+        e.stopPropagation();
+        menu(co, [{ label: 'None', icon: 'x', run: () => setCoordinator(null) }, ...agentChoices().map((n) => ({ label: n, avatar: { name: n }, cls: n === coord ? 'on' : '', run: () => setCoordinator(n) }))], { search: true });
+        return;
+      }
+      const mk = e.target.closest('[data-make-coord]');
+      if (mk) { e.stopPropagation(); setCoordinator(mk.dataset.makeCoord); return; }
       const sb = e.target.closest('[data-standing]');
       if (sb) { e.stopPropagation(); standingAction(sb); return; }
       const fg = e.target.closest('[data-forget]');
@@ -4045,7 +4065,6 @@
     if (t === 'board') {
       const me = state.profiles[settings.userName] || {};
       return `<h3>Parent groups</h3>
-        <div class="choice-row"><div class="cr-label"><span>Coordinator</span><span class="sr-auto">gets requests by default</span></div><button class="dd" data-coord>${state.board?.coordinator ? `${avatar({ name: state.board.coordinator })}${esc(state.board.coordinator)}` : '<span class="v ph">None</span>'}${icon('chev', 'sm')}</button></div>
         ${choiceRow('metrics', 'Metrics strip', [['on', 'Show', 'Done, cycle time and how long agents wait on you, under the top bar'], ['off', 'Hide', 'No metrics strip']], settings.metrics ? 'on' : 'off')}
         ${choiceRow('grouping', 'Grouping', [['off', 'Off', 'Show every ticket separately'], ['list', 'List', 'Group tickets sharing a parent under a heading'], ['stack', 'Stack', 'Pile tickets sharing a parent — click to fan out']], settings.grouping)}
         ${previewStage('grouping')}
@@ -4274,12 +4293,6 @@
       if (th) { switchTheme(th.dataset.pickTheme, e.clientX, e.clientY, () => show('look', true)); return; }
       const bg = e.target.closest('[data-bgfx]');
       if (bg) { settings.bg = bg.dataset.bgfx; saveSettings(); show('look', true); return; }
-      const co = e.target.closest('[data-coord]');
-      if (co) {
-        const set = (v) => api('PATCH', B(''), { coordinator: v }).then(() => { pulseSaved(); state.board.coordinator = v; show(t, true); }, (err) => toast(err.message, { kind: 'error' }));
-        menu(co, [{ label: 'None', icon: 'x', run: () => set(null) }, ...agentChoices().map((n) => ({ label: n, avatar: { name: n }, cls: n === state.board.coordinator ? 'on' : '', run: () => set(n) }))], { search: true });
-        return;
-      }
       const rs = e.target.closest('[data-reset]');
       if (rs) { settings[rs.dataset.reset] = 'theme'; saveSettings(); pulseSaved(); show(t, true); return; }
       const sb = e.target.closest('.seg[data-set] button, .opt-grid[data-set] button');

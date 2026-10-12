@@ -1583,3 +1583,10 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .agent-row .forget { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px 2px 5px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
 .agent-row:hover .forget, .agent-row .forget:focus-visible { opacity: 1; }
 .agent-row .forget:hover { background: color-mix(in oklab, var(--danger) 12%, transparent); color: var(--danger); }
+
+/* agents page: coordinator */
+.coord-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 220px); align-items: center; gap: 14px; padding: 4px 2px 14px; margin-bottom: 12px; border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent); }
+.coord-chip { font-size: 10px; padding: 1px 7px; color: var(--accent); background: color-mix(in oklab, var(--accent) 14%, transparent); }
+.make-coord { grid-column: 1 / -1; justify-self: start; display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 2px 8px 2px 6px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
+.agent-row:hover .make-coord, .make-coord:focus-visible { opacity: 1; }
+.make-coord:hover { background: color-mix(in oklab, var(--accent) 12%, transparent); color: var(--accent); }
