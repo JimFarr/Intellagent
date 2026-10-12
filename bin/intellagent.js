@@ -297,7 +297,13 @@ const { eventLine } = require('../lib/agents');
 async function waitCmd() {
   const f = flags(rest);
   const agent = agentName(f);
-  const events = await nextEvents({ agent, types: f.types, timeoutSec: Number(f.timeout) || 0, listen: listenScope(f) });
+  let events = await nextEvents({ agent, types: f.types, timeoutSec: Number(f.timeout) || 0, listen: listenScope(f) });
+  // One human action is often several events (approve = resolved + moved + approved): wait a moment
+  // so the whole burst comes back together instead of waking the agent once per event.
+  if (events.length) {
+    await new Promise((res) => setTimeout(res, 2000));
+    events = events.concat(await nextEvents({ agent, types: f.types, timeoutSec: 1, quiet: true, listen: listenScope(f) }));
+  }
   if (!events.length) { console.log('(no events before timeout)'); process.exit(2); }
   // The agent is about to read these: mark comments as seen (👀) so the human knows.
   const url = baseUrl(readManifest(findManifest()));
