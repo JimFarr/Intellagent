@@ -2776,10 +2776,32 @@ route('DELETE', '/api/boards/:board/items/:id/lease', 'Release a lease', ({ p, a
   return itemView(ctx, releaseLease(ctx, p.id, actor));
 });
 
-route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call: moves to the review column, comments your summary, releases your lease, raises needs-you. { summary?, reason?, column? }', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call: moves to the review column, comments your summary, releases your lease, raises needs-you. { summary?, reason?, column? } → the item, plus "warnings" if the work skipped the board', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  return itemView(ctx, requestReview(ctx, p.id, body, actor));
+  const before = getItem(ctx, p.id);
+  const warnings = workWarnings(ctx, before);
+  const item = itemView(ctx, requestReview(ctx, p.id, body, actor));
+  return warnings.length ? { ...item, warnings } : item;
 });
+
+// Signs that a ticket's work happened off the board: barely any time in the working column, or commits
+// that mention it from before it was started. Told to the agent at review time so In Progress (and the
+// cycle-time metric) mean something.
+function workWarnings(ctx, item) {
+  const out = [];
+  const work = workingColumn(ctx);
+  const entered = work && (item.flow || []).filter((x) => x.col === work.id).at(-1);
+  if (!entered) return out;
+  const startedMs = Date.parse(entered.at);
+  const secs = Math.round((Date.now() - startedMs) / 1000);
+  if (secs < 60) out.push(`${item.id} spent ${secs}s in ${work.name}. Start tickets (POST …/start) before you work on them, so the board shows real work.`);
+  try {
+    const log = require('child_process').execFileSync('git', ['log', '--all', `--grep=${item.id}([^0-9]|$)`, '-E', '--format=%ct %h'], { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const early = log.split('\n').filter(Boolean).map((l) => l.split(' ')).filter(([t]) => Number(t) * 1000 < startedMs - 5000).map(([, h]) => h);
+    if (early.length) out.push(`Commit${early.length > 1 ? 's' : ''} ${early.join(', ')} mention ${item.id} but came before it was started.`);
+  } catch { /* not a git repo, or git missing */ }
+  return out;
+}
 
 route('GET', '/api/boards/:board/digest', 'Daily digest: end-of-session summaries, newest first. ?days=7', ({ p, q }) => {
   const ctx = getCtx(p.board);

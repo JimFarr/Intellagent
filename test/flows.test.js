@@ -320,6 +320,15 @@ describe('agent flows', () => {
     assert.ok(r.cursor < 999999);
   });
 
+  it('review warns when the ticket barely spent time in the working column', async () => {
+    const it = await s.ok('POST', `${B}/items`, { title: 'rushed', column: 'Backlog' }, USER);
+    await s.ok('POST', `${B}/items/${it.id}/start`, {}, A);
+    const r = await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'done already' }, A);
+    assert.match(r.warnings?.[0] || '', /spent \d+s in/);
+    const plain = await s.ok('POST', `${B}/items`, { title: 'never started', column: 'Backlog' }, USER);
+    assert.equal((await s.ok('POST', `${B}/items/${plain.id}/review`, { summary: 'x' }, A)).warnings, undefined, 'no working-column visit, no claim about it');
+  });
+
   it('test tickets: flagged at creation, immutable, deletable by anyone (leases apply); others are refused', async () => {
     const t1 = await s.ok('POST', `${B}/items`, { title: 'throwaway', column: 'Backlog', test: true }, USER);
     const keep = await s.ok('POST', `${B}/items`, { title: 'real work', column: 'Backlog', blockedBy: [t1.id] }, USER);
