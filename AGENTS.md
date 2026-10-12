@@ -68,6 +68,19 @@ PATCH /api/boards/main/items/INT-12    { "fields": { "risk": "high", "estimate":
 - Wrong types or unknown enum values → `400` listing what's allowed. Undeclared keys → `400`; use `properties` for ad-hoc data.
 - Search fields with `fields.<key>` paths or `?f.<key>=value`; subscribe to changes with `fields=fields.risk`.
 
+### Ticket templates
+Presets for new tickets on this board ("Bug", "Feature"…). The human picks them in the UI; you pass `template`:
+
+```
+GET    /api/boards/main/ticket-templates
+POST   /api/boards/main/items              { "template": "bug", "title": "Crash on save" }   // your values override the template's
+POST   /api/boards/main/ticket-templates   { "label": "Bug", "type": "issue", "priority": "High", "column": "Triage",
+                                             "description": "**Steps**\n1. ", "fields": { "risk": "medium" }, "help": "Something is broken" }
+PATCH  /api/boards/main/ticket-templates/bug   { "priority": "Critical" }
+DELETE /api/boards/main/ticket-templates/bug
+```
+Prefer a template when one fits — tickets then look the same whoever files them. Fields and properties merge key by key; everything else you pass wins.
+
 Card image: `PATCH … { "cover": "auto" | "none" | "<attachment id>" }` (auto = first image).
 Comments can carry files: `POST …/comments { "body": "see screenshot", "attachments": [{ "path": "C:/abs/shot.png" }] }`.
 

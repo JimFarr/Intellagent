@@ -292,8 +292,13 @@ function normalizeBoard(b) {
   b.directives = b.directives || '';
   b.digest = Array.isArray(b.digest) ? b.digest : [];
   b.master = isObj(b.master) ? b.master : null;
+  b.ticketTemplates = Array.isArray(b.ticketTemplates) ? b.ticketTemplates : [];
   b.schema = { builtins: normBuiltins(b.schema?.builtins, true), fields: Array.isArray(b.schema?.fields) ? b.schema.fields : [] };
-  for (const it of Object.values(b.items)) { it.fields = isObj(it.fields) ? it.fields : {}; it.cover = it.cover || 'auto'; it.assignee = it.assignee || null; }
+  for (const it of Object.values(b.items)) {
+    it.fields = isObj(it.fields) ? it.fields : {}; it.cover = it.cover || 'auto'; it.assignee = it.assignee || null;
+    // flow: when the item entered each column (metrics). Older boards start from what is known.
+    if (!Array.isArray(it.flow)) it.flow = [{ col: it.columnId, at: it.enteredColumnAt || it.createdAt }];
+  }
   for (const c of b.columns) {
     c.flags = pickFlags(c.flags);
     c.itemIds = (c.itemIds || []).filter((id) => b.items[id]);
@@ -305,6 +310,66 @@ function normalizeBoard(b) {
     if (col && !placed.has(item.id)) col.itemIds.push(item.id);
   }
   return b;
+}
+
+// Every column change goes through here so the flow history (metrics) stays complete.
+const FLOW_MAX = 100;
+function enterColumn(item, colId) {
+  const t = now();
+  item.columnId = colId;
+  item.enteredColumnAt = t;
+  (item.flow ||= []).push({ col: colId, at: t });
+  if (item.flow.length > FLOW_MAX) item.flow.splice(0, item.flow.length - FLOW_MAX);
+}
+
+// Closed "needs you" requests, kept for metrics (how long agents waited on the human).
+function closeWait(item, prev, actor) {
+  (item.waits ||= []).push({ raisedBy: prev.raisedBy, raisedAt: prev.raisedAt, resolvedAt: now(), by: actor.name, kind: prev.kind || 'question' });
+  if (item.waits.length > 30) item.waits.shift();
+}
+
+/* ticket templates: per-board presets for new tickets ("Bug", "Feature"…) */
+function normTicketTemplate(t, base = {}) {
+  if (!isObj(t)) fail(400, 'Template must be an object');
+  const m = { ...base, ...t };
+  const key = slug(m.key || m.label || '');
+  if (!m.label && !m.key) fail(400, 'Template needs a "label"');
+  const out = {
+    key,
+    label: str(m.label || key, 60).trim(),
+    icon: m.icon ? str(m.icon, 32) : null,
+    help: m.help ? str(m.help, 300) : '',
+    type: m.type ? oneOf(m.type, TYPES, 'task') : null,
+    priority: m.priority ? oneOf(m.priority, PRIORITIES, 'Medium') : null,
+    parent: m.parent ? str(m.parent, 60).trim() : null,
+    column: m.column ? str(m.column, 60) : null,
+    title: m.title ? str(m.title, 200) : '',
+    description: str(m.description || '', 20_000),
+    fields: isObj(m.fields) ? m.fields : {},
+    properties: isObj(m.properties) ? m.properties : {},
+  };
+  return out;
+}
+function ticketTemplate(ctx, key) {
+  const k = slug(key);
+  const t = ctx.board.ticketTemplates.find((x) => x.key === k);
+  if (!t) fail(400, `Unknown ticket template "${key}". Available: ${ctx.board.ticketTemplates.map((x) => x.key).join(', ') || '(none)'}`);
+  return t;
+}
+// Template values first, the caller's on top. Fields and properties merge key by key.
+function withTemplate(ctx, d) {
+  if (!d.template) return d;
+  const t = ticketTemplate(ctx, d.template);
+  const pickDef = (k) => (d[k] != null && d[k] !== '' ? d[k] : t[k] ?? undefined);
+  return {
+    ...d,
+    title: d.title || t.title,
+    type: pickDef('type'), priority: pickDef('priority'), parent: pickDef('parent'),
+    column: d.column ?? d.columnId ?? t.column ?? undefined,
+    description: d.description != null && d.description !== '' ? d.description : t.description,
+    fields: { ...t.fields, ...(isObj(d.fields) ? d.fields : {}) },
+    properties: { ...t.properties, ...(isObj(d.properties) ? d.properties : {}) },
+  };
 }
 
 function writeHash(ctx) { writeFileAtomic(ctx.hashFile, `${ctx.hash}\n`); }
@@ -399,6 +464,7 @@ function createBoard(d, actor) {
     if (board.schema.fields.some((x) => x.key === def.key)) fail(400, `Duplicate field "${def.key}"`);
     board.schema.fields.push(def);
   }
+  board.ticketTemplates = arr(d.ticketTemplates ?? tpl.ticketTemplates).map((t) => normTicketTemplate(t));
   const cols = Array.isArray(d.columns) ? d.columns : tpl.columns;
   for (const c of cols) addColumn(board, c);
   const ctx = { id, ...p, board, archive: { items: {} }, hash: '', lastBackup: 0 };
@@ -662,6 +728,8 @@ function requestReview(ctx, id, d, actor) {
 function createItem(ctx, d, actor) {
   return tx(ctx, (events) => {
     const b = ctx.board;
+    const template = d.template ? ticketTemplate(ctx, d.template).key : null;
+    d = withTemplate(ctx, d);
     const ref = d.columnId ?? d.column;
     const col = ref != null ? findColumn(b, ref) : b.columns.find((c) => c.flags.allowCreate);
     if (!col) fail(400, 'No column on this board allows item creation');
@@ -694,6 +762,8 @@ function createItem(ctx, d, actor) {
       cover: 'auto',
       attachments: [],
       comments: [],
+      flow: [{ col: col.id, at: t }],
+      ...(template ? { template } : {}),
     };
     applyFields(ctx, item, d.fields, actor, null, true);
     b.items[id] = item;
@@ -723,8 +793,7 @@ function moveInto(ctx, item, colRef, position, actor, events) {
   const idx = resolveIndex(to.itemIds, position);
   to.itemIds.splice(idx, 0, item.id);
   if (cross) {
-    item.columnId = to.id;
-    item.enteredColumnAt = now();
+    enterColumn(item, to.id);
     events.push(itemEvent(ctx, 'item.moved', item, actor, { fromColumnId: from.id, columnId: to.id, position: idx }));
     if (to.flags.releaseLeaseOnEnter && item.lease) {
       const c = item.lease.claimant;
@@ -773,6 +842,7 @@ function applyPatch(ctx, item, p, actor, events) {
     const next = parseNeedsHuman(p.needsHuman, actor);
     if (!!prev !== !!next || (prev && next && prev.reason !== next.reason)) {
       item.needsHuman = next;
+      if (prev && !next) closeWait(item, prev, actor);
       changes.needsHuman = { from: prev?.reason ?? null, to: next?.reason ?? null };
       events.push(next
         ? itemEvent(ctx, 'attention.raised', item, actor, { reason: next.reason })
@@ -902,6 +972,7 @@ function resolveAttention(ctx, id, d, actor) {
       item.comments.push(reply);
     }
     item.needsHuman = null;
+    closeWait(item, prev, actor);
     item.version++;
     item.updatedAt = now();
     events.push(itemEvent(ctx, 'attention.resolved', item, actor, { raisedBy: prev.raisedBy, reason: prev.reason, reply: reply?.body ?? null, mentions: [prev.raisedBy] }));
@@ -939,8 +1010,7 @@ function restoreItem(ctx, id, d, actor) {
     const col = d.columnId || d.column ? findColumn(b, d.columnId ?? d.column) : b.columns.find((c) => c.id === rec.archivedFrom) || b.columns[0];
     if (!col) fail(400, 'Board has no columns');
     const { archivedAt, archivedBy, archivedFrom, archiveReason, ...item } = rec;
-    item.columnId = col.id;
-    item.enteredColumnAt = now();
+    enterColumn(item, col.id);
     item.version++;
     item.updatedAt = now();
     b.items[key] = item;
@@ -1426,13 +1496,14 @@ const SCHEMA = {
     cover: '"auto" (first image) | "none" | attachment id — the image shown on the card',
     attachments: '{ id, kind: "file"|"link", name, mime, size, url, addedAt, author }[]',
     comments: '{ id, author, body (markdown), createdAt, attachments? }[]', version: 'integer — bumps on every change; send it back for safe writes',
-    createdAt: 'ISO', updatedAt: 'ISO', enteredColumnAt: 'ISO',
+    createdAt: 'ISO', updatedAt: 'ISO', enteredColumnAt: 'ISO', template: 'ticket template key it was created from',
+    flow: '[{ col, at }] — when it entered each column', waits: '[{ raisedBy, raisedAt, resolvedAt, by }] — closed needs-you requests',
   },
   event: {
     seq: 'integer cursor', ts: 'ISO', board: 'string', hash: 'board hash after the change',
     type: ['item.created', 'item.updated', 'item.moved', 'item.reordered', 'item.archived', 'item.restored', 'comment.added',
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
-      'attention.raised', 'attention.resolved', 'review.requested', 'digest.added', 'schema.updated', 'column.created', 'column.updated', 'column.deleted',
+      'attention.raised', 'attention.resolved', 'review.requested', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agents.changed'],
@@ -1665,6 +1736,40 @@ route('PUT', '/api/boards/:board/schema', 'Set schema: { builtins?: { type: { ui
     }
   });
 });
+route('GET', '/api/boards/:board/ticket-templates', 'Ticket templates: presets for new tickets (create with { "template": "<key>" })', ({ p }) => getCtx(p.board).board.ticketTemplates);
+function templatesTx(ctx, actor, fn) {
+  return tx(ctx, (events) => {
+    const out = fn(ctx.board.ticketTemplates);
+    events.push({ board: ctx.id, type: 'templates.updated', actor, templates: ctx.board.ticketTemplates.map((t) => t.key) });
+    return out;
+  });
+}
+route('POST', '/api/boards/:board/ticket-templates', 'Add a ticket template: { label, key?, icon?, help?, type?, priority?, parent?, column?, title?, description?, fields?, properties?, position? }', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  return created(templatesTx(ctx, actor, (list) => {
+    const t = normTicketTemplate(body);
+    if (list.some((x) => x.key === t.key)) fail(409, `Template "${t.key}" already exists — PATCH it instead`);
+    if (t.column) findColumn(ctx.board, t.column);
+    list.splice(resolveIndex(list.map((x) => x.key), body.position), 0, t);
+    return t;
+  }));
+});
+route('PATCH', '/api/boards/:board/ticket-templates/:key', 'Change a ticket template (merged; fields/properties replace)', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  return templatesTx(ctx, actor, (list) => {
+    const i = list.indexOf(ticketTemplate(ctx, p.key));
+    const t = normTicketTemplate({ ...body, key: list[i].key }, list[i]);
+    if (t.column) findColumn(ctx.board, t.column);
+    list[i] = t;
+    if (body.position != null) { list.splice(i, 1); list.splice(resolveIndex(list.map((x) => x.key), body.position), 0, t); }
+    return t;
+  });
+});
+route('DELETE', '/api/boards/:board/ticket-templates/:key', 'Remove a ticket template (tickets made from it are unchanged)', ({ p, actor }) => {
+  const ctx = getCtx(p.board);
+  return templatesTx(ctx, actor, (list) => { const t = ticketTemplate(ctx, p.key); list.splice(list.indexOf(t), 1); return { deleted: t.key }; });
+});
+
 // Field writes answer with just the field (add ?full=true for the whole schema).
 const fieldReply = (ctx, key, q) => (q.full === 'true' ? schemaView(ctx) : { field: ctx.board.schema.fields.find((f) => f.key === key) || null });
 route('POST', '/api/boards/:board/schema/fields', 'Declare a field: { key, label, type, options?, ui?, stub?, icon?, help?, required?, default?, min?, max?, position? }', ({ p, q, body, actor }) => {
@@ -1752,7 +1857,7 @@ route('GET', '/api/boards/:board/columns/:column/items', 'All items in a column,
   };
 });
 
-route('POST', '/api/boards/:board/items', 'Create item: { title, description?, column?, type?, priority?, parent?, properties?, blockedBy?, needsHuman?, attachments?, position? }',
+route('POST', '/api/boards/:board/items', 'Create item: { title, template?, description?, column?, type?, priority?, parent?, fields?, properties?, blockedBy?, needsHuman?, attachments?, position? }',
   ({ p, body, actor }) => {
     const ctx = getCtx(p.board);
     return created(itemView(ctx, createItem(ctx, body, actor)));

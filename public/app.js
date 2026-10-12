@@ -789,7 +789,7 @@
       <header class="col-head"><span class="col-dot"></span><span class="col-icon"></span><h2 class="col-name"></h2><span class="col-gate" hidden>${icon('user', 'sm')}</span><span class="col-count"></span><span class="grow"></span>
         <button class="col-add" title="New ticket|Quick syntax: Fix login #auth !high /issue">${icon('plus')}</button></header>
       <div class="col-wip" hidden><i></i></div>
-      <div class="composer">${tboxHTML({ ph: 'New ticket…', okIcon: 'plus', okTitle: 'Create', hint: 'Enter', rows: 2 })}</div>
+      <div class="composer"><div class="tpl-row"></div>${tboxHTML({ ph: 'New ticket…', okIcon: 'plus', okTitle: 'Create', hint: 'Enter', rows: 2 })}</div>
       <div class="list"></div></section>`);
     $('.col-add', c).onclick = () => openComposer(id);
     $('.col-count', c).onclick = () => {
@@ -824,15 +824,33 @@
     cnt.dataset.tip = wip ? `WIP limit|${n} of ${wip} slots used` : `${n} ticket${n === 1 ? '' : 's'}`;
   }
 
-  function openComposer(colId) {
+  // Ticket templates (per board) as one-tap chips above the composer; "/bug" in the text picks one too.
+  function openComposer(colId, template = null) {
     const c = colEls.get(colId);
     c.classList.add('composing');
+    const row = $('.composer .tpl-row', c);
+    const tpls = state.board.ticketTemplates || [];
+    row.hidden = !tpls.length;
+    row.innerHTML = tpls.map((t) => `<button class="tpl-chip" data-tpl="${esc(t.key)}" title="${esc(t.label)}|${esc(t.help || 'Start from this template')}">${icon(t.icon || t.type || 'task', 'sm')}${esc(t.label)}</button>`).join('');
+    row.onclick = (e) => { const b = e.target.closest('[data-tpl]'); if (b) setComposerTemplate(colId, c.dataset.tpl === b.dataset.tpl ? null : b.dataset.tpl); };
+    setComposerTemplate(colId, template);
     $('.composer textarea', c).focus();
+  }
+  function setComposerTemplate(colId, key) {
+    const c = colEls.get(colId);
+    const t = (state.board.ticketTemplates || []).find((x) => x.key === key);
+    if (t) c.dataset.tpl = t.key; else delete c.dataset.tpl;
+    for (const b of $$('.tpl-chip', c)) b.classList.toggle('on', b.dataset.tpl === c.dataset.tpl);
+    const ta = $('.composer textarea', c);
+    ta.placeholder = t ? `New ${t.label.toLowerCase()}…` : 'New ticket…';
+    if (t?.title && !ta.value) ta.value = t.title;
+    ta.focus();
   }
   function closeComposer(colId) {
     const c = colEls.get(colId);
     if (!c) return;
     c.classList.remove('composing');
+    delete c.dataset.tpl;
     $('.composer textarea', c).value = '';
   }
   // Quick syntax: "Fix login #auth !high /issue"
@@ -840,7 +858,9 @@
     const c = colEls.get(colId);
     const ta = $('.composer textarea', c);
     let text = ta.value;
-    const body = { column: colId, position: 'top' };
+    const body = { column: colId, position: 'top', ...(c.dataset.tpl ? { template: c.dataset.tpl } : {}) };
+    const tplKeys = new Set((state.board.ticketTemplates || []).map((t) => t.key));
+    text = text.replace(/(^|\s)\/([\w-]+)\b/g, (m, s, k) => { if (!tplKeys.has(k.toLowerCase())) return m; body.template = k.toLowerCase(); return s; });
     text = text.replace(/(^|\s)#([\w./-]+)/g, (_, s, p) => { body.parent = p; return s; });
     text = text.replace(/(^|\s)!(low|med(?:ium)?|high|crit(?:ical)?)\b/gi, (_, s, p) => { body.priority = PRIORITIES.find((x) => x.toLowerCase().startsWith(p.toLowerCase().slice(0, 3))); return s; });
     text = text.replace(/(^|\s)\/(issue|task|spike)\b/gi, (_, s, t) => { body.type = t.toLowerCase(); return s; });
@@ -850,7 +870,7 @@
     ta.value = '';
     autosize(ta);
     ta.focus();
-    try { await api('POST', B('/items'), body); scheduleRefresh(0); } catch (e) { toast(e.message, { kind: 'error' }); ta.value = text; }
+    try { await api('POST', B('/items'), body); scheduleRefresh(0); setComposerTemplate(colId, null); } catch (e) { toast(e.message, { kind: 'error' }); ta.value = text; }
   }
 
   /* ─── groups ─── */
@@ -2929,6 +2949,7 @@
         <button data-tab="cards">${icon('card')}Cards</button>
         <button data-tab="board">${icon('board')}Board</button>
         <button data-tab="fields">${icon('layers')}Fields</button>
+        <button data-tab="templates">${icon('copy')}Templates</button>
         <button data-tab="notify">${icon('bell')}Alerts</button>
         <button data-tab="about">${icon('info')}About</button>
       </nav><div class="set-pane"></div></div></div></div>`);
@@ -2956,7 +2977,7 @@
     // Live data (schema, profiles) changed elsewhere: redraw quietly unless the user is typing in the pane.
     m.refresh = () => {
       const typing = pane.contains(document.activeElement) && document.activeElement.matches('input, textarea');
-      if (['fields', 'board'].includes(m.tab) && !typing) show(m.tab, true);
+      if (['fields', 'board', 'templates'].includes(m.tab) && !typing) show(m.tab, true);
     };
     show(tab);
   }
@@ -3116,6 +3137,7 @@
         <div class="row"><span>Glyph</span><input class="inp" data-uglyph value="${esc(me.glyph || '')}" placeholder="${esc(initials(settings.userName))}" maxlength="4" style="max-width:80px;text-align:center"></div>`;
     }
     if (t === 'fields') return fieldsPane();
+    if (t === 'templates') return templatesPane();
     if (t === 'notify') {
       const perm = 'Notification' in window ? Notification.permission : 'unsupported';
       return `<h3>Alerts</h3>
@@ -3160,6 +3182,73 @@
     return `<h3>${esc(state.board?.name || '')} · built-in</h3><div class="bi-list">${bis}</div>
       <h3>Custom</h3>${customs || ''}
       <div class="fadd"><input class="inp" data-newlabel placeholder="New field"><button class="dd tiny" data-newtype data-type="text">text${icon('chev', 'sm')}</button><button class="btn primary sm" data-newadd>${icon('plus', 'sm')}Add</button></div>`;
+  }
+
+  // Ticket templates: presets for new tickets on this board (agents use them too: { "template": "bug" }).
+  function templatesPane() {
+    const list = state.board?.ticketTemplates || [];
+    const cols = state.board?.columns || [];
+    const cards = list.map((t) => `<div class="fcard tcard" data-tkey="${esc(t.key)}">
+        <div class="srow"><button class="ficon icon-pick" data-ticon title="Icon">${icon(t.icon || t.type || 'task')}</button><input class="inp lab" data-tf="label" value="${esc(t.label)}"><code class="fkey">/${esc(t.key)}</code><button class="icon-x" data-tdel title="Remove">${icon('x', 'sm')}</button></div>
+        <div class="srow sub">
+          <div class="seg mini" data-tseg="type">${['', ...TYPES].map((v) => `<button class="${(t.type || '') === v ? 'on' : ''}" data-v="${v}" title="${v ? `Type: ${v}` : 'Type|Keep the default'}">${v ? `${icon(v, 'sm')}${v}` : '–'}</button>`).join('')}</div>
+          <button class="dd tiny" data-tdd="priority">${icon('flag', 'sm')}${esc(t.priority || 'Priority')}${icon('chev', 'sm')}</button>
+          <button class="dd tiny" data-tdd="column">${icon('board', 'sm')}${esc(cols.find((c) => c.id === t.column || c.name === t.column)?.name || 'Column')}${icon('chev', 'sm')}</button>
+          <input class="inp tparent" data-tf="parent" value="${esc(t.parent || '')}" placeholder="#parent">
+        </div>
+        <input class="inp" data-tf="help" value="${esc(t.help || '')}" placeholder="Hint shown on the chip">
+        <textarea class="inp tdesc" data-tf="description" rows="3" placeholder="Description (markdown, checklists…)">${esc(t.description || '')}</textarea>
+        ${Object.keys(t.fields || {}).length ? `<div class="tfields">${Object.entries(t.fields).map(([k, v]) => `<span class="mini-chip">${esc(k)}=${esc(Array.isArray(v) ? v.join(',') : v)}</span>`).join('')}</div>` : ''}
+      </div>`).join('');
+    return `<h3>${esc(state.board?.name || '')} · ticket templates</h3>
+      ${cards || `<div class="empty-note">${icon('copy')}</div>`}
+      <div class="fadd"><input class="inp" data-newtpl placeholder="New template, e.g. Bug"><button class="btn primary sm" data-tpladd>${icon('plus', 'sm')}Add</button></div>`;
+  }
+
+  async function templateCall(method, key, body) {
+    try { await api(method, B(`/ticket-templates${key ? `/${encodeURIComponent(key)}` : ''}`), body); pulseSaved(); scheduleRefresh(0); }
+    catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+
+  function wireTemplates(pane) {
+    const tplOf = (node) => { const k = node.closest('[data-tkey]')?.dataset.tkey; return k && state.board.ticketTemplates.find((t) => t.key === k); };
+    pane.addEventListener('click', (e) => {
+      const t = tplOf(e.target);
+      const sb = e.target.closest('[data-tseg] button');
+      if (sb && t) { sb.parentElement.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === sb)); templateCall('PATCH', t.key, { [sb.parentElement.dataset.tseg]: sb.dataset.v || null }); return; }
+      const dd = e.target.closest('[data-tdd]');
+      if (dd && t) {
+        const k = dd.dataset.tdd;
+        const items = k === 'priority'
+          ? [{ label: 'Default', icon: 'x', run: () => templateCall('PATCH', t.key, { priority: null }) }, ...PRIORITIES.map((p) => ({ label: p, color: PRIO_VAR[p], cls: p === t.priority ? 'on' : '', run: () => templateCall('PATCH', t.key, { priority: p }) }))]
+          : [{ label: 'Where it is created', icon: 'x', run: () => templateCall('PATCH', t.key, { column: null }) }, ...state.board.columns.filter((c) => c.flags.allowCreate).map((c) => ({ label: c.name, color: c.color, cls: c.id === t.column || c.name === t.column ? 'on' : '', run: () => templateCall('PATCH', t.key, { column: c.id }) }))];
+        menu(dd, items);
+        return;
+      }
+      const ic = e.target.closest('[data-ticon]');
+      if (ic && t) { menu(ic, ['issue', 'task', 'spike', 'sparkle', 'ask', 'flag', 'inbox', 'layers', 'eye', 'lock', 'clock', 'msg'].map((n) => ({ label: n, icon: n, cls: n === t.icon ? 'on' : '', run: () => templateCall('PATCH', t.key, { icon: n }) }))); return; }
+      if (e.target.closest('[data-tdel]') && t) {
+        templateCall('DELETE', t.key).then(() => toast(`Removed ${t.label}`, { icon: 'copy', action: 'Undo', onAction: () => templateCall('POST', null, t) }));
+        return;
+      }
+      if (e.target.closest('[data-tpladd]')) addTemplate(pane);
+    });
+    pane.addEventListener('change', (e) => {
+      const f = e.target.dataset.tf;
+      const t = tplOf(e.target);
+      if (!f || !t) return;
+      const v = e.target.value.trim().replace(/^#/, '');
+      if (f === 'label' && !v) { e.target.value = t.label; return; }
+      templateCall('PATCH', t.key, { [f]: f === 'description' ? e.target.value : v || null });
+    });
+    pane.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('[data-newtpl]')) addTemplate(pane); });
+  }
+  async function addTemplate(pane) {
+    const inp = $('[data-newtpl]', pane);
+    const label = inp.value.trim();
+    if (!label) { inp.focus(); return; }
+    await templateCall('POST', null, { label });
+    inp.value = '';
   }
 
   async function schemaCall(method, path, body, undo) {
@@ -3248,6 +3337,7 @@
 
   function wirePane(t, pane, show) {
     if (t === 'fields' && !pane._fieldsWired) { pane._fieldsWired = true; wireFields(pane); }
+    if (t === 'templates' && !pane._tplWired) { pane._tplWired = true; wireTemplates(pane); }
     pane.onclick = async (e) => {
       const uc = e.target.closest('[data-ucolor]');
       if (uc) { try { await api('PATCH', '/api/profiles/me', { color: uc.dataset.ucolor || null }); pulseSaved(); } catch (err) { toast(err.message, { kind: 'error' }); } return; }

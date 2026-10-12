@@ -1102,3 +1102,19 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .opt-grid button.is-theme::after { content: ''; position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: .7; }
 .choice-row input[type=range] { width: 100%; }
 @media (max-width: 560px) { .choice-row { grid-template-columns: 1fr; gap: 6px; } .opt-grid { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); } }
+
+/* composer: ticket template chips */
+.tpl-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
+.tpl-row[hidden] { display: none; }
+.tpl-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 99px; border: 1px solid color-mix(in oklab, var(--border) 80%, transparent); background: color-mix(in oklab, var(--text) 3%, transparent); color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; transition: background .2s, color .2s, border-color .2s, transform .15s var(--spring); }
+.tpl-chip:hover { color: var(--text); background: var(--hover); }
+.tpl-chip:active { transform: scale(.95); }
+.tpl-chip.on { color: var(--text); border-color: color-mix(in oklab, var(--accent) 60%, transparent); background: color-mix(in oklab, var(--accent) 16%, var(--surface)); }
+
+/* settings: ticket templates */
+.tcard { display: grid; gap: 8px; }
+.tcard .srow.sub { flex-wrap: wrap; gap: 6px; }
+.tcard .icon-pick { border: 0; background: none; cursor: pointer; color: var(--accent); padding: 0; }
+.tcard .tparent { width: 120px; height: 26px; font-size: 12px; }
+.tcard .tdesc { resize: vertical; min-height: 64px; font: 12.5px/1.5 var(--mono); }
+.tcard .tfields { display: flex; flex-wrap: wrap; gap: 5px; }

@@ -54,8 +54,16 @@ const TOOLS = [
     (a) => ['PATCH', `/api/boards/${b(a)}/columns/${encodeURIComponent(a.column)}`, pick(a, ['name', 'color', 'icon', 'position', 'flags'])]],
   ['list_column_items', 'Items in a column, in order.', { board, column, full: S('boolean', 'Return full items') }, ['column'],
     (a) => ['GET', `/api/boards/${b(a)}/columns/${encodeURIComponent(a.column)}/items?${q({ full: a.full })}`]],
-  ['create_item', 'Create a work item.', { board, column, ...itemFields, needsHuman: S('string', 'Ask the human something right away') }, ['title'],
-    (a) => ['POST', `/api/boards/${b(a)}/items`, pick(a, ['column', 'title', 'description', 'type', 'priority', 'parent', 'properties', 'fields', 'blockedBy', 'needsHuman'])]],
+  ['create_item', 'Create a work item. Pass template (see list_ticket_templates) to start from a preset; your values override it.', { board, column, template: S('string', 'Ticket template key, e.g. bug'), ...itemFields, needsHuman: S('string', 'Ask the human something right away') }, ['title'],
+    (a) => ['POST', `/api/boards/${b(a)}/items`, pick(a, ['column', 'template', 'title', 'description', 'type', 'priority', 'parent', 'properties', 'fields', 'blockedBy', 'needsHuman'])]],
+  ['list_ticket_templates', 'Ticket templates on this board (presets for new tickets).', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/ticket-templates`]],
+  ['define_ticket_template', 'Add a ticket template, or change one (same label/key).', { board, label: S('string', 'e.g. Bug'), key: S('string', 'Optional; derived from label'), help: S('string', 'Hint shown on the chip'), type: S('string', 'issue | task | spike'), priority: S('string', 'Low | Medium | High | Critical'), parent: S('string', 'Parent group'), column: S('string', 'Column it starts in'), title: S('string', 'Prefilled title'), description: S('string', 'Markdown, e.g. a checklist'), fields: S('object', 'Field values'), properties: S('object', 'Property values') }, ['label'],
+    async (a, call) => {
+      const body = pick(a, ['label', 'key', 'help', 'type', 'priority', 'parent', 'column', 'title', 'description', 'fields', 'properties']);
+      const key = String(a.key || a.label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const list = await call('GET', `/api/boards/${b(a)}/ticket-templates`);
+      return list.some((t) => t.key === key) ? ['PATCH', `/api/boards/${b(a)}/ticket-templates/${key}`, body] : ['POST', `/api/boards/${b(a)}/ticket-templates`, body];
+    }],
   ['get_item', 'Full item: description, comments, attachments, lease, properties.', { board, id }, ['id'], (a) => ['GET', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}`]],
   ['update_item', 'Change any fields. Include version for safe writes.', { board, id, ...itemFields, column, position: S('string', 'Index, top or bottom'), cover: S('string', 'Card image: auto | none | attachment id'), version: S('number', 'Version from your last read') }, ['id'],
     (a) => ['PATCH', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}`, pick(a, ['title', 'description', 'type', 'priority', 'parent', 'properties', 'fields', 'blockedBy', 'column', 'position', 'cover', 'version'])]],
@@ -119,12 +127,11 @@ async function callTool(name, args = {}) {
   const t = tools.find((x) => x.name === name);
   if (!t) throw new Error(`Unknown tool ${name}`);
   if (!BASE) return { text: NO_BOARD, isError: true };
-  const [method, path, body] = t.call(args);
-  const res = await fetch(BASE + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', 'X-Agent': args.agent || AGENT, ...(tokenFor(args.agent || AGENT) ? { Authorization: `Bearer ${tokenFor(args.agent || AGENT)}` } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const headers = { 'Content-Type': 'application/json', 'X-Agent': args.agent || AGENT, ...(tokenFor(args.agent || AGENT) ? { Authorization: `Bearer ${tokenFor(args.agent || AGENT)}` } : {}) };
+  // A tool spec may look something up first (e.g. create-or-update), so it can be async and gets a JSON GET helper.
+  const getJson = async (m, p) => (await fetch(BASE + p, { method: m, headers })).json();
+  const [method, path, body] = await t.call(args, getJson);
+  const res = await fetch(BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await res.text();
   return { text, isError: !res.ok };
 }

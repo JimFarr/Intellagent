@@ -177,6 +177,41 @@ describe('board API', () => {
     assert.equal(again.events.length, 0);
   });
 
+  test('ticket templates fill a new ticket; the caller overrides', async () => {
+    const list = await s.ok('GET', `${B}/ticket-templates`);
+    assert.deepEqual(list.map((t) => t.key), ['bug', 'feature', 'question'], 'copied from the board preset');
+    const bug = await mk({ template: 'bug', title: 'Crash on save' });
+    assert.equal(bug.type, 'issue');
+    assert.equal(bug.priority, 'High');
+    assert.equal(bug.template, 'bug');
+    assert.match(bug.description, /Steps to reproduce/);
+    const low = await mk({ template: 'bug', title: 'Typo', priority: 'Low', description: 'just a typo' });
+    assert.equal(low.priority, 'Low');
+    assert.equal(low.description, 'just a typo');
+    assert.equal((await s.api('POST', `${B}/items`, { title: 'x', template: 'nope' })).status, 400);
+
+    const t = await s.ok('POST', `${B}/ticket-templates`, { label: 'Hotfix', type: 'issue', priority: 'Critical', column: 'Ready', properties: { hot: true } }, USER);
+    assert.equal(t.key, 'hotfix');
+    const hot = await mk({ template: 'hotfix', title: 'Prod down', column: undefined });
+    assert.equal(hot.columnId, 'ready');
+    assert.deepEqual(hot.properties, { hot: true });
+    await s.ok('PATCH', `${B}/ticket-templates/hotfix`, { priority: 'High' });
+    assert.equal((await mk({ template: 'hotfix', title: 'y', column: undefined })).priority, 'High');
+    await s.ok('DELETE', `${B}/ticket-templates/hotfix`);
+    assert.equal((await s.ok('GET', `${B}/ticket-templates`)).length, 3);
+  });
+
+  test('flow and wait history are recorded for metrics', async () => {
+    const it = await mk({});
+    await s.ok('POST', `${B}/items/${it.id}/move`, { column: 'Ready' });
+    await s.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'ok?' });
+    await s.ok('DELETE', `${B}/items/${it.id}/attention`, { reply: 'yes' }, USER);
+    const full = await s.ok('GET', `${B}/items/${it.id}`);
+    assert.deepEqual(full.flow.map((f) => f.col), ['backlog', 'ready']);
+    assert.equal(full.waits.length, 1);
+    assert.equal(full.waits[0].by, 'James');
+  });
+
   test('cross-origin writes are refused', async () => {
     const r = await fetch(`${s.base}${B}/items`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example', 'x-user': 'James' }, body: '{"title":"x"}' });
     assert.equal(r.status, 403);
