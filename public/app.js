@@ -1074,7 +1074,7 @@
   const SPRING = 'cubic-bezier(.2,.9,.25,1.12)';
   // Opening/closing a stack is a deliberate gesture: calm ease-in-out, no overshoot, for the stack and its neighbours.
   const EASE_IO = 'cubic-bezier(.45,0,.2,1)';
-  const MORPH_MS = 420;
+  const MORPH_MS = 300;
   let morphNext = null;
   function flip(before, { flights = true } = {}) {
     const mo = morphNext;
@@ -1131,7 +1131,7 @@
       const s = m.a || 1, ty = m.f;
       const lw = r.width / s, lh = r.height / s;
       const dx = a.left + a.width / 2 - (r.left + r.width / 2), dy = a.top + a.height / 2 - (r.top + r.height / 2 - ty);
-      const delay = opening ? Math.min(i, 5) * 24 : Math.min(cards.length - 1 - i, 5) * 16;
+      const delay = opening ? Math.min(i, 5) * 16 : Math.min(cards.length - 1 - i, 5) * 12;
       runs.push(c.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${a.width / lw}, ${a.height / lh})` }, { transform: `translate(0px, ${ty}px) scale(${s}, ${s})` }], opts(delay)));
       const w = was?.get(c), o = +getComputedStyle(c).opacity;
       if (!w) return;

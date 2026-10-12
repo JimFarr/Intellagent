@@ -396,14 +396,14 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .group-head .g-name::before { content: '#'; opacity: .5; }
 .g-count { display: inline-grid; place-items: center; flex: none; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 99px; font: 600 10px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); background: color-mix(in oklab, var(--text) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--text) 7%, transparent); transition: color .2s, background-color .2s; }
 .group-head:hover .g-count { color: var(--text); background: color-mix(in oklab, var(--text) 12%, transparent); }
-.group-head .g-chev { width: 13px; height: 13px; flex: none; color: var(--muted); transition: rotate .42s var(--ease-io); }
+.group-head .g-chev { width: 13px; height: 13px; flex: none; color: var(--muted); transition: rotate .3s var(--ease-io); }
 .group-cards { position: relative; display: flex; flex-direction: column; gap: var(--gap); }
 .group.listed.folded .group-cards { display: none; }
 .group.listed.folded .g-chev, .group.stack:not(.open) .g-chev { rotate: -90deg; }
 /* The backdrop (tray or rail). Shown for list groups and open stacks; a stack's appears first as it opens
    and leaves last as it closes. JS animates its bottom edge along with the cards. */
-.g-bg { position: absolute; inset: calc(-1 * var(--gi)); z-index: -1; pointer-events: none; display: none; opacity: 0; transition: opacity .3s .12s var(--ease-io); }
-.group.listed .g-bg, .group.stack.open .g-bg { opacity: 1; transition: opacity .24s ease-out; }
+.g-bg { position: absolute; inset: calc(-1 * var(--gi)); z-index: -1; pointer-events: none; display: none; opacity: 0; transition: opacity .22s .08s var(--ease-io); }
+.group.listed .g-bg, .group.stack.open .g-bg { opacity: 1; transition: opacity .18s ease-out; }
 :root:not([data-groups]) .g-bg, :root[data-groups="tray"] .g-bg { display: block; border-radius: calc(var(--r-card) + var(--gi)); background: color-mix(in oklab, var(--tagc) 6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tagc) 12%, transparent); }
 :root[data-groups="rail"] .g-bg { display: block; inset: calc(18px + var(--gpad)) auto 0 -8px; width: 2px; border-radius: 2px; background: color-mix(in oklab, var(--tagc) 70%, transparent); }
 :root[data-groups="rule"] .group-head { padding-bottom: 6px; margin-bottom: calc(var(--gpad) - 2px); box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--text) 12%, transparent); border-radius: 0; }
@@ -411,6 +411,15 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 :root[data-groups="tab"] .group-head { width: fit-content; max-width: calc(100% - 24px); margin-left: 12px; padding: 4px 9px 4px 8px; border-radius: 9px 9px 0 0; background: color-mix(in oklab, var(--tagc) 14%, var(--surface)); color: color-mix(in oklab, var(--tagc) 40%, var(--text)); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--tagc) 30%, transparent); }
 :root[data-groups="tab"] .group-head .grow { display: none; }
 :root[data-groups="tab"] .group-cards > .card:first-child .tape { display: none; }
+/* A group is one object, so it gets one decoration: the first card carries it, in the canonical spot for its
+   type (tape strip centred across the top, pin centred, clip on the left, fold in the corner), and the
+   other cards drop theirs. On a collapsed stack that single tape/pin/clip holds the whole pile together.
+   (In the tab look the folder tab is the group's marker, so no card keeps one.) */
+.group .group-cards > .card:not(:first-child) .tape { display: none; }
+:root[data-tape="tape"] .group .group-cards > .card:first-child .tape { left: 50%; right: auto; top: -9px; width: 62px; translate: -50% 0; rotate: -2deg; }
+:root[data-tape="pin"] .group .group-cards > .card:first-child .tape { left: 50%; top: -8px; }
+:root[data-tape="clip"] .group .group-cards > .card:first-child .tape { left: 18px; right: auto; rotate: -10deg; }
+:root[data-tape="corner"] .group .group-cards > .card:first-child .tape { width: 22px; height: 22px; }
 /* spine: the label runs down a rail beside the cards */
 :root[data-groups="spine"] .group { padding-left: 24px; }
 :root[data-groups="spine"] .group-head { position: absolute; left: 0; top: 0; bottom: 0; width: 24px; padding: 2px 0 4px; writing-mode: vertical-rl; gap: 7px; overflow: hidden; }
@@ -1390,7 +1399,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 /* tape: centred strip · across the top-left corner · across the top-right corner · off-centre strip.
    Corner strips stay within the card's width: the list clips sideways, so nothing may overhang its padding. */
 :root[data-tape="tape"] .card[data-slot="0"] .tape { left: var(--deco-x); rotate: calc(-2.5deg + var(--deco-r) * .4); }
-:root[data-tape="tape"] .card[data-slot="1"] .tape { left: 2px; top: 2px; width: 50px; rotate: -38deg; }
+:root[data-tape="tape"] .card[data-slot="1"] .tape { left: 2px; top: 2px; width: 50px; translate: 0; rotate: -38deg; }
 :root[data-tape="tape"] .card[data-slot="2"] .tape { left: auto; right: 2px; top: 2px; width: 50px; translate: 0; rotate: 38deg; }
 :root[data-tape="tape"] .card[data-slot="3"] .tape { left: var(--deco-x); width: 46px; rotate: calc(4deg + var(--deco-r) * .5); }
 /* pin: anywhere along the top, sometimes a little lower */
