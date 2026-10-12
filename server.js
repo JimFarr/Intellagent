@@ -1085,6 +1085,50 @@ function react(ctx, id, d, actor, add = true) {
   });
 }
 
+/* Lease requests: an agent that needs a ticket someone else holds asks for it; the holder hands the
+   lease over in one step or declines with a reason. Requests are allowed even while the board is held. */
+function requestLease(ctx, id, d, actor) {
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    const l = activeLease(item);
+    if (!l) fail(409, `${item.id} isn't leased — just start it`, { code: 'NOT_LEASED', hint: `POST …/items/${item.id}/start` });
+    if (l.claimant === actor.name) fail(409, 'You already hold it');
+    item.leaseRequests = (item.leaseRequests || []).filter((x) => x.by !== actor.name);
+    const req = { by: actor.name, reason: str(d.reason || '', 1000), at: now() };
+    item.leaseRequests.push(req);
+    events.push(itemEvent(ctx, 'lease.requested', item, actor, { claimant: l.claimant, reason: req.reason || null, mentions: [l.claimant] }));
+    return { requested: item.id, holder: l.claimant };
+  });
+}
+function handOverLease(ctx, id, d, actor) {
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    const l = activeLease(item);
+    if (!l) fail(409, `${item.id} isn't leased`, { code: 'NOT_LEASED' });
+    if (actor.kind === 'agent' && l.claimant !== actor.name) fail(403, `Only ${l.claimant} (or a human) can hand it over`, { code: 'FORBIDDEN' });
+    const to = str(d.to || item.leaseRequests?.[0]?.by || '', 64).trim();
+    if (!to) fail(400, '"to" is required (no pending request)');
+    makeLease(item, to, l.minutes || M.lease.defaultMinutes, d.status || null, null);
+    item.leaseRequests = (item.leaseRequests || []).filter((x) => x.by !== to);
+    item.version++;
+    events.push(itemEvent(ctx, 'lease.handed', item, actor, { from: l.claimant, claimant: to, note: str(d.note || '', 1000) || null, mentions: [to] }));
+    return itemView(ctx, item);
+  });
+}
+function declineLease(ctx, id, d, actor) {
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    const l = activeLease(item);
+    if (actor.kind === 'agent' && l && l.claimant !== actor.name) fail(403, `Only ${l.claimant} (or a human) can decline`, { code: 'FORBIDDEN' });
+    const who = str(d.to || item.leaseRequests?.[0]?.by || '', 64);
+    const before = (item.leaseRequests || []).length;
+    item.leaseRequests = (item.leaseRequests || []).filter((x) => x.by !== who);
+    if (before === item.leaseRequests.length) fail(404, `No lease request from "${who}"`);
+    events.push(itemEvent(ctx, 'lease.declined', item, actor, { requester: who, reason: str(d.reason || '', 1000) || null, mentions: [who] }));
+    return { declined: who };
+  });
+}
+
 // Asking never needs a lease: anyone working near a ticket may ask about it. Questions stack up;
 // each gets an id and is answered on its own.
 function askHuman(ctx, id, reason, actor) {
@@ -1349,6 +1393,11 @@ function workFor(ctx, name) {
   // One suggestion per ticket (renewing is separate: it is just housekeeping).
   const add = (action, it, why, how) => { const k = action === 'renew' ? `renew:${it.id}` : it.id; if (seen.has(k)) return; seen.add(k); next.push({ action, id: it.id, title: it.title, why, call: how }); };
   for (const q of requests) next.push({ action: 'handle_request', requestId: q.requestId, why: `Request from ${q.from}: ${String(q.request).slice(0, 160)}`, call: `POST /api/boards/${ctx.id}/requests/${q.requestId}/reply { "body": "what you did", "done": true }` });
+  for (const it of items) {
+    const l = activeLease(it);
+    if (l?.claimant !== name) continue;
+    for (const q of it.leaseRequests || []) next.push({ action: 'answer_lease_request', id: it.id, title: it.title, why: `${q.by} asks for it${q.reason ? `: ${q.reason}` : ''}`, call: `POST /api/boards/${ctx.id}/items/${it.id}/lease/handover { "to": "${q.by}" } — or …/lease/decline { "to": "${q.by}", "reason": "…" }` });
+  }
   for (const x of explain) add('explain', x, `Asked to explain (reply on the card only — change nothing): ${String(x.question).slice(0, 140)}`, `POST /api/boards/${ctx.id}/items/${x.id}/comments { "body": "…" }`);
   for (const x of leases.filter((l) => l.minutesLeft <= M.lease.warningMinutes)) add('renew', x, `Your lease ends in ${x.minutesLeft} min`, `${call(x.id, 'lease')} { "minutes": 30 }`);
   for (const x of feedback) add('address_feedback', x, `Review sent back: ${String(x.feedback || '').slice(0, 120)}`, call(x.id, 'start'));
@@ -1396,10 +1445,23 @@ function briefing(ctx, name, base, via = 'cli') {
     ].filter(Boolean).join(' · ');
   };
   const rules = projectRules();
+  const me = profiles[name] || {};
+  const intro = me.role ? [] : [
+    '## First: introduce yourself',
+    'You have no role on this board yet. Before any other work, ask the human these questions (one message, all at once):',
+    `1. **Name** — what should I be called? (leave blank and I'll pick a friendly one${name && !/^(claude|claude-code|mcp-agent|cli-agent|agent)$/.test(name) ? `; I'm currently "${name}"` : ''})`,
+    '2. **Role** — coordinator, builder, reviewer, researcher, writer, or something else?',
+    '3. **Alignment** — how should I behave? (e.g. careful and thorough, fast and pragmatic, terse, explain everything, ask before big changes)',
+    '4. **Anything to avoid or focus on?**',
+    `Then save the answers: MCP \`introduce_yourself { name?, role, alignment, description }\`, or \`intellagent api PATCH /api/profiles/me role="…" alignment="…" description="…"\` (pick a colour and a glyph too). A blank name: \`GET /api/names/suggest\`.`,
+    '',
+  ];
   const lines = [
     `# You are "${name}" on the ${b.name} board`,
     `${base}  ·  board id \`${ctx.id}\`  ·  tickets ${b.idPrefix}-1, ${b.idPrefix}-2…  ·  identify every call as "${name}"${b.coordinator === name ? '  ·  you are this board\'s coordinator: requests come to you' : ''}`,
+    ...(me.role ? [`Role: **${me.role}**${me.alignment ? ` · alignment: ${me.alignment}` : ''}`] : []),
     '',
+    ...intro,
     '## What to do next',
     ...(w.note ? [`> ${w.note}`] : []),
     ...(w.next.length
@@ -1425,6 +1487,7 @@ function briefing(ctx, name, base, via = 'cli') {
     `- Finished? Request review in four parts — what changed, why (incl. alternatives you rejected), how to verify, risks/open questions: ${c('review')}`,
     `- React to a comment or card (never wakes anyone): \`intellagent api POST ${P}/items/<ID>/reactions emoji=+1 commentId=<id>\` — 👀 is added for you on comments you were woken for.`,
     `- Requests (free-form asks like "create tickets for X") arrive as \`handle_request\` in your work: do them, then reply — \`intellagent api POST ${P}/requests/<id>/reply body="what you did, with ticket ids" done=true\`.`,
+    `- Need a ticket someone else holds? Ask: \`intellagent api POST ${P}/items/<ID>/lease/request reason="why"\` — the holder hands it over or declines. If someone asks you, answer it (it's in your work).`,
     '- Asked to *explain* (a comment marked explain, or an "explain" item in your work): answer in a comment and change nothing else — not the code, the ticket, its column or the review.',
     `- Where can this ticket go?: ${c('moves')}`,
     `- End of session (releases everything, posts the digest): ${c('finish')}`,
@@ -1841,6 +1904,9 @@ function updateProfile(name, d, actor) {
   }
   if ('label' in d) { if (d.label) next.label = str(d.label, 40); else delete next.label; }
   if ('description' in d) { if (d.description) next.description = str(d.description, 4000); else delete next.description; }
+  // What the agent is for and how it should behave — set when it introduces itself.
+  if ('role' in d) { if (d.role) next.role = str(d.role, 40); else delete next.role; }
+  if ('alignment' in d) { if (d.alignment) next.alignment = str(d.alignment, 400); else delete next.alignment; }
   if ('image' in d || 'imageBase64' in d || 'imagePath' in d) {
     if (!d.image && !d.imageBase64 && !d.imagePath) delete next.image;
     else if (d.image && /^https?:\/\//i.test(d.image)) next.image = str(d.image, 2000);
@@ -2033,7 +2099,7 @@ const SCHEMA = {
     seq: 'integer cursor', ts: 'ISO', board: 'string', hash: 'board hash after the change',
     type: ['item.created', 'item.updated', 'item.moved', 'item.reordered', 'item.archived', 'item.restored', 'comment.added',
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
-      'attention.raised', 'attention.resolved', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
+      'attention.raised', 'attention.resolved', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agents.changed'],
@@ -2539,6 +2605,10 @@ route('POST', '/api/boards/:board/items/:id/reactions', 'React with an emoji: { 
 route('DELETE', '/api/boards/:board/items/:id/reactions', 'Remove your reaction: { emoji, commentId? }', ({ p, body, q, actor }) =>
   ({ reactions: react(getCtx(p.board), p.id, { ...q, ...body }, actor, false) }));
 
+route('POST', '/api/boards/:board/items/:id/lease/request', 'Ask the holder for a ticket\'s lease: { reason }', ({ p, body, actor }) => requestLease(getCtx(p.board), p.id, body, actor));
+route('POST', '/api/boards/:board/items/:id/lease/handover', 'Holder (or human): hand the lease to { to? (default: first requester), note?, status? }', ({ p, body, actor }) => handOverLease(getCtx(p.board), p.id, body, actor));
+route('POST', '/api/boards/:board/items/:id/lease/decline', 'Holder (or human): decline a lease request { to? (default: first requester), reason }', ({ p, body, actor }) => declineLease(getCtx(p.board), p.id, body, actor));
+
 route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason } — allowed even while others hold leases', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const { item, questionId } = askHuman(ctx, p.id, body.reason, actor);
@@ -2686,7 +2756,20 @@ route('GET', '/api/permissions/me', 'What you are allowed to do (from the manife
 }));
 route('GET', '/api/profiles', 'Display profiles (colour, glyph, image) for agents and users', () => profiles);
 route('GET', '/api/profiles/me', 'Your display profile', ({ actor }) => ({ name: actor.name, ...(profiles[actor.name] || {}) }));
-route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 chars/emoji), label?, description? (markdown: what you were designed to do), image? (https URL) | imageBase64 | imagePath } — null clears',
+// A friendly generated name for agents that don't want to pick one ("leave blank").
+const NAME_ADJ = ['brisk', 'cosmic', 'dapper', 'fuzzy', 'gentle', 'jolly', 'lucky', 'mellow', 'nimble', 'plucky', 'quirky', 'sunny', 'tidy', 'witty', 'zesty', 'breezy', 'cheeky', 'daring', 'humble', 'snappy'];
+const NAME_NOUN = ['otter', 'heron', 'badger', 'lemur', 'puffin', 'gecko', 'walrus', 'panda', 'falcon', 'quokka', 'narwhal', 'koala', 'marmot', 'pangolin', 'axolotl', 'capybara', 'wombat', 'ibis', 'tapir', 'yak'];
+function sillyName() {
+  const taken = new Set([...presence.keys(), ...Object.keys(profiles)]);
+  for (let i = 0; i < 50; i++) {
+    const n = `${NAME_ADJ[crypto.randomInt(NAME_ADJ.length)]}-${NAME_NOUN[crypto.randomInt(NAME_NOUN.length)]}`;
+    if (!taken.has(n)) return n;
+  }
+  return `agent-${crypto.randomBytes(2).toString('hex')}`;
+}
+route('GET', '/api/names/suggest', 'A free, friendly agent name (e.g. "plucky-otter")', () => ({ name: sillyName() }));
+
+route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 chars/emoji), label?, description? (markdown: what you were designed to do), role?, alignment? (how you behave), image? (https URL) | imageBase64 | imagePath } — null clears',
   ({ body, actor }) => updateProfile(actor.name, body, actor));
 
 route('GET', '/avatars/:file', null, ({ res, p }) => {
@@ -2755,7 +2838,7 @@ const server = http.createServer(async (req, res) => {
     checkAuth(req, q, actor, u.pathname);
     const bm = /^\/api\/boards\/([^/]+)(?:\/(.*))?$/.exec(u.pathname);
     const gctx = bm && (boards.get(bm[1]) || boards.get(slug(decodeURIComponent(bm[1]))));
-    if (req.method !== 'GET' && gctx && !/(^|\/)(comments|attention|digest|master|finish|reactions|requests)(\/|$)/.test(bm[2] || '')) {
+    if (req.method !== 'GET' && gctx && !/(^|\/)(comments|attention|digest|master|finish|reactions|requests|request|decline)(\/|$)/.test(bm[2] || '')) {
       guardBoard(gctx, actor);
     }
     if (actor.kind === 'agent' && u.pathname.startsWith('/api')) touch(actor.name, `${req.method} ${u.pathname}`);

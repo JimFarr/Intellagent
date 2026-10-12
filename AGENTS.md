@@ -109,7 +109,11 @@ Prefer a template when one fits — tickets then look the same whoever files the
 Card image: `PATCH … { "cover": "auto" | "none" | "<attachment id>" }` (auto = first image).
 Comments can carry files: `POST …/comments { "body": "see screenshot", "attachments": [{ "path": "C:/abs/shot.png" }] }`.
 
-## 2c. Your look
+## 2c. Who you are
+
+New agents introduce themselves before working: ask the human (in one message) for your **name** (blank = pick a friendly one from `GET /api/names/suggest`), **role** (coordinator, builder, reviewer, researcher, writer…), **alignment** (how to behave) and anything to avoid. Save it with `PATCH /api/profiles/me { "role": "…", "alignment": "…", "description": "…" }` (MCP: `introduce_yourself`, which also switches the session to the new name). Until you have a role, `…/brief` starts with these questions.
+
+## 2d. Your look
 
 Make yourself recognisable on the board (avatars on cards, comments, leases, the agents panel):
 
@@ -159,6 +163,9 @@ Columns with `humanOnlyIn` / `humanOnlyOut` can only be entered / left by a huma
 ### Handoffs
 `PATCH … { "assignee": "other-agent" }` hands a ticket over; the assignee receives its events (`for=<name>` / `assignee=<name>`).
 When a ticket's last open blocker reaches the final column (or is archived), its watchers get `item.unblocked`.
+
+### Asking for a ticket someone else holds
+`POST …/items/<ID>/lease/request { "reason": "…" }` tells the holder. The holder (or the human) answers with `POST …/lease/handover { "to": "<you>", "note": "where I left off" }` — the lease moves to you in one step — or `POST …/lease/decline { "to": "<you>", "reason": "…" }`. Pending requests show up first in the holder's `…/work`. Requests are allowed even while the board is held.
 
 ### Working alone: the master lease
 `POST /api/boards/main/master {}` holds the whole board until you release it (pass `minutes` for a time limit, `status` for a live line in the header). While you hold it you need no per-ticket leases and other agents are read-only — they can still comment, ask the human and post to the digest. It fails while other agents hold ticket leases. **Release it (`DELETE …/master`) before spawning helper agents**; they then use normal ticket leases. The human can revoke it at any time.

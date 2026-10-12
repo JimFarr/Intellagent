@@ -6,12 +6,28 @@
  */
 'use strict';
 
-const { baseUrl, tokenFor, defaultAgent, NO_BOARD } = require('./lib/locate');
+const { baseUrl, tokenFor, defaultAgent, findManifest, NO_BOARD } = require('./lib/locate');
+const fs = require('fs');
+const nodePath = require('path');
 
 const BASE = baseUrl(); // nearest .intellagent/ manifest from the working directory, or INTELLAGENT_URL
 // Agent name: INTELLAGENT_AGENT, else the project's default agent (manifest), else the MCP client's own name.
 // The project default keeps one identity whether the agent uses the CLI or these tools.
 let AGENT = process.env.INTELLAGENT_AGENT || defaultAgent() || 'mcp-agent';
+let CLIENT = 'default';
+// The name an agent chose when it introduced itself is remembered per MCP client, so it keeps it next session.
+const identityFile = () => { const mp = findManifest(); return mp ? nodePath.join(nodePath.dirname(mp), 'cursors', 'mcp-identity.json') : null; };
+function savedIdentity() { try { return JSON.parse(fs.readFileSync(identityFile(), 'utf8'))[CLIENT] || null; } catch { return null; } }
+function setAgent(name) {
+  AGENT = name;
+  const f = identityFile();
+  if (!f || process.env.INTELLAGENT_AGENT) return;
+  let m = {};
+  try { m = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* new */ }
+  m[CLIENT] = name;
+  fs.mkdirSync(nodePath.dirname(f), { recursive: true });
+  fs.writeFileSync(f, JSON.stringify(m, null, 2));
+}
 const BOARD = process.env.INTELLAGENT_BOARD || 'main';
 const VERSION = '1.0.0';
 
@@ -111,6 +127,18 @@ const TOOLS = [
   ['list_requests', 'Requests the human sent you (free-form asks not tied to a ticket).', { board, status: S('string', 'open | done') }, [], (a) => ['GET', `/api/boards/${b(a)}/requests?${q({ status: a.status || 'open', to: AGENT })}`]],
   ['reply_request', 'Reply to a request: say what you did (with ticket ids); pass done: true when finished.', { board, requestId: S('string', 'Request id'), body: S('string', 'Markdown reply'), done: S('boolean', 'Mark the request done') }, ['requestId'],
     (a) => ['POST', `/api/boards/${b(a)}/requests/${encodeURIComponent(a.requestId)}/reply`, pick(a, ['body', 'done'])]],
+  ['introduce_yourself', 'Save who you are after asking the human (name — blank for a generated one, role, alignment). Switches this session to that name.', { name: S('string', 'Your name (omit for a friendly generated one)'), role: S('string', 'coordinator | builder | reviewer | researcher | writer | …'), alignment: S('string', 'How you behave, e.g. careful and thorough'), description: S('string', 'One paragraph: what you do here'), color: S('string', 'CSS colour'), glyph: S('string', '1–2 characters or an emoji') }, ['role'],
+    async (a, call) => {
+      const name = a.name && String(a.name).trim() ? String(a.name).trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 64) : (await call('GET', '/api/names/suggest')).name;
+      setAgent(name);
+      return ['PATCH', '/api/profiles/me', pick(a, ['role', 'alignment', 'description', 'color', 'glyph'])];
+    }],
+  ['request_lease', 'Ask the agent holding a ticket to hand it to you.', { board, id, reason: S('string', 'Why you need it') }, ['id'],
+    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease/request`, pick(a, ['reason'])]],
+  ['hand_over_lease', 'Hand a ticket you hold to an agent that asked for it (default: the first requester).', { board, id, to: S('string', 'Agent name'), note: S('string', 'Handover note: where you left off') }, ['id'],
+    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease/handover`, pick(a, ['to', 'note'])]],
+  ['decline_lease_request', 'Decline a request for a ticket you hold, with a reason.', { board, id, to: S('string', 'Agent name'), reason: S('string', 'Why not (yet)') }, ['id', 'reason'],
+    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease/decline`, pick(a, ['to', 'reason'])]],
   ['react', 'React with an emoji on a card or a comment (never wakes anyone). Use 👀 to show you read a comment.', { board, id, emoji: S('string', 'Emoji, or a name: eyes, +1, tada, rocket, thinking, check, heart…'), commentId: S('string', 'Comment id (omit to react to the card)'), remove: S('boolean', 'Remove your reaction instead') }, ['id', 'emoji'],
     (a) => [a.remove ? 'DELETE' : 'POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/reactions`, pick(a, ['emoji', 'commentId'])]],
   ['ask_human', 'Flag the item as needing the human, with a question.', { board, id, reason: S('string', 'Your question') }, ['id', 'reason'],
@@ -146,6 +174,7 @@ async function callTool(name, args = {}) {
   // A tool spec may look something up first (e.g. create-or-update), so it can be async and gets a JSON GET helper.
   const getJson = async (m, p) => (await fetch(BASE + p, { method: m, headers })).json();
   const [method, path, body] = await t.call(args, getJson);
+  headers['X-Agent'] = AGENT; // introduce_yourself may have just changed it
   // In a standing-agent run, identical writes on a retry replay the first reply instead of acting twice.
   if (batch && method !== 'GET') headers['Idempotency-Key'] = require('crypto').createHash('sha1').update(`${batch}|${method}|${path}|${JSON.stringify(body ?? null)}`).digest('hex');
   const res = await fetch(BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -161,13 +190,22 @@ async function handle(msg) {
   try {
     if (method === 'initialize') {
       const client = params?.clientInfo?.name;
-      if (!process.env.INTELLAGENT_AGENT && !defaultAgent() && client) AGENT = String(client).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 64);
+      CLIENT = String(client || 'default');
+      const saved = !process.env.INTELLAGENT_AGENT && savedIdentity();
+      if (saved) AGENT = saved;
+      else if (!process.env.INTELLAGENT_AGENT && !defaultAgent() && client) AGENT = String(client).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 64);
+      // A new agent (no role on the board yet) starts by asking the human who it should be.
+      let intro = '';
+      try {
+        const me = await (await fetch(`${BASE}/api/profiles/me`, { headers: { 'X-Agent': AGENT } })).json();
+        if (BASE && !me?.role) intro = ' FIRST, before any other work: you have not introduced yourself on this board. Ask the human, in one message: (1) your name — blank means you pick a friendly generated one, (2) your role — coordinator, builder, reviewer, researcher, writer or other, (3) your alignment — how you should behave, (4) anything to avoid or focus on. Then call introduce_yourself with the answers.';
+      } catch { /* board not running */ }
       return send({ jsonrpc: '2.0', id: rid, result: {
         protocolVersion: params?.protocolVersion || '2025-06-18',
         capabilities: { tools: {} },
         serverInfo: { name: 'intellagent', version: VERSION },
         instructions: BASE
-          ? `Kanban shared with the human at ${BASE}. You are "${AGENT}". Call get_briefing first: it says what to do next, how this board works and which tools to use. Work a ticket with start_work → set_status → request_review; ask_human when unsure; finish_session at the end.`
+          ? `Kanban shared with the human at ${BASE}. You are "${AGENT}". Call get_briefing first: it says what to do next, how this board works and which tools to use. Work a ticket with start_work → set_status → request_review; ask_human when unsure; finish_session at the end.${intro}`
           : NO_BOARD,
       } });
     }

@@ -2,7 +2,7 @@
 // Structured agent flows: work → start → ask → answer → review → decision → finish.
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, USER } = require('./helpers');
+const { startServer, until, USER } = require('./helpers');
 
 const B = '/api/boards/main';
 const A = { agent: 'ada' };
@@ -194,6 +194,54 @@ describe('agent flows', () => {
     assert.equal(listed.replies[0].body, 'Created T-90 and T-91');
     const direct = await s.ok('POST', `${B}/requests`, { body: 'ping', to: 'ada' }, USER);
     assert.equal(direct.to, 'ada');
+  });
+
+  it('lease requests: ask the holder, who hands over or declines', async () => {
+    const it = await mk({ title: 'contested' });
+    await s.ok('POST', `${B}/items/${it.id}/start`, {}, { agent: 'holder2' });
+    const { seq } = await s.ok('GET', '/api/app');
+    await s.ok('POST', `${B}/items/${it.id}/lease/request`, { reason: 'I have the fix ready' }, { agent: 'asker2' });
+    assert.equal((await s.ok('GET', `/api/events?since=${seq}&for=holder2&types=lease.requested`)).events.length, 1, 'the holder is told');
+    const hw = await work({ agent: 'holder2' });
+    assert.equal(hw.next[0].action, 'answer_lease_request');
+    assert.equal((await s.api('POST', `${B}/items/${it.id}/lease/handover`, {}, { agent: 'asker2' })).status, 403, 'only the holder hands over');
+    await s.ok('POST', `${B}/items/${it.id}/lease/handover`, { note: 'tests are in test/x' }, { agent: 'holder2' });
+    assert.equal((await s.ok('GET', `${B}/items/${it.id}`)).lease.claimant, 'asker2');
+    assert.equal((await s.ok('GET', `/api/events?since=${seq}&for=asker2&types=lease.handed`)).events.length, 1);
+    await s.ok('POST', `${B}/items/${it.id}/lease/request`, { reason: 'mine now?' }, { agent: 'holder2' });
+    await s.ok('POST', `${B}/items/${it.id}/lease/decline`, { reason: 'nearly done' }, { agent: 'asker2' });
+    const [ev] = (await s.ok('GET', `/api/events?since=${seq}&for=holder2&types=lease.declined`)).events;
+    assert.equal(ev.reason, 'nearly done');
+    await s.ok('POST', `${B}/finish`, {}, { agent: 'asker2' });
+  });
+
+  it('new agents are asked to introduce themselves; names can be generated', async () => {
+    const brief = await s.ok('GET', `${B}/brief`, undefined, { agent: 'newbie' });
+    assert.match(brief, /First: introduce yourself/);
+    const { name } = await s.ok('GET', '/api/names/suggest');
+    assert.match(name, /^[a-z]+-[a-z]+$/);
+    await s.ok('PATCH', '/api/profiles/me', { role: 'builder', alignment: 'careful' }, { agent: 'newbie' });
+    const after = await s.ok('GET', `${B}/brief`, undefined, { agent: 'newbie' });
+    assert.doesNotMatch(after, /First: introduce yourself/);
+    assert.match(after, /Role: \*\*builder\*\*/);
+  });
+
+  it('MCP: introduce_yourself with a blank name picks a name and switches to it', async () => {
+    const { spawn } = require('child_process');
+    const path = require('path');
+    const mcp = spawn(process.execPath, [path.join(__dirname, '..', 'mcp.js')], { env: { ...process.env, INTELLAGENT_URL: s.base, INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_AGENT: '' }, stdio: ['pipe', 'pipe', 'inherit'] });
+    let out = '';
+    mcp.stdout.on('data', (d) => (out += d));
+    const send = (m) => mcp.stdin.write(`${JSON.stringify(m)}\n`);
+    const reply = (id) => until(() => out.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((m) => m.id === id), 5000, `mcp reply ${id}`);
+    try {
+      send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'test-client' } } });
+      assert.match((await reply(1)).result.instructions, /introduce_yourself/);
+      send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'introduce_yourself', arguments: { role: 'reviewer', alignment: 'terse' } } });
+      const prof = JSON.parse((await reply(2)).result.content[0].text);
+      assert.match(prof.name, /^[a-z]+-[a-z]+$/);
+      assert.equal(prof.role, 'reviewer');
+    } finally { mcp.kill(); }
   });
 
   it('transitions explain where a ticket can go', async () => {
