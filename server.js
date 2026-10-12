@@ -462,7 +462,8 @@ function snapshot(ctx, item) {
   };
 }
 
-// Who this event is "addressed to": leaseholder, whoever asked for help, agent author, @mentions — minus the actor.
+// Who this event is "addressed to": leaseholder, past leaseholders, whoever asked for help, agent author,
+// assignee, thread participants, @mentions — minus the actor.
 function recipientsFor(item, actor, extra = []) {
   const s = new Set(extra);
   const l = activeLease(item);
@@ -470,6 +471,7 @@ function recipientsFor(item, actor, extra = []) {
   if (item.needsHuman) s.add(item.needsHuman.raisedBy);
   if (item.author?.kind === 'agent') s.add(item.author.name);
   if (item.assignee) s.add(item.assignee);
+  for (const w of item.workedBy || []) s.add(w); // released after review, still owns the follow-up
   for (const c of item.comments || []) if (c.author?.name) s.add(c.author.name); // thread participants
   s.delete(actor.name);
   return [...s];
@@ -479,7 +481,8 @@ function itemEvent(ctx, type, item, actor, extra = {}) {
   const { mentions = [], ...rest } = extra;
   return {
     board: ctx.id, type, actor, itemId: item.id, columnId: item.columnId,
-    item: snapshot(ctx, item), recipients: recipientsFor(item, actor, mentions),
+    // The master-lease holder works every ticket without leasing it, so it hears about all of them.
+    item: snapshot(ctx, item), recipients: recipientsFor(item, actor, [...mentions, activeMaster(ctx)?.holder].filter((n) => n && n !== actor.name)),
     ...(mentions.length ? { mentions } : {}), ...rest,
   };
 }
@@ -842,6 +845,7 @@ function claimLease(ctx, id, d, actor) {
       fail(409, `${item.id} is already leased by ${cur.claimant} until ${cur.expiresAt}`, { lease: cur });
     }
     const renew = !!cur && cur.claimant === claimant;
+    if (!(item.workedBy || []).includes(claimant)) item.workedBy = [...(item.workedBy || []), claimant].slice(-5);
     const t = Date.now();
     item.lease = {
       claimant,
@@ -1426,7 +1430,7 @@ const SCHEMA = {
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
     changes: '{ [field | "properties.<key>"]: { from, to } }?', item: 'snapshot { id,title,type,priority,columnId,column,parent,claimant,needsHuman }?',
-    recipients: 'string[] — agents/users this event concerns (leaseholder, asker, agent author, @mentions)',
+    recipients: 'string[] — agents/users this event concerns (leaseholder and past leaseholders, asker, agent author, assignee, commenters, master-lease holder, @mentions)',
   },
   eventFilter: {
     board: 'board id', types: 'comma list; prefix wildcard allowed e.g. "lease.*"', itemId: 'INT-12', column: 'column id or name (destination)',

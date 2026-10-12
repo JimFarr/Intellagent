@@ -27,7 +27,8 @@ function flags(args) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a.startsWith('--')) {
-      const [k, v] = a.slice(2).split('=');
+      const eq = a.indexOf('=');
+      const [k, v] = eq < 0 ? [a.slice(2)] : [a.slice(2, eq), a.slice(eq + 1)]; // values may contain '=' (--filter)
       out[k] = v ?? (args[i + 1] && !args[i + 1].startsWith('--') ? args[++i] : true);
     } else out._.push(a);
   }
@@ -189,14 +190,22 @@ function agentName(f) {
   if (!a) { console.error('Pass --agent <name> or set INTELLAGENT_AGENT.'); process.exit(1); }
   return String(a);
 }
-const cursorPath = (mp, agent) => path.join(path.dirname(mp), 'cursors', `${agent.replace(/[^\w.-]+/g, '_')}.json`);
+const cursorPath = (mp, agent, scope) => path.join(path.dirname(mp), 'cursors', `${agent.replace(/[^\w.-]+/g, '_')}${scope ? `.${scope}` : ''}.json`);
+
+// What to listen to: the agent's inbox (default), every human action (--human, for a coordinator),
+// or any /api/events filter (--filter "types=item.created&column=Ready"). Each scope keeps its own cursor.
+function listenScope(f) {
+  if (f.filter) return { scope: 'filter-' + String(f.filter).replace(/[^\w]+/g, '_').slice(0, 40), query: Object.fromEntries(new URLSearchParams(String(f.filter))) };
+  if (f.human) return { scope: 'human', query: { actorKind: 'user' } };
+  return { scope: '', query: null };
+}
 
 // Long-polls the agent's inbox from its saved cursor; resolves with the events (or [] on timeout).
-async function nextEvents({ agent, types, timeoutSec, quiet }) {
+async function nextEvents({ agent, types, timeoutSec, quiet, listen = { scope: '', query: null } }) {
   const mp = findManifest();
   const url = baseUrl(readManifest(mp));
   if (!url) { console.error(NO_BOARD); process.exit(3); }
-  const file = cursorPath(mp, agent);
+  const file = cursorPath(mp, agent, listen.scope);
   let since = null;
   try { since = JSON.parse(fs.readFileSync(file, 'utf8')).cursor; } catch { /* first run */ }
   const headers = { 'X-Agent': agent };
@@ -204,7 +213,7 @@ async function nextEvents({ agent, types, timeoutSec, quiet }) {
   const deadline = timeoutSec ? Date.now() + timeoutSec * 1000 : Infinity;
   for (;;) {
     const left = Math.max(1, Math.min(50, Math.ceil((deadline - Date.now()) / 1000)));
-    const q = new URLSearchParams({ for: agent, excludeActor: agent, since: String(since), timeout: String(left), ...(types ? { types } : {}) });
+    const q = new URLSearchParams({ ...(listen.query || { for: agent }), excludeActor: agent, since: String(since), timeout: String(left), ...(types ? { types } : {}) });
     let r;
     try { r = await (await fetch(`${url}/api/events/wait?${q}`, { headers })).json(); }
     catch (e) { if (!quiet) console.error(`board unreachable (${e.message}); retrying…`); await new Promise((res) => setTimeout(res, 5000)); continue; }
@@ -221,7 +230,7 @@ const eventLine = (e) => `#${e.seq} ${e.type}${e.itemId ? ` ${e.itemId}` : ''}${
 async function waitCmd() {
   const f = flags(rest);
   const agent = agentName(f);
-  const events = await nextEvents({ agent, types: f.types, timeoutSec: Number(f.timeout) || 0 });
+  const events = await nextEvents({ agent, types: f.types, timeoutSec: Number(f.timeout) || 0, listen: listenScope(f) });
   if (!events.length) { console.log('(no events before timeout)'); process.exit(2); }
   console.log(f.json ? JSON.stringify(events, null, 2) : events.map(eventLine).join('\n'));
 }
@@ -234,16 +243,20 @@ async function watchCmd() {
   const cmd = sep >= 0 ? rest.slice(sep + 1) : (f.claude ? ['claude', '-p', 'Handle the Intellagent events described on stdin.'] : null);
   const agent = agentName(f);
   if (!cmd?.length) { console.error('Usage: intellagent watch --agent <name> -- <command…>   (or --claude)'); process.exit(1); }
-  console.log(`watching inbox of "${agent}" — runs: ${cmd.join(' ')}`);
+  const listen = listenScope(f);
+  const what = f.filter ? `events matching ${f.filter}` : f.human ? 'everything the human does' : `inbox of "${agent}"`;
+  console.log(`watching ${what} as "${agent}" — runs: ${cmd.join(' ')}`);
   for (;;) {
-    let events = await nextEvents({ agent, types: f.types, timeoutSec: 0, quiet: true });
+    let events = await nextEvents({ agent, types: f.types, timeoutSec: 0, quiet: true, listen });
     await new Promise((res) => setTimeout(res, 3000)); // let a burst of edits settle into one run
-    events = events.concat(await nextEvents({ agent, types: f.types, timeoutSec: 1, quiet: true }));
+    events = events.concat(await nextEvents({ agent, types: f.types, timeoutSec: 1, quiet: true, listen }));
     const mp = findManifest();
     const evFile = path.join(path.dirname(mp), 'cursors', `${agent.replace(/[^\w.-]+/g, '_')}-events.json`);
     fs.writeFileSync(evFile, JSON.stringify(events, null, 2));
     const prompt = [
-      `You are "${agent}", working on this project's Intellagent board. These events are addressed to you:`,
+      listen.query
+        ? `You are "${agent}", coordinating this project's Intellagent board. New activity (${what}):`
+        : `You are "${agent}", working on this project's Intellagent board. These events are addressed to you:`,
       ...events.map((e) => `- ${eventLine(e)}`),
       '',
       `Read each ticket for context (intellagent api GET /api/boards/main/items/<ID>), act on it following the board's standing rules and the project's CLAUDE.md, and reply on the card.`,
@@ -274,6 +287,8 @@ const HELP = `intellagent — a kanban for you and your agents
   api M PATH [b]   call the API as an agent      (INTELLAGENT_AGENT=name; body: key=value… | json | @file | -)
   wait             block until something arrives in your inbox, print it, exit   --agent --types --timeout --json
   watch -- CMD     run CMD each time your inbox gets events (unattended agents)   --agent --claude --once
+                   both also take --human (everything the human does: for a coordinator)
+                   or --filter "types=item.created&column=Ready" (any /api/events filter)
   mcp              MCP server over stdio
   hook ...         git: install | post-commit | sync-ci
 `;

@@ -128,10 +128,13 @@ The ticket glows on the board. The human's answer arrives as an `attention.resol
 You only see board events when you look. Two ways to make answers on cards reach you:
 - **During a session:** run `intellagent wait --agent <you>` as a **background** command. It blocks until something arrives in your inbox, prints it and exits — your shell tool notifies you. It remembers its place, so nothing is missed between runs. Re-arm it after handling the events.
 - **Unattended:** the human runs `intellagent watch --agent <you> --claude` (or `-- <any command>`). Each inbox event batch starts a fresh headless run with the events on stdin.
+- **Coordinating several agents:** add `--human` to either command to hear about *everything* the human does on the board (new tickets, comments, moves), not just your inbox — then delegate with `assignee` or a comment @mentioning a worker. `--filter "types=item.created&column=Ready"` takes any event filter.
+
+Your inbox already includes tickets you created, leased (now or before), commented on, were assigned or @mentioned on — and, while you hold the master lease, every ticket on the board.
 
 ## 5. Events — know when things change
 
-Every change emits an event with an increasing `seq`. Each event lists `recipients`: the leaseholder, whoever asked for help, the agent author, and @mentions. **`for=<your-name>` is your inbox.**
+Every change emits an event with an increasing `seq`. Each event lists `recipients`: the leaseholder and past leaseholders, whoever asked for help, the agent author, the assignee, thread participants, the master-lease holder and @mentions. **`for=<your-name>` is your inbox.**
 
 ```
 GET /api/events/wait?since=<seq>&for=my-agent&timeout=25     ← long-poll: returns as soon as something matches
