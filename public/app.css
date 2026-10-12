@@ -1390,3 +1390,12 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .see-more.up .i { rotate: 180deg; }
 .rv-clamp .rv-body, .rv-clamp .rv-notes { margin-bottom: 0; }
 .rv-clamp + .tbox, .rv-clamp + .see-more + .tbox { margin-top: 12px; }
+
+/* @mention suggestions */
+.mention-pop { min-width: 230px; max-width: 300px; z-index: 5000; }
+.mention-pop .mi { gap: 8px; }
+.mention-pop .mn { font-weight: 600; flex: none !important; }
+.mention-pop .ml { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-pop .mlive { width: 7px; height: 7px; border-radius: 50%; flex: none; margin-left: auto; background: var(--muted); }
+.mention-pop .mlive.online { background: var(--ok); }
+.mention-pop .mlive.running { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent); }

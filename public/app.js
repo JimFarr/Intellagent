@@ -2574,6 +2574,98 @@
     return [...s].filter(Boolean);
   }
 
+  /* ─── @mention suggestions in comment-style text boxes ─── */
+
+  // Where the caret sits inside a textarea, in viewport pixels (mirror-div technique).
+  function caretPoint(ta) {
+    const cs = getComputedStyle(ta);
+    const mirror = document.createElement('div');
+    for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderLeftWidth', 'boxSizing', 'width', 'tabSize']) mirror.style[p] = cs[p];
+    Object.assign(mirror.style, { position: 'fixed', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', top: '0', left: '0' });
+    mirror.textContent = ta.value.slice(0, ta.selectionStart);
+    const mark = document.createElement('span');
+    mark.textContent = '​';
+    mirror.append(mark);
+    document.body.append(mirror);
+    const r = ta.getBoundingClientRect();
+    const pt = { x: r.left + mark.offsetLeft - ta.scrollLeft, y: r.top + mark.offsetTop - ta.scrollTop + mark.offsetHeight };
+    mirror.remove();
+    return pt;
+  }
+
+  const mention = { pop: null, ta: null, start: 0, items: [], active: 0 };
+  function mentionCandidates(q) {
+    const it = state.modal?.kind === 'item' ? state.board?.items[state.modal.id] : null;
+    const involved = new Set([...(it?.workedBy || []), it?.assignee, it?.author?.name, ...(it?.questions || []).map((x) => x.raisedBy)].filter(Boolean));
+    const names = new Set([...knownPeople(), ...Object.keys(state.standing || {})]);
+    names.delete(settings.userName);
+    const ql = q.toLowerCase();
+    return [...names].map((name) => {
+      const p = state.profiles[name] || {};
+      const pres = state.presence.find((x) => x.name === name);
+      const run = state.standing?.[name]?.status;
+      const live = run === 'running' ? 'running' : pres?.online ? 'online' : state.standing?.[name] ? 'standing' : '';
+      const hit = !ql ? 1 : name.toLowerCase().startsWith(ql) ? 3 : (p.label || '').toLowerCase().includes(ql) || name.toLowerCase().includes(ql) ? 2 : 0;
+      return { name, label: p.label || '', live, score: hit && hit * 100 + (involved.has(name) ? 40 : 0) + (live === 'running' || live === 'online' ? 20 : live ? 10 : 0) };
+    }).filter((x) => x.score).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, 7);
+  }
+  function closeMention() { mention.pop?.remove(); mention.pop = null; mention.ta = null; }
+  function drawMention() {
+    const pop = mention.pop;
+    pop.innerHTML = mention.items.map((x, i) => `<button class="mi ${i === mention.active ? 'act' : ''}" data-i="${i}">${avatar({ name: x.name })}<span class="mn">${esc(x.name)}</span>${x.label ? `<span class="ml">${esc(x.label)}</span>` : ''}${x.live ? `<i class="mlive ${x.live}" title="${x.live}"></i>` : ''}</button>`).join('');
+  }
+  function updateMention(ta) {
+    const upto = ta.value.slice(0, ta.selectionStart);
+    const m = /(^|[\s(])@([\w.-]*)$/.exec(upto);
+    if (!m) { closeMention(); return; }
+    const items = mentionCandidates(m[2]);
+    if (!items.length) { closeMention(); return; }
+    if (!mention.pop) {
+      mention.pop = el('<div class="menu mention-pop" role="listbox"></div>');
+      mention.pop.addEventListener('mousedown', (e) => {
+        const b = e.target.closest('[data-i]');
+        if (b) { e.preventDefault(); pickMention(Number(b.dataset.i)); }
+      });
+      document.body.append(mention.pop);
+    }
+    Object.assign(mention, { ta, start: upto.length - m[2].length - 1, items, active: Math.min(mention.active, items.length - 1) });
+    drawMention();
+    const pt = caretPoint(ta);
+    const w = mention.pop.offsetWidth;
+    const h = mention.pop.offsetHeight;
+    mention.pop.style.left = `${Math.min(pt.x - 10, innerWidth - w - 8)}px`;
+    mention.pop.style.top = `${pt.y + h + 8 > innerHeight ? pt.y - h - 26 : pt.y + 4}px`;
+  }
+  function pickMention(i) {
+    const { ta, start, items } = mention;
+    const x = items[i];
+    if (!ta || !x) return;
+    const before = ta.value.slice(0, start);
+    const after = ta.value.slice(ta.selectionStart);
+    ta.value = `${before}@${x.name} ${after.replace(/^\S*/, '')}`;
+    const pos = before.length + x.name.length + 2;
+    ta.setSelectionRange(pos, pos);
+    closeMention();
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.focus();
+  }
+  const mentionable = (t) => t?.tagName === 'TEXTAREA' && !t.closest('.composer');
+  document.addEventListener('input', (e) => { if (mentionable(e.target)) updateMention(e.target); else if (mention.pop) closeMention(); });
+  document.addEventListener('click', (e) => { if (mention.pop && !mention.pop.contains(e.target) && e.target !== mention.ta) closeMention(); });
+  document.addEventListener('focusout', (e) => { if (e.target === mention.ta) setTimeout(() => { if (document.activeElement !== mention.ta) closeMention(); }, 120); });
+  // Capture phase: while suggestions are open, arrows/Enter/Tab/Escape belong to them, not to the text box.
+  document.addEventListener('keydown', (e) => {
+    if (!mention.pop || e.target !== mention.ta) return;
+    const n = mention.items.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { mention.active = (mention.active + (e.key === 'ArrowDown' ? 1 : n - 1)) % n; drawMention(); }
+    else if (e.key === 'Enter' || e.key === 'Tab') pickMention(mention.active);
+    else if (e.key === 'Escape') closeMention();
+    else return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, true);
+  document.addEventListener('keyup', (e) => { if (mentionable(e.target) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End')) updateMention(e.target); });
+
   function openSideDropdown(m, btn) {
     const it = draftView(m);
     const b = state.board;
