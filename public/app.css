@@ -1726,3 +1726,13 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 /* Stop all agents (INT-49): top of the Agents page; the second click is the confirm */
 .stop-row { display: flex; justify-content: flex-end; margin: 0 0 10px; }
 .stop-row .btn.danger.armed { background: color-mix(in oklab, var(--danger) 16%, transparent); border-color: color-mix(in oklab, var(--danger) 55%, transparent); }
+
+/* Agent changes (INT-55): who changed what on an agent, each undoable */
+.chg-list { margin-top: 10px; display: grid; gap: 4px; }
+.chg-head { font: 600 11px var(--sans, inherit); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.chg { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 8px; font-size: 12px; padding: 4px 6px; border-radius: 8px; background: color-mix(in oklab, var(--text) 4%, transparent); }
+.chg .who { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+.chg .who .avatar { width: 16px; height: 16px; font-size: 9px; }
+.chg .what { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.chg .what b { color: var(--text); font-weight: 600; }
+.chg time { color: var(--muted); font-size: 11px; white-space: nowrap; }

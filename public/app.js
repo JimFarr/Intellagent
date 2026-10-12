@@ -149,6 +149,15 @@
     return l && l !== n ? `<span class="dn" title="@${esc(n)}">${esc(l)}</span>` : esc(n || '');
   };
 
+  // Standing agents whose active run was woken for this request (kind 'requests') or by a comment on this
+  // ticket (kind 'comments') and haven't answered there yet — they get a "thinking" bubble. `answered(name,
+  // since)` says whether a reply from <name> landed after the run started. Only 'running' counts: queued,
+  // throttled, failed and paused runs show nothing, and the bubble goes with the run.
+  const thinkers = (kind, id, answered) => Object.values(state.standing || {})
+    .filter((a) => a.status === 'running' && a.lastRun?.about?.[kind]?.includes(id) && !answered(a.name, a.lastRun.startedAt))
+    .map((a) => a.name);
+  const dotsHTML = '<i class="ai-dots"><b></b><b></b><b></b></i>';
+
   /* ═════════════════════════ themes + settings ═════════════════════════ */
 
   // A theme = palette + style spec + optional CSS. The style spec drives data-attributes on <html>
@@ -985,6 +994,13 @@
       if (run && run !== 'idle') av.dataset.run = run; else delete av.dataset.run;
     }
     renderPresenceButton();
+    // a run starting or ending adds / removes "thinking" bubbles in the open threads
+    const think = JSON.stringify(Object.values(state.standing).filter((a) => a.status === 'running').map((a) => [a.name, a.lastRun?.about]));
+    if (think !== state.thinkSig) {
+      state.thinkSig = think;
+      $('#requestsDrawer .drawer-body')?._redraw?.();
+      if (state.modal?.kind === 'item' && !state.modal.create) state.modal.refresh();
+    }
     if ($('#agentsDrawer') && !$('#agentsDrawer .add-agent')) fillAgents($('#agentsDrawer .drawer-body')); // never wipe a half-filled form
   }
 
@@ -2726,10 +2742,12 @@
 
     $('.c-n', main).textContent = it.comments.length;
     const cmts = $('.cmts', main);
-    const sig = `${it.id}:${it.comments.map((c) => `${c.id}${JSON.stringify(c.reactions || {})}`).join('|')}`;
+    const think = m.create ? [] : thinkers('comments', it.id, (n, since) => it.comments.some((c) => c.author?.name === n && c.createdAt > since));
+    const sig = `${it.id}:${it.comments.map((c) => `${c.id}${JSON.stringify(c.reactions || {})}`).join('|')}:${think}`;
     if (cmts.dataset.sig !== sig) {
       cmts.dataset.sig = sig;
-      cmts.innerHTML = it.comments.map((c) => `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${nameHTML(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(nameOf(c.author.name))} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}${reactionsHTML(c.reactions, { cid: c.id, add: !m.archived })}</div></div>`).join('');
+      cmts.innerHTML = it.comments.map((c) => `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${nameHTML(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(nameOf(c.author.name))} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}${reactionsHTML(c.reactions, { cid: c.id, add: !m.archived })}</div></div>`).join('')
+        + think.map((n) => `<div class="cmt thinking" aria-live="polite">${avatar({ kind: 'agent', name: n }, 'lg')}<div><div class="cmt-head"><b>${nameHTML(n)}</b><span class="kind">${icon('bot', 'sm')}</span><span>is writing a reply</span></div><div class="think-bubble" role="status" aria-label="${esc(nameOf(n))} is writing a reply">${dotsHTML}</div></div></div>`).join('');
       if (!cmts._reactWired) { cmts._reactWired = true; wireReactions(cmts, m.id); }
       cmts.onclick = (e) => {
         const b = e.target.closest('[data-why]');
@@ -3236,6 +3254,7 @@
       case 'item.reordered': return `${who} reordered ${b(id)}`;
       case 'item.archived': return `${who} archived ${b(id)}`;
       case 'item.deleted': return `${who} deleted test ticket ${b(id)}`;
+      case 'agent.managed': return `${who} changed ${b(nameOf(ev.agent))}: ${Object.keys(ev.changes || {}).map((k) => k.replace(/^profile\./, '')).join(', ')}${ev.delegated ? ' for you' : ''}`;
       case 'item.restored': return `${who} restored ${b(id)}`;
       case 'comment.added': return `${who} on ${b(id)}: ${html ? esc(ev.comment?.body?.slice(0, 120)) : ev.comment?.body?.slice(0, 80)}${ev.comment?.attachments ? ` ${html ? icon('clip', 'sm') : '📎'}` : ''}`;
       case 'lease.claimed': return `${nb(ev.claimant)} claimed ${b(id)}`;
@@ -3497,14 +3516,19 @@
       const atEnd = !seen || pane.scrollHeight - pane.scrollTop - pane.clientHeight < 80;
       drawChats();
       const msgs = reqThread(list, reqWho);
+      // one bubble per agent still working on an open request in this conversation
+      const think = [...new Set(list.filter((q) => q.status === 'open' && (!reqWho || q.to === reqWho))
+        .flatMap((q) => thinkers('requests', q.id, (n, since) => q.replies.some((r) => r.author?.name === n && r.at > since))))];
       let day = '';
       box.innerHTML = msgs.length ? msgs.map((m) => (m.day !== day ? `<div class="msg-day"><span>${esc(dayLabel((day = m.day)))}</span></div>` : '') + msgHTML(m)).join('')
+          + think.map((n) => `<div class="msg them thinking" aria-live="polite"><span class="msg-av">${avatar({ kind: 'agent', name: n }, 'lg')}</span><div class="msg-col"><div class="msg-who">${nameHTML(n)}</div><div class="bubble" role="status" aria-label="${esc(nameOf(n))} is writing a reply">${dotsHTML}</div></div></div>`).join('')
         : `<div class="empty-note">${icon('send')}${reqWho ? `<div>No messages with ${esc(nameOf(reqWho))} yet</div>` : ''}</div>`;
       seen = new Set(msgs.map((m) => m.id));
       if (atEnd) pane.scrollTop = pane.scrollHeight;
     };
     const load = async () => { try { list = await api('GET', B('/requests')); draw(); } catch { /* offline */ } };
     body._reload = load;
+    body._redraw = draw;
     const send = async () => {
       const text = ta.value.trim();
       if (!text && !staged.files.length) { ta.focus(); return; }
@@ -4212,7 +4236,23 @@
     const why = l?.why ? ` for ${esc(l.why.replace('work.pending', 'work waiting on the board'))}` : '';
     const live = a.keepAlive ? (a.session ? `session alive · turn ${a.session.turns}/${a.session.recycleAfter} · ` : 'keep-alive (starts on next wake) · ') : '';
     const meta = `${live}${a.model ? `runs on <b>${esc(a.model)}</b>${a.tier ? ` (${a.tier})` : ''} · ` : ''}wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
-    return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div></div>`;
+    // Who changed this agent (the human or an agent manager), newest first, each undoable.
+    const fmt = (v) => (v == null ? '—' : typeof v === 'object' ? (Array.isArray(v) ? v.join(', ') : Object.entries(v).map(([k, x]) => `${k}: ${Array.isArray(x) ? x.join('/') : x}`).join(', ')) : String(v));
+    const changes = (a.changes || []).slice(-5).reverse().map((c) => `<div class="chg"><span class="who">${avatar(c.by)}${nameHTML(c.by?.name)}</span><span class="what">${Object.entries(c.changes).map(([k, v]) => `<b>${esc(k.replace(/^profile\./, ''))}</b> ${esc(fmt(v.from))} → ${esc(fmt(v.to))}`).join(' · ')}</span><time>${rel(c.at)}</time><button class="btn sm ghost" data-revert="${esc(c.id)}" data-agent="${esc(a.name)}" title="Revert|Put these values back">${icon('restore', 'sm')}</button></div>`).join('');
+    return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div>${changes ? `<div class="chg-list"><div class="chg-head">Recent changes</div>${changes}</div>` : ''}</div>`;
+  }
+  // Undo one change: send the old values back (as the human).
+  async function revertChange(btn) {
+    const a = state.standing[btn.dataset.agent];
+    const c = (a?.changes || []).find((x) => x.id === btn.dataset.revert);
+    if (!c) return;
+    const body = {};
+    for (const [k, v] of Object.entries(c.changes)) {
+      if (k.startsWith('profile.')) body[k.slice(8)] = v.from;
+      else if (k === 'limits') body.permissions = { columns: v.from?.columns ?? null, readOnly: !!v.from?.readOnly };
+      else body[k] = v.from;
+    }
+    try { await api('PATCH', `/api/agents/${encodeURIComponent(a.name)}`, body); toast(`Reverted ${nameOf(a.name)}`, { icon: 'restore', kind: 'ok' }); await refreshPresence(); await refreshProfiles(); } catch (e) { toast(e.message, { kind: 'error' }); }
   }
 
   async function openAgent(name) {
@@ -4239,6 +4279,8 @@
     body.onclick = (e) => {
       const sb = e.target.closest('[data-standing]');
       if (sb) { standingAction(sb).then(() => draw()); return; }
+      const rv = e.target.closest('[data-revert]');
+      if (rv) { revertChange(rv).then(() => draw()); return; }
       const o = e.target.closest('[data-open]'); if (o) openItem(o.dataset.open, cardEls.get(o.dataset.open));
     };
     try {

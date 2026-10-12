@@ -589,7 +589,14 @@ function itemEvent(ctx, type, item, actor, extra = {}) {
   };
 }
 
-const permsFor = (name) => M.permissions[name] || M.permissions['*'] || null;
+const permsFor = (name) => {
+  const base = M.permissions[name] || M.permissions['*'] || null;
+  const lim = standing?.limitsOf?.(name);
+  if (!lim) return base;
+  const low = (xs) => xs.map((x) => String(x).toLowerCase());
+  const columns = base?.columns && lim.columns ? base.columns.filter((c) => low(lim.columns).includes(String(c).toLowerCase())) : (lim.columns || base?.columns || null);
+  return { ...(base || {}), ...(columns ? { columns } : {}), readOnly: !!(base?.readOnly || lim.readOnly) };
+};
 
 /* Grants: powers that are human-only by default, delegated by the human to named agents. They live only in
    the human's files — agents.json ("grants") or the manifest's permissions — never in the API, and are
@@ -602,6 +609,7 @@ const POWERS = {
   'review.decide': 'Decide reviews (approve / request changes)',
   'column.gate': 'Move tickets into / out of human-only columns',
   'agents.control': 'Pause, resume and run other standing agents',
+  'agents.manage': "Change other standing agents' label, role, personality and model (allowlist), and narrow their permissions",
 };
 function grantsOf(name) {
   const raw = [...arr(standing?.grantsOf?.(name)), ...arr(M.permissions[name]?.grants)];
@@ -1663,6 +1671,7 @@ function briefing(ctx, name, base, via = 'cli') {
         'review.decide': `decide: ${cli('POST', `${P}/items/<ID>/review/decision`, 'verdict=approve comment="why"')} (or verdict=changes with what to change)`,
         'column.gate': 'move tickets through human-only columns with a normal move (tickets with an open review: decide the review instead)',
         'agents.control': `${cli('POST', '/api/agents/<name>/pause')} · …/resume · …/run`,
+        'agents.manage': `${cli('PATCH', '/api/agents/<name>', 'label="…" model=haiku alignment="…"')} — models: ${MANAGER_MODELS.join(', ')}; perms and permissions can only narrow; never your own record`,
       };
       return ['', '## Powers the human delegated to you',
         ...g.map((x) => `- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}: ${how[x.power]}`),
@@ -3083,6 +3092,98 @@ route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=2
   fs.closeSync(fd);
   return { file: f, truncated: size > n, log: buf.toString('utf8') };
 });
+/* Agent manager (INT-55): an agent with the agents.manage grant (or the human) edits another standing
+   agent. What it may change is a fixed list; the run command, grants, enabled, env and cwd stay with the
+   human's file. Models come from an allowlist, and tool perms and board permissions only ever narrow. */
+const MANAGER_MODELS = Array.isArray(M.managerModels) && M.managerModels.length ? M.managerModels.map(String) : ['haiku', 'sonnet', 'opus'];
+const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions'];
+function manageAgent(target, d, actor) {
+  if (!standing) fail(404, 'No standing agents on this board');
+  const a = standing.get(target); // 404 if unknown
+  const name = a.name;
+  const keys = Object.keys(d || {});
+  const bad = keys.filter((k) => !MANAGE_KEYS.includes(k));
+  if (bad.length) fail(403, `${bad.join(', ')} can't be changed through the API — the human edits agents.json for that`, { code: 'NOT_DELEGABLE', hint: `Changeable: ${MANAGE_KEYS.join(', ')}` });
+  const agent = actor.kind !== 'user';
+  if (agent) {
+    const mine = grantsOf(actor.name).filter((g) => g.power === 'agents.manage');
+    if (!mine.length) fail(403, 'Only the human can change other agents', { code: 'HUMAN_ONLY', hint: 'The human can delegate this with "grants": ["agents.manage"] in agents.json' });
+    if (name.toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent manager never edits its own record', { code: 'OWN_WORK', hint: 'Ask the human' });
+    if (!mine.some((g) => !g.where?.agents || [].concat(g.where.agents).map((x) => String(x).toLowerCase()).includes(name.toLowerCase()))) {
+      fail(403, `${name} is outside your agents.manage grant`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
+    }
+  }
+  const cfg = {};
+  if ('role' in d) {
+    if (d.role != null && !require('./lib/agents').ROLES[d.role]) fail(400, `Unknown role "${d.role}". Roles: ${Object.keys(require('./lib/agents').ROLES).join(', ')}`);
+    cfg.role = d.role || null;
+  }
+  if ('description' in d) cfg.description = d.description ? str(d.description, 2000) : null;
+  if ('model' in d) {
+    const m = d.model == null || d.model === '' ? null : String(d.model);
+    if (m && !/^[\w.:-]{1,64}$/.test(m)) fail(400, 'Model: a plain name like haiku, sonnet or opus');
+    if (agent && m && !MANAGER_MODELS.includes(m)) fail(400, `An agent manager may only pick ${MANAGER_MODELS.join(', ')}`, { code: 'MODEL_NOT_ALLOWED' });
+    if (agent && !m) fail(400, 'Pick a model from the allowlist; clearing it is up to the human', { code: 'MODEL_NOT_ALLOWED' });
+    cfg.model = m;
+  }
+  if ('perms' in d) {
+    const next = [...new Set([].concat(d.perms || []).map(String))];
+    const PERMS = require('./lib/agents').PERMS;
+    const unknown = next.filter((k) => !PERMS[k]);
+    if (unknown.length) fail(400, `Unknown permission(s): ${unknown.join(', ')}`);
+    const now = a.perms || [];
+    if (agent && next.some((k) => !now.includes(k))) fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}`, { code: 'WIDEN' });
+    cfg.perms = next;
+  }
+  if ('permissions' in d) {
+    const p = d.permissions || {};
+    const cur = permsFor(name) || {};
+    const lim = { ...(a.limits || {}) };
+    if ('columns' in p) {
+      const cols = p.columns == null ? null : [].concat(p.columns).map(String);
+      if (agent) {
+        const low = (xs) => xs.map((x) => x.toLowerCase());
+        if (!cols) fail(403, 'Removing a column limit widens access — that is up to the human', { code: 'WIDEN' });
+        if (cur.columns && cols.some((c) => !low(cur.columns).includes(c.toLowerCase()))) fail(403, `Board permissions can only narrow: ${name} may change ${cur.columns.join(', ')}`, { code: 'WIDEN' });
+        const own = permsFor(actor.name)?.columns;
+        if (own && cols.some((c) => !low(own).includes(c.toLowerCase()))) fail(403, `Beyond your own scope (${own.join(', ')})`, { code: 'WIDEN' });
+      }
+      if (cols) lim.columns = cols; else delete lim.columns;
+    }
+    if ('readOnly' in p) {
+      if (agent && !p.readOnly && cur.readOnly) fail(403, `${name} is read-only; only the human can lift that`, { code: 'WIDEN' });
+      if (p.readOnly) lim.readOnly = true; else delete lim.readOnly;
+    }
+    cfg.limits = Object.keys(lim).length ? lim : null;
+  }
+  const by = { kind: actor.kind, name: actor.name };
+  const res = Object.keys(cfg).length ? standing.manage(name, cfg, by) : { changes: {} };
+  // display: label, glyph, colour and personality live on the profile
+  const prof = Object.fromEntries(['label', 'glyph', 'color', 'alignment'].filter((k) => k in d).map((k) => [k, d[k]]));
+  if ('description' in d) prof.description = d.description;
+  if (Object.keys(prof).length) {
+    const before = { ...(profiles[name] || {}) };
+    updateProfile(name, prof, actor);
+    for (const k of Object.keys(prof)) {
+      const to = profiles[name]?.[k] ?? null;
+      if (JSON.stringify(before[k] ?? null) !== JSON.stringify(to) && !(k === 'description' && res.changes.description)) res.changes[`profile.${k}`] = { from: before[k] ?? null, to };
+    }
+  }
+  if (!Object.keys(res.changes).length) return { agent: standing.get(name), changes: {} };
+  emit({ type: 'agent.managed', actor, agent: name, changes: res.changes, ...(agent ? { delegated: { power: 'agents.manage', onBehalfOf: 'human' } } : {}), recipients: [name].filter((n) => n !== actor.name) });
+  // delegated changes leave a trail in the digest too
+  if (agent && boards.has(M.defaultBoard)) {
+    const ctx = boards.get(M.defaultBoard);
+    const lines = Object.entries(res.changes).map(([k, v]) => `${k}: ${JSON.stringify(v.from)} → ${JSON.stringify(v.to)}`).join('; ');
+    tx(ctx, (events) => {
+      const entry = { id: rid('d'), date: new Date().toLocaleDateString('en-CA'), ts: now(), author: actor, summary: `Changed **${name}** (agents.manage, on the human's behalf): ${lines}`, items: [] };
+      ctx.board.digest.push(entry);
+      events.push({ board: ctx.id, type: 'digest.added', actor, entry: { id: entry.id, summary: trimChange(entry.summary) } });
+    });
+  }
+  return { agent: standing.get(name), changes: res.changes };
+}
+route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? } } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself)', ({ p, body, actor }) => manageAgent(p.name, body, actor));
 route('POST', '/api/agents/stop-all', 'Human (or the agents.control grant): stop every agent now — kill runs, pause standing agents, release agent leases and the master lease, send their In Progress tickets back to Ready with a comment', ({ actor }) => {
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
   return stopAllAgents(actor);

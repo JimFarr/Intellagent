@@ -463,3 +463,56 @@ describe('grants: powers the human delegates in agents.json', () => {
     assert.ok(m.delegated.reviews >= 1 && m.delegated.moves >= 1);
   });
 });
+
+describe('agent manager: the agents.manage grant', () => {
+  let s;
+  const ag = (agent) => ({ agent });
+  const patch = (who, target, body) => s.api('PATCH', `/api/agents/${target}`, body, who);
+  before(async () => {
+    s = await startServer({ agents: { agents: {
+      mgr: { enabled: false, grants: ['agents.manage'] },
+      scoped: { enabled: false, grants: [{ power: 'agents.manage', where: { agents: ['w1'] } }] },
+      w1: { enabled: false, role: 'builder', perms: ['edit', 'test', 'git'] },
+      w2: { enabled: false, role: 'builder' },
+    } } });
+  });
+  after(async () => { await s.stop(); });
+
+  it('changes label, role, personality and model of another agent, audited', async () => {
+    const { seq } = await s.ok('GET', '/api/app');
+    const r = await patch(ag('mgr'), 'w1', { label: 'Junior', alignment: 'careful, small steps', role: 'reviewer', model: 'haiku' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const a = await s.ok('GET', '/api/agents/w1');
+    assert.equal(a.model, 'haiku');
+    assert.equal(a.role, 'reviewer');
+    assert.match(a.run, / --model haiku$/);
+    assert.equal(a.changes.at(-1).by.name, 'mgr');
+    assert.equal((await s.ok('GET', '/api/profiles')).w1.label, 'Junior');
+    const ev = (await s.ok('GET', `/api/events?since=${seq}&types=agent.managed`)).events.at(-1);
+    assert.equal(ev.delegated.power, 'agents.manage');
+    const digest = (await s.ok('GET', `${B}/digest?days=1`)).flatMap((d) => d.entries);
+    assert.ok(digest.some((e) => /Changed \*\*w1\*\*/.test(e.summary)), 'a delegated change leaves a digest line');
+  });
+
+  it('refuses escalation: non-delegable keys, models off the allowlist, widening, its own record, out of scope, no grant', async () => {
+    assert.equal((await patch(ag('mgr'), 'w1', { run: 'rm -rf /' })).body.code, 'NOT_DELEGABLE');
+    assert.equal((await patch(ag('mgr'), 'w1', { grants: ['agents.manage'] })).body.code, 'NOT_DELEGABLE');
+    assert.equal((await patch(ag('mgr'), 'w1', { model: 'claude-opus-9000' })).body.code, 'MODEL_NOT_ALLOWED');
+    assert.equal((await patch(ag('mgr'), 'mgr', { model: 'opus' })).body.code, 'OWN_WORK');
+    assert.equal((await patch(ag('scoped'), 'w2', { label: 'x' })).body.code, 'OUT_OF_SCOPE');
+    assert.equal((await patch(ag('w2'), 'w1', { label: 'x' })).body.code, 'HUMAN_ONLY');
+    // tool perms and board permissions only narrow
+    assert.equal((await patch(ag('mgr'), 'w1', { perms: ['edit'] })).status, 200);
+    assert.equal((await patch(ag('mgr'), 'w1', { perms: ['edit', 'web'] })).body.code, 'WIDEN');
+    assert.equal((await patch(ag('mgr'), 'w1', { permissions: { columns: ['Backlog', 'Ready'] } })).status, 200);
+    assert.deepEqual((await s.ok('GET', '/api/permissions/me', undefined, ag('w1'))).permissions.columns, ['Backlog', 'Ready']);
+    assert.equal((await patch(ag('mgr'), 'w1', { permissions: { columns: ['Backlog', 'Ready', 'Done'] } })).body.code, 'WIDEN');
+    assert.equal((await patch(ag('mgr'), 'w1', { permissions: { readOnly: true } })).status, 200);
+    assert.equal((await patch(ag('mgr'), 'w1', { permissions: { readOnly: false } })).body.code, 'WIDEN');
+    // the human can widen again (revert)
+    assert.equal((await patch(USER, 'w1', { permissions: { columns: null, readOnly: false }, perms: ['edit', 'test', 'git'] })).status, 200);
+    assert.equal((await s.ok('GET', '/api/permissions/me', undefined, ag('w1'))).permissions, null);
+    const me = await s.ok('GET', '/api/permissions/me', undefined, ag('mgr'));
+    assert.deepEqual(me.grants.map((g) => g.power), ['agents.manage']);
+  });
+});
