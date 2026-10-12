@@ -1733,7 +1733,7 @@
 
   /* ═════════════════════════ markdown ═════════════════════════ */
 
-  const safeUrl = (u) => /^(https?:|\/|#|mailto:)/i.test(u) || /^data:image\//i.test(u);
+  const safeUrl = (u) => /^(https?:|\/|#|mailto:|blob:)/i.test(u) || /^data:image\//i.test(u);
   function inline(s) {
     const codes = [];
     s = s.replace(/`([^`]+)`/g, (_, c) => `\u0001${codes.push(c) - 1}\u0001`);
@@ -1862,6 +1862,7 @@
       toast('Changes discarded', { icon: 'x', timeout: 1800 });
     }
     state.modal = null;
+    if (m.pendingFiles?.length) dropStaged(m); // a cancelled new ticket uploaded nothing; free the previews
     closeMenus();
     // Prefer the live card for this item (the board may have re-rendered while the modal was open).
     const src = (m.kind === 'item' && cardEls.get(m.id)) || m.src;
@@ -2068,6 +2069,7 @@
       $('span', box).textContent = msg;
     };
     if (!q.title) { err('Give it a title'); $('.m-title', m.root).focus(); return; }
+    if (m.creating) return; // a double click must not make two tickets
     const fields = Object.fromEntries(Object.entries(d.fields || {}).filter(([, v]) => v !== null && v !== '' && !(Array.isArray(v) && !v.length)));
     const body = {
       title: q.title, column: d.columnId, position: 'top',
@@ -2078,13 +2080,20 @@
       ...(Object.keys(d.properties || {}).length ? { properties: d.properties } : {}),
       ...(q.template || m.create.template ? { template: q.template || m.create.template } : {}),
     };
+    m.creating = true;
+    m.root.classList.add('busy');
     try {
       const it = await api('POST', B('/items'), body);
+      if (m.pendingFiles?.length) await uploadStaged(m, it.id, body.description || '');
       m.draft = {};
-      toast(`Created ${it.id}`, { icon: 'plus', kind: 'ok', timeout: 2000 });
+      // Done: close, and let the board show the new card (it gets the new-ticket highlight).
+      if (state.modal === m) closeModal(true);
+      toast(`Created ${it.id}`, { icon: 'plus', kind: 'ok', timeout: 3000, action: 'Open', onAction: () => openItem(it.id) });
       await loadBoard(state.boardId);
-      m.switchTo(it.id);
-    } catch (e) { err(e.message); }
+    } catch (e) {
+      // stay open with everything typed, and say why
+      err(e.message);
+    } finally { m.creating = false; m.root.classList.remove('busy'); }
   }
 
   function wireModalShell(m) {
@@ -2136,7 +2145,8 @@
       e.preventDefault();
       if (target?.closest('.cmt-compose')) { stageFiles(m, files); return; }
       if (!canEdit('attachments') || m.archived) return;
-      const atts = await uploadFiles(m, files);
+      // A new ticket has nowhere to attach to yet: preview the files locally, upload them after Create.
+      const atts = m.create ? stageForCreate(m, files) : await uploadFiles(m, files);
       if (target && target.closest('.desc-edit')) {
         const snippet = atts.map((a) => (isImage(a) ? `![${a.name}](${a.url})` : `[${a.name}](${a.url})`)).join('\n');
         const s = target.selectionStart;
@@ -2436,6 +2446,39 @@
   function readFile(f) {
     return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
   }
+  // Create mode: keep pasted files in the page (blob: URLs) until the ticket exists. Nothing is uploaded
+  // before Create, so cancelling leaves no orphan attachments.
+  function stageForCreate(m, files) {
+    m.pendingFiles ||= [];
+    return files.filter((f) => {
+      if (f.size <= 15 * 1024 * 1024) return true;
+      toast(`${f.name} is over 15 MB`, { kind: 'error' });
+      return false;
+    }).map((f) => {
+      const a = { name: f.name || 'pasted.png', mime: f.type, url: URL.createObjectURL(f), file: f };
+      m.pendingFiles.push(a);
+      return a;
+    });
+  }
+  function dropStaged(m) {
+    for (const a of m.pendingFiles || []) URL.revokeObjectURL(a.url);
+    m.pendingFiles = [];
+  }
+  // After Create: upload the staged files the description still uses and point its links at them.
+  async function uploadStaged(m, id, description) {
+    const used = (m.pendingFiles || []).filter((a) => description.includes(a.url));
+    if (!used.length) return dropStaged(m);
+    let desc = description;
+    for (const a of used) {
+      try {
+        const att = await api('POST', I(id, '/attachments'), { name: a.name, mime: a.mime, dataBase64: await readFile(a.file) });
+        desc = desc.split(a.url).join(att.url);
+      } catch (e) { toast(`${a.name}: ${e.message}`, { kind: 'error' }); desc = desc.split(a.url).join(''); }
+    }
+    dropStaged(m);
+    await api('PATCH', I(id), { description: desc });
+  }
+
   async function uploadFiles(m, files) {
     const out = [];
     for (const f of files) {

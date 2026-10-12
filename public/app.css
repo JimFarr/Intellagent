@@ -1690,6 +1690,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .item-modal.creating .tabs, .item-modal.creating .tab-comments, .item-modal.creating .tab-activity,
 .item-modal.creating .ask-slot, .item-modal.creating .m-reacts, .item-modal.creating .m-foot,
 .item-modal.creating .m-sub, .item-modal.creating .section:has(.atts) { display: none !important; }
+.item-modal.creating.busy [data-draft="save"], .busy > .item-modal.creating [data-draft="save"] { opacity: .55; pointer-events: none; }
 .item-modal.creating .m-id { cursor: default; font-weight: 600; color: var(--text); }
 .item-modal.creating .m-title:placeholder-shown { font-weight: 500; }
 .create-tpls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }

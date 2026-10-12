@@ -319,4 +319,16 @@ describe('agent flows', () => {
     assert.ok(Date.now() - t < 1500);
     assert.ok(r.cursor < 999999);
   });
+
+  it('create with a pasted image: the new ticket gets the attachment and its description points at it', async () => {
+    // what the create modal does after Create (INT-33): create, upload each staged file, rewrite its blob: link
+    const staged = 'blob:http://127.0.0.1/abc';
+    const it = await s.ok('POST', `${B}/items`, { title: 'pasted', column: 'Backlog', description: `see ![shot.png](${staged})` }, USER);
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const att = await s.ok('POST', `${B}/items/${it.id}/attachments`, { name: 'shot.png', mime: 'image/png', dataBase64: png }, USER);
+    await s.ok('PATCH', `${B}/items/${it.id}`, { description: `see ![shot.png](${att.url})` }, USER);
+    const got = await s.ok('GET', `${B}/items/${it.id}`);
+    assert.deepEqual(got.attachments.map((a) => a.name), ['shot.png']);
+    assert.ok(got.description.includes(att.url) && !got.description.includes('blob:'));
+  });
 });
