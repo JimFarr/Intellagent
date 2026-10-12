@@ -926,6 +926,8 @@
     c.dataset.type = it.type;
     c.style.setProperty('--tilt', `${tilt(it.id)}deg`);
     c.classList.toggle('needs', !!it.needsHuman);
+    const nq = it.questions?.length || (it.needsHuman ? 1 : 0);
+    $('.c-ask', c).textContent = nq > 1 ? `?${nq}` : '?';
     c.classList.toggle('selected', state.selected.has(it.id));
     const ageN = Number(settings.ageDays);
     const age = ageN ? clamp((idleDays(it) - 1) / Math.max(1, ageN - 1), 0, 1) : 0;
@@ -1910,44 +1912,50 @@
 
     // needs-you banner
     const slot = $('.ask-slot', main);
-    if (it.needsHuman && !m.archived) {
-      const key = `${it.id}:${it.needsHuman.raisedAt}`;
+    // Every open question gets its own box: reply to it (or resolve it) on its own. Reviews get approve / request changes.
+    const qs = it.questions?.length ? it.questions : it.needsHuman ? [it.needsHuman] : [];
+    if (qs.length && !m.archived) {
+      const key = `${it.id}:${qs.map((q) => q.id || q.raisedAt).join(',')}`;
       if (slot.dataset.key !== key) {
         slot.dataset.key = key;
-        const isReview = it.needsHuman.kind === 'review';
-        slot.innerHTML = `<div class="m-ask ${isReview ? 'is-review' : ''}"><div class="ask-head">${icon(isReview ? 'eye' : 'ask')}${avatar({ kind: 'agent', name: it.needsHuman.raisedBy })}<b>${esc(it.needsHuman.raisedBy)}</b><span>${rel(it.needsHuman.raisedAt)}</span>${isReview ? '<span class="chip review-chip">Review</span>' : ''}</div>
-          <div class="md">${md(it.needsHuman.reason)}</div>
+        slot.innerHTML = qs.map((q, i) => {
+          const isReview = q.kind === 'review';
+          return `<div class="m-ask ${isReview ? 'is-review' : ''}" data-q="${esc(q.id || '')}" data-kind="${isReview ? 'review' : 'question'}"><div class="ask-head">${icon(isReview ? 'eye' : 'ask')}${avatar({ kind: 'agent', name: q.raisedBy })}<b>${esc(q.raisedBy)}</b><span>${rel(q.raisedAt)}</span>${isReview ? '<span class="chip review-chip">Review</span>' : qs.length > 1 ? `<span class="q-count">${i + 1}/${qs.length}</span>` : ''}</div>
+          <div class="md">${md(q.reason)}</div>
           ${isReview
     ? tboxHTML({ ph: 'Feedback…', okIcon: 'send', okTitle: 'Request changes (Ctrl+Enter)', tools: `<button class="btn primary sm" data-r="approve">${icon('check', 'sm')}Approve</button>` })
-    : tboxHTML({ ph: 'Reply…', okIcon: 'send', okTitle: 'Reply & resolve (Ctrl+Enter)', tools: `<button class="tb-btn" data-r="resolve" title="Resolve|Mark the question answered without replying">${icon('check')}</button>` })}</div>`;
-        const box = $('.tbox', slot);
-        const resolve = async (withReply) => {
-          const ta = $('textarea', box);
-          const reply = withReply ? ta.value.trim() : '';
-          if (withReply && !reply) { ta.focus(); return; }
-          try { await api('DELETE', I(m.id, '/attention'), { reply }); pulseSaved(); scheduleRefresh(0); } catch (e) { toast(e.message, { kind: 'error' }); }
-        };
-        // Review: approve moves the ticket on through the gate; feedback sends it back a column.
-        const review = async (approve) => {
-          const ta = $('textarea', box);
-          const text = ta.value.trim();
-          if (!approve && !text) { ta.focus(); return; }
-          try {
-            // One step on the server: verdict recorded, comment posted, moved on (or back), agent told.
-            await api('POST', I(m.id, '/review/decision'), { verdict: approve ? 'approve' : 'changes', comment: text });
-            pulseSaved();
-            toast(approve ? `Approved ${m.id}` : `Sent ${m.id} back`, { kind: approve ? 'ok' : '', icon: approve ? 'check' : 'restore' });
-            scheduleRefresh(0);
-          } catch (e) { toast(e.message, { kind: 'error' }); }
-        };
-        if (isReview) {
-          wireTbox(box, () => review(false));
-          $('[data-r="approve"]', slot).onclick = () => review(true);
-        } else {
-          wireTbox(box, () => resolve(true));
-          $('[data-r="resolve"]', slot).onclick = () => resolve(false);
+    : tboxHTML({ ph: 'Reply…', okIcon: 'send', okTitle: 'Reply & resolve (Ctrl+Enter)', tools: `<button class="tb-btn" data-r="resolve" title="Resolve|Mark this question answered without replying">${icon('check')}</button>` })}</div>`;
+        }).join('');
+        for (const card of $$('.m-ask', slot)) {
+          const box = $('.tbox', card);
+          const qid = card.dataset.q || undefined;
+          const resolve = async (withReply) => {
+            const ta = $('textarea', box);
+            const reply = withReply ? ta.value.trim() : '';
+            if (withReply && !reply) { ta.focus(); return; }
+            try { await api('DELETE', I(m.id, '/attention'), { reply, questionId: qid }); pulseSaved(); scheduleRefresh(0); } catch (e) { toast(e.message, { kind: 'error' }); }
+          };
+          // One step on the server: verdict recorded, comment posted, moved on (or back), agent told.
+          const review = async (approve) => {
+            const ta = $('textarea', box);
+            const text = ta.value.trim();
+            if (!approve && !text) { ta.focus(); return; }
+            try {
+              await api('POST', I(m.id, '/review/decision'), { verdict: approve ? 'approve' : 'changes', comment: text });
+              pulseSaved();
+              toast(approve ? `Approved ${m.id}` : `Sent ${m.id} back`, { kind: approve ? 'ok' : '', icon: approve ? 'check' : 'restore' });
+              scheduleRefresh(0);
+            } catch (e) { toast(e.message, { kind: 'error' }); }
+          };
+          if (card.dataset.kind === 'review') {
+            wireTbox(box, () => review(false));
+            $('[data-r="approve"]', card).onclick = () => review(true);
+          } else {
+            wireTbox(box, () => resolve(true));
+            $('[data-r="resolve"]', card).onclick = () => resolve(false);
+          }
         }
-        if (first || m.rail) setTimeout(() => $('textarea', box)?.focus(), 300);
+        if (first || m.rail) setTimeout(() => $('.m-ask textarea', slot)?.focus(), 300);
       }
     } else { slot.innerHTML = ''; slot.dataset.key = ''; }
 

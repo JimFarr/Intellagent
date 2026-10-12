@@ -308,6 +308,8 @@ function normalizeBoard(b) {
     it.fields = isObj(it.fields) ? it.fields : {}; it.cover = it.cover || 'auto'; it.assignee = it.assignee || null;
     // flow: when the item entered each column (metrics). Older boards start from what is known.
     if (!Array.isArray(it.flow)) it.flow = [{ col: it.columnId, at: it.enteredColumnAt || it.createdAt }];
+    if (!Array.isArray(it.questions)) it.questions = it.needsHuman ? [{ id: rid('q'), ...it.needsHuman }] : [];
+    syncNeeds(it);
   }
   for (const c of b.columns) {
     c.flags = pickFlags(c.flags);
@@ -334,7 +336,7 @@ function enterColumn(item, colId) {
 
 // Closed "needs you" requests, kept for metrics (how long agents waited on the human).
 function closeWait(item, prev, actor) {
-  (item.waits ||= []).push({ raisedBy: prev.raisedBy, raisedAt: prev.raisedAt, resolvedAt: now(), by: actor.name, kind: prev.kind || 'question' });
+  (item.waits ||= []).push({ id: prev.id || null, reason: prev.reason || null, raisedBy: prev.raisedBy, raisedAt: prev.raisedAt, resolvedAt: now(), by: actor.name, kind: prev.kind || 'question' });
   if (item.waits.length > 30) item.waits.shift();
 }
 
@@ -707,7 +709,36 @@ function parseNeedsHuman(v, actor) {
   if (!v) return null;
   const reason = typeof v === 'string' ? v : v.reason;
   const kind = isObj(v) && v.kind === 'review' ? 'review' : 'question';
-  return { reason: str(reason || 'Needs input', 2000), raisedBy: actor.name, raisedAt: now(), kind };
+  return { id: rid('q'), reason: str(reason || 'Needs input', 2000), raisedBy: actor.name, raisedAt: now(), kind };
+}
+
+// A ticket can carry several open questions. `needsHuman` mirrors the oldest one so older clients,
+// filters and the UI's "needs you" flag keep working.
+function syncNeeds(item) { item.questions ||= item.needsHuman ? [{ id: rid('q'), ...item.needsHuman }] : []; item.needsHuman = item.questions[0] || null; }
+
+// Open a question (an identical open one from the same asker is reused). Returns it.
+function openQuestion(ctx, item, q, actor, events) {
+  syncNeeds(item);
+  const same = item.questions.find((x) => x.raisedBy === q.raisedBy && x.reason === q.reason && x.kind === q.kind);
+  if (same) return same;
+  item.questions.push(q);
+  syncNeeds(item);
+  events.push(itemEvent(ctx, 'attention.raised', item, actor, { questionId: q.id, reason: q.reason, kind: q.kind, open: item.questions.length }));
+  return q;
+}
+
+// Close questions (all, or those matching `pick`), each with its own event; the reply is posted once.
+function closeQuestions(ctx, item, actor, events, { pick = () => true, reply = null, extra = {} } = {}) {
+  syncNeeds(item);
+  const closing = item.questions.filter(pick);
+  if (!closing.length) return [];
+  item.questions = item.questions.filter((q) => !closing.includes(q));
+  syncNeeds(item);
+  for (const q of closing) {
+    closeWait(item, q, actor);
+    events.push(itemEvent(ctx, 'attention.resolved', item, actor, { questionId: q.id, raisedBy: q.raisedBy, reason: q.reason, kind: q.kind, reply, open: item.questions.length, mentions: [q.raisedBy], ...extra }));
+  }
+  return closing;
 }
 
 // Review column: one flagged `review`, else the column just before the first human-only gate.
@@ -730,12 +761,14 @@ function requestReview(ctx, id, d, actor) {
     if (summary) item.comments.push({ id: rid('c'), author: actor, body: summary, createdAt: now() });
     const lease = item.lease;
     if (lease && lease.claimant === actor.name) item.lease = null;
-    item.needsHuman = { reason: str(d.reason || (summary ? summary.split('\n')[0].slice(0, 200) : 'Ready for review'), 2000), raisedBy: actor.name, raisedAt: now(), kind: 'review' };
+    syncNeeds(item);
+    item.questions = item.questions.filter((q) => q.kind !== 'review');
+    const rq = parseNeedsHuman({ reason: str(d.reason || (summary ? summary.split('\n')[0].slice(0, 200) : 'Ready for review'), 2000), kind: 'review' }, actor);
     item.version++;
     item.updatedAt = now();
     if (lease && !item.lease) events.push(itemEvent(ctx, 'lease.released', item, actor, { claimant: lease.claimant, reason: 'review requested' }));
-    events.push(itemEvent(ctx, 'review.requested', item, actor, { summary: trimChange(summary) || null, reason: item.needsHuman.reason }));
-    events.push(itemEvent(ctx, 'attention.raised', item, actor, { reason: item.needsHuman.reason, kind: 'review' }));
+    events.push(itemEvent(ctx, 'review.requested', item, actor, { summary: trimChange(summary) || null, reason: rq.reason }));
+    openQuestion(ctx, item, rq, actor, events);
     return item;
   });
 }
@@ -770,7 +803,8 @@ function createItem(ctx, d, actor) {
       version: 1,
       lease: null,
       assignee: d.assignee ? str(d.assignee, 64).trim() : null,
-      needsHuman: parseNeedsHuman(d.needsHuman, actor),
+      needsHuman: null,
+      questions: [],
       blockedBy: arr(d.blockedBy).map((x) => String(x).toUpperCase()).filter((x) => b.items[x] || ctx.archive.items[x]),
       properties: isObj(d.properties) ? d.properties : {},
       fields: {},
@@ -786,7 +820,8 @@ function createItem(ctx, d, actor) {
     for (const a of arr(d.attachments)) item.attachments.push(saveAttachment(ctx, item, a, actor));
     events.push(itemEvent(ctx, 'item.created', item, actor));
     if (item.assignee) events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: item.assignee, from: null, mentions: [item.assignee] }));
-    if (item.needsHuman) events.push(itemEvent(ctx, 'attention.raised', item, actor, { reason: item.needsHuman.reason }));
+    const q0 = parseNeedsHuman(d.needsHuman, actor);
+    if (q0) openQuestion(ctx, item, q0, actor, events);
     return item;
   });
 }
@@ -856,14 +891,10 @@ function applyPatch(ctx, item, p, actor, events) {
   if ('needsHuman' in p) {
     const prev = item.needsHuman;
     const next = parseNeedsHuman(p.needsHuman, actor);
-    if (!!prev !== !!next || (prev && next && prev.reason !== next.reason)) {
-      item.needsHuman = next;
-      if (prev && !next) closeWait(item, prev, actor);
-      changes.needsHuman = { from: prev?.reason ?? null, to: next?.reason ?? null };
-      events.push(next
-        ? itemEvent(ctx, 'attention.raised', item, actor, { reason: next.reason })
-        : itemEvent(ctx, 'attention.resolved', item, actor, { raisedBy: prev.raisedBy, mentions: [prev.raisedBy] }));
-    }
+    const before = item.questions.length;
+    if (next) openQuestion(ctx, item, next, actor, events);
+    else closeQuestions(ctx, item, actor, events);
+    if (item.questions.length !== before) changes.needsHuman = { from: prev?.reason ?? null, to: item.needsHuman?.reason ?? null };
   }
   if ('properties' in p) {
     if (p.properties !== null && !isObj(p.properties)) fail(400, '"properties" must be an object');
@@ -977,38 +1008,39 @@ function releaseLease(ctx, id, actor) {
   });
 }
 
+// Answer one question ({ questionId }) or, without one, every open question on the ticket.
 function resolveAttention(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
-    const prev = item.needsHuman;
-    if (!prev) return item;
+    syncNeeds(item);
+    if (!item.questions.length) return item;
+    const qid = d.questionId || d.question;
+    if (qid && !item.questions.some((q) => q.id === qid)) fail(404, `No open question "${qid}" on ${item.id}`, { code: 'NOT_FOUND', questions: item.questions.map((q) => q.id) });
     let reply = null;
     if (String(d.reply || '').trim()) {
-      reply = { id: rid('c'), author: actor, body: str(d.reply, 20_000), createdAt: now() };
+      const q = qid ? item.questions.find((x) => x.id === qid) : null;
+      reply = { id: rid('c'), author: actor, body: str(d.reply, 20_000), createdAt: now(), ...(q ? { answers: q.id } : {}) };
       item.comments.push(reply);
     }
-    item.needsHuman = null;
-    closeWait(item, prev, actor);
+    closeQuestions(ctx, item, actor, events, { pick: (q) => !qid || q.id === qid, reply: reply?.body ?? null });
     item.version++;
     item.updatedAt = now();
-    events.push(itemEvent(ctx, 'attention.resolved', item, actor, { raisedBy: prev.raisedBy, reason: prev.reason, reply: reply?.body ?? null, mentions: [prev.raisedBy] }));
     return item;
   });
 }
 
-// Asking never needs a lease: anyone working near a ticket may ask about it. A newer question
-// replaces an open one (the old one is kept in `waits`).
+// Asking never needs a lease: anyone working near a ticket may ask about it. Questions stack up;
+// each gets an id and is answered on its own.
 function askHuman(ctx, id, reason, actor) {
-  return tx(ctx, (events) => {
-    const item = getItem(ctx, id);
-    const prev = item.needsHuman;
-    if (prev) closeWait(item, prev, actor);
-    item.needsHuman = parseNeedsHuman({ reason: reason || 'Needs input' }, actor);
-    item.version++;
-    item.updatedAt = now();
-    events.push(itemEvent(ctx, 'attention.raised', item, actor, { reason: item.needsHuman.reason, ...(prev ? { replaced: prev.reason } : {}) }));
-    return item;
+  let q;
+  const item = tx(ctx, (events) => {
+    const it = getItem(ctx, id);
+    q = openQuestion(ctx, it, parseNeedsHuman({ reason: reason || 'Needs input' }, actor), actor, events);
+    it.version++;
+    it.updatedAt = now();
+    return it;
   });
+  return { item, questionId: q.id };
 }
 
 /* ───── structured agent flows: pickup/working columns, transitions, start, decide, finish, work ───── */
@@ -1115,7 +1147,7 @@ function startWork(ctx, id, d, actor) {
 
 // The human's reply to a closed question: the first comment they wrote after it was asked.
 function replyAfter(item, w) {
-  const c = (item.comments || []).find((x) => x.author?.kind === 'user' && x.createdAt >= w.raisedAt);
+  const c = (w.id && item.comments.find((x) => x.answers === w.id)) || (item.comments || []).find((x) => x.author?.kind === 'user' && x.createdAt >= w.raisedAt);
   return c ? c.body : null;
 }
 
@@ -1125,12 +1157,13 @@ function decideReview(ctx, id, d, actor) {
   const verdict = d.verdict === 'approve' || d.verdict === 'approved' ? 'approve' : d.verdict === 'changes' ? 'changes' : fail(400, '"verdict" must be "approve" or "changes"');
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
-    const prev = item.needsHuman;
+    syncNeeds(item);
+    const prev = item.questions.find((q) => q.kind === 'review') || null;
     const requestedBy = prev?.raisedBy || item.workedBy?.at(-1) || null;
     const comment = str(d.comment || '', 20_000).trim();
     if (verdict === 'changes' && !comment) fail(400, 'Say what needs to change in "comment"');
     if (comment || verdict === 'approve') item.comments.push({ id: rid('c'), author: actor, body: comment || 'Approved ✓', createdAt: now() });
-    if (prev) { item.needsHuman = null; closeWait(item, prev, actor); }
+    closeQuestions(ctx, item, actor, events, { pick: (q) => q.kind === 'review', reply: comment || 'Approved ✓', extra: { verdict } });
     const cols = ctx.board.columns;
     const idx = cols.findIndex((c) => c.id === item.columnId);
     const target = d.column ? findColumn(ctx.board, d.column)
@@ -1141,7 +1174,6 @@ function decideReview(ctx, id, d, actor) {
     item.version++;
     item.updatedAt = now();
     const who = [requestedBy, ...(item.workedBy || [])].filter(Boolean);
-    events.push(itemEvent(ctx, 'attention.resolved', item, actor, { raisedBy: prev?.raisedBy || null, reason: prev?.reason || null, kind: 'review', verdict, reply: comment || 'Approved ✓', mentions: who }));
     events.push(itemEvent(ctx, verdict === 'approve' ? 'review.approved' : 'review.changes_requested', item, actor, { verdict, feedback: comment || null, mentions: who }));
     return item;
   });
@@ -1193,9 +1225,11 @@ function workFor(ctx, name) {
   for (const it of items) {
     const l = activeLease(it);
     if (l?.claimant === name) leases.push(brief(it, { expiresAt: l.expiresAt, minutesLeft: Math.max(0, Math.round((Date.parse(l.expiresAt) - Date.now()) / 60000)), status: l.status || null }));
-    if (it.needsHuman?.raisedBy === name) { waiting.push(brief(it, { question: it.needsHuman.reason, kind: it.needsHuman.kind, since: it.needsHuman.raisedAt })); continue; }
+    const mine = (it.questions || []).filter((q) => q.raisedBy === name);
+    for (const q of mine) waiting.push(brief(it, { questionId: q.id, question: q.reason, kind: q.kind, since: q.raisedAt }));
+    if (mine.length) continue;
     const w = (it.waits || []).filter((x) => x.raisedBy === name && x.kind !== 'review').at(-1);
-    if (w && Date.parse(w.resolvedAt) > lastMine(it) && it.columnId !== done) answered.push(brief(it, { question: w.reason || null, answer: replyAfter(it, w), answeredBy: w.by }));
+    if (w && Date.parse(w.resolvedAt) > lastMine(it) && it.columnId !== done) answered.push(brief(it, { questionId: w.id, question: w.reason || null, answer: replyAfter(it, w), answeredBy: w.by }));
     const rv = it.review;
     if (rv?.verdict === 'changes' && (rv.requestedBy === name || it.workedBy?.includes(name)) && Date.parse(rv.at) > lastMine(it)) feedback.push(brief(it, { feedback: rv.comment, by: rv.by }));
     if (it.assignee === name && it.columnId !== done && !(l && l.claimant !== name) && !leases.some((x) => x.id === it.id)) assigned.push(brief(it));
@@ -1811,7 +1845,8 @@ const SCHEMA = {
     columnId: 'string', author: '{ kind: "user"|"agent"|"system", name } (read-only)',
     lease: '{ claimant, leasedAt, expiresAt, minutes, renewals, status?, statusAt? } | null — managed via /lease and /status',
     assignee: 'string|null — who should pick this up next (handoff); they receive its events',
-    needsHuman: '{ reason, raisedBy, raisedAt, kind: question|review } | null — set to ask the human for input',
+    needsHuman: '{ id, reason, raisedBy, raisedAt, kind: question|review } | null — the oldest open question (set it to ask; null answers all)',
+    questions: '[{ id, reason, raisedBy, raisedAt, kind }] — every open question; answer one with DELETE …/attention { questionId, reply }',
     blockedBy: 'itemId[]', blocks: 'itemId[] (computed)', properties: 'object — free-form property bag (undeclared data)',
     fields: 'object — values for the board custom fields declared in GET /api/boards/:board/schema; validated by type',
     cover: '"auto" (first image) | "none" | attachment id — the image shown on the card',
@@ -2307,9 +2342,10 @@ route('POST', '/api/boards/:board/finish', 'End your session: release all your l
 
 route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason } — allowed even while others hold leases', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  return itemView(ctx, askHuman(ctx, p.id, body.reason, actor));
+  const { item, questionId } = askHuman(ctx, p.id, body.reason, actor);
+  return { ...itemView(ctx, item), questionId };
 });
-route('DELETE', '/api/boards/:board/items/:id/attention', 'Resolve: { reply? } (reply becomes a comment)', ({ p, body, actor }) => {
+route('DELETE', '/api/boards/:board/items/:id/attention', 'Answer: { reply?, questionId? } — one question, or all open ones without questionId (reply becomes a comment)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   return itemView(ctx, resolveAttention(ctx, p.id, body, actor));
 });

@@ -1121,3 +1121,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 .token-hint { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
 .token-hint code { font: 11.5px var(--mono); color: var(--text); }
+
+/* several open questions on one ticket */
+.m-ask + .m-ask { margin-top: 10px; }
+.q-count { margin-left: auto; font: 600 10.5px var(--mono); color: var(--muted); }

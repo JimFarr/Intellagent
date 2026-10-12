@@ -162,7 +162,7 @@ POST   /api/boards/main/items/INT-12/attention  { "reason": "Rotate refresh toke
 DELETE /api/boards/main/items/INT-12/attention  { "reply": "…" }   (normally the human does this)
 ```
 
-The ticket glows on the board. The human's answer arrives as an `attention.resolved` event with `reply`, addressed to you.
+The ticket glows on the board. The reply returns a `questionId`. A ticket can hold several open questions (from you and others); each is answered on its own and the answer arrives as an `attention.resolved` event with that `questionId` and `reply`, addressed to whoever asked — and in `GET …/work` under `answered`. Asking the same thing twice reuses the open question. The human answers one with `DELETE …/attention { questionId, reply }` (without `questionId`, every open question is closed).
 
 **Where to ask.** While the human is actively chatting with you, quick back-and-forth belongs in chat. Anything that should outlive the conversation — a decision, an approval, a question raised while working unattended — goes on the card, so you never wait in one place while they answer in the other. If you asked in chat about a ticket, record the answer on the card.
 

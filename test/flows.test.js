@@ -59,6 +59,37 @@ describe('agent flows', () => {
     assert.equal(w.next.find((n) => n.id === it.id)?.action, 'resume');
   });
 
+  it('a ticket holds several questions, answered one at a time', async () => {
+    const it = await mk({ title: 'many questions' });
+    const q1 = (await s.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'Which DB?' }, A)).questionId;
+    const q2 = (await s.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'Which region?' }, { agent: 'bob' })).questionId;
+    const again = (await s.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'Which DB?' }, A)).questionId;
+    assert.equal(again, q1, 'asking the same thing twice reuses the open question');
+    let full = await s.ok('GET', `${B}/items/${it.id}`);
+    assert.equal(full.questions.length, 2);
+    assert.equal(full.needsHuman.id, q1, 'needsHuman mirrors the oldest');
+
+    const { seq } = await s.ok('GET', '/api/app');
+    await s.ok('DELETE', `${B}/items/${it.id}/attention`, { questionId: q2, reply: 'eu-west' }, USER);
+    full = await s.ok('GET', `${B}/items/${it.id}`);
+    assert.deepEqual(full.questions.map((q) => q.id), [q1]);
+    const evs = (await s.ok('GET', `/api/events?since=${seq}&types=attention.resolved`)).events;
+    assert.equal(evs.length, 1);
+    assert.equal(evs[0].questionId, q2);
+    assert.deepEqual(evs[0].recipients.includes('bob'), true);
+    const bob = await work({ agent: 'bob' });
+    assert.equal(bob.answered.find((x) => x.id === it.id)?.answer, 'eu-west');
+    const ada = await work();
+    assert.ok(ada.waitingOnHuman.some((x) => x.questionId === q1), 'ada is still waiting');
+
+    // a review request stacks with open questions; the verdict only closes the review
+    await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'ready' }, { agent: 'bob' });
+    assert.equal((await s.ok('GET', `${B}/items/${it.id}`)).questions.length, 2);
+    await s.ok('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'changes', comment: 'nope' }, USER);
+    assert.deepEqual((await s.ok('GET', `${B}/items/${it.id}`)).questions.map((q) => q.id), [q1]);
+    assert.equal((await s.api('DELETE', `${B}/items/${it.id}/attention`, { questionId: 'q_nope' }, USER)).body.code, 'NOT_FOUND');
+  });
+
   it('review feedback comes back as a structured verdict, and start resumes it', async () => {
     const it = await mk({ title: 'review me' });
     await s.ok('POST', `${B}/items/${it.id}/start`, {}, A);
