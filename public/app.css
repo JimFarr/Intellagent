@@ -1419,3 +1419,9 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .c-reacts { display: inline-flex; gap: 4px; font-size: 12px; }
 .c-reacts > span { display: inline-flex; align-items: center; gap: 2px; }
 .c-reacts b { font: 600 10.5px var(--mono); color: var(--muted); }
+
+/* hub: the settings-style window for Inbox, Digest, Agents, Rules, Flow and Archive */
+.hub .hub-title { font: 700 16px var(--display); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub .hub-back .back { rotate: 90deg; }
+.hub .drawer-body { padding: 4px 0 8px; overflow: visible; }
+.hub .set-nav button { white-space: nowrap; }

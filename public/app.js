@@ -858,9 +858,10 @@
       openMetrics();
     };
   }
-  function openMetrics() {
+  async function openMetrics() {
+    // The strip normally loads these; fetch them here when it is hidden.
+    if (!state.metrics) { try { state.metrics = await api('GET', B(`/metrics?days=${settings.metricsDays}`)); } catch { return; } }
     const m = state.metrics;
-    if (!m) return;
     const body = openDrawer('metricsDrawer', `Flow · last ${m.days} days`, 'activity');
     const maxStay = Math.max(1, ...m.columns.map((c) => c.medianStayHours || 0));
     const agents = Object.entries(m.byAgent).sort((a, b) => b[1] - a[1]);
@@ -2948,24 +2949,53 @@
 
   /* ═════════════════════════ drawers + toasts ═════════════════════════ */
 
+  /* ─── the hub: Inbox, Digest, Agents and friends share one settings-style window ─── */
+
+  // Each page: [page id, label, icon, opener]. Sub-pages (an agent's profile, a run log) light up their parent.
+  const HUB = [
+    ['inboxDrawer', 'Inbox', 'bell', () => openInbox()],
+    ['catchDrawer', 'While you were away', 'sparkle', () => openCatchup()],
+    ['digestDrawer', 'Digest', 'news', () => openDigest()],
+    ['agentsDrawer', 'Agents', 'bot', () => openAgents()],
+    ['rulesDrawer', 'Standing rules', 'pin', () => openRules()],
+    ['metricsDrawer', 'Flow', 'activity', () => openMetrics()],
+    ['archiveDrawer', 'Archive', 'archive', () => openArchive()],
+  ];
+  const HUB_PARENT = { agentDrawer: 'agentsDrawer', runLogDrawer: 'agentsDrawer' };
+
+  // Opens (or reuses) the hub on a page and returns that page's body element. Pages keep their old
+  // drawer ids, so code that looks for `#agentsDrawer .drawer-body` still finds them.
   function openDrawer(id, title, iconName) {
-    closeDrawers();
-    const d = el(`<aside class="drawer" id="${id}"><div class="drawer-head">${icon(iconName)}<span>${esc(title)}</span><span class="grow"></span><button class="pill-btn icon-btn sm" data-close>${icon('x')}</button></div><div class="drawer-body"></div></aside>`);
-    document.body.append(d);
-    $('[data-close]', d).onclick = closeDrawers;
-    requestAnimationFrame(() => requestAnimationFrame(() => d.classList.add('open')));
-    setTimeout(() => {
-      const off = (e) => {
-        if (!d.isConnected) { document.removeEventListener('pointerdown', off, true); return; }
-        if (!d.contains(e.target) && !e.target.closest('.menu, .scrim, .lightbox, #topbar')) closeDrawers();
-      };
-      document.addEventListener('pointerdown', off, true);
-    });
-    return $('.drawer-body', d);
+    let m = state.modal?.kind === 'hub' ? state.modal : null;
+    if (!m) {
+      closeModal(true);
+      const root = el(`<div class="scrim"><div class="modal settings hub entering" role="dialog" aria-modal="true">
+        <header class="m-head"><button class="pill-btn icon-btn sm hub-back" hidden title="Back">${icon('chev', 'back')}</button><span class="m-type hub-ic" style="color:var(--accent)"></span><span class="hub-title"></span><span class="grow"></span><button class="pill-btn icon-btn sm" data-close>${icon('x')}</button></header>
+        <div class="m-frame"><nav class="set-nav">${HUB.map(([hid, label, ic]) => `<button data-hub="${hid}">${icon(ic)}${label}</button>`).join('')}</nav><div class="set-pane hub-pane"></div></div></div></div>`);
+      document.body.append(root);
+      m = { kind: 'hub', id: null, root, modal: $('.modal', root), refresh: () => {} };
+      state.modal = m;
+      syncScrimmed();
+      root.addEventListener('pointerdown', (e) => { root._down = e.target === root; });
+      root.addEventListener('click', (e) => { if (e.target === root && root._down) closeModal(); });
+      $('[data-close]', root).onclick = () => closeModal();
+      for (const b of $$('[data-hub]', root)) b.onclick = () => HUB.find(([hid]) => hid === b.dataset.hub)[3]();
+      $('.hub-back', root).onclick = () => HUB.find(([hid]) => hid === m.parent)?.[3]();
+    }
+    const parent = HUB_PARENT[id] || id;
+    m.page = id;
+    m.parent = parent;
+    $$('[data-hub]', m.root).forEach((b) => b.classList.toggle('on', b.dataset.hub === parent));
+    $('.hub-ic', m.root).innerHTML = icon(iconName);
+    $('.hub-title', m.root).textContent = title;
+    $('.hub-back', m.root).hidden = !HUB_PARENT[id];
+    const pane = $('.hub-pane', m.root);
+    pane.innerHTML = `<div class="hub-page" id="${id}"><div class="drawer-body"></div></div>`;
+    pane.scrollTop = 0;
+    if (!reduced()) pane.animate([{ opacity: 0, translate: '0 6px' }, { opacity: 1, translate: '0 0' }], { duration: 240, easing: 'cubic-bezier(.22, 1, .36, 1)' });
+    return $('.drawer-body', pane);
   }
-  function closeDrawers() {
-    for (const d of $$('.drawer')) { d.classList.remove('open'); d.id = ''; setTimeout(() => d.remove(), 450); }
-  }
+  function closeDrawers() { if (state.modal?.kind === 'hub') closeModal(); }
 
   function openRules() {
     const body = openDrawer('rulesDrawer', 'Standing rules', 'pin');
@@ -3974,7 +4004,6 @@
       if ($('.palette-scrim')) { closePalette(); return; }
       if ($('.lightbox')) { $('.lightbox').remove(); return; }
       if (state.modal) { if (typing) e.target.blur(); closeModal(); return; }
-      if ($('.drawer.open')) { closeDrawers(); return; }
       if (state.bulk) { setBulk(false); return; }
       if (state.query) { $('#search').value = ''; state.query = ''; applyFilter(); $('#search').blur(); }
       return;
