@@ -29,6 +29,8 @@ async function api(method, p, body) {
       ...(tokenFor(AGENT) ? { Authorization: `Bearer ${tokenFor(AGENT)}` } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
+    // Bookkeeping must never hold up a commit: a board that is busy (or waiting on this very commit) is skipped.
+    signal: AbortSignal.timeout(3000),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);

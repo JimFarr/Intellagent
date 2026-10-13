@@ -514,6 +514,11 @@ describe('per-agent git worktrees', () => {
     fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
     git('add', '.');
     git('commit', '-q', '-m', 'init');
+    // A post-commit hook, as `intellagent hook install` writes one: landing must not run it (it would call the
+    // board while the board waits on git). It counts its runs in a file git does not track.
+    const hookRuns = path.join(dir, 'hook-runs.txt');
+    fs.writeFileSync(path.join(dir, '.git', 'hooks', 'post-commit'), `#!/bin/sh\necho ran >> "${hookRuns.replace(/\\/g, '/')}"\n`, { mode: 0o755 });
+    const runs = () => (fs.existsSync(hookRuns) ? fs.readFileSync(hookRuns, 'utf8').split('\n').filter(Boolean).length : 0);
     const s = await startServer({ dir, agents: { defaults: fast, agents: { ann: { run: run('commit'), worktree: true }, bob: { run: run('commit'), worktree: true } } } });
     try {
       const a = await s.ok('POST', `${B}/items`, { title: 'for ann', column: 'Ready', assignee: 'ann' }, USER);
@@ -529,8 +534,11 @@ describe('per-agent git worktrees', () => {
       await until(async () => (await agentState(s, 'ann')).status === 'idle', 6000, 'ann idle');
       const r = await s.ok('POST', `${B}/items/${a.id}/review`, { summary: 'done' }, { agent: 'ann' });
       assert.match(r.comments.at(-1).body, /Commits\*\* on `agent\/ann`/);
+      const before = runs();
+      assert.ok(before > 0, 'the hook does run on ordinary commits: the agents\' own');
       await s.ok('POST', `${B}/items/${a.id}/review/decision`, { verdict: 'approve' }, USER);
       assert.ok(fs.existsSync(path.join(dir, `work-${a.id}.txt`)), 'landed on main');
+      assert.equal(runs(), before, 'landing ran no hook');
       assert.ok(git('log', '-1', '--format=%s').includes(`(${a.id})`));
       assert.match((await comments(s, a.id)).at(-1), /Landed on main/);
       assert.ok(!fs.existsSync(path.join(dir, `work-${b.id}.txt`)), "bob's unapproved work stays off main");
