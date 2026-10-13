@@ -3662,6 +3662,7 @@
     const examples = ['Create tickets for…', 'What’s blocked, and why?', 'Summarise what changed today'];
     const pop = el(`<div class="ask-pop" role="dialog" aria-label="Ask an agent">
       ${tboxHTML({ cls: 'ask-box', ph: '', okIcon: 'send', okTitle: 'Send|Enter · Shift+Enter for a new line', hint: '↵ send', tools: '<button class="ask-to" type="button"></button>' })}
+      <div class="ask-paused" hidden></div>
       <div class="ask-thread"></div>
       <div class="ask-foot"><button class="ask-all" type="button">All requests${icon('chev', 'sm')}</button><span class="grow"></span><span><kbd>@</kbd> loop someone in</span><span><kbd>Esc</kbd> close</span></div>
     </div>`);
@@ -3679,7 +3680,24 @@
       $('.ask-to', pop).innerHTML = to ? `<span class="muted">To</span>${avatar({ kind: 'agent', name: to })}<b>${nameHTML(to)}</b>${icon('chev', 'sm')}` : `<span class="muted">To</span><b class="ph">Choose an agent</b>${icon('chev', 'sm')}`;
       $('.ask-to', pop).dataset.tip = to === state.board.coordinator ? 'Coordinator|The board’s default agent for asks · click to send to someone else' : 'Recipient|Click to choose another agent';
       ta.placeholder = to ? `Ask ${nameOf(to)} to plan, create tickets, explain…` : 'Ask an agent…';
+      // A paused (or failed) standing agent won't answer: say so here, with one click to wake it.
+      const sa = to && state.standing?.[to];
+      const stuck = sa && (sa.status === 'paused' || sa.status === 'failed');
+      const bar = $('.ask-paused', pop);
+      bar.hidden = !stuck;
+      if (stuck) bar.innerHTML = `${icon('pause', 'sm')}<span><b>${esc(nameOf(to))}</b> is ${sa.status}${sa.queued ? ` · ${sa.queued} waiting` : ''} — it won't answer until resumed</span><button class="btn sm" type="button" data-ask-resume>${icon('play', 'sm')}Resume</button>`;
     };
+    pop.addEventListener('click', async (e) => {
+      if (!e.target.closest('[data-ask-resume]')) return;
+      e.stopPropagation();
+      const to = askTo();
+      try {
+        await api('POST', `/api/agents/${encodeURIComponent(to)}/resume`, {});
+        toast(`${nameOf(to)} resumed`, { icon: 'play', kind: 'ok', timeout: 2200 });
+        await refreshPresence();
+        drawTo();
+      } catch (err) { toast(err.message, { kind: 'error' }); }
+    });
     const pickTo = () => {
       const btn = $('.ask-to', pop);
       const to = askTo();

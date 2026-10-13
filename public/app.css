@@ -1736,3 +1736,10 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .chg .what { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
 .chg .what b { color: var(--text); font-weight: 600; }
 .chg time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+/* Ask popover: the recipient is paused — say so, with Resume */
+.ask-paused { display: flex; align-items: center; gap: 8px; margin: 8px 12px 0; padding: 6px 8px 6px 10px; border-radius: 10px; font-size: 12px; color: var(--text);
+  background: color-mix(in oklab, var(--warn) 12%, transparent); border: 1px solid color-mix(in oklab, var(--warn) 35%, transparent); }
+.ask-paused[hidden] { display: none; }
+.ask-paused > span { flex: 1; min-width: 0; }
+.ask-paused .i { color: var(--warn); flex: none; }

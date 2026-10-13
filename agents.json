@@ -8,10 +8,13 @@
       "role": "coordinator",
       "description": "Triages James's new tickets and requests for Intellagent: fills fields, priority and acceptance checklists, groups them, and assigns work (design work to designer).",
       "model": "sonnet",
-      "throttleMinutes": 0.5,
-      "maxRunsPerHour": 15,
+      "throttleMinutes": 0.1,
+      "maxRunsPerHour": 40,
       "pickup": "ready",
-      "sweepMinutes": 30
+      "sweepMinutes": 30,
+      "grants": [
+        "agents.control"
+      ]
     },
     "designer": {
       "role": "designer",
