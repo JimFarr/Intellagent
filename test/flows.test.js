@@ -196,6 +196,17 @@ describe('agent flows', () => {
     assert.equal(direct.to, 'ada');
   });
 
+  it('an agent asking another agent hears the reply', async () => {
+    const { seq } = await s.ok('GET', '/api/app');
+    const req = await s.ok('POST', `${B}/requests`, { body: 'May I run a solve? 11 threads, 2048 MB, 20 min', to: 'guard' }, { agent: 'qa' });
+    await s.ok('POST', `${B}/requests/${req.id}/reply`, { body: 'Pass. Lease L4 until 09:20.', done: true }, { agent: 'guard' });
+    const evs = (await s.ok('GET', `/api/events?since=${seq}&for=qa&types=request.*`)).events;
+    assert.equal(evs.length, 1, 'the reply reaches the agent that asked');
+    assert.equal(evs[0].reply, 'Pass. Lease L4 until 09:20.');
+    assert.deepEqual(evs[0].addressed, ['qa'], 'and wakes it');
+    assert.equal(evs[0].request.by, 'qa');
+  });
+
   it('lease requests: ask the holder, who hands over or declines', async () => {
     const it = await mk({ title: 'contested' });
     await s.ok('POST', `${B}/items/${it.id}/start`, {}, { agent: 'holder2' });

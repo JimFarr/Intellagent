@@ -1597,7 +1597,9 @@ function replyRequest(ctx, id, d, actor) {
     if (d.done === false) req.status = 'open';
     req.updatedAt = now();
     const to = actor.name === req.to ? [] : [req.to];
-    events.push({ board: ctx.id, type: req.status === 'done' && d.done ? 'request.done' : 'request.replied', actor, request: { id: req.id, body: trimChange(req.body), to: req.to, status: req.status }, ...(body ? { reply: trimChange(body) } : {}), ...(atts.length ? { attachments: filesForEvent(ctx, atts) } : {}), recipients: to });
+    // An agent that asked another (a builder asking the Guard for a lease) is waiting on the answer: it is for them.
+    const asker = req.by?.kind === 'agent' && req.by.name !== actor.name ? [req.by.name] : [];
+    events.push({ board: ctx.id, type: req.status === 'done' && d.done ? 'request.done' : 'request.replied', actor, request: { id: req.id, body: trimChange(req.body), to: req.to, by: req.by?.name, status: req.status }, ...(body ? { reply: trimChange(body) } : {}), ...(atts.length ? { attachments: filesForEvent(ctx, atts) } : {}), recipients: [...new Set([...to, ...asker])], ...(asker.length ? { addressed: asker } : {}) });
     return req;
   });
 }
