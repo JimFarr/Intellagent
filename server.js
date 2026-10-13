@@ -52,7 +52,11 @@ function loadManifest() {
   };
   if (process.env.INTELLAGENT_PORT) merged.port = Number(process.env.INTELLAGENT_PORT);
   // local.json next to the manifest (git-ignored) carries machine-local secrets, e.g. the user token.
-  try { const local = JSON.parse(fs.readFileSync(path.join(path.dirname(MANIFEST_PATH), 'local.json'), 'utf8')); if (local.userToken) merged.auth.userToken = local.userToken; } catch { /* none */ }
+  try {
+    const local = JSON.parse(fs.readFileSync(path.join(path.dirname(MANIFEST_PATH), 'local.json'), 'utf8'));
+    if (local.userToken) merged.auth.userToken = local.userToken;
+    if (local.agentTokens) merged.auth.agentTokens = { ...(merged.auth.agentTokens || {}), ...local.agentTokens };
+  } catch { /* none */ }
   merged.dataDir = path.resolve(path.dirname(MANIFEST_PATH), merged.dataDir);
   return merged;
 }
@@ -2588,9 +2592,25 @@ function tokenOf(req, q) {
 }
 const tokenEq = (a, b) => typeof a === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
+// Agent tokens in local.json (git-ignored), read fresh; and issue one for a standing agent on a board that
+// requires them, so agents the human adds keep working.
+function readLocalAgentTokens() {
+  try { return JSON.parse(fs.readFileSync(path.join(path.dirname(MANIFEST_PATH), 'local.json'), 'utf8')).agentTokens || {}; } catch { return {}; }
+}
+function issueAgentToken(name) {
+  if (!M.auth.requireAgentTokens || !name || M.auth.agentTokens?.[name] || readLocalAgentTokens()[name]) return;
+  const file = path.join(path.dirname(MANIFEST_PATH), 'local.json');
+  let local = {};
+  try { local = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* new */ }
+  local.agentTokens = { ...(local.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') };
+  fs.writeFileSync(file, `${JSON.stringify(local, null, 2)}\n`);
+  M.auth.agentTokens = { ...(M.auth.agentTokens || {}), [name]: local.agentTokens[name] };
+}
+
 // Optional auth from the manifest. Off by default; docs and app name stay public so agents can discover it.
 function checkAuth(req, q, actor, pathname) {
-  if (!pathname.startsWith('/api') || pathname === '/api/docs' || pathname === '/api/app') return;
+  // the route index, docs and app name stay public so agents can discover the board (and ask for a token)
+  if (!pathname.startsWith('/api') || pathname === '/api' || pathname === '/api/docs' || pathname === '/api/app') return;
   const A = M.auth;
   const tok = tokenOf(req, q);
   if (actor.kind === 'user') {
@@ -2599,7 +2619,12 @@ function checkAuth(req, q, actor, pathname) {
   }
   const need = A.agentTokens?.[actor.name];
   if (need) { if (!tokenEq(tok, need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent' }); return; }
-  if (A.requireAgentTokens) fail(401, `Agent "${actor.name}" has no token configured in the manifest`, { auth: 'agent' });
+  if (A.requireAgentTokens) {
+    // a token issued since the board started (intellagent token --agent) counts without a restart
+    const fresh = readLocalAgentTokens()[actor.name];
+    if (fresh) { A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh }; if (tokenEq(tok, fresh)) return; fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent' }); }
+    fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name} (the CLI and MCP tools then send it by themselves)` });
+  }
   const p = permsFor(actor.name);
   if (p?.readOnly && req.method !== 'GET' && /^\/api\/boards\//.test(pathname) && !/\/(comments|attention)$/.test(pathname)) {
     fail(403, `${actor.name} is read-only (it may still comment and ask for help)`);
@@ -3283,6 +3308,7 @@ route('POST', '/api/agents', 'Human: add or update a standing agent { name, role
   if (body.limits !== undefined) body.limits = cleanLimits(body.limits);
   if (body.grants !== undefined) body.grants = cleanGrants(body.grants);
   const a = standing.define(body.name, body, { kind: actor.kind, name: actor.name });
+  issueAgentToken(a.name);
   if (body.coordinator) {
     const ctx = getCtx(q.board || M.defaultBoard);
     tx(ctx, (events) => { ctx.board.coordinator = a.name; events.push({ board: ctx.id, type: 'board.updated', actor, changes: { coordinator: { to: a.name } } }); });
@@ -3540,7 +3566,7 @@ const server = http.createServer(async (req, res) => {
       const hit = r.re.exec(u.pathname);
       if (hit) { m = { r, params: Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(hit[i + 1])])) }; break; }
     }
-    if (!m) fail(404, `No route for ${req.method} ${u.pathname}. See GET /api`);
+    if (!m) fail(404, `No route for ${req.method} ${u.pathname}`, { code: 'NOT_FOUND', hint: 'Routes: GET /api. From the CLI, call operations by name instead: intellagent help <word> (e.g. intellagent help search), then intellagent do <operation> key=value' });
     const q = Object.fromEntries(u.searchParams);
     const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {};
     const actor = actorOf(req, q);
@@ -3645,6 +3671,8 @@ standing = require('./lib/agents').createAgents({
     }
   },
 });
+
+try { for (const a of standing.list().agents) issueAgentToken(a.name); } catch (e) { console.warn(`agent tokens: ${e.message}`); }
 
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE') console.error(`Port ${M.port} is in use. Set "port" in ${MANIFEST_PATH} or INTELLAGENT_PORT.`);

@@ -2,7 +2,8 @@
 /*
  * Intellagent MCP server (stdio). Zero dependencies — thin wrapper over the HTTP API.
  *   claude mcp add intellagent -e INTELLAGENT_AGENT=my-agent -- node /abs/path/intellagent/mcp.js
- * Env: INTELLAGENT_URL (default http://127.0.0.1:7420), INTELLAGENT_AGENT, INTELLAGENT_BOARD (default main)
+ * Env: INTELLAGENT_URL (default http://127.0.0.1:7420), INTELLAGENT_AGENT, INTELLAGENT_BOARD (default main),
+ *      INTELLAGENT_MCP_PROFILE core (default) | full, or --profile <name>; INTELLAGENT_MCP_TOOLS=name,name for an explicit list
  */
 'use strict';
 
@@ -31,133 +32,30 @@ function setAgent(name) {
 const BOARD = process.env.INTELLAGENT_BOARD || 'main';
 const VERSION = '1.0.0';
 
-const S = (type, description, extra = {}) => ({ type, description, ...extra });
-const board = S('string', `Board id (default "${BOARD}")`);
-const id = S('string', 'Item id, e.g. INT-12');
-const column = S('string', 'Column id or name');
-const filterProps = {
-  board, types: S('string', 'Comma list of event types; "lease.*" wildcard'), itemId: id, column: S('string', 'Destination column'),
-  claimant: S('string', 'Leaseholder name'), for: S('string', 'Recipient name — events addressed to this agent'),
-  itemType: S('string', 'issue | task | spike'), parent: S('string', 'Parent tag'),
-  fields: S('string', 'Comma list of changed fields, e.g. "priority,properties.risk"'), excludeActor: S('string', 'Skip events by this actor'),
-};
-const itemFields = {
-  title: S('string', 'Title'), description: S('string', 'Markdown'), type: S('string', 'issue | task | spike'),
-  priority: S('string', 'Low | Medium | High | Critical'), parent: S('string', 'Parent tag for grouping'),
-  properties: S('object', 'Free-form property bag; merged on update, null deletes a key'), blockedBy: S('array', 'Item ids', { items: { type: 'string' } }),
-  fields: S('object', 'Values for the declared schema fields, e.g. { "risk": "high" }; null clears'),
-};
-const fieldDef = {
-  key: S('string', 'Field key'), label: S('string', 'Label'), type: S('string', 'text | markdown | number | boolean | enum | tags | date | url | user'),
-  options: S('array', 'For enum/tags: strings or { value, color }', { items: {} }), ui: S('string', 'edit | read (humans read-only) | hidden'),
-  stub: S('string', 'none | top | meta — where it shows on the card'), icon: S('string', 'Icon name'), help: S('string', 'Tooltip / meaning'),
-  required: S('boolean', 'Required on create'), default: S('string', 'Default value'), min: S('number', 'Number min'), max: S('number', 'Number max'),
-};
-const b = (a) => encodeURIComponent(a.board || BOARD);
-const q = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
-const pick = (a, keys) => Object.fromEntries(keys.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
+const TOOLS = require('./lib/tools').makeTools({ board: BOARD, agent: () => AGENT, onIdentity: (name) => setAgent(name) });
 
-const TOOLS = [
-  ['get_briefing', 'START HERE. Who you are, what to do next, the columns, templates, fields, rules and which tools to use.', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/brief?via=mcp`]],
-  ['get_my_work', 'What needs you now: next actions, your leases, answered questions, review feedback, assigned and ready tickets.', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/work`]],
-  ['start_work', 'Start or resume a ticket in one step: claims it, moves it to the working column, assigns you, sets your status. Also the way to resume after an answer or review feedback.', { board, id, status: S('string', 'What you are about to do'), minutes: S('number', 'Lease length'), column: S('string', 'Override the target column'), force: S('boolean', 'Start even if blocked') }, ['id'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/start`, pick(a, ['status', 'minutes', 'column', 'force'])]],
-  ['get_transitions', 'Where you can move a ticket, and why not elsewhere.', { board, id }, ['id'], (a) => ['GET', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/transitions`]],
-  ['finish_session', 'End your session: releases all your leases and the board hold, posts your digest summary.', { board, summary: S('string', 'Markdown: what you did, what is left'), items: S('array', 'Ticket ids it covers', { items: { type: 'string' } }) }, [],
-    (a) => ['POST', `/api/boards/${b(a)}/finish`, pick(a, ['summary', 'items'])]],
-  ['get_docs', 'The full agent guide (get_briefing is usually enough).', {}, [], () => ['GET', '/api/docs']],
-  ['get_schema', 'Data model, event types, filter keys, search operators.', {}, [], () => ['GET', '/api/schema']],
-  ['list_boards', 'List boards.', {}, [], () => ['GET', '/api/boards']],
-  ['create_board', 'Create a new kanban board.', { name: S('string', 'Board name'), idPrefix: S('string', 'Item id prefix, e.g. REF'), template: S('string', 'default | simple | empty'), columns: S('array', 'Optional column definitions', { items: { type: 'object' } }), directives: S('string', 'Standing rules (markdown)') }, ['name'],
-    (a) => ['POST', '/api/boards', pick(a, ['name', 'idPrefix', 'template', 'columns', 'directives'])]],
-  ['board_summary', 'Compact overview: columns, flags, one line per item.', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/summary`]],
-  ['get_directives', 'Standing rules from the human. Read before working.', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/directives`]],
-  ['create_column', 'Create a column (agents only).', { board, name: S('string', 'Name'), color: S('string', 'CSS color'), icon: S('string', 'inbox|target|play|eye|check|… or emoji'), position: S('number', 'Index'), flags: S('object', 'allowCreate, allowMoveIn, allowMoveOut, wipLimit, releaseLeaseOnEnter, autoArchiveAfterDays, or custom') }, ['name'],
-    (a) => ['POST', `/api/boards/${b(a)}/columns`, pick(a, ['name', 'color', 'icon', 'position', 'flags'])]],
-  ['update_column', 'Rename, recolor, reorder or change flags (merged).', { board, column, name: S('string', 'New name'), color: S('string', 'CSS color'), icon: S('string', 'Icon'), position: S('number', 'Index'), flags: S('object', 'Flags to merge') }, ['column'],
-    (a) => ['PATCH', `/api/boards/${b(a)}/columns/${encodeURIComponent(a.column)}`, pick(a, ['name', 'color', 'icon', 'position', 'flags'])]],
-  ['list_column_items', 'Items in a column, in order.', { board, column, full: S('boolean', 'Return full items') }, ['column'],
-    (a) => ['GET', `/api/boards/${b(a)}/columns/${encodeURIComponent(a.column)}/items?${q({ full: a.full })}`]],
-  ['create_item', 'Create a work item. Pass template (see list_ticket_templates) to start from a preset; your values override it.', { board, column, template: S('string', 'Ticket template key, e.g. bug'), assignee: S('string', 'Hand it to an agent'), ...itemFields, needsHuman: S('string', 'Ask the human something right away') }, ['title'],
-    (a) => ['POST', `/api/boards/${b(a)}/items`, pick(a, ['column', 'template', 'title', 'description', 'type', 'priority', 'parent', 'assignee', 'properties', 'fields', 'blockedBy', 'needsHuman'])]],
-  ['list_ticket_templates', 'Ticket templates on this board (presets for new tickets).', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/ticket-templates`]],
-  ['define_ticket_template', 'Add a ticket template, or change one (same label/key).', { board, label: S('string', 'e.g. Bug'), key: S('string', 'Optional; derived from label'), help: S('string', 'Hint shown on the chip'), type: S('string', 'issue | task | spike'), priority: S('string', 'Low | Medium | High | Critical'), parent: S('string', 'Parent group'), column: S('string', 'Column it starts in'), title: S('string', 'Prefilled title'), description: S('string', 'Markdown, e.g. a checklist'), fields: S('object', 'Field values'), properties: S('object', 'Property values') }, ['label'],
-    async (a, call) => {
-      const body = pick(a, ['label', 'key', 'help', 'type', 'priority', 'parent', 'column', 'title', 'description', 'fields', 'properties']);
-      const key = String(a.key || a.label).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      const list = await call('GET', `/api/boards/${b(a)}/ticket-templates`);
-      return list.some((t) => t.key === key) ? ['PATCH', `/api/boards/${b(a)}/ticket-templates/${key}`, body] : ['POST', `/api/boards/${b(a)}/ticket-templates`, body];
-    }],
-  ['get_item', 'Full item: description, comments, attachments, lease, properties.', { board, id }, ['id'], (a) => ['GET', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}`]],
-  ['update_item', 'Change any fields. Include version for safe writes.', { board, id, ...itemFields, column, position: S('string', 'Index, top or bottom'), cover: S('string', 'Card image: auto | none | attachment id'), version: S('number', 'Version from your last read') }, ['id'],
-    (a) => ['PATCH', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}`, pick(a, ['title', 'description', 'type', 'priority', 'parent', 'properties', 'fields', 'blockedBy', 'column', 'position', 'cover', 'version'])]],
-  ['get_board_schema', 'Ticket schema: declared fields + built-in field config.', { board }, [], (a) => ['GET', `/api/boards/${b(a)}/schema`]],
-  ['define_field', 'Declare a typed field on the ticket schema.', { board, ...fieldDef }, ['key', 'type'],
-    (a) => ['POST', `/api/boards/${b(a)}/schema/fields`, pick(a, Object.keys(fieldDef))]],
-  ['update_field', 'Change a declared field (merged).', { board, ...fieldDef }, ['key'],
-    (a) => ['PATCH', `/api/boards/${b(a)}/schema/fields/${encodeURIComponent(a.key)}`, pick(a, Object.keys(fieldDef).filter((k) => k !== 'key'))]],
-  ['configure_builtins', 'Hide, relabel or make read-only the built-in fields, e.g. { "priority": { "ui": "hidden" } }.', { board, builtins: S('object', '{ type|priority|parent|description|blockedBy|attachments|cover|properties: { ui, stub, label } }') }, ['builtins'],
-    (a) => ['PUT', `/api/boards/${b(a)}/schema`, { builtins: a.builtins }]],
-  ['move_item', 'Move between columns or reorder.', { board, id, column, position: S('string', 'Index, top or bottom'), beforeId: S('string', 'Place before this item'), afterId: S('string', 'Place after this item') }, ['id'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/move`, pick(a, ['column', 'position', 'beforeId', 'afterId'])]],
-  ['add_comment', 'Comment on an item (markdown, @mentions notify). Optional files by absolute path.', { board, id, body: S('string', 'Markdown'), files: S('array', 'Absolute file paths to attach', { items: { type: 'string' } }) }, ['id'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/comments`, { body: a.body || '', attachments: (a.files || []).map((path) => ({ path })) }]],
-  ['attach_file', 'Attach a local file (absolute path) or a URL.', { board, id, path: S('string', 'Absolute file path'), url: S('string', 'Link'), name: S('string', 'Display name') }, ['id'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/attachments`, pick(a, ['path', 'url', 'name'])]],
-  ['claim_lease', 'Claim or renew a lease on an item.', { board, id, minutes: S('number', 'Lease length (default 30)'), status: S('string', 'Optional live status line') }, ['id'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease`, pick(a, ['minutes', 'status'])]],
-  ['set_status', 'Post a live status line on an item you hold (shown on the card). Empty clears.', { board, id, status: S('string', 'e.g. "running tests 4/12"') }, ['id', 'status'],
-    (a) => ['PUT', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/status`, { status: a.status }]],
-  ['assign_item', 'Hand an item to another agent (or a human).', { board, id, assignee: S('string', 'Name; empty to unassign') }, ['id'],
-    (a) => ['PATCH', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}`, { assignee: a.assignee || null }]],
-  ['my_permissions', 'What this agent is allowed to change.', {}, [], () => ['GET', '/api/permissions/me']],
-  ['request_review', 'Done with an item? One call: moves it to the review column, posts your explanation, releases your lease, and asks the human to review. Explain in four parts.', { board, id, changed: S('string', 'What changed (markdown)'), why: S('string', 'Why this approach; alternatives you rejected'), verify: S('string', 'How the human can verify it'), risks: S('string', 'Risks and open questions'), summary: S('string', 'Optional extra summary') }, ['id', 'changed', 'why', 'verify'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/review`, pick(a, ['changed', 'why', 'verify', 'risks', 'summary'])]],
-  ['post_digest', "Append an end-of-session summary to today's digest.", { board, summary: S('string', 'Markdown: what you did, what is next, open questions'), items: S('array', 'Related item ids', { items: { type: 'string' } }) }, ['summary'],
-    (a) => ['POST', `/api/boards/${b(a)}/digest`, pick(a, ['summary', 'items'])]],
-  ['read_digest', 'Read recent digest entries (what other agents and the human summarised).', { board, days: S('number', 'Days back, default 7') }, [],
-    (a) => ['GET', `/api/boards/${b(a)}/digest?days=${a.days || 7}`]],
-  ['claim_board', 'Hold the whole board as the only agent (master lease): no per-ticket leases needed; other agents become read-only. Omit minutes to hold until released.', { board, minutes: S('number', 'Optional time limit'), status: S('string', 'What you are doing') }, [],
-    (a) => ['POST', `/api/boards/${b(a)}/master`, pick(a, ['minutes', 'status'])]],
-  ['set_board_status', 'Live status while you hold the whole board.', { board, status: S('string', 'e.g. "fixing auth tickets"') }, ['status'],
-    (a) => ['PUT', `/api/boards/${b(a)}/master/status`, { status: a.status }]],
-  ['release_board', 'Release the whole board (do this before spawning helper agents that use ticket leases).', { board }, [],
-    (a) => ['DELETE', `/api/boards/${b(a)}/master`]],
-  ['release_lease', 'Release your lease.', { board, id }, ['id'], (a) => ['DELETE', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease`]],
-  ['list_requests', 'Requests the human sent you (free-form asks not tied to a ticket).', { board, status: S('string', 'open | done') }, [], (a) => ['GET', `/api/boards/${b(a)}/requests?${q({ status: a.status || 'open', to: AGENT })}`]],
-  ['reply_request', 'Reply to a request: say what you did (with ticket ids); pass done: true when finished.', { board, requestId: S('string', 'Request id'), body: S('string', 'Markdown reply'), done: S('boolean', 'Mark the request done') }, ['requestId'],
-    (a) => ['POST', `/api/boards/${b(a)}/requests/${encodeURIComponent(a.requestId)}/reply`, pick(a, ['body', 'done'])]],
-  ['introduce_yourself', 'Save who you are after asking the human (name — blank for a generated one, role, alignment). Switches this session to that name.', { name: S('string', 'Your name (omit for a friendly generated one)'), role: S('string', 'coordinator | builder | reviewer | researcher | writer | …'), alignment: S('string', 'How you behave, e.g. careful and thorough'), description: S('string', 'One paragraph: what you do here'), color: S('string', 'CSS colour'), glyph: S('string', '1–2 characters or an emoji') }, ['role'],
-    async (a, call) => {
-      const name = a.name && String(a.name).trim() ? String(a.name).trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 64) : (await call('GET', '/api/names/suggest')).name;
-      setAgent(name);
-      return ['PATCH', '/api/profiles/me', pick(a, ['role', 'alignment', 'description', 'color', 'glyph'])];
-    }],
-  ['request_lease', 'Ask the agent holding a ticket to hand it to you.', { board, id, reason: S('string', 'Why you need it') }, ['id'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease/request`, pick(a, ['reason'])]],
-  ['hand_over_lease', 'Hand a ticket you hold to an agent that asked for it (default: the first requester).', { board, id, to: S('string', 'Agent name'), note: S('string', 'Handover note: where you left off') }, ['id'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease/handover`, pick(a, ['to', 'note'])]],
-  ['decline_lease_request', 'Decline a request for a ticket you hold, with a reason.', { board, id, to: S('string', 'Agent name'), reason: S('string', 'Why not (yet)') }, ['id', 'reason'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/lease/decline`, pick(a, ['to', 'reason'])]],
-  ['react', 'React with an emoji on a card or a comment (never wakes anyone). Use 👀 to show you read a comment.', { board, id, emoji: S('string', 'Emoji, or a name: eyes, +1, tada, rocket, thinking, check, heart…'), commentId: S('string', 'Comment id (omit to react to the card)'), remove: S('boolean', 'Remove your reaction instead') }, ['id', 'emoji'],
-    (a) => [a.remove ? 'DELETE' : 'POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/reactions`, pick(a, ['emoji', 'commentId'])]],
-  ['ask_human', 'Flag the item as needing the human, with a question.', { board, id, reason: S('string', 'Your question') }, ['id', 'reason'],
-    (a) => ['POST', `/api/boards/${b(a)}/items/${encodeURIComponent(a.id)}/attention`, { reason: a.reason }]],
-  ['archive_items', 'Archive items (never deleted).', { board, ids: S('array', 'Item ids', { items: { type: 'string' } }), reason: S('string', 'Why') }, ['ids'],
-    (a) => ['POST', `/api/boards/${b(a)}/archive`, pick(a, ['ids', 'reason'])]],
-  ['search', 'Search items with filters incl. property bag.', { board, q: S('string', 'Text'), where: S('object', '{ "properties.risk": "high", "priority": { "in": ["High"] } }'), includeArchived: S('boolean', 'Include archive'), sort: S('string', 'Field path or "priority"'), order: S('string', 'asc | desc'), limit: S('number', 'Max results'), full: S('boolean', 'Full items') }, [],
-    (a) => ['POST', '/api/search', { ...pick(a, ['q', 'where', 'includeArchived', 'sort', 'order', 'limit', 'full']), board: a.board || BOARD }]],
-  ['wait_for_events', 'Long-poll for events matching a filter. Returns { events, cursor }; pass cursor as since next time.', { since: S('number', 'Cursor (omit = only future events)'), timeout: S('number', 'Seconds, default 25'), ...filterProps }, [],
-    (a) => ['GET', `/api/events/wait?${q({ timeout: 25, ...a })}`]],
-  ['subscribe', 'Create a durable subscription; server remembers your cursor.', { label: S('string', 'Label'), filter: S('object', 'Filter keys: ' + Object.keys(filterProps).join(', ')) }, [],
-    (a) => ['POST', '/api/subscriptions', { label: a.label, filter: a.filter || { for: AGENT } }]],
-  ['next_events', 'Get the next events for a subscription (long-polls, advances the cursor).', { subscription: S('string', 'Subscription id'), timeout: S('number', 'Seconds, default 25') }, ['subscription'],
-    (a) => ['GET', `/api/subscriptions/${encodeURIComponent(a.subscription)}/next?${q({ timeout: a.timeout ?? 25 })}`]],
-  ['set_profile', 'Set how you appear on the board: colour, glyph (1–2 chars/emoji), label, description (what you were designed to do), avatar image.', { color: S('string', 'CSS colour'), glyph: S('string', '1–2 characters or an emoji'), label: S('string', 'Display label'), description: S('string', 'Markdown: your purpose and how to work with you'), imagePath: S('string', 'Absolute path to an image'), image: S('string', 'https image URL') }, [],
-    (a) => ['PATCH', '/api/profiles/me', pick(a, ['color', 'glyph', 'label', 'description', 'imagePath', 'image'])]],
-  ['rename_app', 'White-label: rename the app.', { name: S('string', 'New app name') }, ['name'], (a) => ['PATCH', '/api/app', { name: a.name }]],
-];
+/* Profiles: which tools are listed (all stay callable by name).
+   core  (default) — what an agent uses on nearly every turn; the rest is one CLI call away (skills/intellagent)
+   full  — everything (the old behaviour)
+   INTELLAGENT_MCP_TOOLS=name,name — an explicit list instead */
+const CORE = ['get_briefing', 'get_my_work', 'get_item', 'start_work', 'set_status', 'add_comment', 'ask_human', 'request_review', 'wait_for_events', 'finish_session'];
+const argProfile = (() => { const i = process.argv.indexOf('--profile'); return i > 0 ? process.argv[i + 1] : (process.argv.find((x) => x.startsWith('--profile=')) || '').slice(10) || null; })();
+const PROFILE = String(process.env.INTELLAGENT_MCP_PROFILE || argProfile || 'core').toLowerCase();
+const ALLOW = (process.env.INTELLAGENT_MCP_TOOLS || '').split(',').map((x) => x.trim()).filter(Boolean);
+let needsIntro = false; // set at initialize: a new agent also gets introduce_yourself until it has a role
+function listed() {
+  const names = new Set(TOOLS.map((t) => t[0]));
+  if (ALLOW.length) return ALLOW.filter((n) => names.has(n));
+  if (PROFILE === 'full') return [...names];
+  return [...CORE, ...(needsIntro ? ['introduce_yourself'] : [])];
+}
 
+{
+  const known = new Set(TOOLS.map((t) => t[0]));
+  const unknown = ALLOW.filter((n) => !known.has(n));
+  if (unknown.length) process.stderr.write(`intellagent mcp: unknown tool(s) in INTELLAGENT_MCP_TOOLS ignored: ${unknown.join(', ')}\n`);
+  if (!ALLOW.length && !['core', 'full'].includes(PROFILE)) process.stderr.write(`intellagent mcp: unknown profile "${PROFILE}", using core\n`);
+}
 const tools = TOOLS.map(([name, description, properties, required, call]) => ({
   name, description,
   // No per-call "agent" override: one MCP server speaks as one agent (set by INTELLAGENT_AGENT or the project default).
@@ -198,6 +96,7 @@ async function handle(msg) {
       let intro = '';
       try {
         const me = await (await fetch(`${BASE}/api/profiles/me`, { headers: { 'X-Agent': AGENT } })).json();
+        if (BASE && !me?.role) needsIntro = true;
         if (BASE && !me?.role) intro = ' FIRST, before any other work: you have not introduced yourself on this board. Ask the human, in one message: (1) your name — blank means you pick a friendly generated one, (2) your role — coordinator, builder, reviewer, researcher, writer or other, (3) your alignment — how you should behave, (4) anything to avoid or focus on. Then call introduce_yourself with the answers.';
       } catch { /* board not running */ }
       return send({ jsonrpc: '2.0', id: rid, result: {
@@ -205,12 +104,15 @@ async function handle(msg) {
         capabilities: { tools: {} },
         serverInfo: { name: 'intellagent', version: VERSION },
         instructions: BASE
-          ? `Kanban shared with the human at ${BASE}. You are "${AGENT}". Call get_briefing first: it says what to do next, how this board works and which tools to use. Work a ticket with start_work → set_status → request_review; ask_human when unsure; finish_session at the end.${intro}`
+          ? `Kanban shared with the human at ${BASE}. You are "${AGENT}". Call get_briefing first: it says what to do next, how this board works and which calls to use. Work a ticket with start_work → set_status → request_review; ask_human when unsure; finish_session at the end.${listed().length < TOOLS.length ? ' Anything else (search, move, assign, attach, leases, digest, schema) is one CLI call: `intellagent do <operation> key=value` — e.g. `intellagent do search q=payment`, `intellagent do move_item id=INT-12 column=Ready`; `intellagent help <word>` lists the operations and their parameters (the intellagent skill has the full list).' : ''}${intro}`
           : NO_BOARD,
       } });
     }
     if (method === 'ping') return send({ jsonrpc: '2.0', id: rid, result: {} });
-    if (method === 'tools/list') return send({ jsonrpc: '2.0', id: rid, result: { tools: tools.map(({ call, ...t }) => t) } });
+    if (method === 'tools/list') {
+      const show = new Set(listed());
+      return send({ jsonrpc: '2.0', id: rid, result: { tools: tools.filter((t) => show.has(t.name)).map(({ call, ...t }) => t) } });
+    }
     if (method === 'tools/call') {
       let out;
       try { out = await callTool(params.name, params.arguments); }

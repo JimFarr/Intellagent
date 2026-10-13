@@ -4,7 +4,7 @@
  *   intellagent init [dir] [--template software] [--name "My App"] [--prefix APP] [--port 7421] [--agent claude] [--no-mcp] [--no-claude] [--no-start]
  *   intellagent brief [--agent name]    everything an agent needs to start working
  *   intellagent templates               list board templates
- *   intellagent skill install [--project] install the /intellagent-setup skill for Claude Code
+ *   intellagent skill install [--project] install the intellagent skills for Claude Code
  *   intellagent start [--open]          run the board for the nearest .intellagent/ folder
  *   intellagent open | status | docs
  *   intellagent api <METHOD> <path> [json | @file | -]
@@ -92,13 +92,15 @@ async function init() {
     readonlyData: true,
     backups: 10,
     // Your token lives in local.json (not committed): only requests that carry it act as you.
-    auth: { userToken: null, agentTokens: {}, requireAgentTokens: false },
+    // agents must send a token (local.json holds them; the CLI and MCP send them by themselves); --open-agents turns it off
+    auth: { userToken: null, agentTokens: {}, requireAgentTokens: !f['open-agents'] },
     defaultAgent: agent,
     permissions: {},
   };
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  if (userToken) fs.writeFileSync(path.join(folder, 'local.json'), `${JSON.stringify({ userToken }, null, 2)}\n`);
+  const agentTokens = f['open-agents'] ? undefined : { [agent]: crypto.randomBytes(18).toString('base64url') };
+  if (userToken || agentTokens) fs.writeFileSync(path.join(folder, 'local.json'), `${JSON.stringify({ ...(userToken ? { userToken } : {}), ...(agentTokens ? { agentTokens } : {}) }, null, 2)}\n`);
   fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\n');
   const url = `http://127.0.0.1:${port}`;
   fs.writeFileSync(path.join(folder, 'README.md'), `# ${name} · Intellagent board\n\n- \`intellagent start\` runs it (from anywhere in this project); \`intellagent open\` opens it signed in; \`intellagent stop\` stops it.\n- \`intellagent brief\` shows an agent everything it needs.\n- \`local.json\` holds your user token (git-ignored). Only requests with it act as you; \`intellagent open\` signs the browser in.\n\n## Agent instructions\n\n${agentPrompt(url, agent)}\n`);
@@ -161,6 +163,16 @@ function tokenCmd() {
   let local = {};
   try { local = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { /* none yet */ }
   const f = flags(rest);
+  // --agent <name>: that agent's token (boards with requireAgentTokens refuse agents without one)
+  if (f.agent) {
+    const name = String(f.agent);
+    if (local.agentTokens?.[name] && !f.rotate) { console.log(`${name} already has a token in ${file}. --rotate replaces it.`); return; }
+    local.agentTokens = { ...(local.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') };
+    fs.writeFileSync(file, `${JSON.stringify(local, null, 2)}\n`);
+    console.log(`Token for "${name}" saved in ${file} (git-ignored). The board accepts it at once.`);
+    console.log(`In this project the CLI and MCP tools send it by themselves when they act as ${name}. Elsewhere, give the agent INTELLAGENT_TOKEN=<the token>.`);
+    return;
+  }
   if (local.userToken && !f.rotate) {
     console.log(`This board already has a user token (${path.relative(process.cwd(), file) || file}).\n  intellagent open           signs the browser in\n  intellagent token --rotate replaces it (signs every browser out)`);
     return;
@@ -215,17 +227,18 @@ async function stop() {
 // Everything an agent needs to start, from the board itself (so it is never stale).
 async function brief() {
   const f = flags(rest);
-  const mp = requireManifest();
-  const m = readManifest(mp);
-  const url = baseUrl(m);
+  const m = readManifest(findManifest());
+  const url = baseUrl(m); // INTELLAGENT_URL, or the nearest board folder
+  if (!url) { console.error(NO_BOARD); process.exit(3); }
   const agent = String(f.agent || defaultAgent(m) || 'agent');
-  const board = String(f.board || m.defaultBoard || 'main');
+  const board = String(f.board || process.env.INTELLAGENT_BOARD || m?.defaultBoard || 'main');
   const { tokenFor } = require('../lib/locate');
   const tok = tokenFor(agent);
   let r;
   try { r = await fetch(`${url}/api/boards/${board}/brief?via=${f.via || 'cli'}`, { headers: { 'X-Agent': agent, ...(tok ? { Authorization: `Bearer ${tok}` } : {}) } }); }
   catch { console.error(`The board isn't running (${url}). Start it in the background: intellagent start --background`); process.exit(1); }
   process.stdout.write(`${await r.text()}\n`);
+  if (!r.ok) process.exit(1);
 }
 
 async function status() {
@@ -265,13 +278,15 @@ function templates() {
 function skill() {
   const f = flags(rest);
   if (f._[0] !== 'install') { console.log('Usage: intellagent skill install [--project]'); return; }
-  const src = path.join(ROOT, 'skills', 'intellagent-setup', 'SKILL.md');
   const base = f.project ? path.join(process.cwd(), '.claude', 'skills') : path.join(os.homedir(), '.claude', 'skills');
-  const dest = path.join(base, 'intellagent-setup', 'SKILL.md');
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(src, dest);
-  console.log(`Installed ${dest}`);
-  console.log('In Claude Code: /intellagent-setup, or just ask it to set up Intellagent.');
+  // intellagent: how an agent works a ticket (loads when it does); intellagent-setup: setting up a board
+  for (const name of ['intellagent', 'intellagent-setup']) {
+    const dest = path.join(base, name, 'SKILL.md');
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(path.join(ROOT, 'skills', name, 'SKILL.md'), dest);
+    console.log(`Installed ${dest}`);
+  }
+  console.log('In Claude Code: agents pick up the intellagent skill when they work a ticket; /intellagent-setup sets up a board.');
 }
 
 /* ── wait / watch: make the board able to wake an agent ── */
@@ -296,11 +311,23 @@ async function nextEvents({ agent, types, timeoutSec, quiet, listen = { scope: '
   const mp = findManifest();
   const url = baseUrl(readManifest(mp));
   if (!url) { console.error(NO_BOARD); process.exit(3); }
-  const file = cursorPath(mp, agent, listen.scope);
+  // the cursor lives in the board folder; with only INTELLAGENT_URL, in a temp file per board and agent
+  const file = mp ? cursorPath(mp, agent, listen.scope)
+    : path.join(os.tmpdir(), 'intellagent-cursors', `${crypto.createHash('sha1').update(url).digest('hex').slice(0, 10)}-${String(agent).replace(/[^\w.-]+/g, '_')}${listen.scope ? `-${listen.scope}` : ''}.json`);
   let since = null;
   try { since = JSON.parse(fs.readFileSync(file, 'utf8')).cursor; } catch { /* first run */ }
-  const headers = { 'X-Agent': agent };
-  if (since == null) since = (await (await fetch(`${url}/api/app`, { headers })).json()).seq; // start from now
+  const { tokenFor } = require('../lib/locate');
+  const tok = tokenFor(agent);
+  const headers = { 'X-Agent': agent, ...(tok ? { Authorization: `Bearer ${tok}` } : {}) };
+  if (since == null) {
+    // First wait: start right after this agent's own last action, so an answer that arrived between
+    // "ask" and "wait" is not missed; an agent that has done nothing yet starts from now.
+    try {
+      const mine = (await (await fetch(`${url}/api/events?actor=${encodeURIComponent(agent)}&tail=true&limit=1`, { headers })).json()).events || [];
+      since = mine.length ? mine[mine.length - 1].seq : null;
+    } catch { /* fall back to now */ }
+    if (since == null) since = (await (await fetch(`${url}/api/app`, { headers })).json()).seq;
+  }
   const deadline = timeoutSec ? Date.now() + timeoutSec * 1000 : Infinity;
   for (;;) {
     const left = Math.max(1, Math.min(50, Math.ceil((deadline - Date.now()) / 1000)));
@@ -502,21 +529,73 @@ function autostart() {
   } else console.log(fs.existsSync(file) ? `On  (${file})` : 'Off  — turn on with: intellagent autostart on');
 }
 
+/* Operations by name — the same definitions as the MCP tools (lib/tools.js), so an agent without the MCP
+   server (or with only its core) gets the same calls with the same parameters.
+     intellagent do <operation> key=value …   run it (JSON out; errors: code + hint on stderr, exit 1)
+     intellagent help <operation>             its exact request shape */
+function operations() {
+  const { makeTools } = require('../lib/tools');
+  const m = readManifest(findManifest() || '');
+  return makeTools({ board: process.env.INTELLAGENT_BOARD || m?.defaultBoard || 'main', agent: () => require('../lib/request').agentName() });
+}
+function findOps(query) {
+  const ops = operations();
+  const qy = String(query || '').toLowerCase().replace(/-/g, '_');
+  const exact = ops.find((t) => t[0] === qy);
+  if (exact) return [exact];
+  const byName = ops.filter((t) => t[0].includes(qy));
+  return byName.length ? byName : ops.filter((t) => t[1].toLowerCase().includes(qy));
+}
+function opHelp(query) {
+  const { requestShape } = require('../lib/tools');
+  const hits = findOps(query);
+  if (!hits.length) { console.error(`No operation matches "${query}". Operations: ${operations().map((t) => t[0]).join(', ')}`); process.exit(2); }
+  for (const t of hits.slice(0, 6)) {
+    const [name, description, props, required] = t;
+    const shape = requestShape(t);
+    console.log(`${name} — ${description}`);
+    if (shape) console.log(`  request  ${shape.method} ${shape.path}${shape.query.length ? ` ?${shape.query.join('&')}` : ''}`);
+    for (const [k, v] of Object.entries(props)) console.log(`  ${required.includes(k) ? '*' : ' '} ${k.padEnd(16)} ${v.type}${v.description ? ` — ${v.description}` : ''}`);
+    const ex = required.map((k) => `${k}=${k === 'id' ? 'INT-12' : `<${k}>`}`).join(' ');
+    console.log(`  run      intellagent do ${name}${ex ? ` ${ex}` : ''}${shape ? `\n  or       intellagent api ${shape.method} ${shape.path.replace('<board>', 'main').replace('<ID>', 'INT-12')}` : ''}\n`);
+  }
+  if (hits.length > 6) console.log(`… and ${hits.length - 6} more: ${hits.slice(6).map((t) => t[0]).join(', ')}`);
+}
+async function doOp() {
+  const [query, ...pairs] = rest;
+  if (!query) { console.error('Usage: intellagent do <operation> key=value …   (intellagent help <operation> for its parameters)'); process.exit(2); }
+  const { fromPairs, send, report } = require('../lib/request');
+  const t = operations().find((x) => x[0] === String(query).toLowerCase().replace(/-/g, '_'));
+  if (!t) { const near = findOps(query).map((x) => x[0]); console.error(`No operation "${query}".${near.length ? ` Did you mean: ${near.slice(0, 5).join(', ')}?` : ''}`); process.exit(2); }
+  const compact = pairs.includes('--compact');
+  let args;
+  try { args = fromPairs(pairs.filter((x) => x !== '--compact')); } catch (e) { console.error(e.message); process.exit(2); }
+  const missing = t[3].filter((k) => args[k] === undefined || args[k] === '');
+  if (missing.length) { console.error(`${t[0]} needs: ${missing.join(', ')}  (intellagent help ${t[0]})`); process.exit(2); }
+  const getJson = async (m, p) => (await send(m, p)).json;
+  const [method, p, body] = await t[4](args, getJson);
+  process.exitCode = report(await send(method, p, body), { compact });
+}
+
 const HELP = `intellagent — a kanban for you and your agents
 
   init [dir]       set up a board here, start it, open it   --template --name --prefix --port --agent (default claude)
                    also adds the MCP tools (.mcp.json) and CLAUDE.md instructions; opt out: --no-mcp --no-claude --no-start --no-token
   templates        list board templates (software, research, ops, ...)
-  skill install    add the /intellagent-setup skill to Claude Code   [--project]
+  skill install    add the intellagent skills to Claude Code (working a ticket; setting up)   [--project]
   start            run this project's board      --open --background
   stop             stop a board started in the background
   brief            what an agent needs to start: next steps, columns, templates, rules, calls   --agent --via cli|mcp|http
   open             open the board in a browser (signed in, if the board has a user token)
   merge ID         land an approved ticket's commits from its agent's worktree branch on main
+  token --agent N  issue (or --rotate) an agent's token, for boards that require agent tokens
   token [--rotate] give this board a user token so only you can act as the human (older boards)
   status           where it is and whether it's running
   docs             print the agent guide
   api M PATH [b]   call the API as an agent      (INTELLAGENT_AGENT=name; body: key=value… | json | @file | -)
+  do OP [k=v …]    run an operation by name (the MCP tools, all of them): intellagent do move_item id=INT-12 column=Review
+  help OP          an operation's exact request and parameters (help lease, help search …)
+                   api/do: JSON on stdout; errors: "error <status> <CODE>: … — hint: …" on stderr, exit 1 (2 unreachable/bad input, 3 no board)
   wait             block until something arrives in your inbox, print it, exit   --agent --types --timeout --json
   watch -- CMD     run CMD each time your inbox gets events (unattended agents)   --agent --claude --once
                    both also take --human (everything the human does: for a coordinator)
@@ -550,9 +629,10 @@ const commands = {
   autostart,
   watch: watchCmd,
   api: () => forward('cli.js', rest),
+  do: () => doOp().catch((e) => { console.error(e.message); process.exit(e.exit || 2); }),
   mcp: () => forward('mcp.js', rest),
   hook: () => forward('git-hook.js', rest),
-  help: () => process.stdout.write(HELP),
+  help: () => (rest[0] ? opHelp(rest[0]) : process.stdout.write(HELP)),
 };
 const run = commands[cmd] || commands.help;
 Promise.resolve(run()).catch((e) => { console.error(e.message); process.exit(1); });

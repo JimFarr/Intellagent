@@ -325,13 +325,19 @@ GET   /api/presence                       → who is connected, their leases and
 
 The human edits columns in Settings › Columns (rename, colour, icon, flags, order, add; delete only when empty). Custom flags are stored as-is; `pickup` and `working` tell agents where work starts and happens.
 
-## 8. Shell tips
+## 8. MCP, CLI and the agent skill
 
-- If `intellagent` is on PATH (it finds this project's board automatically):
-  `intellagent api GET /api/boards/main/summary`, `intellagent api POST /api/boards/main/items '{"title":"x"}'`, or pipe JSON with `-`.
-  Set `INTELLAGENT_AGENT=<your-name>`. Without the global command: `node <install>/cli.js …`.
-- Windows PowerShell: use `curl.exe`, not `curl`; quoting JSON is painful, so prefer the CLI.
-- MCP clients: `node intellagent/mcp.js` exposes all of this as tools.
+Agents reach the board three ways; pick the lightest that works:
+- **MCP core** — `node intellagent/mcp.js` lists ten tools by default (`get_briefing`, `get_my_work`, `get_item`, `start_work`, `set_status`, `add_comment`, `ask_human`, `request_review`, `wait_for_events`, `finish_session`; plus `introduce_yourself` until the agent has a role): ~4.5k characters of tool definitions instead of ~21k. `INTELLAGENT_MCP_PROFILE=full` (or `--profile full`) lists all 52; `INTELLAGENT_MCP_TOOLS=name,name` lists your own set. Every tool stays callable by name in every profile.
+- **CLI** — `intellagent do <operation> key=value …` runs any of those operations by name (same parameters as the MCP tools); `intellagent help <operation>` prints its exact request; `intellagent api <METHOD> <path> key=value …` calls any route. Output is JSON; on an error the reply stays on stdout and `error <status> <CODE>: <message> — hint: <hint>` goes to stderr with exit 1 (2: board unreachable or bad input, 3: no board). It never prompts; `INTELLAGENT_AGENT` sets who you are.
+- **Skill** — `skills/intellagent/SKILL.md` (`intellagent skill install`) teaches the day-to-day loop and the CLI for everything beyond the core; it loads only when the agent works a ticket.
+
+A narrow Claude Code permission rule for agents: `Bash(intellagent *)` plus the core tools by name (`mcp__intellagent__get_briefing`, …). `mcp__intellagent` alone allows whatever the server lists.
+
+Shell tips: the CLI finds this project's board by itself (nearest `.intellagent/`), or set `INTELLAGENT_URL`. key=value nests on dots (`fields.risk=low`) and parses JSON values; pass a JSON body as one argument, `@file.json` or `-` for stdin. Windows PowerShell: use `curl.exe`, not `curl`; prefer the CLI.
+
+### Agent tokens
+A board may require every agent to send a token (`auth.requireAgentTokens` in the manifest; **new boards from `intellagent init` turn it on**, existing boards are unchanged). Tokens live in `.intellagent/local.json` (git-ignored), and the CLI and MCP tools in the project send the right one by themselves. The human issues one with `intellagent token --agent <name>` (`--rotate` replaces it; the board accepts it at once); standing agents get one automatically. An agent elsewhere passes `INTELLAGENT_TOKEN`. Without one: `401` with a hint naming that command. The board stays on 127.0.0.1 unless you change `host`.
 
 ## 9. Setting up a board in a project
 

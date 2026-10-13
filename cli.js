@@ -7,35 +7,21 @@
  *   echo {"body":"hi"} | intellagent api POST /api/boards/main/items/INT-1/comments -
  *   intellagent api PATCH /api/boards/main/items/INT-1 @patch.json
  * key=value: dotted keys nest (fields.risk=low); values are parsed as JSON when possible
- * (3, true, null, ["a","b"]) and kept as text otherwise.
+ * (3, true, null, ["a","b"]) and kept as text otherwise. --compact prints one-line JSON.
+ * Output: the reply as JSON on stdout; on an error also "error <status> <CODE>: <message> — hint: …" on
+ * stderr and exit 1 (2: can't reach the board or bad input, 3: no board found). Never prompts.
  * Env: INTELLAGENT_AGENT (your name). The board is found from the nearest .intellagent/ folder,
  * or set INTELLAGENT_URL explicitly.
  */
 'use strict';
 const fs = require('fs');
-const { baseUrl, tokenFor, defaultAgent, NO_BOARD } = require('./lib/locate');
+const { fromPairs, send, report } = require('./lib/request');
 
-const [method = 'GET', rawPath = '/api', ...args] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const compact = argv.includes('--compact');
+const [method = 'GET', rawPath = '/api', ...args] = argv.filter((x) => x !== '--compact' && x !== '--json');
 // Git Bash (MSYS) rewrites "/api/x" into "C:/Program Files/Git/api/x" — undo that, and allow "api/x" without a slash.
 const path = `/${rawPath.replace(/^[A-Za-z]:[\\/].*?(?=[\\/](api|files)\b)/, '').replace(/\\/g, '/').replace(/^\/+/, '')}`;
-const base = baseUrl();
-const agent = defaultAgent() || 'cli-agent';
-const token = tokenFor(agent);
-
-function fromPairs(pairs) {
-  const out = {};
-  for (const pair of pairs) {
-    const i = pair.indexOf('=');
-    if (i < 1) throw new Error(`Expected key=value, got "${pair}"`);
-    const keys = pair.slice(0, i).split('.');
-    let v = pair.slice(i + 1);
-    try { v = JSON.parse(v); } catch { /* plain text */ }
-    let t = out;
-    for (const k of keys.slice(0, -1)) t = (t[k] ||= {});
-    t[keys[keys.length - 1]] = v;
-  }
-  return JSON.stringify(out);
-}
 
 function readBody() {
   if (!args.length) return undefined;
@@ -47,26 +33,6 @@ function readBody() {
 }
 
 (async () => {
-  if (!base) { console.error(NO_BOARD); process.exit(3); }
-  const body = readBody();
-  const M = method.toUpperCase();
-  // Inside a standing-agent run: tag calls with the run, and derive an Idempotency-Key from the batch, so
-  // a retry that repeats an identical write gets the first reply instead of doing it twice.
-  const { run, batch } = require('./lib/locate').runContext();
-  const idemKey = batch && M !== 'GET' ? require('crypto').createHash('sha1').update(`${batch}|${M}|${path}|${body || ''}`).digest('hex') : null;
-  const res = await fetch(base + path, {
-    method: M,
-    headers: {
-      'Content-Type': 'application/json', 'X-Agent': agent,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(run ? { 'X-Intellagent-Run': run } : {}),
-      ...(idemKey ? { 'Idempotency-Key': idemKey } : {}),
-    },
-    body,
-  });
-  const text = await res.text();
-  let out = text;
-  try { out = JSON.stringify(JSON.parse(text), null, 2); } catch { /* not JSON (e.g. docs) */ }
-  process.stdout.write(`${out}\n`);
-  if (!res.ok) process.exit(1);
-})().catch((e) => { console.error(e.message.startsWith('Expected') ? e.message : `Cannot reach ${base}: ${e.message}`); process.exit(2); });
+  const r = await send(method, path, readBody());
+  process.exitCode = report(r, { compact });
+})().catch((e) => { console.error(e.message); process.exit(e.exit || 2); });
