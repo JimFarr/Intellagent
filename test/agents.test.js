@@ -504,3 +504,38 @@ describe('per-agent git worktrees', () => {
     }
   });
 });
+
+describe('specialised agents', () => {
+  it('areas, concerns and a context page reach the agent, its brief and the receptionist, and are editable', async () => {
+    const fs = require('fs');
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      desk: { role: 'coordinator', enabled: false },
+      pixel: { run: run('ok'), areas: ['public/app.css'], concerns: ['dark/light parity'] },
+    } } });
+    try {
+      // edit from the UI's API: add an area and write the context page
+      const r = await s.ok('PATCH', '/api/agents/pixel', { areas: ['public/app.css', 'public/themes/'], concerns: ['dark/light parity', 'calm motion'], context: '# Pixel\nThemes live in STYLE tokens.' }, USER);
+      assert.ok(r.changes.areas && r.changes.context, JSON.stringify(r.changes));
+      const a = await s.ok('GET', '/api/agents/pixel');
+      assert.deepEqual(a.areas, ['public/app.css', 'public/themes/']);
+      assert.equal(a.contextFile, 'agent-context/pixel.md');
+      assert.ok(fs.existsSync(path.join(s.dir, 'agent-context', 'pixel.md')), 'the context page is a file beside agents.json');
+      assert.match((await s.ok('GET', '/api/agents/pixel/context')).text, /STYLE tokens/);
+      // the agent's own brief, and the receptionist's routing view
+      const brief = (await s.api('GET', `${B}/brief`, undefined, { agent: 'pixel' })).body;
+      assert.match(typeof brief === 'string' ? brief : brief.markdown, /Your speciality[\s\S]*public\/themes\/[\s\S]*calm motion[\s\S]*STYLE tokens/);
+      const desk = (await s.api('GET', `${B}/brief`, undefined, { agent: 'desk' })).body;
+      assert.match(typeof desk === 'string' ? desk : desk.markdown, /\*\*pixel\*\*[\s\S]*owns: `public\/app\.css`/);
+      // and the first prompt of a run
+      const it = await s.ok('POST', `${B}/items`, { title: 'restyle', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@pixel please' }, USER);
+      await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('pixel:')), 8000, 'pixel ran');
+      const logs = fs.readdirSync(path.join(s.dir, 'data', 'agent-runs', 'pixel')).filter((x) => x.endsWith('.log'));
+      const log = fs.readFileSync(path.join(s.dir, 'data', 'agent-runs', 'pixel', logs.at(-1)), 'utf8');
+      assert.match(log, /## Your speciality[\s\S]*Pixel/);
+      // agents without a grant can't change it; input is checked
+      assert.equal((await s.api('PATCH', '/api/agents/pixel', { areas: ['x'] }, { agent: 'desk' })).status, 403);
+      assert.equal((await s.api('PATCH', '/api/agents/pixel', { areas: Array.from({ length: 41 }, (_, i) => `f${i}`) }, USER)).status, 400);
+    } finally { await s.stop(); }
+  });
+});

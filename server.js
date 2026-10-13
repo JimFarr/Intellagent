@@ -1721,13 +1721,18 @@ function briefing(ctx, name, base, via = 'cli') {
       : ['Nothing is waiting for you. Ask the human what to work on, or create tickets for work you were given.']),
     ...(w.waitingOnHuman.length ? ['', `Waiting on the human (don't redo these): ${w.waitingOnHuman.map((x) => `${x.id} "${x.question}"`).join('; ')}`] : []),
     ...(() => {
+      let sp = '';
+      try { sp = standing?.specialityOf(name) || ''; } catch { /* not a standing agent */ }
+      return sp ? ['', sp] : [];
+    })(),
+    ...(() => {
       // The receptionist routes work: show it the team with role, model tier and what each does.
       const isCoord = name === b.coordinator || standing?.list().agents.find((a) => a.name === name)?.role === 'coordinator';
       const team = isCoord ? standing.list().agents.filter((a) => a.name !== name) : [];
       if (!team.length) return [];
       return ['', '## Agents you can route to (set "assignee")',
-        ...team.map((a) => `- **${a.name}**${a.role ? ` · ${a.role}` : ''}${a.model ? ` · ${a.model}${a.tier ? ` (${a.tier})` : ''}` : ''}${a.enabled ? '' : ' · paused'}${a.description ? ` — ${a.description}` : ''}`),
-        'Route by tier when agents have models: **junior** (haiku) gets small, well-specified tickets; **mid** (sonnet) normal features and bugs; **senior** (opus) risky or cross-cutting work and anything with risk: high. Match the role first (a designer gets design work), then the tier.'];
+        ...team.map((a) => `- **${a.name}**${a.role ? ` · ${a.role}` : ''}${a.model ? ` · ${a.model}${a.tier ? ` (${a.tier})` : ''}` : ''}${a.enabled ? '' : ' · paused'}${a.description ? ` — ${a.description}` : ''}${a.areas?.length ? `\n  owns: ${a.areas.map((x) => `\`${x}\``).join(', ')}` : ''}${a.concerns?.length ? `\n  watches for: ${a.concerns.join('; ')}` : ''}`),
+        'Route by tier when agents have models: **junior** (haiku) gets small, well-specified tickets; **mid** (sonnet) normal features and bugs; **senior** (opus) risky or cross-cutting work and anything with risk: high. Match the code first: give a ticket to the agent whose areas cover the files it touches (and whose concerns fit it); then the role (a designer gets design work); then the tier.'];
     })(),
     ...(() => {
       const g = grantsOf(name);
@@ -3177,7 +3182,14 @@ route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=2
    agent. What it may change is a fixed list; the run command, grants, enabled, env and cwd stay with the
    human's file. Models come from an allowlist, and tool perms and board permissions only ever narrow. */
 const MANAGER_MODELS = Array.isArray(M.managerModels) && M.managerModels.length ? M.managerModels.map(String) : ['haiku', 'sonnet', 'opus'];
-const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions'];
+const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context'];
+// a list of short strings (areas: paths or globs; concerns: phrases)
+const strList = (v, what) => {
+  if (v == null) return null;
+  const xs = [].concat(v).map((x) => String(x).trim()).filter(Boolean);
+  if (xs.length > 40) fail(400, `At most 40 ${what}`);
+  return [...new Set(xs.map((x) => x.slice(0, 200)))];
+};
 function manageAgent(target, d, actor) {
   if (!standing) fail(404, 'No standing agents on this board');
   const a = standing.get(target); // 404 if unknown
@@ -3237,8 +3249,16 @@ function manageAgent(target, d, actor) {
     }
     cfg.limits = Object.keys(lim).length ? lim : null;
   }
+  if ('areas' in d) cfg.areas = strList(d.areas, 'areas');
+  if ('concerns' in d) cfg.concerns = strList(d.concerns, 'concerns');
   const by = { kind: actor.kind, name: actor.name };
   const res = Object.keys(cfg).length ? standing.manage(name, cfg, by) : { changes: {} };
+  if ('context' in d) {
+    const text = d.context == null ? '' : str(d.context, 20_000);
+    const before = standing.setContext(name, text);
+    const short = (t) => (t ? `${t.trim().split('\n')[0].slice(0, 80)}… (${t.length} chars)` : null);
+    if (before !== text) res.changes.context = { from: short(before), to: short(text) };
+  }
   // display: label, glyph, colour and personality live on the profile
   const prof = Object.fromEntries(['label', 'glyph', 'color', 'alignment'].filter((k) => k in d).map((k) => [k, d[k]]));
   if ('description' in d) prof.description = d.description;
@@ -3264,6 +3284,25 @@ function manageAgent(target, d, actor) {
   }
   return { agent: standing.get(name), changes: res.changes };
 }
+// Project files and folders matching ?q= (git-tracked), for picking an agent's areas.
+let fileCache = { at: 0, list: [] };
+route('GET', '/api/files', 'Project files and folders matching ?q= (git-tracked; up to 40) — for agent areas', ({ q }) => {
+  if (Date.now() - fileCache.at > 30_000) {
+    let files = [];
+    try { files = require('child_process').execFileSync('git', ['ls-files'], { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 5000, maxBuffer: 32 * 1024 * 1024 }).split('\n').filter(Boolean); } catch { /* not a repo */ }
+    const dirs = new Set();
+    for (const x of files) { const parts = x.split('/'); for (let i = 1; i < parts.length; i++) dirs.add(`${parts.slice(0, i).join('/')}/`); }
+    fileCache = { at: Date.now(), list: [...dirs, ...files].sort() };
+  }
+  const needle = String(q.q || '').toLowerCase();
+  const hits = fileCache.list.filter((x) => x.toLowerCase().includes(needle));
+  // shortest first: folders and near matches before deep files
+  return hits.sort((a, b) => a.length - b.length || a.localeCompare(b)).slice(0, 40);
+});
+route('GET', '/api/agents/:name/context', "An agent's context page (markdown) and where it lives", ({ p }) => {
+  const a = standing.get(p.name);
+  return { agent: a.name, file: a.contextFile, text: standing.contextOf(a.name) };
+});
 route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? } } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself)', ({ p, body, actor }) => manageAgent(p.name, body, actor));
 route('POST', '/api/agents/stop-all', 'Human (or the agents.control grant): stop every agent now — kill runs, pause standing agents, release agent leases and the master lease, send their In Progress tickets back to Ready with a comment', ({ actor }) => {
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);

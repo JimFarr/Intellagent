@@ -4293,6 +4293,7 @@
 
   async function openAgent(name) {
     const body = openDrawer('agentDrawer', name, 'bot');
+    let spec = null; // the Speciality editor survives redraws (a half-typed edit must not vanish)
     const draw = (activity = null) => {
       const p = state.profiles[name] || {};
       const pres = state.presence.find((x) => x.name === name);
@@ -4304,12 +4305,15 @@
           <div class="ah-sub"><span class="status-dot ${pres?.online ? 'on' : ''}"></span><span>${esc(name)}</span><span>· ${mode}</span>${pres?.lastSeen ? `<span>· ${rel(pres.lastSeen)}</span>` : ''}</div></div></div>
         ${p.description || state.standing[name]?.description ? `<div class="md ah-desc">${md(p.description || state.standing[name].description)}</div>` : ''}
         ${state.standing[name] ? standingSection(state.standing[name]) : ''}
+        ${state.standing[name] ? '<div class="spec-slot"></div>' : ''}
         ${section('Holding', 'clock', (pres?.leases || []).map((l) => chip(l.id, 'clock')).join(''))}
         ${section('Assigned', 'user', items.filter((i) => i.assignee === name).map((i) => chip(i.id, i.type)).join(''))}
         ${section('Listening to', 'radio', Object.entries(state.listeners).filter(([, ns]) => ns.includes(name)).map(([id]) => chip(id, 'radio')).join(''))}
         ${section('Subscriptions', 'bell', (pres?.subscriptions || []).map((x) => `<span class="mini-chip" title="${esc(JSON.stringify(x.filter))}">${icon('bell', 'sm')}${esc(x.label || Object.entries(x.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join(''))}
         <div class="section"><div class="section-head">${icon('activity', 'sm')}<span>Activity</span><span class="rule"></span></div>
           <div class="ah-act">${activity == null ? '' : activity.length ? activity.map((ev) => `<div class="act">${icon(eventIcon(ev.type), 'sm')}<div>${describe(ev, true)}</div><time>${rel(ev.ts)}</time></div>`).join('') : `<div class="empty-note">${icon('activity')}</div>`}</div></div>`;
+      const slot = $('.spec-slot', body);
+      if (slot) { spec ||= specialityEditor(name); slot.replaceWith(spec); }
     };
     draw();
     body.onclick = (e) => {
@@ -4323,6 +4327,71 @@
       const r = await api('GET', `/api/events?since=0&limit=30&tail=true&actor=${encodeURIComponent(name)}`);
       if ($('#agentDrawer')) draw(r.events.slice().reverse());
     } catch { /* offline */ }
+  }
+
+  /* What makes an agent a specialist: the code it owns (guidance), what it watches for, and its context page.
+     Edited here, saved to agents.json and agent-context/<name>.md through PATCH /api/agents/<name>. */
+  function specialityEditor(name) {
+    const a = state.standing[name] || {};
+    const st = { areas: [...(a.areas || [])], concerns: [...(a.concerns || [])], context: '', loaded: false, dirty: false };
+    const root = el(`<div class="section spec"><div class="section-head">${icon('target', 'sm')}<span>Speciality</span><span class="rule"></span></div>
+      <div class="spec-ed">
+        <div class="spec-label">Owns <span class="muted">— code areas it is routed for (guidance, not a limit)</span></div>
+        <div class="spec-chips" data-k="areas"></div>
+        <div class="spec-add"><input class="inp" data-add="areas" placeholder="Add a file or folder — type to search the repo" autocomplete="off" list="specfiles-${esc(name)}"><datalist id="specfiles-${esc(name)}"></datalist><button class="btn sm ghost" type="button" data-add-btn="areas">${icon('plus', 'sm')}Add</button></div>
+        <div class="spec-label">Watches for <span class="muted">— concerns it checks before asking for review</span></div>
+        <div class="spec-chips" data-k="concerns"></div>
+        <div class="spec-add"><input class="inp" data-add="concerns" placeholder="e.g. accessibility contrast, dark/light parity, performance" autocomplete="off"><button class="btn sm ghost" type="button" data-add-btn="concerns">${icon('plus', 'sm')}Add</button></div>
+        <div class="spec-label">Context <span class="muted spec-file">${esc(a.contextFile || '')} — how its area works, conventions, traps; read on each session's first turn</span></div>
+        <textarea class="inp spec-ctx" rows="8" placeholder="Loading…" spellcheck="true"></textarea>
+        <div class="spec-foot"><span class="spec-state muted"></span><span class="grow"></span><button class="btn primary sm" type="button" data-spec-save disabled>${icon('check', 'sm')}Save</button></div>
+      </div></div>`);
+    const ta = $('.spec-ctx', root);
+    const saveBtn = $('[data-spec-save]', root);
+    const touch = () => { st.dirty = true; saveBtn.disabled = false; $('.spec-state', root).textContent = 'Unsaved changes'; };
+    const drawChips = (k) => {
+      $(`[data-k="${k}"]`, root).innerHTML = st[k].length
+        ? st[k].map((x, i) => `<span class="spec-chip ${k === 'areas' ? 'path' : ''}">${k === 'areas' ? icon('text', 'sm') : icon('eye', 'sm')}<span>${esc(x)}</span><button type="button" data-rm="${k}" data-i="${i}" title="Remove">${icon('x', 'sm')}</button></span>`).join('')
+        : `<span class="muted spec-none">${k === 'areas' ? 'No areas yet' : 'No concerns yet'}</span>`;
+    };
+    drawChips('areas');
+    drawChips('concerns');
+    const add = (k) => {
+      const inp = $(`[data-add="${k}"]`, root);
+      const v = inp.value.trim();
+      if (!v) { inp.focus(); return; }
+      if (!st[k].includes(v)) { st[k].push(v); drawChips(k); touch(); }
+      inp.value = '';
+      inp.focus();
+    };
+    api('GET', `/api/agents/${encodeURIComponent(name)}/context`).then((r) => { ta.value = r.text || ''; ta.placeholder = 'Markdown: what this agent should know about its area'; st.loaded = true; autosize(ta); }, () => { ta.placeholder = 'Could not load the context page'; });
+    // file suggestions from the repo as you type a path
+    let t = null;
+    $('[data-add="areas"]', root).addEventListener('input', (e) => {
+      clearTimeout(t);
+      const q = e.target.value.trim();
+      t = setTimeout(async () => {
+        try { const list = await api('GET', `/api/files?q=${encodeURIComponent(q)}`); $('datalist', root).innerHTML = list.map((x) => `<option value="${esc(x)}"></option>`).join(''); } catch { /* offline */ }
+      }, 150);
+    });
+    root.addEventListener('keydown', (e) => { const k = e.target.dataset?.add; if (k && e.key === 'Enter') { e.preventDefault(); add(k); } });
+    ta.addEventListener('input', () => { autosize(ta); touch(); });
+    root.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-add-btn]');
+      if (b) { add(b.dataset.addBtn); return; }
+      const rm = e.target.closest('[data-rm]');
+      if (rm) { st[rm.dataset.rm].splice(Number(rm.dataset.i), 1); drawChips(rm.dataset.rm); touch(); return; }
+      if (e.target.closest('[data-spec-save]')) {
+        saveBtn.disabled = true;
+        try {
+          const r = await api('PATCH', `/api/agents/${encodeURIComponent(name)}`, { areas: st.areas, concerns: st.concerns, ...(st.loaded ? { context: ta.value } : {}) });
+          st.dirty = false;
+          $('.spec-state', root).textContent = Object.keys(r.changes || {}).length ? 'Saved — used from its next session' : 'No changes';
+          await refreshPresence();
+        } catch (err) { saveBtn.disabled = false; toast(err.message, { kind: 'error' }); }
+      }
+    });
+    return root;
   }
 
   /* ═════════════════════════ command palette (Ctrl+K) ═════════════════════════ */

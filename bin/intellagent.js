@@ -436,6 +436,8 @@ async function agentsCmd() {
       ...(f['max-runs'] != null ? { maxRunsPerHour: f['max-runs'] === 'none' ? null : Number(f['max-runs']) } : {}),
       ...(f.throttle != null ? { throttleMinutes: Number(f.throttle) } : {}),
       ...(f.model ? { model: String(f.model) } : {}),
+      ...(f.areas ? { areas: String(f.areas).split(',').map((x) => x.trim()).filter(Boolean) } : {}),
+      ...(f.concerns ? { concerns: String(f.concerns).split(',').map((x) => x.trim()).filter(Boolean) } : {}),
       ...(f.description ? { description: String(f.description) } : {}),
     };
     fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
@@ -526,6 +528,7 @@ const HELP = `intellagent — a kanban for you and your agents
     add NAME       --role coordinator|builder|reviewer|researcher|writer  --allow edit,test,build,git,web,read
                    --listen addressed|inbox|human|new-tickets|"types=…"  --max-runs N|none  --throttle MIN  --run "<command>" (overrides role)
                    --model haiku|sonnet|opus  (junior / mid / senior; the receptionist routes by it)
+                   --areas "public/app.css,public/themes/"  --concerns "accessibility,performance"  (its speciality)
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 `;
