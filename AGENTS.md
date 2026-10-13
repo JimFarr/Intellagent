@@ -172,7 +172,7 @@ At the end of a session: `POST /api/boards/main/digest { "summary": "markdown", 
 Columns with `humanOnlyIn` / `humanOnlyOut` can only be entered / left by a human (`403` for agents). By default **Done** is human-only: move finished work to **Review** and let the human accept it.
 
 ### Grants: powers the human delegates
-Some agents may do human-only things because the human said so in **agents.json** (or the manifest's `permissions.<name>.grants`) — never through the API:
+Some agents may do human-only things because the human said so — in **agents.json** (or the manifest's `permissions.<name>.grants`), or on the Agents page (an agent's *Edit* › Grants), which only works for the signed-in human on a board with a sign-in token (`intellagent token`; without one the API answers `403 NO_TOKEN`). Agents can never set grants:
 ```jsonc
 "approver":   { "role": "reviewer", "grants": ["review.decide"] },
 "gatekeeper": { "enabled": false, "grants": [{ "power": "column.gate", "where": { "column": "Done", "fields.risk": "low" } }] }

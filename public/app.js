@@ -3959,12 +3959,47 @@
       <div class="aa-perms aa-listens">${LISTENS.map(([k, l]) => `<button class="toggle-chip ${!customListen && k === listenNow ? 'on' : ''}" data-listen="${k}">${esc(l)}</button>`).join('')}${customListen ? `<span class="aa-note">custom in agents.json: ${esc(listenLabel(edit.listen))} (kept unless you pick one)</span>` : ''}</div>
       <div class="aa-label">Throttle</div>
       <div class="aa-row"><input class="inp" type="number" min="0" step="1" data-aa-throttle placeholder="role default" value="${edit?.throttleMinutes ?? ''}" style="max-width:9em"><span class="aa-note">minutes events wait to arrive together in one run (0 = wake at once)</span></div>
+      <div class="aa-label">Runs per hour</div>
+      <div class="aa-row"><input class="inp" type="number" min="1" step="1" data-aa-maxruns placeholder="${edit?.maxRunsPerHour === null ? 'no limit' : 'default 20'}" value="${edit?.maxRunsPerHour ?? ''}" style="max-width:9em"><label class="aa-check"><input type="checkbox" data-aa-nolimit ${edit && edit.maxRunsPerHour === null ? 'checked' : ''}> no limit</label><span class="aa-note">a ceiling on cost if something keeps waking it</span></div>
+      <label class="aa-check"><input type="checkbox" data-aa-keepalive ${edit?.keepAlive ? 'checked' : ''}> <span><b>Keep alive</b> — one live session between wakes (cheaper per wake; recycled now and then)</span></label>
+      <div class="aa-label">Board access</div>
+      <div class="aa-perms aa-cols">${(state.board?.columns || []).map((c) => `<button class="toggle-chip ${(edit?.limits?.columns || []).map((x) => String(x).toLowerCase()).includes(c.name.toLowerCase()) ? 'on' : ''}" data-col="${esc(c.name)}">${esc(c.name)}</button>`).join('')}<span class="aa-note">columns it may change — none picked: all of them</span></div>
+      <label class="aa-check"><input type="checkbox" data-aa-readonly ${edit?.limits?.readOnly ? 'checked' : ''}> <span><b>Read-only</b> — may comment and ask, never change tickets</span></label>
+      <div class="aa-label">Grants <span class="aa-note">powers that skip your approval</span></div>
+      <div class="aa-grants"><div class="aa-note">Checking…</div></div>
       <div class="aa-label">Description</div>
       <textarea class="inp aa-desc" rows="2" data-aa-desc></textarea>
       <label class="aa-coord" hidden><input type="checkbox" data-aa-coord checked> Make it this board's coordinator (requests go to it)</label>
       <div class="aa-foot"><span class="aa-hint">It runs headless Claude Code when something is for it — needs <code>claude</code> installed and signed in.</span><span class="grow"></span><button class="btn ghost sm" data-aa-cancel>Cancel</button><button class="btn primary sm" data-aa-add>${edit ? icon('check', 'sm') : icon('plus', 'sm')}${edit ? 'Save changes' : 'Add agent'}</button></div>
     </div>`);
     host.replaceWith(f);
+    // Grants: editable only by the signed-in human on a board with a sign-in token
+    const GRANTS = [
+      ['review.decide', 'Decide reviews', 'approve or send back tickets for you', 'column=Review; fields.risk=low'],
+      ['column.gate', 'Move through Done', 'move tickets into and out of approval columns', 'fields.risk=low'],
+      ['agents.control', 'Control agents', 'pause, resume and run other agents', ''],
+      ['agents.manage', 'Manage agents', "change other agents' label, model, speciality, narrow their access", 'agents=junior,mid'],
+    ];
+    const scopeText = (w) => Object.entries(w || {}).map(([k, v]) => `${k}=${[].concat(v).join(',')}`).join('; ');
+    const parseScope = (t) => {
+      const w = {};
+      for (const part of String(t || '').split(';')) {
+        const [k, ...rest] = part.split('=');
+        const v = rest.join('=').trim();
+        if (!k.trim() || !v) continue;
+        const vs = v.split(',').map((x) => x.trim()).filter(Boolean);
+        w[k.trim()] = vs.length > 1 ? vs : vs[0];
+      }
+      return Object.keys(w).length ? w : null;
+    };
+    let grantsEditable = false;
+    const drawGrants = (ok) => {
+      grantsEditable = ok;
+      const have = Object.fromEntries((edit?.grants || []).map((g) => (typeof g === 'string' ? [g, {}] : [g.power, g.where || {}])));
+      $('.aa-grants', f).innerHTML = (ok ? '' : `<div class="aa-lock">${icon('lock', 'sm')}<span>Locked: grants can be set here only on a board with a sign-in token. Run <code>intellagent token</code>, restart the board and sign in with <code>intellagent open</code> — or edit agents.json.</span></div>`)
+        + GRANTS.map(([k, label, help, eg]) => `<div class="aa-grant ${ok ? '' : 'locked'}"><label class="aa-check"><input type="checkbox" data-grant="${k}" ${k in have ? 'checked' : ''} ${ok ? '' : 'disabled'}> <span><b>${esc(label)}</b> — ${esc(help)}</span></label><input class="inp" data-grant-where="${k}" placeholder="${eg ? `only where… e.g. ${esc(eg)}` : 'only where… (optional)'}" value="${esc(scopeText(have[k]))}" ${ok ? '' : 'disabled'}></div>`).join('');
+    };
+    api('GET', '/api/permissions/me').then((p) => drawGrants(!!p.boardHasUserToken), () => drawGrants(false));
     const paint = () => {
       $$('.aa-role', f).forEach((b) => b.classList.toggle('on', b.dataset.role === role));
       $$('[data-perm]', f).forEach((b) => b.classList.toggle('on', chosen.has(b.dataset.perm)));
@@ -3990,6 +4025,8 @@
       if (mb) { $$('[data-model]', f).forEach((b) => b.classList.toggle('on', b === mb)); return; }
       const lb = e.target.closest('[data-listen]');
       if (lb) { $$('[data-listen]', f).forEach((b) => b.classList.toggle('on', b === lb)); return; }
+      const cb = e.target.closest('[data-col]');
+      if (cb) { cb.classList.toggle('on'); return; }
       const pb = e.target.closest('[data-perm]');
       if (pb) { if (chosen.has(pb.dataset.perm)) chosen.delete(pb.dataset.perm); else chosen.add(pb.dataset.perm); paint(); return; }
       if (e.target.closest('[data-aa-cancel]')) { fillAgents($('#agentsDrawer .drawer-body')); return; }
@@ -4002,6 +4039,18 @@
           await api('POST', `/api/agents?board=${encodeURIComponent(state.boardId)}`, {
             name, role, perms: [...chosen], model: $('[data-model].on', f)?.dataset.model || null, description: $('[data-aa-desc]', f).value.trim(),
             ...(listen ? { listen } : {}), ...(throttle !== '' ? { throttleMinutes: Number(throttle) } : edit ? { throttleMinutes: null } : {}), coordinator: coord,
+            ...(() => {
+              const max = $('[data-aa-maxruns]', f).value.trim();
+              return $('[data-aa-nolimit]', f).checked ? { maxRunsPerHour: null } : max !== '' ? { maxRunsPerHour: Number(max) } : {};
+            })(),
+            // only what you changed: untouched settings keep coming from the board defaults
+            ...($('[data-aa-keepalive]', f).checked !== !!edit?.keepAlive ? { keepAlive: $('[data-aa-keepalive]', f).checked } : {}),
+            ...(() => {
+              const lim = { columns: $$('[data-col].on', f).map((b) => b.dataset.col), readOnly: $('[data-aa-readonly]', f).checked };
+              const was = { columns: (edit?.limits?.columns || []).map(String), readOnly: !!edit?.limits?.readOnly };
+              return JSON.stringify(lim) !== JSON.stringify(was) ? { limits: lim } : {};
+            })(),
+            ...(grantsEditable ? { grants: $$('[data-grant]', f).filter((c) => c.checked).map((c) => { const where = parseScope($(`[data-grant-where="${c.dataset.grant}"]`, f).value); return where ? { power: c.dataset.grant, where } : c.dataset.grant; }) } : {}),
           });
           if (coord) state.board.coordinator = name;
           toast(edit ? `Saved ${name}` : `${name} is on call`, { icon: 'bot', kind: 'ok', timeout: 2500 });

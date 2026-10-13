@@ -632,3 +632,35 @@ describe('agent reviewers', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('agent permissions from the UI', () => {
+  it('board access, keep-alive and runs per hour save with history; grants only from the signed-in human on a board with a token', async () => {
+    // no token on this board: grants are refused even for the human
+    const s1 = await startServer({ agents: { agents: { w: { role: 'builder', enabled: false } } } });
+    try {
+      assert.equal((await s1.api('POST', '/api/agents', { name: 'w', grants: ['review.decide'] }, USER)).body.code, 'NO_TOKEN');
+      const r = await s1.ok('POST', '/api/agents', { name: 'w', keepAlive: true, maxRunsPerHour: 7, limits: { columns: ['Backlog', 'Ready'], readOnly: true } }, USER);
+      assert.equal(r.keepAlive, true);
+      assert.equal(r.maxRunsPerHour, 7);
+      assert.deepEqual(r.limits, { columns: ['Backlog', 'Ready'], readOnly: true });
+      assert.deepEqual((await s1.ok('GET', '/api/permissions/me', undefined, { agent: 'w' })).permissions, { columns: ['Backlog', 'Ready'], readOnly: true });
+      assert.ok(r.changes.at(-1).changes.limits, 'the edit is in its Recent changes');
+      assert.equal((await s1.ok('POST', '/api/agents', { name: 'w', maxRunsPerHour: null }, USER)).maxRunsPerHour, null, 'null stays "no limit"');
+    } finally { await s1.stop(); }
+
+    // with a token: the signed-in human may set grants; agents never
+    const s2 = await startServer({ manifest: { auth: { userToken: 'secret-token' } }, agents: { agents: { w: { role: 'builder', enabled: false } } } });
+    try {
+      const human = (method, p, body) => fetch(`${s2.base}${p}`, { method, headers: { 'content-type': 'application/json', 'x-user': 'James', origin: s2.base, authorization: 'Bearer secret-token' }, body: body && JSON.stringify(body) }).then(async (x) => ({ status: x.status, body: await x.json() }));
+      assert.equal((await s2.api('POST', '/api/agents', { name: 'w', grants: ['review.decide'] }, USER)).status, 401, 'no token, no human');
+      assert.equal((await s2.api('POST', '/api/agents', { name: 'w', grants: ['review.decide'] }, { agent: 'w' })).status, 403, 'agents never');
+      const g = await human('POST', '/api/agents', { name: 'w', grants: ['agents.control', { power: 'review.decide', where: { 'fields.risk': 'low' } }] });
+      assert.equal(g.status, 201, JSON.stringify(g.body));
+      assert.deepEqual(g.body.grants, ['agents.control', { power: 'review.decide', where: { 'fields.risk': 'low' } }]);
+      const me = await fetch(`${s2.base}/api/permissions/me`, { headers: { 'x-agent': 'w' } }).then((x) => x.json());
+      assert.deepEqual(me.grants.map((x) => x.power), ['agents.control', 'review.decide']);
+      assert.equal((await human('POST', '/api/agents', { name: 'w', grants: ['make.coffee'] })).status, 400);
+      assert.deepEqual((await human('POST', '/api/agents', { name: 'w', grants: [] })).body.grants, [], 'removing all grants');
+    } finally { await s2.stop(); }
+  });
+});

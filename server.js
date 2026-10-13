@@ -3255,9 +3255,34 @@ route('GET', '/api/agents/roles', 'Roles and permissions available for standing 
   const { ROLES, PERMS } = require('./lib/agents');
   return { roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: Object.fromEntries(Object.entries(PERMS).map(([k, v]) => [k, v.label])) };
 });
-route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, model?, description?, listen?, throttleMinutes?, maxRunsPerHour?, coordinator? } — permissions from the fixed list, never a command', ({ body, actor, q }) => {
+// Grants as the UI sends them: [{ power, where? }]; where is { key: value | [values] } (strings only).
+function cleanGrants(list) {
+  if (list == null) return null;
+  if (!Array.isArray(list)) fail(400, '"grants" must be a list');
+  return list.map((g) => {
+    const power = typeof g === 'string' ? g : g?.power;
+    if (!POWERS[power]) fail(400, `Unknown power "${power}". Powers: ${Object.keys(POWERS).join(', ')}`);
+    const where = isObj(g?.where) ? Object.fromEntries(Object.entries(g.where).map(([k, v]) => [str(k, 80), Array.isArray(v) ? v.map((x) => str(x, 200)) : str(v, 200)]).filter(([k]) => /^[\w.]+$/.test(k))) : null;
+    return where && Object.keys(where).length ? { power, where } : power;
+  });
+}
+// Board access the UI sets: { columns?: [names], readOnly? } (stored as "limits")
+function cleanLimits(v) {
+  if (v == null) return null;
+  if (!isObj(v)) fail(400, '"limits" must be an object');
+  const out = {};
+  if (Array.isArray(v.columns) && v.columns.length) out.columns = v.columns.map((x) => str(x, 80));
+  if (v.readOnly) out.readOnly = true;
+  return out;
+}
+route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, model?, description?, listen?, throttleMinutes?, maxRunsPerHour?, keepAlive?, limits?: { columns?, readOnly? }, grants?, coordinator? } — permissions from the fixed list, never a command. grants need a board with a user token (the signed-in human)', ({ body, actor, q }) => {
   humanOnly(actor);
-  const a = standing.define(body.name, body);
+  // Grants bypass the human's own approval, so only a request that proves it is the human may set them:
+  // the board must have a user token (checked by authenticate for every X-User request).
+  if (body.grants !== undefined && !M.auth.userToken) fail(403, 'Grants can be set from the browser only on a board with a sign-in token — run "intellagent token", restart the board and sign in with "intellagent open"; or edit agents.json', { code: 'NO_TOKEN' });
+  if (body.limits !== undefined) body.limits = cleanLimits(body.limits);
+  if (body.grants !== undefined) body.grants = cleanGrants(body.grants);
+  const a = standing.define(body.name, body, { kind: actor.kind, name: actor.name });
   if (body.coordinator) {
     const ctx = getCtx(q.board || M.defaultBoard);
     tx(ctx, (events) => { ctx.board.coordinator = a.name; events.push({ board: ctx.id, type: 'board.updated', actor, changes: { coordinator: { to: a.name } } }); });
@@ -3436,6 +3461,7 @@ route('GET', '/api/permissions/me', 'What you are allowed to do (from the manife
   name: actor.name, kind: actor.kind, permissions: actor.kind === 'agent' ? permsFor(actor.name) : null,
   grants: actor.kind === 'agent' ? grantsOf(actor.name).map((g) => ({ ...g, means: POWERS[g.power] })) : null,
   tokenRequired: actor.kind === 'user' ? !!M.auth.userToken : !!M.auth.agentTokens?.[actor.name] || !!M.auth.requireAgentTokens,
+  boardHasUserToken: !!M.auth.userToken,
 }));
 route('GET', '/api/profiles', 'Display profiles (colour, glyph, image) for agents and users', () => profiles);
 route('GET', '/api/profiles/me', 'Your display profile', ({ actor }) => ({ name: actor.name, ...(profiles[actor.name] || {}) }));
