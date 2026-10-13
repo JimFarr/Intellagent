@@ -320,6 +320,17 @@ describe('agent flows', () => {
     assert.ok(r.cursor < 999999);
   });
 
+  it('an approved ticket stays in Done: no new review request, no agent move out', async () => {
+    const it = await s.ok('POST', `${B}/items`, { title: 'finished', column: 'Backlog' }, USER);
+    await s.ok('POST', `${B}/items/${it.id}/start`, {}, A);
+    await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'done' }, A);
+    assert.equal((await s.ok('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'approve' }, USER)).column, 'Done');
+    const again = await s.api('POST', `${B}/items/${it.id}/review`, { summary: 'one more look?' }, A);
+    assert.equal(again.body.code, 'ALREADY_DONE');
+    assert.equal((await s.api('POST', `${B}/items/${it.id}/move`, { column: 'Review' }, A)).body.code, 'HUMAN_ONLY');
+    assert.equal((await s.ok('GET', `${B}/items/${it.id}`)).column, 'Done');
+  });
+
   it('review warns when the ticket barely spent time in the working column', async () => {
     const it = await s.ok('POST', `${B}/items`, { title: 'rushed', column: 'Backlog' }, USER);
     await s.ok('POST', `${B}/items/${it.id}/start`, {}, A);
