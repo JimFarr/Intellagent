@@ -4926,6 +4926,7 @@
     ['review', 'Review', 'Where "request review" moves tickets'],
     ['humanOnlyIn', 'Only you move in', 'Agents can\'t move tickets into this column (an approval gate)'],
     ['humanOnlyOut', 'Only you move out', 'Agents can\'t move tickets out of this column'],
+    ['sleeping', 'Sleeping', 'Tickets wait here without waking anyone, even when assigned; moving one out wakes its assignee. Agents file new tickets here'],
     ['releaseLeaseOnEnter', 'Release on enter', 'Entering this column releases the ticket\'s lease'],
   ];
   const COL_ICONS = ['inbox', 'target', 'play', 'eye', 'check', 'flag', 'clock', 'ask', 'layers', 'sparkle', 'lock', 'archive', 'bot', 'pin'];

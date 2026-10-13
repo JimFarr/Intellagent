@@ -128,6 +128,11 @@ const DEFAULT_FLAGS = {
   humanOnlyIn: false,
   humanOnlyOut: false,
   review: false,
+  // A sleeping column holds work nobody should start yet: tickets can be dropped and assigned there without
+  // waking anyone, agents cannot start them, and moving one out (into Ready) wakes its assignee. On a board
+  // with one, agents file new tickets there; the coordinator decides where an agent's ticket goes, and only
+  // the human wakes the human's own.
+  sleeping: false,
 };
 const TEMPLATES = require('./lib/templates');
 
@@ -156,6 +161,14 @@ function oneOf(v, list, dflt) {
 }
 
 // Known flags are coerced to their type; unknown flags are kept verbatim so agents can invent their own.
+function findColumnById(b, id) { return b.columns.find((c) => c.id === id); }
+// Whether a ticket sits in a sleeping column (see DEFAULT_FLAGS).
+function asleep(ctx, item) { return !!findColumnById(ctx.board, item.columnId)?.flags.sleeping; }
+// The board's coordinator: the agent requests default to, or a standing agent with the coordinator role.
+function isCoordinator(ctx, name) {
+  if (name && name === ctx.board.coordinator) return true;
+  try { return standing?.get?.(name)?.role === 'coordinator'; } catch { return false; }
+}
 function pickFlags(f, base = DEFAULT_FLAGS) {
   const out = { ...base };
   for (const [k, v] of Object.entries(f || {})) {
@@ -742,7 +755,7 @@ const openBlockersOf = (ctx, item) => (item.blockedBy || []).filter((id) => ctx.
 function emitUnblocked(ctx, resolvedId, actor, events) {
   for (const it of Object.values(ctx.board.items)) {
     if (it.id === resolvedId || !it.blockedBy?.includes(resolvedId) || openBlockersOf(ctx, it).length) continue;
-    events.push(itemEvent(ctx, 'item.unblocked', it, actor, { resolvedBy: resolvedId, mentions: [it.assignee, activeLease(it)?.claimant].filter(Boolean) }));
+    events.push(itemEvent(ctx, 'item.unblocked', it, actor, { resolvedBy: resolvedId, mentions: [asleep(ctx, it) ? null : it.assignee, activeLease(it)?.claimant].filter(Boolean) }));
   }
 }
 
@@ -949,6 +962,10 @@ function createItem(ctx, d, actor) {
     const col = ref != null ? findColumn(b, ref) : b.columns.find((c) => c.flags.allowCreate);
     if (!col) fail(400, 'No column on this board allows item creation');
     if (actor.kind !== 'user' && col.flags.humanOnlyIn) fail(403, `Only a human can add items to "${col.name}"`);
+    const beds = b.columns.filter((c) => c.flags.sleeping);
+    if (actor.kind === 'agent' && beds.length && !col.flags.sleeping && !isCoordinator(ctx, actor.name)) {
+      fail(403, `New tickets from agents go to ${beds.map((c) => c.name).join(' or ')}, where they wait; the coordinator decides where they go from there`, { code: 'SLEEPING', hint: `Create it with "column": "${beds[0].name}"` });
+    }
     checkColumnPerm(ctx, actor, [col.id]);
     if (!col.flags.allowCreate) fail(403, `Column "${col.name}" does not allow item creation. Allowed: ${b.columns.filter((c) => c.flags.allowCreate).map((c) => c.name).join(', ') || '(none)'}`);
     checkWip(col);
@@ -999,7 +1016,7 @@ function createItem(ctx, d, actor) {
     col.itemIds.splice(resolveIndex(col.itemIds, positionOf(d)), 0, id);
     for (const a of arr(d.attachments)) item.attachments.push(saveAttachment(ctx, item, a, actor));
     events.push(itemEvent(ctx, 'item.created', item, actor, item.agentDraft ? { mentions: [item.agentDraft.writer], draft: true } : {}));
-    if (item.assignee) events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: item.assignee, from: null, mentions: [item.assignee] }));
+    if (item.assignee) events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: item.assignee, from: null, mentions: asleep(ctx, item) ? [] : [item.assignee] }));
     const q0 = parseNeedsHuman(d.needsHuman, actor);
     if (q0) openQuestion(ctx, item, q0, actor, events);
     return item;
@@ -1015,6 +1032,10 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } 
   if (cross) {
     if (!from.flags.allowMoveOut) fail(403, `Items cannot leave "${from.name}"`);
     if (!to.flags.allowMoveIn) fail(403, `"${to.name}" does not accept moved items`);
+    // Waking a ticket is the human's call, or the coordinator's for a ticket an agent filed.
+    if (from.flags.sleeping && !to.flags.sleeping && actor.kind === 'agent' && !(isCoordinator(ctx, actor.name) && item.author?.kind === 'agent')) {
+      fail(403, `${item.id} is asleep in "${from.name}": only the human${item.author?.kind === 'agent' ? ' or the coordinator' : ''} moves it on`, { code: 'SLEEPING', hint: 'Ask on the card' });
+    }
     // Human-only gates: an agent passes only with a column.gate grant (a delegated review carries its own).
     const leavingDone = from.id === doneColumnId(ctx);
     gated = actor.kind !== 'user' && !!(to.flags.humanOnlyIn || from.flags.humanOnlyOut || leavingDone);
@@ -1040,7 +1061,9 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } 
   to.itemIds.splice(idx, 0, item.id);
   if (cross) {
     enterColumn(item, to.id);
-    events.push(itemEvent(ctx, 'item.moved', item, actor, { fromColumnId: from.id, columnId: to.id, position: idx, ...(gated ? { delegated: { power: gateBy.power, onBehalfOf: 'human' } } : {}) }));
+    // Out of a sleeping column (into Ready): the ticket is awake now, so its assignee is called to it.
+    const woken = from.flags.sleeping && !to.flags.sleeping && item.assignee && item.assignee !== actor.name ? [item.assignee] : [];
+    events.push(itemEvent(ctx, 'item.moved', item, actor, { fromColumnId: from.id, columnId: to.id, position: idx, ...(woken.length ? { mentions: woken } : {}), ...(gated ? { delegated: { power: gateBy.power, onBehalfOf: 'human' } } : {}) }));
     if (to.flags.releaseLeaseOnEnter && item.lease) {
       const c = item.lease.claimant;
       item.lease = null;
@@ -1118,7 +1141,8 @@ function applyPatch(ctx, item, p, actor, events) {
     const next = p.assignee ? str(p.assignee, 64).trim() : null;
     if (prev !== next) {
       set('assignee', next);
-      events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: next, from: prev, mentions: [next, prev].filter(Boolean) }));
+      // In a sleeping column an assignment is a note of who will take it, not a call to start.
+      events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: next, from: prev, mentions: asleep(ctx, item) ? [] : [next, prev].filter(Boolean) }));
     }
   }
   if ('cover' in p) {
@@ -1412,6 +1436,9 @@ function startWork(ctx, id, d, actor) {
     const item = getItem(ctx, id);
     guardBoard(ctx, actor);
     checkColumnPerm(ctx, actor, [item.columnId]);
+    if (actor.kind === 'agent' && asleep(ctx, item)) {
+      fail(409, `${item.id} is in ${findColumnById(ctx.board, item.columnId).name}, which is asleep: it starts once it is moved to Ready`, { code: 'SLEEPING', hint: 'Pick another ticket (GET …/work), or ask on the card' });
+    }
     const cur = activeLease(item);
     if (cur && cur.claimant !== actor.name) fail(423, `${item.id} is leased by ${cur.claimant} until ${cur.expiresAt}`, { code: 'LEASED', hint: 'Pick another ticket (GET …/work)', lease: cur });
     const open = openBlockersOf(ctx, item);
@@ -1632,7 +1659,7 @@ function workFor(ctx, name) {
     if (w && Date.parse(w.resolvedAt) > lastMine(it) && it.columnId !== done) answered.push(brief(it, { questionId: w.id, question: w.reason || null, answer: replyAfter(it, w), answeredBy: w.by }));
     const rv = it.review;
     if (rv?.verdict === 'changes' && (rv.requestedBy === name || it.workedBy?.includes(name)) && Date.parse(rv.at) > lastMine(it)) feedback.push(brief(it, { feedback: rv.comment, by: rv.by }));
-    if (it.assignee === name && it.columnId !== done && !(l && l.claimant !== name) && !leases.some((x) => x.id === it.id)) assigned.push(brief(it));
+    if (it.assignee === name && it.columnId !== done && !asleep(ctx, it) && !(l && l.claimant !== name) && !leases.some((x) => x.id === it.id)) assigned.push(brief(it));
   }
   const requests = (b.requests || []).filter((q) => q.status === 'open' && q.to === name).map((q) => ({ requestId: q.id, request: q.body, from: q.by?.name, at: q.at, replies: q.replies.length }));
   // "Explain" questions addressed to me that I haven't answered since they were asked.
@@ -1726,7 +1753,7 @@ function stalledFor(ctx, name, minutes) {
   const out = [];
   for (const it of b.columns.filter((c) => c.id !== done).flatMap((c) => c.itemIds.map((id) => b.items[id]).filter(Boolean))) {
     const who = it.assignee;
-    if (!who || who === name || it.test || (it.questions || []).length || activeLease(it)) continue;
+    if (!who || who === name || asleep(ctx, it) || it.test || (it.questions || []).length || activeLease(it)) continue;
     let a;
     try { a = standing.get(who); } catch { continue; } // only standing agents can be woken
     if (standing.isRunning(who)) continue;
@@ -1809,7 +1836,7 @@ function briefing(ctx, name, base, via = 'cli') {
     return [
       pick ? 'pick up work here' : '', workingColumn(ctx) === col ? 'work in progress (start moves tickets here)' : '',
       reviewColumn(ctx) === col ? 'review (request review moves tickets here)' : '',
-      f.allowCreate ? 'new tickets OK' : '', f.humanOnlyIn ? 'only the human moves tickets in' : '', f.humanOnlyOut ? 'only the human moves tickets out' : '',
+      f.sleeping ? 'asleep: tickets wait here, assigned or not, until the human (or, for tickets agents filed, the coordinator) moves them on; agents file new tickets here and cannot start them here' : '', f.allowCreate ? 'new tickets OK' : '', f.humanOnlyIn ? 'only the human moves tickets in' : '', f.humanOnlyOut ? 'only the human moves tickets out' : '',
       f.wipLimit ? `max ${f.wipLimit}` : '',
     ].filter(Boolean).join(' · ');
   };

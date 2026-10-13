@@ -562,3 +562,53 @@ describe('agent manager: the agents.manage grant', () => {
     assert.deepEqual(me.grants.map((g) => g.power), ['agents.manage']);
   });
 });
+
+describe('a sleeping column: work waits there until the human (or the coordinator) wakes it', () => {
+  let s;
+  before(async () => {
+    s = await startServer();
+    await s.ok('PATCH', `${B}/columns/backlog`, { flags: { sleeping: true } }, USER);
+    await s.ok('PATCH', B, { coordinator: 'coord' }, USER);
+  });
+  after(() => s.stop());
+  const ev = async (seq, q) => (await s.ok('GET', `/api/events?since=${seq}&${q}`)).events;
+
+  it('assigning a sleeping ticket wakes nobody, and its owner cannot start it', async () => {
+    const { seq } = await s.ok('GET', '/api/app');
+    const it = await s.ok('POST', `${B}/items`, { title: 'later', column: 'Backlog', assignee: 'ann' }, USER);
+    const [assigned] = await ev(seq, 'types=item.assigned');
+    assert.equal(assigned.addressed, undefined, 'a note of who will take it, not a call to start');
+    const w = await s.ok('GET', `${B}/work`, undefined, { agent: 'ann' });
+    assert.ok(!w.next.some((n) => n.id === it.id), 'not in its owner\'s work');
+    const r = await s.api('POST', `${B}/items/${it.id}/start`, {}, { agent: 'ann' });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.code, 'SLEEPING');
+  });
+
+  it('moving it to Ready wakes its owner, who can then start it', async () => {
+    const it = await s.ok('POST', `${B}/items`, { title: 'now', column: 'Backlog', assignee: 'ann' }, USER);
+    const { seq } = await s.ok('GET', '/api/app');
+    await s.ok('POST', `${B}/items/${it.id}/move`, { column: 'Ready' }, USER);
+    const [moved] = await ev(seq, 'types=item.moved');
+    assert.deepEqual(moved.addressed, ['ann']);
+    assert.ok((await s.ok('GET', `${B}/work`, undefined, { agent: 'ann' })).next.some((n) => n.id === it.id && n.action === 'start'));
+    await s.ok('POST', `${B}/items/${it.id}/start`, {}, { agent: 'ann' });
+  });
+
+  it('agents file into the sleeping column; the coordinator chooses where an agent\'s ticket goes', async () => {
+    const no = await s.api('POST', `${B}/items`, { title: 'found a bug', column: 'Ready' }, { agent: 'qa' });
+    assert.equal(no.status, 403);
+    assert.equal(no.body.code, 'SLEEPING');
+    const filed = await s.ok('POST', `${B}/items`, { title: 'found a bug', column: 'Backlog' }, { agent: 'qa' });
+    assert.equal((await s.api('POST', `${B}/items/${filed.id}/move`, { column: 'Ready' }, { agent: 'qa' })).body.code, 'SLEEPING', 'not by the agent that filed it');
+    await s.ok('POST', `${B}/items/${filed.id}/move`, { column: 'Ready' }, { agent: 'coord' });
+    await s.ok('POST', `${B}/items`, { title: 'urgent, from triage', column: 'Ready' }, { agent: 'coord' });
+  });
+
+  it('the human\'s own sleeping tickets are woken by the human alone', async () => {
+    const mine = await s.ok('POST', `${B}/items`, { title: 'my idea', column: 'Backlog' }, USER);
+    const r = await s.api('POST', `${B}/items/${mine.id}/move`, { column: 'Ready' }, { agent: 'coord' });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.code, 'SLEEPING');
+  });
+});

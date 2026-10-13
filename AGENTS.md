@@ -171,6 +171,8 @@ At the end of a session: `POST /api/boards/main/digest { "summary": "markdown", 
 ### Approval gates
 Columns with `humanOnlyIn` / `humanOnlyOut` can only be entered / left by a human (`403` for agents). By default **Done** is human-only: move finished work to **Review** and let the human accept it.
 
+A **sleeping** column (`flags.sleeping`, e.g. Backlog) holds work nobody should start yet. Assigning a ticket there wakes nobody; agents cannot start it there (`409 SLEEPING`) and it is not in their work. Moving it out — into Ready — wakes its assignee. On a board with a sleeping column, agents file new tickets into it (`403 SLEEPING` elsewhere); the **coordinator** decides where a ticket an agent filed goes (leave it asleep, or create or move it into any column it may use), and only the human wakes the human's own tickets.
+
 ### Grants: powers the human delegates
 Some agents may do human-only things because the human said so — in **agents.json** (or the manifest's `permissions.<name>.grants`), or on the Agents page (an agent's *Edit* › Grants), which only works for the signed-in human on a board with a sign-in token (`intellagent token`; without one the API answers `403 NO_TOKEN`). Agents can never set grants:
 ```jsonc
