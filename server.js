@@ -837,6 +837,13 @@ function requestReview(ctx, id, d, actor) {
     if (Object.keys(notes).length) {
       summary = [summary, ...REVIEW_PARTS.filter(([k]) => notes[k]).map(([k, label]) => `**${label}**\n${notes[k]}`)].filter(Boolean).join('\n\n');
     }
+    const wt = actor.kind === 'agent' && worktrees ? agentBranch(actor.name) : null;
+    if (wt) {
+      const commits = worktrees.commitsFor(actor.name, item.id);
+      summary = [summary, commits.length
+        ? `**Commits** on \`${wt.branch}\` (they land on approval)\n${commits.map((c) => `- \`${c.sha.slice(0, 7)}\` ${c.subject}`).join('\n')}`
+        : `⚠ No commits mentioning ${item.id} on \`${wt.branch}\` — approving lands nothing.`].filter(Boolean).join('\n\n');
+    }
     if (summary) item.comments.push({ id: rid('c'), author: actor, body: summary, createdAt: now(), ...(Object.keys(notes).length ? { review: notes } : {}) });
     const lease = item.lease;
     if (lease && lease.claimant === actor.name) item.lease = null;
@@ -1400,6 +1407,19 @@ function recordVerdict(ctx, item, actor, events, verdict, comment = '', grant = 
   item.review = { verdict, comment: comment || null, by: actor.name, at: now(), requestedBy, ...(delegated ? { delegated } : {}) };
   const who = [requestedBy, ...(item.workedBy || [])].filter(Boolean);
   events.push(itemEvent(ctx, verdict === 'approve' ? 'review.approved' : 'review.changes_requested', item, actor, { verdict, feedback: comment || null, mentions: who, ...(delegated ? { delegated } : {}) }));
+  if (verdict === 'approve' && requestedBy && worktrees && agentBranch(requestedBy)) landWork(ctx, item, requestedBy, actor, events);
+}
+
+// Put a ticket's commits from the agent's worktree branch on main, and say on the card what happened.
+function landWork(ctx, item, agent, actor, events) {
+  let r;
+  try { r = worktrees.land(agent, item.id); } catch (e) { r = { landed: [], reason: e.message, command: `intellagent merge ${item.id}` }; }
+  const body = r.landed.length
+    ? `⤵ Landed on main: ${r.landed.map((x) => `\`${x}\``).join(', ')} from \`agent/${agent}\`.`
+    : `⚠ Not landed: ${r.reason}.${r.commits?.length ? ` When that's sorted, run \`${r.command}\`.` : ''}`;
+  item.comments.push({ id: rid('c'), author: SYSTEM, body, createdAt: now() });
+  events.push(itemEvent(ctx, r.landed.length ? 'item.landed' : 'item.land_failed', item, actor, { agent, landed: r.landed, ...(r.reason ? { reason: r.reason } : {}), mentions: [agent] }));
+  return r;
 }
 
 // End of a session: release every lease (and the board hold) you have, optionally posting the digest.
@@ -2110,6 +2130,9 @@ function matchesFilter(event, filter) {
 
 const sseClients = new Set();
 let standing = null; // standing agents (lib/agents.js), started at boot
+let worktrees = null; // per-agent git worktrees (lib/worktrees.js)
+// The agent's worktree branch, when it has one (standing agents that edit files).
+const agentBranch = (name) => { try { return (name && standing?.get(name).worktree) || null; } catch { return null; } };
 const waiters = new Set();
 
 function emit(ev) {
@@ -2911,6 +2934,19 @@ route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move thi
 });
 route('POST', '/api/boards/:board/items/:id/start', 'Start or resume work in one step: lease + move to the working column + status + assign. { status?, minutes?, column?, force? }', ({ p, body, actor }) =>
   startWork(getCtx(p.board), p.id, body, actor));
+route('POST', '/api/boards/:board/items/:id/land', 'Human: put this ticket\'s commits from its agent\'s worktree branch on main (after approval, when landing was blocked) { agent? }', ({ p, body, actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Only the human lands work on main', { code: 'HUMAN_ONLY' });
+  if (!worktrees) fail(400, 'No worktrees on this board');
+  const ctx = getCtx(p.board);
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, p.id);
+    const agent = body.agent || item.review?.requestedBy || item.workedBy?.at(-1);
+    if (!agent || !agentBranch(agent)) fail(400, `No agent worktree for ${item.id}; pass "agent"`);
+    const r = landWork(ctx, item, agent, actor, events);
+    item.version++;
+    return { item: item.id, agent, ...r };
+  });
+});
 route('POST', '/api/boards/:board/items/:id/review/decision', 'Human: decide a review { verdict: "approve"|"changes", comment?, column? }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   return itemView(ctx, decideReview(ctx, p.id, body, actor));
@@ -3402,7 +3438,13 @@ for (const d of fs.readdirSync(BOARDS_DIR)) {
 }
 if (!boards.size) seed();
 checkPresence();
+worktrees = require('./lib/worktrees').createWorktrees({
+  root: PROJECT_ROOT,
+  // .intellagent/worktrees in a project; .worktrees beside a manifest at the repo root (git-ignored either way)
+  dir: path.basename(path.dirname(MANIFEST_PATH)) === '.intellagent' ? path.join(path.dirname(MANIFEST_PATH), 'worktrees') : path.join(PROJECT_ROOT, '.worktrees'),
+});
 standing = require('./lib/agents').createAgents({
+  worktrees,
   file: path.join(path.dirname(MANIFEST_PATH), M.agentsFile || 'agents.json'),
   stateFile: path.join(DATA, 'agents.state.json'),
   logDir: path.join(DATA, 'agent-runs'),
