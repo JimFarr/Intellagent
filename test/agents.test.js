@@ -580,3 +580,51 @@ describe('specialised agents', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('agent reviewers', () => {
+  it('the receptionist assigns a specialist reviewer (never the author), who comments a verdict; only the human approves', async () => {
+    const s = await startServer({ agents: { agents: {
+      desk: { role: 'coordinator', enabled: false },
+      maker: { role: 'builder', enabled: false, reviewer: true },
+      critic: { role: 'reviewer', enabled: false, areas: ['server.js'] },
+      plain: { role: 'builder', enabled: false },
+    } } });
+    const ag = (agent) => ({ agent });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'feature', column: 'Ready', assignee: 'maker' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/start`, {}, ag('maker'));
+      await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'done' }, ag('maker'));
+      // the receptionist is told to assign one, and offered only reviewers who aren't the author
+      const w = await s.ok('GET', `${B}/work?agent=desk`);
+      const ask = w.next.find((n) => n.id === it.id && n.action === 'assign_reviewer');
+      assert.ok(ask, 'receptionist gets assign_reviewer');
+      assert.match(ask.why, /critic/);
+      assert.doesNotMatch(ask.why, /maker/, 'the author is never offered');
+      // never the author, never a non-reviewer, never by a builder
+      assert.equal((await s.api('POST', `${B}/items/${it.id}/reviewers`, { name: 'maker' }, ag('desk'))).body.code, 'OWN_WORK');
+      assert.equal((await s.api('POST', `${B}/items/${it.id}/reviewers`, { name: 'plain' }, ag('desk'))).body.code, 'NOT_REVIEWER');
+      assert.equal((await s.api('POST', `${B}/items/${it.id}/reviewers`, { name: 'critic' }, ag('maker'))).body.code, 'HUMAN_ONLY');
+      const { seq } = await s.ok('GET', '/api/app');
+      await s.ok('POST', `${B}/items/${it.id}/reviewers`, { name: 'critic' }, ag('desk'));
+      const ev = (await s.ok('GET', `/api/events?since=${seq}&types=review.reviewer_assigned`)).events.at(-1);
+      assert.deepEqual(ev.addressed, ['critic'], 'the reviewer is woken');
+      assert.ok((await s.ok('GET', `${B}/work?agent=critic`)).next.some((n) => n.action === 'review_ticket' && n.id === it.id));
+      // only the reviewer gives its verdict; concerns @mention the author
+      assert.equal((await s.api('POST', `${B}/items/${it.id}/reviewers/critic/verdict`, { verdict: 'ok' }, ag('desk'))).status, 403);
+      const v = await s.ok('POST', `${B}/items/${it.id}/reviewers/critic/verdict`, { verdict: 'concerns', comment: 'No test for the error path.' }, ag('critic'));
+      assert.equal(v.reviewers[0].verdict, 'concerns');
+      assert.match(v.comments.at(-1).body, /⚠ \*\*Concerns\*\*[\s\S]*@maker/);
+      assert.equal(v.column, 'Review', 'a reviewer never moves the ticket');
+      assert.equal((await s.api('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'approve' }, ag('critic'))).body.code, 'HUMAN_ONLY');
+      // asking for review again resets the tick and wakes the reviewer
+      await s.ok('POST', `${B}/items/${it.id}/start`, {}, ag('maker'));
+      const again = await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'added the test' }, ag('maker'));
+      assert.equal(again.reviewers[0].verdict, null);
+      // a reviewer who starts working on the ticket can no longer judge it
+      const it2 = await s.ok('POST', `${B}/items`, { title: 'second', column: 'Ready' }, USER);
+      await s.ok('POST', `${B}/items/${it2.id}/reviewers`, { name: 'critic' }, USER);
+      await s.ok('POST', `${B}/items/${it2.id}/lease`, {}, ag('critic'));
+      assert.equal((await s.api('POST', `${B}/items/${it2.id}/reviewers/critic/verdict`, { verdict: 'ok' }, ag('critic'))).body.code, 'OWN_WORK');
+    } finally { await s.stop(); }
+  });
+});

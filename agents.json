@@ -29,7 +29,8 @@
         "calm motion: ease in/out, no bounce, prefers-reduced-motion",
         "text contrast and focus visibility",
         "phone width (375px)"
-      ]
+      ],
+      "reviewer": true
     },
     "junior": {
       "role": "builder",
@@ -64,7 +65,8 @@
         "API errors carry a code and a hint",
         "CLI, MCP and AGENTS.md stay in step with the API",
         "a test for every route or behaviour"
-      ]
+      ],
+      "reviewer": true
     },
     "senior": {
       "role": "builder",
@@ -81,7 +83,8 @@
         "no privilege escalation: human-only gates, grants and permissions stay intact",
         "agent wake loops and run cost",
         "data integrity: everything through tx(), formats stay compatible"
-      ]
+      ],
+      "reviewer": true
     }
   }
 }

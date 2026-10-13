@@ -824,6 +824,71 @@ function reviewColumn(ctx) {
 
 const REVIEW_PARTS = [['changed', 'What changed'], ['why', 'Why'], ['verify', 'How to verify'], ['risks', 'Risks and open questions']];
 
+/* Agent reviewers (INT-64): specialists the receptionist (or the human) asks to look at a ticket in review.
+   They comment — ✅ looks good, or ⚠ concerns with the author @mentioned — and the card shows their ticks.
+   They never decide the review: the human still approves into Done. */
+const isReviewer = (name) => { try { return !!standing?.get(name).reviewer; } catch { return false; } };
+// every agent marked as a reviewer, paused ones too (the receptionist can resume them)
+const reviewerPool = () => { try { return (standing?.list().agents || []).filter((a) => a.reviewer); } catch { return []; } };
+const authorsOf = (item) => new Set([item.review?.requestedBy, ...(item.questions || []).filter((q) => q.kind === 'review').map((q) => q.raisedBy), ...(item.workedBy || []), item.assignee].filter(Boolean));
+function mayAssignReviewers(actor) {
+  if (actor.kind === 'user') return true;
+  try { return standing.get(actor.name).role === 'coordinator'; } catch { return false; }
+}
+function addReviewer(ctx, id, d, actor) {
+  if (!mayAssignReviewers(actor)) fail(403, 'Only the human or the receptionist assigns reviewers', { code: 'HUMAN_ONLY' });
+  const who = str(d.name || d.reviewer || '', 64).trim();
+  if (!who) fail(400, '"name" is required');
+  if (!isReviewer(who)) fail(400, `${who} is not a reviewer — switch on "Can review" in its Speciality (or "reviewer": true in agents.json)`, { code: 'NOT_REVIEWER', hint: `Reviewers: ${reviewerPool().map((a) => a.name).join(', ') || 'none yet'}` });
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    if (authorsOf(item).has(who)) fail(403, `${who} worked on ${item.id} — a reviewer must be someone else`, { code: 'OWN_WORK' });
+    item.reviewers ||= [];
+    if (item.reviewers.some((r) => r.name === who)) return item;
+    item.reviewers.push({ name: who, by: actor.name, at: now(), verdict: null });
+    item.version++;
+    item.updatedAt = now();
+    events.push(itemEvent(ctx, 'review.reviewer_assigned', item, actor, { reviewer: who, mentions: [who] }));
+    return item;
+  });
+}
+function removeReviewer(ctx, id, name, actor) {
+  if (!mayAssignReviewers(actor)) fail(403, 'Only the human or the receptionist removes reviewers', { code: 'HUMAN_ONLY' });
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    const before = (item.reviewers || []).length;
+    item.reviewers = (item.reviewers || []).filter((r) => r.name !== name);
+    if (item.reviewers.length === before) return item;
+    item.version++;
+    item.updatedAt = now();
+    events.push(itemEvent(ctx, 'review.reviewer_removed', item, actor, { reviewer: name }));
+    return item;
+  });
+}
+function reviewerVerdict(ctx, id, name, d, actor) {
+  if (actor.name !== name) fail(403, 'Only that reviewer gives its verdict', { code: 'FORBIDDEN' });
+  const verdict = ['ok', 'approve', 'good'].includes(d.verdict) ? 'ok' : d.verdict === 'concerns' ? 'concerns' : fail(400, '"verdict" must be "ok" or "concerns"');
+  const comment = str(d.comment || '', 20_000).trim();
+  if (verdict === 'concerns' && !comment) fail(400, 'Say what concerns you in "comment"');
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    const r = (item.reviewers || []).find((x) => x.name === name);
+    if (!r) fail(404, `${name} is not a reviewer on ${item.id}`);
+    if (authorsOf(item).has(name)) fail(403, `${name} has worked on ${item.id} since being asked to review it — a reviewer never judges its own work`, { code: 'OWN_WORK', hint: 'Leave the verdict to another reviewer or the human' });
+    const author = (item.questions || []).find((q) => q.kind === 'review')?.raisedBy || item.review?.requestedBy || item.workedBy?.at(-1) || null;
+    const ask = verdict === 'concerns' && author && !comment.includes(`@${author}`) ? `\n\n@${author} please take a look.` : '';
+    const body = `${verdict === 'ok' ? '✅ **Looks good**' : '⚠ **Concerns**'} — review by ${name}${comment ? `\n\n${comment}` : ''}${ask}`;
+    const c = { id: rid('c'), author: actor, body, createdAt: now() };
+    item.comments.push(c);
+    Object.assign(r, { verdict, at: c.createdAt, commentId: c.id });
+    item.version++;
+    item.updatedAt = c.createdAt;
+    events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(body) }, mentions: mentionsIn(body) }));
+    events.push(itemEvent(ctx, 'review.reviewed', item, actor, { reviewer: name, verdict }));
+    return item;
+  });
+}
+
 function requestReview(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
@@ -861,6 +926,12 @@ function requestReview(ctx, id, d, actor) {
     if (lease && !item.lease) events.push(itemEvent(ctx, 'lease.released', item, actor, { claimant: lease.claimant, reason: 'review requested' }));
     events.push(itemEvent(ctx, 'review.requested', item, actor, { summary: trimChange(summary) || null, reason: rq.reason }));
     openQuestion(ctx, item, rq, actor, events);
+    // asked again (e.g. after changes): every assigned reviewer looks again
+    for (const r of item.reviewers || []) {
+      if (!r.verdict) continue;
+      r.verdict = null;
+      events.push(itemEvent(ctx, 'review.reviewer_assigned', item, actor, { reviewer: r.name, again: true, mentions: [r.name] }));
+    }
     return item;
   });
 }
@@ -1577,11 +1648,27 @@ function workFor(ctx, name) {
   for (const x of feedback) add('address_feedback', x, `Review sent back: ${String(x.feedback || '').slice(0, 120)}`, call(x.id, 'start'));
   for (const x of answered) add('resume', x, `Your question was answered: ${String(x.answer || '').slice(0, 120)}`, call(x.id, 'start'));
   for (const x of leases) add('continue', x, x.status ? `You were: ${x.status}` : 'You hold this lease', `${call(x.id, 'review')} { "summary": "…" } when done`);
+  for (const it of items.filter((x) => x.columnId !== done && (x.reviewers || []).some((r) => r.name === name && !r.verdict))) {
+    add('review_ticket', brief(it), 'You are a reviewer: read its commits (listed in the review comment; git show <sha>) against your concerns, then give a verdict — ok, or concerns with what should change',
+      `POST /api/boards/${ctx.id}/items/${it.id}/reviewers/${name}/verdict { "verdict": "ok" | "concerns", "comment": "…" }`);
+  }
   for (const x of assigned) add('start', x, 'Assigned to you', call(x.id, 'start'));
   // A router (the coordinator role) assigns Ready work; it never picks it up itself.
   let router = false;
   try { router = !!standing && standing.get(name).role === 'coordinator'; } catch { /* not a standing agent */ }
   if (!router && (!next.length || next.every((n) => n.action === 'renew'))) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
+  // A router assigns reviewers to tickets waiting in review, when a reviewer other than the author exists.
+  if (router) {
+    const pool = reviewerPool();
+    for (const it of items) {
+      if (!(it.questions || []).some((q) => q.kind === 'review') || (it.reviewers || []).length || it.test) continue;
+      const mine = authorsOf(it);
+      const cand = pool.filter((a) => !mine.has(a.name));
+      if (!cand.length) continue;
+      add('assign_reviewer', brief(it), `In review with no reviewer — pick one whose areas or concerns fit: ${cand.map((a) => `${a.name}${a.areas?.length ? ` (owns ${a.areas.slice(0, 3).join(', ')})` : ''}`).join('; ')}. Or leave it if none fits`,
+        `POST /api/boards/${ctx.id}/items/${it.id}/reviewers { "name": "…" }`);
+    }
+  }
   // A supervising agent hears about other agents' stalled tickets.
   const supervise = stalledFor(ctx, name, standing?.superviseOf?.(name) || 0).map((x) => brief(x.it, { assignee: x.who, agentStatus: x.status, idleMinutes: x.idleMin, lastActivity: new Date(x.lastMs).toISOString() }));
   for (const x of supervise) {
@@ -2968,6 +3055,12 @@ route('POST', '/api/boards/:board/items/:id/review/decision', 'Human: decide a r
 route('POST', '/api/boards/:board/finish', 'End your session: release all your leases (and the board hold), optionally post the digest { summary?, items? }', ({ p, body, actor }) =>
   finishSession(getCtx(p.board), body, actor));
 
+route('POST', '/api/boards/:board/items/:id/reviewers', 'Assign a reviewer (the human or the receptionist): { name } — an agent marked as a reviewer, never the ticket\'s author; it is woken to comment', ({ p, body, actor }) =>
+  itemView(getCtx(p.board), addReviewer(getCtx(p.board), p.id, body, actor)));
+route('DELETE', '/api/boards/:board/items/:id/reviewers/:name', 'Remove a reviewer (the human or the receptionist)', ({ p, actor }) =>
+  itemView(getCtx(p.board), removeReviewer(getCtx(p.board), p.id, p.name, actor)));
+route('POST', '/api/boards/:board/items/:id/reviewers/:name/verdict', 'A reviewer\'s verdict: { verdict: "ok" | "concerns", comment } — posts it on the card (concerns @mention the author); the human still approves', ({ p, body, actor }) =>
+  itemView(getCtx(p.board), reviewerVerdict(getCtx(p.board), p.id, p.name, body, actor)));
 route('POST', '/api/boards/:board/items/:id/reactions', 'React with an emoji: { emoji ("👀" or "eyes", "+1", "tada"…), commentId? (else the card), toggle? }', ({ p, body, actor }) =>
   ({ reactions: react(getCtx(p.board), p.id, body, actor, body.toggle ? 'toggle' : true) }));
 route('DELETE', '/api/boards/:board/items/:id/reactions', 'Remove your reaction: { emoji, commentId? }', ({ p, body, q, actor }) =>
@@ -3189,7 +3282,7 @@ route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=2
    agent. What it may change is a fixed list; the run command, grants, enabled, env and cwd stay with the
    human's file. Models come from an allowlist, and tool perms and board permissions only ever narrow. */
 const MANAGER_MODELS = Array.isArray(M.managerModels) && M.managerModels.length ? M.managerModels.map(String) : ['haiku', 'sonnet', 'opus'];
-const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context'];
+const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context', 'reviewer'];
 // a list of short strings (areas: paths or globs; concerns: phrases)
 const strList = (v, what) => {
   if (v == null) return null;
@@ -3258,6 +3351,7 @@ function manageAgent(target, d, actor) {
   }
   if ('areas' in d) cfg.areas = strList(d.areas, 'areas');
   if ('concerns' in d) cfg.concerns = strList(d.concerns, 'concerns');
+  if ('reviewer' in d) cfg.reviewer = d.reviewer ? true : null;
   const by = { kind: actor.kind, name: actor.name };
   const res = Object.keys(cfg).length ? standing.manage(name, cfg, by) : { changes: {} };
   if ('context' in d) {

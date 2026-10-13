@@ -1534,6 +1534,7 @@
     const nProps = Object.keys(it.properties || {}).length;
     if (s.properties && shown('properties') && nProps) meta.push(`<span class="m" title="Properties|Free-form data agents attached">${icon('braces', 'sm')}${nProps}</span>`);
     if (it.test) meta.unshift(`<span class="m test-tag" title="Test ticket|Disposable — anyone may delete it for good">${icon('flask', 'sm')}test</span>`);
+    if (it.reviewers?.length) meta.push(`<span class="m revs">${it.reviewers.map((r) => reviewerTick(r)).join('')}</span>`);
     if (it.agentDraft) meta.push(`<span class="m drafting" title="Being written up|${esc(nameOf(it.agentDraft.writer))} is turning these notes into a full ticket${it.agentDraft.explicit.length ? ` — keeping ${esc(it.agentDraft.explicit.join(', '))}` : ''}">${icon('sparkle', 'sm')}drafting</span>`);
     if (stub('assignee') && it.assignee) meta.push(`<span class="m assn" title="${esc(bi('assignee').label)}|Handed to ${esc(nameOf(it.assignee))} — they get its events">${icon('move', 'sm')}${avatar({ name: it.assignee })}</span>`);
     const ck = checklist(it.description);
@@ -2873,6 +2874,10 @@
       const v = it.assignee ? `${avatar({ name: it.assignee })}${nameHTML(it.assignee)}` : '';
       det.push(`<div class="field">${lbl('assignee', 'user')}${lock('assignee') ? `<div class="ro-val ${it.assignee ? '' : 'empty'}">${v || '—'}</div>` : ddHTML('assignee', v, { placeholder: 'Nobody' })}</div>`);
     }
+    // specialist reviewers: they comment, you approve
+    if (!m.create && ((it.reviewers || []).length || Object.values(state.standing || {}).some((a) => a.reviewer))) {
+      det.push(`<div class="field"><div class="lbl">${icon('eye', 'sm')}Reviewers</div><div class="rv-list">${(it.reviewers || []).map((r) => reviewerTick(r, { rm: !m.archived })).join('')}${m.archived ? '' : `<button class="rv-add" type="button" data-act="rv-add" title="Add a reviewer|An agent marked as a reviewer comments its verdict; you still approve">${icon('plus', 'sm')}</button>`}</div></div>`);
+    }
     parts.push(`<div class="fgroup">${det.join('')}</div>`);
 
     // lease + dependencies
@@ -2995,6 +3000,18 @@
       }
       const dd = e.target.closest('[data-dd]');
       if (dd) { openSideDropdown(m, dd); return; }
+      if (e.target.closest('[data-act="rv-add"]')) {
+        const it = draftView(m);
+        const mine = new Set([it.assignee, ...(it.workedBy || []), ...(it.questions || []).filter((q) => q.kind === 'review').map((q) => q.raisedBy)].filter(Boolean));
+        const pool = Object.values(state.standing || {}).filter((a) => a.reviewer && !(it.reviewers || []).some((r) => r.name === a.name));
+        menu(e.target.closest('button'), pool.length ? pool.map((a) => ({
+          label: nameOf(a.name), avatar: { kind: 'agent', name: a.name }, hint: mine.has(a.name) ? 'worked on it' : (a.areas || []).slice(0, 2).join(', '), cls: mine.has(a.name) ? 'off' : '',
+          run: () => (mine.has(a.name) ? toast(`${nameOf(a.name)} worked on this — pick someone else`, { kind: 'error' }) : api('POST', I(m.id, '/reviewers'), { name: a.name }).then(() => scheduleRefresh(0), (err) => toast(err.message, { kind: 'error' }))),
+        })) : [{ label: 'No reviewers yet — switch on "Can review" in an agent\'s Speciality', icon: 'info', run: () => {} }]);
+        return;
+      }
+      const rvRm = e.target.closest('[data-act="rv-rm"]');
+      if (rvRm) { api('DELETE', I(m.id, `/reviewers/${encodeURIComponent(rvRm.dataset.rv)}`)).then(() => scheduleRefresh(0), (err) => toast(err.message, { kind: 'error' })); return; }
       const act = e.target.closest('[data-act]')?.dataset.act;
       try {
         if (act === 'revoke') { await api('DELETE', I(m.id, '/lease')); scheduleRefresh(0); }
@@ -3262,6 +3279,9 @@
       case 'item.reordered': return `${who} reordered ${b(id)}`;
       case 'item.archived': return `${who} archived ${b(id)}`;
       case 'item.deleted': return `${who} deleted test ticket ${b(id)}`;
+      case 'review.reviewer_assigned': return `${who} asked ${b(nameOf(ev.reviewer))} to review ${b(id)}${ev.again ? ' again' : ''}`;
+      case 'review.reviewer_removed': return `${who} removed ${b(nameOf(ev.reviewer))} as reviewer of ${b(id)}`;
+      case 'review.reviewed': return `${who} reviewed ${b(id)}: ${ev.verdict === 'ok' ? 'looks good ✓' : 'concerns ⚠'}`;
       case 'agent.managed': return `${who} changed ${b(nameOf(ev.agent))}: ${Object.keys(ev.changes || {}).map((k) => k.replace(/^profile\./, '')).join(', ')}${ev.delegated ? ' for you' : ''}`;
       case 'item.restored': return `${who} restored ${b(id)}`;
       case 'comment.added': return `${who} on ${b(id)}: ${html ? esc(ev.comment?.body?.slice(0, 120)) : ev.comment?.body?.slice(0, 80)}${ev.comment?.attachments ? ` ${html ? icon('clip', 'sm') : '📎'}` : ''}`;
@@ -4331,6 +4351,9 @@
 
   /* What makes an agent a specialist: the code it owns (guidance), what it watches for, and its context page.
      Edited here, saved to agents.json and agent-context/<name>.md through PATCH /api/agents/<name>. */
+  // A reviewer's tick: ✓ looks good, ! concerns, … still looking.
+  const reviewerTick = (r, { rm = false } = {}) => `<span class="rv-tick ${r.verdict || 'pending'}" title="${esc(nameOf(r.name))}|${r.verdict === 'ok' ? 'Looks good' : r.verdict === 'concerns' ? 'Has concerns — see the comment' : 'Reviewing…'}">${avatar({ kind: 'agent', name: r.name })}<i>${r.verdict === 'ok' ? '✓' : r.verdict === 'concerns' ? '!' : '…'}</i>${rm ? `<button type="button" data-act="rv-rm" data-rv="${esc(r.name)}" title="Remove reviewer">${icon('x', 'sm')}</button>` : ''}</span>`;
+
   function specialityEditor(name) {
     const a = state.standing[name] || {};
     const st = { areas: [...(a.areas || [])], concerns: [...(a.concerns || [])], context: '', loaded: false, dirty: false };
@@ -4342,6 +4365,7 @@
         <div class="spec-label">Watches for <span class="muted">— concerns it checks before asking for review</span></div>
         <div class="spec-chips" data-k="concerns"></div>
         <div class="spec-add"><input class="inp" data-add="concerns" placeholder="e.g. accessibility contrast, dark/light parity, performance" autocomplete="off"><button class="btn sm ghost" type="button" data-add-btn="concerns">${icon('plus', 'sm')}Add</button></div>
+        <label class="spec-toggle"><input type="checkbox" data-reviewer ${a.reviewer ? 'checked' : ''}> <span><b>Can review</b> other agents' work in its areas — the receptionist may assign it; it comments, you approve</span></label>
         <div class="spec-label">Context <span class="muted spec-file">${esc(a.contextFile || '')} — how its area works, conventions, traps; read on each session's first turn</span></div>
         <textarea class="inp spec-ctx" rows="8" placeholder="Loading…" spellcheck="true"></textarea>
         <div class="spec-foot"><span class="spec-state muted"></span><span class="grow"></span><button class="btn primary sm" type="button" data-spec-save disabled>${icon('check', 'sm')}Save</button></div>
@@ -4376,6 +4400,7 @@
     });
     root.addEventListener('keydown', (e) => { const k = e.target.dataset?.add; if (k && e.key === 'Enter') { e.preventDefault(); add(k); } });
     ta.addEventListener('input', () => { autosize(ta); touch(); });
+    $('[data-reviewer]', root).addEventListener('change', touch);
     root.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-add-btn]');
       if (b) { add(b.dataset.addBtn); return; }
@@ -4384,7 +4409,7 @@
       if (e.target.closest('[data-spec-save]')) {
         saveBtn.disabled = true;
         try {
-          const r = await api('PATCH', `/api/agents/${encodeURIComponent(name)}`, { areas: st.areas, concerns: st.concerns, ...(st.loaded ? { context: ta.value } : {}) });
+          const r = await api('PATCH', `/api/agents/${encodeURIComponent(name)}`, { areas: st.areas, concerns: st.concerns, reviewer: $('[data-reviewer]', root).checked, ...(st.loaded ? { context: ta.value } : {}) });
           st.dirty = false;
           $('.spec-state', root).textContent = Object.keys(r.changes || {}).length ? 'Saved — used from its next session' : 'No changes';
           await refreshPresence();

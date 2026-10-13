@@ -1842,3 +1842,19 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .spec-ctx { width: 100%; min-height: 120px; resize: vertical; font: 12.5px/1.5 var(--mono, ui-monospace, monospace); }
 .spec-foot { display: flex; align-items: center; gap: 8px; }
 .spec-state { font-size: 12px; }
+
+/* Agent reviewers (INT-64): ticks on cards and in the ticket */
+.rv-tick { position: relative; display: inline-flex; align-items: center; }
+.rv-tick .avatar { width: 18px; height: 18px; font-size: 9px; }
+.rv-tick i { position: absolute; right: -4px; bottom: -4px; display: grid; place-items: center; width: 12px; height: 12px; border-radius: 50%;
+  font: 700 8px/1 var(--sans, inherit); font-style: normal; color: #fff; background: var(--muted); box-shadow: 0 0 0 1.5px var(--surface, #fff); }
+.rv-tick.ok i { background: var(--ok, #3fb97f); }
+.rv-tick.concerns i { background: var(--warn); }
+.rv-tick button { margin-left: 2px; display: inline-grid; place-items: center; width: 16px; height: 16px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; }
+.rv-tick button:hover { color: var(--danger); }
+.card .m.revs { display: inline-flex; gap: 7px; }
+.rv-list { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-height: 26px; }
+.rv-add { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1px dashed var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+.rv-add:hover { color: var(--text); border-color: var(--accent); }
+.spec-toggle { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; margin-top: 4px; cursor: pointer; }
+.spec-toggle input { margin-top: 2px; }
