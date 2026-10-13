@@ -191,6 +191,14 @@
       shadow: mode === 'dark' ? 'rgb(0 0 0 / .6)' : 'rgb(60 45 30 / .22)', 'fx-o': mode === 'dark' ? '.34' : '.5', grain: mode === 'dark' ? '.07' : '.09',
     },
   });
+  // The Bauhaus family shares one geometry: a card wears its type as a shape in the top-right corner (issue a
+  // circle, task a square, spike a triangle) and a column a thick rule on top. `s` is the shape's size in px,
+  // `rule` the rule's thickness; `extra` is the variant's own CSS (it comes last, so it wins).
+  const bauhausCss = (s, rule, extra = '') => `.card { background: radial-gradient(circle at 100% 0, var(--type-c) 0 ${s}px, transparent ${s + 1}px), var(--surface); } .card[data-type="task"] { background: linear-gradient(var(--type-c), var(--type-c)) 100% 0 / ${s}px ${s}px no-repeat, var(--surface); } .card[data-type="spike"] { background: linear-gradient(225deg, var(--type-c) 50%, transparent 50%) 100% 0 / ${Math.round(s * 1.36)}px ${Math.round(s * 1.36)}px no-repeat, var(--surface); } .card::before { display: none; } .column { border-top: ${rule}px solid var(--col); } .col-name { font-weight: 900; letter-spacing: .06em; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 900; } ${extra}`;
+  // The poster look (Bauhaus, Bauhaus Night) and the quieter studio look (thin borders, small shapes, no offset shadow).
+  const BAUHAUS_POSTER = { md: 'grid', card: 0, col: 0, modal: 0, ctl: 20, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'solid', chips: 'pill', heads: 'caps', bg: 'none', texture: true, avatar: 'round', corner: 30, titleW: 700, font: "'Archivo'", display: "'Archivo'" };
+  const BAUHAUS_STUDIO = { md: 'grid', card: 2, col: 2, modal: 4, ctl: 4, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, avatar: 'square', corner: 20, titleW: 600, font: "'Inter'", display: "'Archivo'", colAlpha: 100 };
+  const STUDIO_CSS = '.col-name { font-weight: 700; letter-spacing: .1em; font-size: 12px; } .c-title { font-size: 14px; } .app-name { font-weight: 700; letter-spacing: -.01em; }';
   const THEMES = {
     intellagent: T('Intellagent', 'dark', ['#0d0e1a', '#161829', '#1d2035', '#eceefe', '#8e93b8', '#2b2f4a', '#8b7bff', '#2fe0c4', '#ff6b8b', '#6aa8ff', '#ffc857', '#3ddc97', '#ffb454', '#ff5d73', '#7b5cff', '#00d4b0', '#ff5fa2']),
     daylight: T('Daylight', 'light', ['#f4f1ec', '#ebe6de', '#fffdf9', '#23212b', '#7a7585', '#ddd6cb', '#6c5cff', '#0fb59a', '#e5486b', '#3b7bea', '#e3a019', '#1f9e66', '#d9822b', '#d93c56', '#b6a8ff', '#8ff0dc', '#ffc2d9'],
@@ -252,8 +260,21 @@
       { md: 'grid', card: 0, col: 0, modal: 0, ctl: 0, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'lane', chips: 'tag', bg: 'none', texture: false, avatar: 'square', avatars: 'ink', colColor: 'ink', titleW: 700, font: "'Inter'", display: "'Inter'", colAlpha: 100 },
       '.col-head { border-bottom: 3px solid var(--text) !important; align-items: flex-end; } .col-name { font-size: 30px; font-weight: 800; letter-spacing: -.045em; text-transform: lowercase; line-height: 1; } .col-count { background: none; padding: 0; font: 300 30px/1 var(--display); letter-spacing: -.04em; color: var(--accent); } .col-dot, .col-icon { display: none; } .card { background: transparent; border-width: 0 0 1px; border-color: var(--text); border-radius: 0; box-shadow: none; padding: 12px 0 11px; } .card::before { display: none; } .card:hover { background: rgb(0 0 0 / .03); } .c-title { font-size: 15.5px; letter-spacing: -.02em; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 800; letter-spacing: -.045em; font-size: 22px; } .logo { filter: grayscale(1) contrast(1.6); }'),
     bauhaus: T('Bauhaus', 'light', ['#f1ebdd', '#e8e0cd', '#fbf7ee', '#1a1a1a', '#6a645a', '#1a1a1a', '#d6312a', '#1f4fa3', '#d6312a', '#1f4fa3', '#f2b705', '#2e7d32', '#e8701a', '#d6312a', '#d6312a', '#1f4fa3', '#f2b705'],
-      { md: 'grid', card: 0, col: 0, modal: 0, ctl: 20, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'solid', chips: 'pill', heads: 'caps', bg: 'none', texture: true, avatar: 'round', corner: 30, titleW: 700, font: "'Archivo'", display: "'Archivo'" },
-      '.card { background: radial-gradient(circle at 100% 0, var(--type-c) 0 22px, transparent 23px), var(--surface); } .card[data-type="task"] { background: linear-gradient(var(--type-c), var(--type-c)) 100% 0 / 22px 22px no-repeat, var(--surface); } .card[data-type="spike"] { background: linear-gradient(225deg, var(--type-c) 50%, transparent 50%) 100% 0 / 30px 30px no-repeat, var(--surface); } .card::before { display: none; } .column { border-top: 10px solid var(--col); } .col-name { font-weight: 900; letter-spacing: .06em; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 900; }'),
+      { ...BAUHAUS_POSTER }, bauhausCss(22, 10)),
+    // The same poster at night: primaries on warm black, cream ink.
+    'bauhaus-night': T('Bauhaus Night', 'dark', ['#14130f', '#1c1b16', '#23211b', '#f1ebdd', '#9a9384', '#d9d1bf', '#e8443a', '#3d6fd6', '#e8443a', '#3d6fd6', '#f5c518', '#43a047', '#ef8a2a', '#e8443a', '#e8443a', '#3d6fd6', '#f5c518'],
+      { ...BAUHAUS_POSTER, texture: false }, bauhausCss(22, 10)),
+    // Black on paper with one red: the shapes alone tell the types apart.
+    'bauhaus-mono': T('Bauhaus Mono', 'light', ['#ecebe7', '#e2e1dc', '#f8f8f6', '#151515', '#6b6b6b', '#151515', '#c8281e', '#151515', '#151515', '#151515', '#151515', '#3d3d3d', '#6b6b6b', '#c8281e', '#151515', '#6b6b6b', '#b5b5b5'],
+      { ...BAUHAUS_POSTER, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: #c8281e; box-shadow: 3px 3px 0 var(--text); }')),
+    // Mono, inverted: white geometry on black, red only for danger.
+    'bauhaus-noir': T('Bauhaus Noir', 'dark', ['#0e0e0e', '#161616', '#1c1c1c', '#ededea', '#8c8c88', '#ededea', '#ededea', '#8c8c88', '#ededea', '#ededea', '#ededea', '#bdbdbd', '#a0a0a0', '#ff4a3d', '#ededea', '#8c8c88', '#4a4a4a'],
+      { ...BAUHAUS_POSTER, texture: false, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: var(--text); color: var(--bg); box-shadow: none; }')),
+    // For work: muted primaries, hairline borders, small shapes — still a circle, a square and a triangle.
+    'bauhaus-studio': T('Bauhaus Studio', 'light', ['#f3f2ee', '#eae8e2', '#ffffff', '#1d1f24', '#6b6e76', '#d6d3cb', '#b8402f', '#24407a', '#b8402f', '#24407a', '#c9962a', '#3b7a4a', '#c9772a', '#b8402f', '#b8402f', '#24407a', '#c9962a'],
+      { ...BAUHAUS_STUDIO }, bauhausCss(14, 4, STUDIO_CSS)),
+    'bauhaus-studio-dark': T('Bauhaus Studio Dark', 'dark', ['#16171b', '#1d1f24', '#23262c', '#e7e6e1', '#8d9099', '#30333b', '#e0584a', '#5b84d6', '#e0584a', '#5b84d6', '#e3b341', '#4caf6e', '#e08a3a', '#e0584a', '#e0584a', '#5b84d6', '#e3b341'],
+      { ...BAUHAUS_STUDIO }, bauhausCss(14, 4, STUDIO_CSS)),
     soft: T('Soft', 'light', ['#e6e9ef', '#e6e9ef', '#e6e9ef', '#2d3346', '#7b8196', '#d5d9e2', '#6c63ff', '#00b8a9', '#ef5d7a', '#5b8def', '#f0a93b', '#2bb673', '#f08c3b', '#e5484d', '#e6e9ef', '#e6e9ef', '#e6e9ef'],
       { card: 16, col: 26, modal: 28, ctl: 14, bw: 0, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'solid', bg: 'none', texture: false, avatar: 'round', colAlpha: 100 },
       '.column { box-shadow: 10px 10px 24px #c5c9d3, -10px -10px 24px #ffffff; } .card { box-shadow: 6px 6px 14px #c8ccd6, -6px -6px 14px #ffffff; } .card:hover { box-shadow: 2px 2px 6px #c8ccd6, -2px -2px 6px #ffffff; } .card::before { display: none; } .search input, .inp, .dd, .tbox, .seg { background: var(--bg); box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; border-color: transparent; } .pill-btn, .btn:not(.primary), .car-nav { background: var(--bg); border-color: transparent; box-shadow: 4px 4px 10px #c8ccd6, -4px -4px 10px #ffffff; } .pill-btn:active, .btn:active { box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; } .modal, .drawer { box-shadow: 20px 20px 50px #c5c9d3, -20px -20px 50px #ffffff; } .seg button.on { box-shadow: 3px 3px 6px #c8ccd6, -3px -3px 6px #ffffff; }'),
@@ -296,6 +317,7 @@
     intellagent: 'gem', daylight: 'tint', dracula: 'flat', nord: 'tint', mocha: 'tint', latte: 'tint', tokyo: 'ring', gruvbox: 'flat',
     solarized: 'tint', github: 'flat', slate: 'tint', graphite: 'ring', midnight: 'ring', paper: 'ring', brutalist: 'stamp', cork: 'flat',
     blueprint: 'ring', vision: 'gem', phosphor: 'ring', swiss: 'flat', bauhaus: 'flat', soft: 'pebble', dusk: 'pebble', moss: 'pebble',
+    'bauhaus-night': 'flat', 'bauhaus-mono': 'flat', 'bauhaus-noir': 'flat', 'bauhaus-studio': 'tint', 'bauhaus-studio-dark': 'tint',
     clay: 'pebble', tide: 'tint', bloom: 'gem', iridescent: 'gem', riso: 'stamp',
   };
   for (const [k, v] of Object.entries(AV_STYLE)) if (THEMES[k]) THEMES[k].style.avStyle ??= v;
@@ -303,6 +325,7 @@
   const DROP_STYLE = {
     vision: 'tint', tide: 'tint', iridescent: 'tint', liquid: 'tint', cloud: 'tint', daylight: 'tint', latte: 'tint',
     soft: 'lift', dusk: 'lift', clay: 'lift', pop: 'lift', brutalist: 'lift', bauhaus: 'lift', riso: 'lift', aqua: 'lift',
+    'bauhaus-night': 'lift', 'bauhaus-mono': 'lift', 'bauhaus-noir': 'lift', 'bauhaus-studio': 'dashed', 'bauhaus-studio-dark': 'dashed',
     blueprint: 'dashed', phosphor: 'dashed', swiss: 'dashed', paper: 'dashed', graphite: 'dashed',
     moss: 'spotlight', midnight: 'spotlight', tokyo: 'spotlight', slate: 'spotlight',
     bloom: 'pulse', dracula: 'pulse', mocha: 'pulse', cork: 'pulse',
@@ -314,6 +337,7 @@
   const GROUP_LOOK = {
     paper: 'cover', cork: 'cover', clay: 'cover', cloud: 'cover', riso: 'tab', solarized: 'tab',
     swiss: 'spine', bauhaus: 'spine', brutalist: 'spine',
+    'bauhaus-night': 'spine', 'bauhaus-mono': 'spine', 'bauhaus-noir': 'spine', 'bauhaus-studio': 'rule', 'bauhaus-studio-dark': 'rule',
     phosphor: 'foot', blueprint: 'foot',
     github: 'rule', slate: 'rule', graphite: 'rule', midnight: 'rule', nord: 'rule',
     dracula: 'rail', tokyo: 'rail', synthwave: 'rail', gruvbox: 'rail', pop: 'rail', iridescent: 'rail',
