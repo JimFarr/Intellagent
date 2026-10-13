@@ -1187,6 +1187,7 @@ function normEmoji(v) {
 // add: true adds, false removes, 'toggle' flips. Returns the target's reactions.
 function react(ctx, id, d, actor, add = true) {
   return tx(ctx, (events) => {
+    // d.note: a line the chip's hover shows next to the name (e.g. when a queued ⏳ will run)
     const item = getItem(ctx, id);
     const emoji = normEmoji(d.emoji);
     const comment = d.commentId ? item.comments.find((c) => c.id === d.commentId) : null;
@@ -1199,6 +1200,10 @@ function react(ctx, id, d, actor, add = true) {
     if (on === has) return reactions;
     reactions[emoji] = on ? [...who, actor.name] : who.filter((n) => n !== actor.name);
     if (!reactions[emoji].length) delete reactions[emoji];
+    const notes = (target.reactionNotes ||= {});
+    const key = `${emoji}|${actor.name}`;
+    if (on && d.note) notes[key] = String(d.note).slice(0, 200); else delete notes[key];
+    if (!Object.keys(notes).length) delete target.reactionNotes;
     events.push(itemEvent(ctx, on ? 'reaction.added' : 'reaction.removed', item, actor, { emoji, ...(comment ? { commentId: comment.id } : {}) }));
     return reactions;
   });
@@ -3458,7 +3463,19 @@ standing = require('./lib/agents').createAgents({
   onRunStart: (name, events) => {
     for (const e of events) {
       if (e.type !== 'comment.added' || !e.comment?.id || !boards.has(e.board)) continue;
-      try { react(boards.get(e.board), e.itemId, { emoji: '👀', commentId: e.comment.id }, { kind: 'agent', name }); } catch { /* comment gone */ }
+      const ctx = boards.get(e.board);
+      const me = { kind: 'agent', name };
+      try { react(ctx, e.itemId, { emoji: '⏳', commentId: e.comment.id }, me, false); } catch { /* comment gone */ }
+      try { react(ctx, e.itemId, { emoji: '👀', commentId: e.comment.id }, me); } catch { /* comment gone */ }
+    }
+  },
+  // A comment for an agent that can't run yet (settling, throttled or busy): ⏳ now, 👀 when its run starts.
+  onQueued: (name, events, when) => {
+    const note = when.busy ? 'queued — runs after its current run'
+      : `queued — runs about ${new Date(when.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    for (const e of events) {
+      if (e.type !== 'comment.added' || !e.comment?.id || !boards.has(e.board)) continue;
+      try { react(boards.get(e.board), e.itemId, { emoji: '⏳', commentId: e.comment.id, note }, { kind: 'agent', name }); } catch { /* comment gone */ }
     }
   },
   onRunEnd: (name) => {

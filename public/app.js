@@ -2661,7 +2661,7 @@
 
     const col = colById(it.columnId);
     const rx = $('.m-reacts', main) || (() => { const d = el('<div class="m-reacts"></div>'); $('.m-sub', main).after(d); wireReactions(d, m.id); return d; })();
-    rx.innerHTML = reactionsHTML(it.reactions, { add: !m.archived });
+    rx.innerHTML = reactionsHTML(it.reactions, { add: !m.archived, notes: it.reactionNotes });
     $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${nameHTML(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}`;
 
     // needs-you banner
@@ -2754,7 +2754,7 @@
     const sig = `${it.id}:${it.comments.map((c) => `${c.id}${JSON.stringify(c.reactions || {})}`).join('|')}:${think}`;
     if (cmts.dataset.sig !== sig) {
       cmts.dataset.sig = sig;
-      cmts.innerHTML = it.comments.map((c) => `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${nameHTML(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(nameOf(c.author.name))} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}${reactionsHTML(c.reactions, { cid: c.id, add: !m.archived })}</div></div>`).join('')
+      cmts.innerHTML = it.comments.map((c) => `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${nameHTML(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(nameOf(c.author.name))} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}${reactionsHTML(c.reactions, { cid: c.id, add: !m.archived, notes: c.reactionNotes })}</div></div>`).join('')
         + think.map((n) => `<div class="cmt thinking" aria-live="polite">${avatar({ kind: 'agent', name: n }, 'lg')}<div><div class="cmt-head"><b>${nameHTML(n)}</b><span class="kind">${icon('bot', 'sm')}</span><span>is writing a reply</span></div><div class="think-bubble" role="status" aria-label="${esc(nameOf(n))} is writing a reply">${dotsHTML}</div></div></div>`).join('');
       if (!cmts._reactWired) { cmts._reactWired = true; wireReactions(cmts, m.id); }
       cmts.onclick = (e) => {
@@ -3025,11 +3025,11 @@
 
   const REACT_SET = ['👍', '👀', '🎉', '❤️', '🚀', '🤔', '✅', '😄'];
   // Chips for a reactions map; mine are highlighted. data-react carries the emoji, data-cid the comment.
-  function reactionsHTML(reactions, { cid = '', add = true, compact = false } = {}) {
+  function reactionsHTML(reactions, { cid = '', add = true, compact = false, notes = {} } = {}) {
     const entries = Object.entries(reactions || {}).filter(([, who]) => who.length);
     if (!entries.length && !add) return '';
     const me = settings.userName;
-    return `<div class="reacts ${compact ? 'compact' : ''}">${entries.map(([e, who]) => `<button class="react ${who.includes(me) ? 'mine' : ''}" data-react="${esc(e)}" data-cid="${esc(cid)}" title="${esc(e)}|${esc(who.join(', '))}"><span>${e}</span><b>${who.length}</b></button>`).join('')}${add ? `<button class="react add" data-react-add data-cid="${esc(cid)}" title="React|Add an emoji — agents see it, it never wakes them">${icon('smile', 'sm')}</button>` : ''}</div>`;
+    return `<div class="reacts ${compact ? 'compact' : ''}">${entries.map(([e, who]) => `<button class="react ${who.includes(me) ? 'mine' : ''}" data-react="${esc(e)}" data-cid="${esc(cid)}" title="${esc(e)}|${esc(who.map((n) => (notes?.[`${e}|${n}`] ? `${n} — ${notes[`${e}|${n}`]}` : n)).join(', '))}"><span>${e}</span><b>${who.length}</b></button>`).join('')}${add ? `<button class="react add" data-react-add data-cid="${esc(cid)}" title="React|Add an emoji — agents see it, it never wakes them">${icon('smile', 'sm')}</button>` : ''}</div>`;
   }
   function reactPicker(anchor, onPick) {
     $$('.react-pick').forEach((x) => x.remove());

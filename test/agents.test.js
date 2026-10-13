@@ -50,6 +50,22 @@ describe('standing agents', () => {
     assert.deepEqual(asked.reactions, { '👀': ['bot'] }, 'the comment it was woken for is marked seen');
   });
 
+  it('marks a comment ⏳ while it waits for a busy agent and swaps it for 👀 when its run starts', async () => {
+    const it = await s.ok('POST', `${B}/items`, { title: 'queued marker', column: 'Backlog' }, USER);
+    const find = async (text) => (await s.ok('GET', `${B}/items/${it.id}`)).comments.find((c) => c.body === text);
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@slowpoke first' }, USER);
+    await until(async () => (await agentState(s, 'slowpoke')).status === 'running', 4000, 'slowpoke running');
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@slowpoke second' }, USER);
+    const waiting = await until(async () => { const c = await find('@slowpoke second'); return c?.reactions?.['⏳'] ? c : null; }, 4000, 'hourglass');
+    assert.deepEqual(waiting.reactions, { '⏳': ['slowpoke'] });
+    assert.match(waiting.reactionNotes['⏳|slowpoke'], /after its current run/);
+    await until(async () => (await find('@slowpoke second'))?.reactions?.['👀'], 8000, 'seen');
+    const seen = await find('@slowpoke second');
+    assert.deepEqual(seen.reactions, { '👀': ['slowpoke'] }, '⏳ is gone once the run starts');
+    assert.equal(seen.reactionNotes, undefined);
+    await until(async () => (await agentState(s, 'slowpoke')).status === 'idle', 6000, 'slowpoke idle'); // leave it quiet for the next test
+  });
+
   it('retries a failing agent, then flags it and waits for the human', async () => {
     const it = await s.ok('POST', `${B}/items`, { title: 'flaky test', column: 'Backlog' }, USER);
     const { seq } = await s.ok('GET', '/api/app');
