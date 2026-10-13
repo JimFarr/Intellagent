@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { startServer, USER } = require('./helpers');
+const { startServer, until, USER } = require('./helpers');
 const { measure } = require('../scripts/measure-mcp');
 const { makeTools } = require('../lib/tools');
 
@@ -143,6 +143,14 @@ describe('agent tokens on new boards', () => {
       const yes = cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'pat' } });
       assert.equal(yes.code, 0, yes.err);
       assert.equal(yes.json.agent, 'pat');
+    } finally { await s.stop(); }
+  });
+  it('a standing agent added to agents.json while the board runs gets its token without a restart', async () => {
+    const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    try {
+      // as `intellagent agents add late` does: the file is edited, and the running board notices
+      fs.writeFileSync(path.join(s.dir, 'agents.json'), JSON.stringify({ agents: { late: { enabled: false, perms: ['read'] } } }));
+      await until(async () => cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'late' } }).code === 0, 10000, 'late can call the board');
     } finally { await s.stop(); }
   });
 });

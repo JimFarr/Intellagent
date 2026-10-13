@@ -294,7 +294,11 @@ async function status() {
   if (mp) { const pr = projectOf(mp); console.log(`project   ${pr}${fs.existsSync(pr) ? '' : '  ⚠ missing'}`); }
   console.log(`url       ${url}  ${app ? '● running' : '○ not running'}`);
   if (!app) return;
-  const boards = await (await fetch(`${url}/api/boards`)).json();
+  // As the human: a board that requires tokens answers an anonymous caller with an error, not its boards.
+  const t = mp && userToken(mp);
+  const r = await fetch(`${url}/api/boards`, { headers: { 'x-user': os.userInfo().username, ...(t ? { authorization: `Bearer ${t}` } : {}) } });
+  const boards = await r.json().catch(() => null);
+  if (!r.ok || !Array.isArray(boards)) { console.log(`boards    (not readable: ${boards?.error || r.status})`); return; }
   for (const b of boards) console.log(`board     ${b.id} · ${b.items} items · ${b.needsHuman} need you · ${b.archived} archived`);
 }
 

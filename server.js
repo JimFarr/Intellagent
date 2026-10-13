@@ -3690,6 +3690,7 @@ standing = require('./lib/agents').createAgents({
       try { react(boards.get(e.board), e.itemId, { emoji: '⏳', commentId: e.comment.id, note }, { kind: 'agent', name }); } catch { /* comment gone */ }
     }
   },
+  onAgentsChanged: (names) => { for (const n of names) issueAgentToken(n); },
   onRunEnd: (name) => {
     for (const ctx of boards.values()) {
       if (Object.values(ctx.board.items).some((it) => activeLease(it)?.claimant === name)) finishSession(ctx, {}, { kind: 'agent', name });
