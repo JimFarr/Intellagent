@@ -6,8 +6,8 @@
   "agents": {
     "coordinator": {
       "role": "coordinator",
-      "description": "Triages James's new tickets and requests for Intellagent: fills fields, priority and acceptance checklists, groups them, and assigns work (design work to designer).",
-      "model": "sonnet",
+      "description": "Receptionist: triages James's new tickets and requests, fills fields, priority and acceptance checklists, and routes work: design work to designer; code by tier — junior (haiku) small well-specified tickets, mid (sonnet) normal features and bugs, senior (opus) risky or cross-cutting work (risk: high). Checks that assigned agents are actually working.",
+      "model": "haiku",
       "throttleMinutes": 0.1,
       "maxRunsPerHour": 40,
       "pickup": "ready",
@@ -20,6 +20,24 @@
       "role": "designer",
       "description": "Owns Intellagent's look and feel: themes, CSS, layout and motion. Takes design tickets and explains the choices in its review.",
       "throttleMinutes": 1
+    },
+    "junior": {
+      "role": "builder",
+      "model": "haiku",
+      "maxRunsPerHour": 15,
+      "description": "Junior builder (haiku): small, well-specified tickets — copy, styling tweaks, one-file fixes with a clear checklist. Asks on the card when anything is unclear."
+    },
+    "mid": {
+      "role": "builder",
+      "model": "sonnet",
+      "maxRunsPerHour": 10,
+      "description": "Mid builder (sonnet): normal features and bugs across server, UI and CLI, with tests."
+    },
+    "senior": {
+      "role": "builder",
+      "model": "opus",
+      "maxRunsPerHour": 6,
+      "description": "Senior builder (opus): risky or cross-cutting work — agents, permissions, data, anything with risk: high. Plans before changing, explains trade-offs in the review."
     }
   }
 }
