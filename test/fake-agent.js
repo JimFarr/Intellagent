@@ -36,7 +36,7 @@ if (mode === 'stream') {
           body: JSON.stringify({ body: `turn ${turns} in pid ${process.pid} (${kind}${role})` }),
         });
       }
-      process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 10, output_tokens: 5 } })}\n`);
+      process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: turns * 50000 }, num_turns: 1 })}\n`);
     }
   });
   process.stdin.on('end', () => process.exit(0));

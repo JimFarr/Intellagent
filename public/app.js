@@ -4270,7 +4270,7 @@
     const l = a.lastRun;
     const listen = listenLabel(a.listen);
     const why = l?.why ? ` for ${esc(l.why.replace('work.pending', 'work waiting on the board'))}` : '';
-    const live = a.keepAlive ? (a.session ? `session alive · turn ${a.session.turns}/${a.session.recycleAfter} · ` : 'keep-alive (starts on next wake) · ') : '';
+    const live = a.keepAlive ? (a.session ? `session alive · turn ${a.session.turns}/${a.session.recycleAfter}${a.session.context != null ? ` · context ${Math.round(a.session.context / 1000)}k${a.session.recycleAboveTokens ? `/${Math.round(a.session.recycleAboveTokens / 1000)}k` : ''}` : ''} · ` : 'keep-alive (starts on next wake) · ') : '';
     const meta = `${live}${a.model ? `runs on <b>${esc(a.model)}</b>${a.tier ? ` (${a.tier})` : ''} · ` : ''}wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
     // Who changed this agent (the human or an agent manager), newest first, each undoable.
     const fmt = (v) => (v == null ? '—' : typeof v === 'object' ? (Array.isArray(v) ? v.join(', ') : Object.entries(v).map(([k, x]) => `${k}: ${Array.isArray(x) ? x.join('/') : x}`).join(', ')) : String(v));

@@ -313,6 +313,31 @@ describe('keep-alive standing agents', () => {
   });
 });
 
+describe('keep-alive recycling by context size', () => {
+  it('replaces a session once its context per call passes recycleAboveTokens, and reports the size', async () => {
+    // the fake agent's context grows 50k per turn: 50k, 100k, 150k
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      fat: { role: 'builder', run: run('stream'), keepAlive: true, recycleAboveTokens: 120000, throttleMinutes: 0 },
+    } } });
+    const mine = async (id) => (await comments(s, id)).filter((c) => c.startsWith('fat: turn'));
+    const idle = () => until(async () => (await agentState(s, 'fat')).status === 'idle', 6000, 'fat idle');
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'context', column: 'Backlog' }, USER);
+      for (let n = 1; n <= 3; n++) {
+        await s.ok('POST', `${B}/items/${it.id}/comments`, { body: `@fat wake ${n}` }, USER);
+        await until(async () => (await mine(it.id)).length === n, 8000, `turn ${n}`);
+        await idle();
+        if (n === 1) assert.equal((await agentState(s, 'fat')).session.context, 50010);
+      }
+      const [t1, t2, t3] = await mine(it.id);
+      assert.match(t2, /turn 2 in/, 'still under the limit: same session');
+      assert.match(t3, /turn 3 in/, 'turn 3 ran in the same session');
+      assert.equal((await agentState(s, 'fat')).session, null, 'turn 3 read 150k per call: the session was ended');
+      assert.ok(t1 && t2 && t3);
+    } finally { await s.stop(); }
+  });
+});
+
 describe('stop all agents', () => {
   it('kills runs without counting a failure, pauses everyone, frees leases, sends their In Progress tickets to Ready; resume-all restarts', async () => {
     const s = await startServer({ agents: { defaults: fast, agents: { busy: { run: run('slow', 4000) }, calm2: { run: run('ok') } } } });
