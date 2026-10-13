@@ -124,6 +124,10 @@ describe('standing agents', () => {
     assert.match(a.run, /^claude -p .*--allowedTools .*"Bash\(npm test:\*\)"/);
     assert.ok(!a.run.includes('evil'), 'a run command from the API is ignored');
     assert.equal(a.role, 'builder');
+    // the Edit form posts the same shape again: role, perms, wake-ups and throttle change in place
+    const e = await s.ok('POST', '/api/agents', { name: 'bob', role: 'reviewer', perms: ['read'], listen: 'inbox', throttleMinutes: 7, model: 'opus', description: 'looks at diffs' }, USER);
+    assert.deepEqual([e.role, e.perms, e.listen, e.throttleMinutes, e.model, e.description], ['reviewer', ['read'], 'inbox', 7, 'opus', 'looks at diffs']);
+    assert.equal((await s.ok('POST', '/api/agents', { name: 'bob', throttleMinutes: null }, USER)).listen, 'inbox', 'fields not sent are kept');
     await s.ok('POST', '/api/agents', { name: 'lead', role: 'coordinator', coordinator: true }, USER);
     assert.equal((await s.ok('GET', B)).board.coordinator, 'lead');
     await s.ok('DELETE', '/api/agents/bob', undefined, USER);

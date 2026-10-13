@@ -3894,12 +3894,19 @@
       <span class="run-state" data-run="${a.status}">${esc(RUN_LABEL[a.status] || a.status)}${a.queued ? ` · ${a.queued} waiting` : ''}</span>
       ${a.status === 'paused' || a.status === 'failed' ? btn('resume', 'play', 'Resume', 'Resume|Clear failures and run any waiting events') : btn('pause', 'pause', 'Pause', 'Pause|The current run finishes; new events wait')}
       ${btn('run', 'sparkle', 'Run now', 'Run now|Start a run with whatever is waiting, or just to check the board')}
+      ${btn('edit', 'pencil', 'Edit', 'Edit|Change role, permissions, model, what wakes it and its throttle')}
       ${btn('log', 'terminal', 'Log', 'Last run|Output of the most recent run')}
       ${btn('remove', 'x', 'Remove', 'Remove|Delete this standing agent from agents.json — its tickets and history stay')}</div>`;
   }
   async function standingAction(btn) {
     const { standing: act, name } = btn.dataset;
     if (act === 'log') return showRunLog(name);
+    if (act === 'edit') {
+      // the same form as Add, filled in; shown in the Agents drawer whichever page the button was on
+      const body = openDrawer('agentsDrawer', 'Agents', 'bot');
+      body.innerHTML = '<div></div>';
+      return addAgentForm(body.firstChild, state.standing[name]);
+    }
     if (act === 'remove') {
       if (btn.dataset.armed !== '1') { btn.dataset.armed = '1'; $('span', btn).textContent = 'Click to confirm'; setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; $('span', btn).textContent = 'Remove'; } }, 3000); return; }
       try { await api('DELETE', `/api/agents/${encodeURIComponent(name)}`); toast(`Removed ${name}`, { icon: 'bot', timeout: 2200 }); refreshPresence(); } catch (e) { toast(e.message, { kind: 'error' }); }
@@ -3930,23 +3937,32 @@
 
   /* ─── add a standing agent: name + role + permissions (never a raw command) ─── */
   let rolesCache = null;
-  async function addAgentForm(host) {
+  async function addAgentForm(host, edit = null) {
     rolesCache ||= await api('GET', '/api/agents/roles');
     const { roles, perms } = rolesCache;
-    let role = 'builder';
-    let chosen = new Set(roles[role].perms);
+    let role = edit?.role && roles[edit.role] ? edit.role : 'builder';
+    let chosen = new Set(edit?.perms || roles[role].perms);
+    // what wakes it: one simple choice; an array or filter written in agents.json is left as it is
+    const LISTENS = [['', 'Role default'], ...Object.entries(LISTEN_LABEL)];
+    const listenNow = typeof edit?.listen === 'string' ? edit.listen : '';
+    const customListen = edit?.listen != null && typeof edit.listen !== 'string';
+    const modelNow = edit?.model || '';
     const f = el(`<div class="add-agent">
-      <div class="aa-row"><input class="inp" data-aa-name placeholder="Name, e.g. builder" spellcheck="false" maxlength="64"></div>
+      <div class="aa-row"><input class="inp" data-aa-name placeholder="Name, e.g. builder" spellcheck="false" maxlength="64"${edit ? ` value="${esc(edit.name)}" readonly` : ''}></div>
       <div class="aa-label">Role</div>
       <div class="aa-roles">${Object.entries(roles).map(([k, v]) => `<button class="aa-role" data-role="${k}">${icon(v.icon || 'bot')}<b>${esc(v.label)}</b><span>${esc(v.description)}</span></button>`).join('')}</div>
       <div class="aa-label">Allowed to</div>
       <div class="aa-perms">${Object.entries(perms).map(([k, label]) => `<button class="toggle-chip" data-perm="${k}">${esc(label)}</button>`).join('')}<span class="aa-note">plus the board itself, always</span></div>
       <div class="aa-label">Model</div>
-      <div class="aa-perms aa-models">${[['', 'Default'], ['haiku', 'Haiku · junior'], ['sonnet', 'Sonnet · mid'], ['opus', 'Opus · senior']].map(([k, l]) => `<button class="toggle-chip ${k ? '' : 'on'}" data-model="${k}">${l}</button>`).join('')}<span class="aa-note">the receptionist routes small tickets to juniors, risky ones to seniors</span></div>
+      <div class="aa-perms aa-models">${[['', 'Default'], ['haiku', 'Haiku · junior'], ['sonnet', 'Sonnet · mid'], ['opus', 'Opus · senior']].map(([k, l]) => `<button class="toggle-chip ${k === modelNow ? 'on' : ''}" data-model="${k}">${l}</button>`).join('')}<span class="aa-note">the receptionist routes small tickets to juniors, risky ones to seniors</span></div>
+      <div class="aa-label">Wakes on</div>
+      <div class="aa-perms aa-listens">${LISTENS.map(([k, l]) => `<button class="toggle-chip ${!customListen && k === listenNow ? 'on' : ''}" data-listen="${k}">${esc(l)}</button>`).join('')}${customListen ? `<span class="aa-note">custom in agents.json: ${esc(listenLabel(edit.listen))} (kept unless you pick one)</span>` : ''}</div>
+      <div class="aa-label">Throttle</div>
+      <div class="aa-row"><input class="inp" type="number" min="0" step="1" data-aa-throttle placeholder="role default" value="${edit?.throttleMinutes ?? ''}" style="max-width:9em"><span class="aa-note">minutes events wait to arrive together in one run (0 = wake at once)</span></div>
       <div class="aa-label">Description</div>
       <textarea class="inp aa-desc" rows="2" data-aa-desc></textarea>
       <label class="aa-coord" hidden><input type="checkbox" data-aa-coord checked> Make it this board's coordinator (requests go to it)</label>
-      <div class="aa-foot"><span class="aa-hint">It runs headless Claude Code when something is for it — needs <code>claude</code> installed and signed in.</span><span class="grow"></span><button class="btn ghost sm" data-aa-cancel>Cancel</button><button class="btn primary sm" data-aa-add>${icon('plus', 'sm')}Add agent</button></div>
+      <div class="aa-foot"><span class="aa-hint">It runs headless Claude Code when something is for it — needs <code>claude</code> installed and signed in.</span><span class="grow"></span><button class="btn ghost sm" data-aa-cancel>Cancel</button><button class="btn primary sm" data-aa-add>${edit ? icon('check', 'sm') : icon('plus', 'sm')}${edit ? 'Save changes' : 'Add agent'}</button></div>
     </div>`);
     host.replaceWith(f);
     const paint = () => {
@@ -3960,24 +3976,35 @@
       role = k;
       chosen = new Set(roles[k].perms);
       const name = $('[data-aa-name]', f);
-      if (!name.value || Object.keys(roles).includes(name.value)) name.value = k;
+      if (!edit && (!name.value || Object.keys(roles).includes(name.value))) name.value = k;
       paint();
     };
-    pickRole('builder');
+    if (edit) {
+      $('[data-aa-desc]', f).value = edit.description || '';
+      paint();
+    } else pickRole('builder');
     f.addEventListener('click', async (e) => {
       const rb = e.target.closest('[data-role]');
       if (rb) { pickRole(rb.dataset.role); return; }
       const mb = e.target.closest('[data-model]');
       if (mb) { $$('[data-model]', f).forEach((b) => b.classList.toggle('on', b === mb)); return; }
+      const lb = e.target.closest('[data-listen]');
+      if (lb) { $$('[data-listen]', f).forEach((b) => b.classList.toggle('on', b === lb)); return; }
       const pb = e.target.closest('[data-perm]');
       if (pb) { if (chosen.has(pb.dataset.perm)) chosen.delete(pb.dataset.perm); else chosen.add(pb.dataset.perm); paint(); return; }
       if (e.target.closest('[data-aa-cancel]')) { fillAgents($('#agentsDrawer .drawer-body')); return; }
       if (e.target.closest('[data-aa-add]')) {
         const name = $('[data-aa-name]', f).value.trim();
         try {
-          await api('POST', `/api/agents?board=${encodeURIComponent(state.boardId)}`, { name, role, perms: [...chosen], model: $('[data-model].on', f)?.dataset.model || null, description: $('[data-aa-desc]', f).value.trim(), coordinator: role === 'coordinator' && $('[data-aa-coord]', f).checked });
-          if (role === 'coordinator' && $('[data-aa-coord]', f).checked) state.board.coordinator = name;
-          toast(`${name} is on call`, { icon: 'bot', kind: 'ok', timeout: 2500 });
+          const listen = $('[data-listen].on', f)?.dataset.listen || undefined; // blank: leave as it is / role default
+          const throttle = $('[data-aa-throttle]', f).value.trim();
+          const coord = !edit && role === 'coordinator' && $('[data-aa-coord]', f).checked;
+          await api('POST', `/api/agents?board=${encodeURIComponent(state.boardId)}`, {
+            name, role, perms: [...chosen], model: $('[data-model].on', f)?.dataset.model || null, description: $('[data-aa-desc]', f).value.trim(),
+            ...(listen ? { listen } : {}), ...(throttle !== '' ? { throttleMinutes: Number(throttle) } : edit ? { throttleMinutes: null } : {}), coordinator: coord,
+          });
+          if (coord) state.board.coordinator = name;
+          toast(edit ? `Saved ${name}` : `${name} is on call`, { icon: 'bot', kind: 'ok', timeout: 2500 });
           await refreshPresence();
           if ($('#agentsDrawer')) fillAgents($('#agentsDrawer .drawer-body'));
         } catch (err) { toast(err.message, { kind: 'error' }); }
@@ -4291,7 +4318,7 @@
     const listen = listenLabel(a.listen);
     const why = l?.why ? ` for ${esc(l.why.replace('work.pending', 'work waiting on the board'))}` : '';
     const live = a.keepAlive ? (a.session ? `session alive · turn ${a.session.turns}/${a.session.recycleAfter}${a.session.context != null ? ` · context ${Math.round(a.session.context / 1000)}k${a.session.recycleAboveTokens ? `/${Math.round(a.session.recycleAboveTokens / 1000)}k` : ''}` : ''} · ` : 'keep-alive (starts on next wake) · ') : '';
-    const meta = `${live}${a.model ? `runs on <b>${esc(a.model)}</b>${a.tier ? ` (${a.tier})` : ''} · ` : ''}wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
+    const meta = `${live}${a.model ? `runs on <b>${esc(a.model)}</b>${a.tier ? ` (${a.tier})` : ''} · ` : ''}can ${esc((a.perms || []).concat('board').join(', '))} · wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
     // Who changed this agent (the human or an agent manager), newest first, each undoable.
     const fmt = (v) => (v == null ? '—' : typeof v === 'object' ? (Array.isArray(v) ? v.join(', ') : Object.entries(v).map(([k, x]) => `${k}: ${Array.isArray(x) ? x.join('/') : x}`).join(', ')) : String(v));
     const changes = (a.changes || []).slice(-5).reverse().map((c) => `<div class="chg"><span class="who">${avatar(c.by)}${nameHTML(c.by?.name)}</span><span class="what">${Object.entries(c.changes).map(([k, v]) => `<b>${esc(k.replace(/^profile\./, ''))}</b> ${esc(fmt(v.from))} → ${esc(fmt(v.to))}`).join(' · ')}</span><time>${rel(c.at)}</time><button class="btn sm ghost" data-revert="${esc(c.id)}" data-agent="${esc(a.name)}" title="Revert|Put these values back">${icon('restore', 'sm')}</button></div>`).join('');
