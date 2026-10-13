@@ -19,25 +19,69 @@
     "designer": {
       "role": "designer",
       "description": "Owns Intellagent's look and feel: themes, CSS, layout and motion. Takes design tickets and explains the choices in its review.",
-      "throttleMinutes": 1
+      "throttleMinutes": 1,
+      "areas": [
+        "public/app.css",
+        "public/index.html"
+      ],
+      "concerns": [
+        "dark/light parity across every theme",
+        "calm motion: ease in/out, no bounce, prefers-reduced-motion",
+        "text contrast and focus visibility",
+        "phone width (375px)"
+      ]
     },
     "junior": {
       "role": "builder",
       "model": "haiku",
       "maxRunsPerHour": 15,
-      "description": "Junior builder (haiku): small, well-specified tickets — copy, styling tweaks, one-file fixes with a clear checklist. Asks on the card when anything is unclear."
+      "description": "Junior builder (haiku): small, well-specified tickets — copy, styling tweaks, one-file fixes with a clear checklist. Asks on the card when anything is unclear.",
+      "areas": [
+        "AGENTS.md",
+        "skills/",
+        "public/app.js"
+      ],
+      "concerns": [
+        "keep the change as small as the ticket",
+        "match the surrounding code style",
+        "ask when the ticket is unclear"
+      ]
     },
     "mid": {
       "role": "builder",
       "model": "sonnet",
       "maxRunsPerHour": 10,
-      "description": "Mid builder (sonnet): normal features and bugs across server, UI and CLI, with tests."
+      "description": "Mid builder (sonnet): normal features and bugs across server, UI and CLI, with tests.",
+      "areas": [
+        "bin/intellagent.js",
+        "cli.js",
+        "mcp.js",
+        "lib/locate.js",
+        "lib/templates.js",
+        "test/flows.test.js"
+      ],
+      "concerns": [
+        "API errors carry a code and a hint",
+        "CLI, MCP and AGENTS.md stay in step with the API",
+        "a test for every route or behaviour"
+      ]
     },
     "senior": {
       "role": "builder",
       "model": "opus",
       "maxRunsPerHour": 6,
-      "description": "Senior builder (opus): risky or cross-cutting work — agents, permissions, data, anything with risk: high. Plans before changing, explains trade-offs in the review."
+      "description": "Senior builder (opus): risky or cross-cutting work — agents, permissions, data, anything with risk: high. Plans before changing, explains trade-offs in the review.",
+      "areas": [
+        "server.js",
+        "lib/agents.js",
+        "lib/worktrees.js",
+        "test/agents.test.js"
+      ],
+      "concerns": [
+        "no privilege escalation: human-only gates, grants and permissions stay intact",
+        "agent wake loops and run cost",
+        "data integrity: everything through tx(), formats stay compatible"
+      ]
     }
   }
 }
