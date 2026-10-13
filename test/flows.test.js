@@ -205,6 +205,10 @@ describe('agent flows', () => {
     assert.equal(evs[0].reply, 'Pass. Lease L4 until 09:20.');
     assert.deepEqual(evs[0].addressed, ['qa'], 'and wakes it');
     assert.equal(evs[0].request.by, 'qa');
+    const { seq: s2 } = await s.ok('GET', '/api/app');
+    await s.ok('POST', `${B}/requests/${req.id}/reply`, { body: 'Done with L4.' }, { agent: 'qa' });
+    const [back] = (await s.ok('GET', `/api/events?since=${s2}&for=guard&types=request.*`)).events;
+    assert.deepEqual(back.addressed, ['guard'], 'the asker saying it is done wakes the agent it asked');
   });
 
   it('lease requests: ask the holder, who hands over or declines', async () => {
