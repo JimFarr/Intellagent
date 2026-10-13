@@ -3036,7 +3036,7 @@ function workWarnings(ctx, item) {
   const secs = Math.round((Date.now() - startedMs) / 1000);
   if (secs < 60) out.push(`${item.id} spent ${secs}s in ${work.name}. Start tickets (POST …/start) before you work on them, so the board shows real work.`);
   try {
-    const log = require('child_process').execFileSync('git', ['log', '--all', `--grep=${item.id}([^0-9]|$)`, '-E', '--format=%ct %h'], { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const log = require('child_process').execFileSync('git', ['log', '--all', `--grep=${item.id}([^0-9]|$)`, '-E', '--format=%ct %h'], { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     const early = log.split('\n').filter(Boolean).map((l) => l.split(' ')).filter(([t]) => Number(t) * 1000 < startedMs - 5000).map(([, h]) => h);
     if (early.length) out.push(`Commit${early.length > 1 ? 's' : ''} ${early.join(', ')} mention ${item.id} but came before it was started.`);
   } catch { /* not a git repo, or git missing */ }
@@ -3466,7 +3466,7 @@ let fileCache = { at: 0, list: [] };
 route('GET', '/api/files', 'Project files and folders matching ?q= (git-tracked; up to 40) — for agent areas', ({ q }) => {
   if (Date.now() - fileCache.at > 30_000) {
     let files = [];
-    try { files = require('child_process').execFileSync('git', ['ls-files'], { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 5000, maxBuffer: 32 * 1024 * 1024 }).split('\n').filter(Boolean); } catch { /* not a repo */ }
+    try { files = require('child_process').execFileSync('git', ['ls-files'], { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 5000, maxBuffer: 32 * 1024 * 1024, windowsHide: true }).split('\n').filter(Boolean); } catch { /* not a repo */ }
     const dirs = new Set();
     for (const x of files) { const parts = x.split('/'); for (let i = 1; i < parts.length; i++) dirs.add(`${parts.slice(0, i).join('/')}/`); }
     fileCache = { at: Date.now(), list: [...dirs, ...files].sort() };
