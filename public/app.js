@@ -271,10 +271,10 @@
       '.column { border-radius: 34px; border-color: rgb(255 255 255 / .75); box-shadow: 0 22px 44px -30px rgb(15 90 100 / .5); } .col-head { position: relative; } .col-head::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: -6px; height: 9px; background: radial-gradient(circle at 8px -3px, transparent 7px, var(--col, var(--accent)) 7.5px, var(--col, var(--accent)) 9px, transparent 9.5px) 0 0 / 16px 9px repeat-x; opacity: .55; } .card { border-radius: 26px 26px 26px 6px; border-color: rgb(255 255 255 / .95); background: linear-gradient(170deg, rgb(255 255 255 / .95), rgb(232 246 246 / .88)); box-shadow: 0 10px 22px -12px rgb(15 90 100 / .45), inset 0 -2px 0 rgb(15 122 134 / .08); } .card:nth-child(2n) { border-radius: 26px 26px 6px 26px; } .card:hover { box-shadow: 0 16px 30px -12px rgb(15 90 100 / .5), 0 0 0 1px rgb(15 122 134 / .3); } .btn.primary { background: linear-gradient(135deg, #0f7a86, #2f8fb8); border-radius: 999px; } .app-name { color: #0f7a86; }'),
     bloom: T('Bloom', 'dark', ['#170f1c', '#1f1526', '#271b30', '#f3e8f4', '#a08aa8', '#3a2a44', '#e58ad6', '#f6c453', '#ff7a9a', '#9d8cff', '#f6c453', '#7fd6a0', '#f2a05c', '#ff5f7e', '#5b1e5a', '#3a1d63', '#6b4a12'],
       { card: 22, col: 32, modal: 32, ctl: 14, bw: 1, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'orbit', enter: 'zoom', lanes: 'glass', chips: 'pill', bg: 'blobs', texture: true, avatar: 'round', md: 'clean', titleW: 600, display: "'Fraunces'", colAlpha: 70 },
-      '.card { border-radius: 34px 6px 34px 6px; border-color: rgb(229 138 214 / .18); background: radial-gradient(120% 100% at 100% 0%, rgb(229 138 214 / .14), transparent 60%), linear-gradient(150deg, #2e2038, #231a2b); box-shadow: 0 14px 28px -16px rgb(0 0 0 / .85); } .card:nth-child(2n) { border-radius: 6px 34px 6px 34px; background: radial-gradient(120% 100% at 0% 0%, rgb(246 196 83 / .10), transparent 60%), linear-gradient(150deg, #2e2038, #231a2b); } .card:hover { box-shadow: 0 20px 40px -16px rgb(229 138 214 / .45), 0 0 0 1px rgb(246 196 83 / .3); } .column { border-radius: 90px 90px 30px 30px / 60px 60px 30px 30px; border-color: rgb(229 138 214 / .14); background: linear-gradient(180deg, rgb(58 30 70 / .55), rgb(31 21 38 / .7)); } .col-head { padding-top: 22px; justify-content: center; } .col-name { font-family: var(--display); font-style: italic; font-weight: 600; } .app-name { background: linear-gradient(90deg, #e58ad6, #f6c453); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; } .btn.primary { background: linear-gradient(135deg, #e58ad6, #b56ae0); color: #1b0f20; border-radius: 18px 4px 18px 4px; }'),
+      '.card { border-radius: 34px 6px 34px 6px; border-color: rgb(229 138 214 / .18); background: radial-gradient(120% 100% at 100% 0%, rgb(229 138 214 / .14), transparent 60%), linear-gradient(150deg, #2e2038, #231a2b); box-shadow: 0 14px 28px -16px rgb(0 0 0 / .85); } .card:nth-child(2n) { border-radius: 6px 34px 6px 34px; background: radial-gradient(120% 100% at 0% 0%, rgb(246 196 83 / .10), transparent 60%), linear-gradient(150deg, #2e2038, #231a2b); } .card:hover { box-shadow: 0 20px 40px -16px rgb(229 138 214 / .45), 0 0 0 1px rgb(246 196 83 / .3); } .column { border-radius: 90px 90px 30px 30px / 60px 60px 30px 30px; border-color: rgb(229 138 214 / .14); background: linear-gradient(180deg, rgb(58 30 70 / .55), rgb(31 21 38 / .7)); } .col-head { padding-top: 22px; justify-content: center; } .col-name { font-family: var(--display); font-style: italic; font-weight: 600; } .app-name { background: linear-gradient(90deg, #e58ad6, #f6c453); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; } .btn.primary { background: linear-gradient(135deg, #e58ad6, #b56ae0); color: #1b0f20; border-radius: 18px 4px 18px 4px; } .group { --g-r: calc(34px + var(--gi)) calc(6px + var(--gi)); --cover-r: 34px 6px; --tab-x: 30px; } .group-cards > .card, .group-cards > .card:nth-child(2n) { border-radius: 34px 6px; }'),
     cloud: T('Cloud', 'light', ['#f1efea', '#ebe8e1', '#fbfaf7', '#2f2d35', '#8b8792', '#e3dfd7', '#8d82d6', '#e39aa6', '#e2898c', '#7fa6d6', '#dfb465', '#78b692', '#e0a36c', '#d66f6e', '#ddd7f6', '#f7d9de', '#d3ebde'],
       { card: 18, col: 26, modal: 28, ctl: 14, bw: 1, cards: 'elevated', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'solid', chips: 'pill', bg: 'blobs', texture: false, md: 'clean', avStyle: 'tint', titleW: 600, display: "'Outfit'", colAlpha: 100 },
-      '.column { background: linear-gradient(180deg, #edeae3, #e8e4dc); border-color: transparent; } .card { padding: 14px 15px 12px; } .c-title { font-size: 14.5px; letter-spacing: -.005em; } .col-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; } .btn.primary { background: #2f2d35; color: #fbfaf7; } .app-name { color: #2f2d35; }'),
+      '.column { background: linear-gradient(180deg, #edeae3, #e8e4dc); border-color: transparent; } .card { padding: 14px 15px 12px; } .group { --cpx: 15px; } .c-title { font-size: 14.5px; letter-spacing: -.005em; } .col-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; } .btn.primary { background: #2f2d35; color: #fbfaf7; } .app-name { color: #2f2d35; }'),
     liquid: T('Liquid', 'light', ['#dfe6f6', '#ffffff', '#ffffff', '#111733', '#5a6482', '#cdd6ec', '#3d6bff', '#ff5aa6', '#ff5d73', '#3d6bff', '#ffb020', '#22c08a', '#ff8a3d', '#ef4058', '#7aa0ff', '#ff9bd2', '#7cf0d6'],
       { card: 18, col: 28, modal: 30, ctl: 14, bw: 1, cards: 'glass', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'zoom', lanes: 'glass', chips: 'pill', bg: 'mesh', texture: false, md: 'clean', avStyle: 'gem', titleW: 600, display: "'Outfit'", colAlpha: 40 },
       '.column, .card, .modal, .drawer, .pill-btn, .search input { box-shadow: inset 0 1px 0 rgb(255 255 255 / .9), inset 0 0 0 1px rgb(255 255 255 / .35), 0 18px 40px -26px rgb(30 50 140 / .45); } .modal, .drawer { background: rgb(255 255 255 / .72); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); } .pill-btn { background: rgb(255 255 255 / .55); } .btn.primary { background: linear-gradient(180deg, #5a83ff, #2f5cf5); border-radius: 999px; box-shadow: inset 0 1px 0 rgb(255 255 255 / .45), 0 8px 18px -8px rgb(47 92 245 / .6); } .app-name { background: linear-gradient(90deg, #3d6bff, #ff5aa6); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }'),
@@ -321,6 +321,8 @@
   for (const [k, v] of Object.entries(GROUP_LOOK)) if (THEMES[k]) THEMES[k].style.groups ??= v;
   // Organic themes lean on their colour fields: let the background blobs come through more.
   for (const [k, o] of [['moss', '.62'], ['clay', '.7'], ['tide', '.75'], ['bloom', '.6'], ['cloud', '.8'], ['liquid', '.95']]) if (THEMES[k]) THEMES[k].vars['fx-o'] = o;
+  // Blueprint's contours are drawn in one ink, like the sheet itself (index lines in its text white, not gold).
+  THEMES.blueprint.vars['topo-index'] = THEMES.blueprint.vars.text;
   const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['mesh', 'Mesh'], ['stars', 'Stars'], ['topo', 'Topo'], ['halftone', 'Halftone'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['confetti', 'Confetti'], ['none', 'None']];
   const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES.intellagent).style });
   // A user setting of "theme" (or unset) defers to the theme's own choice.
@@ -411,6 +413,7 @@
     let cols = ['#fff', '#fff', '#fff'];
     let mx = 0;
     let my = 0;
+    let last = 0;
     const seed = () => {
       const n = Math.min(280, Math.round((innerWidth * innerHeight) / 6500));
       pts = Array.from({ length: n }, () => ({ x: Math.random() * innerWidth, y: Math.random() * innerHeight, z: Math.random() ** 1.7 * 0.9 + 0.1, t: Math.random() * 6.28, c: Math.random() < 0.2 }));
@@ -423,15 +426,20 @@
       seed();
       if (!raf) frame();
     };
-    const frame = () => {
+    // Capped at 30 fps (a slow drift loses nothing, and it halves the cost; a quarter on 120 Hz screens).
+    // Steps are scaled by the time elapsed, in 60 fps units, so the speed is the same at any refresh rate.
+    const frame = (now = performance.now()) => {
       raf = 0;
       if (!cv) return;
       const move = !reduced() && !document.hidden;
+      if (move && last && now - last < 1000 / 30 - 2) { raf = requestAnimationFrame(frame); return; }
+      const k = move && last ? Math.min(4, (now - last) / (1000 / 60)) : 0;
+      last = move ? now : 0;
       ctx.clearRect(0, 0, innerWidth, innerHeight);
       const light = document.documentElement.dataset.mode === 'light';
       for (const p of pts) {
         if (move) {
-          p.y -= p.z * 0.14; p.x += p.z * 0.05; p.t += 0.025 * p.z;
+          p.y -= p.z * 0.14 * k; p.x += p.z * 0.05 * k; p.t += 0.025 * p.z * k;
           if (p.y < -4) { p.y = innerHeight + 4; p.x = Math.random() * innerWidth; }
           if (p.x > innerWidth + 4) p.x = -4;
         }
@@ -441,7 +449,7 @@
         ctx.arc(p.x + mx * p.z * 16, p.y + my * p.z * 16, p.z * 1.7, 0, 6.283);
         ctx.fill();
       }
-      if (move && document.documentElement.dataset.bg === 'stars') raf = requestAnimationFrame(frame);
+      if (move && document.documentElement.dataset.bg === 'stars') raf = requestAnimationFrame(frame); else last = 0;
     };
     addEventListener('resize', resize);
     addEventListener('pointermove', (e) => { mx = e.clientX / innerWidth - 0.5; my = e.clientY / innerHeight - 0.5; });
@@ -450,7 +458,7 @@
       sync() {
         const on = document.documentElement.dataset.bg === 'stars';
         if (!cv) { cv = document.getElementById('stars'); if (!cv) return; ctx = cv.getContext('2d'); }
-        if (!on) { cancelAnimationFrame(raf); raf = 0; ctx.clearRect(0, 0, cv.width, cv.height); return; }
+        if (!on) { cancelAnimationFrame(raf); raf = 0; last = 0; ctx.clearRect(0, 0, cv.width, cv.height); return; }
         const cs = getComputedStyle(document.documentElement);
         cols = [cs.getPropertyValue('--text').trim(), cs.getPropertyValue('--accent').trim(), cs.getPropertyValue('--accent-2').trim()];
         if (!pts.length) resize();
@@ -507,7 +515,7 @@
       }
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       ctx.strokeStyle = c.accent; ctx.lineWidth = Math.max(0.7, 1 * k); ctx.stroke(paths[0]);
-      ctx.strokeStyle = c['accent-2']; ctx.lineWidth = Math.max(1, 1.9 * k); ctx.stroke(paths[1]);
+      ctx.strokeStyle = c['topo-index'] || c['accent-2']; ctx.lineWidth = Math.max(1, 1.9 * k); ctx.stroke(paths[1]);
     }
 
     // two offset halftone screens (15° and 75°) whose dots swell where each colour pools
@@ -3850,9 +3858,19 @@
   const LISTEN_LABEL = { addressed: 'mentions & assignments', inbox: 'everything on its tickets', human: 'everything you do', 'new-tickets': 'new tickets' };
   const listenLabel = (l) => [].concat(l || 'inbox').map((x) => (typeof x === 'string' ? LISTEN_LABEL[x] || x : Object.entries(x).map(([k, v]) => `${k}=${v}`).join(' '))).join(' + ');
 
+  // "mid · sonnet · last run 12.3k in / 800 out · today 41k in / 3.2k out (5 runs)"; n/a when the run reported none
+  function usageLine(a) {
+    const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
+    const pair = (u) => `${k(u.input)} in / ${k(u.output)} out`;
+    const last = a.lastRun?.usage;
+    const day = a.usageToday;
+    const model = a.model ? `${a.tier ? `${esc(a.tier)} · ` : ''}${esc(a.model)}` : 'default model';
+    const tip = (u) => (u ? `cache read ${u.cacheRead || 0}, cache written ${u.cacheCreated || 0}` : 'This run reported no token usage');
+    return `<div class="standing-usage"><span>${model}</span><span title="${tip(last)}">last run ${last ? pair(last) : 'n/a'}</span><span>today ${day ? `${pair(day)} (${day.runs} run${day.runs === 1 ? '' : 's'})` : 'n/a'}</span></div>`;
+  }
   function standingControls(a) {
     const btn = (act, ic, label, tip) => `<button class="btn sm ghost" data-standing="${act}" data-name="${esc(a.name)}" title="${tip}">${icon(ic, 'sm')}<span>${label}</span></button>`;
-    return `<div class="standing-ctl">
+    return `${usageLine(a)}<div class="standing-ctl">
       <span class="run-state" data-run="${a.status}">${esc(RUN_LABEL[a.status] || a.status)}${a.queued ? ` · ${a.queued} waiting` : ''}</span>
       ${a.status === 'paused' || a.status === 'failed' ? btn('resume', 'play', 'Resume', 'Resume|Clear failures and run any waiting events') : btn('pause', 'pause', 'Pause', 'Pause|The current run finishes; new events wait')}
       ${btn('run', 'sparkle', 'Run now', 'Run now|Start a run with whatever is waiting, or just to check the board')}

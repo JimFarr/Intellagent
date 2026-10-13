@@ -24,7 +24,15 @@ The whole loop for one ticket:
 | Verdict | (human) `review.approved` / `review.changes_requested` | Feedback shows in `…/work`; `start` again to address it |
 | End of session | `POST …/finish { summary }` | Releases everything you hold, posts the digest |
 
-Errors are `{ "error": "…", "code": "LEASED", "hint": "…" }`. Codes: `LEASED` `BOARD_HELD` `BLOCKED` `WIP_LIMIT` `HUMAN_ONLY` `VERSION_CONFLICT` `LEASES_ACTIVE` `UNKNOWN_FIELD` `NOT_FOUND` `UNAUTHORIZED` `FORBIDDEN` `BAD_REQUEST`. Branch on `code`, follow `hint`.
+Errors are `{ "error": "…", "code": "LEASED", "hint": "…" }`. Branch on `code`, follow `hint`. Codes:
+
+| Group | Codes |
+|---|---|
+| Held or blocked | `LEASED` `NOT_LEASED` `BOARD_HELD` `LEASES_ACTIVE` `BLOCKED` `WIP_LIMIT` `LOCKED_COLUMN` |
+| Not yours to do | `HUMAN_ONLY` `OWN_WORK` `OUT_OF_SCOPE` `NOT_DELEGABLE` `FORBIDDEN` `UNAUTHORIZED` |
+| Wrong input | `BAD_REQUEST` `UNKNOWN_FIELD` `IMMUTABLE` `EXPLICIT` `BAD_EMOJI` `MODEL_NOT_ALLOWED` `WIDEN` `NO_AGENT` |
+| Wrong state | `VERSION_CONFLICT` `REVIEW_OPEN` `NOT_TEST` `NOT_FOUND` `ARCHIVED` `LOCKED` `CONFLICT` `TOO_LARGE` |
+| Agent management | `STANDING_AGENT` `ONLINE` `HOLDS_LEASES` |
 
 ## 0. Rules of the road
 
@@ -202,6 +210,8 @@ The ticket glows on the board. The reply returns a `questionId`. A ticket can ho
 
 **What not to post.** Keep cards and the digest readable: no step-by-step progress logs, nothing git already shows (diffs, file lists), no restating the ticket. Post decisions, blockers, results and how to verify.
 
+**Requests.** The human's free-form asks ("create tickets for X") are *requests*, sent to the board's coordinator or a named agent. They arrive as `handle_request` in `…/work`: do it, then `POST …/requests/<id>/reply { "body": "what you did, with ticket ids", "done": true }`. `GET …/requests` lists them; `POST …/requests { "body": "…", "to": "<agent>" }` sends one (to the coordinator if `to` is omitted).
+
 ### Getting woken up
 You only see board events when you look. Ways to make answers on cards reach you:
 - **During a session:** run `intellagent wait --agent <you>` as a **background** command. It blocks until something arrives in your inbox, prints it and exits — your shell tool notifies you. It remembers its place, so nothing is missed between runs. Re-arm it after handling the events.
@@ -320,40 +330,37 @@ The human edits columns in Settings › Columns (rename, colour, icon, flags, or
 - Windows PowerShell: use `curl.exe`, not `curl`; quoting JSON is painful, so prefer the CLI.
 - MCP clients: `node intellagent/mcp.js` exposes all of this as tools.
 
-## 9. A good working loop
+## 9. Setting up a board in a project
+
+Asked to "set up Intellagent here"? Use the **intellagent-setup** skill (`skills/intellagent-setup/SKILL.md`). It stops and asks the human at three points (template and prefix, the proposed fields and rules, the seed tickets) and only touches `.intellagent/`, `.mcp.json`, `CLAUDE.md` and `.git/hooks/`, and only the ones the human agreed to. The commands it uses: `intellagent init --template <t> --name "…" --prefix XX`, `intellagent templates`, `intellagent status`, `intellagent hook install`, `intellagent autostart on`.
+
+## 10. Route index
+
+Every route the server has, for checking a call before you make it. `GET /api` lists the same routes live, each with its description. `:board` is `main` unless `GET /api/boards` says otherwise; `:id` is a ticket id, case-insensitive.
 
 ```
-1. GET …/brief                        (once per session or run)
-2. Take the first "next" action — usually POST …/items/<ID>/start { status }
-3. Work. Update your status; renew the lease if it runs long (…/work warns you).
-4. Unsure? POST …/attention { reason }; carry on with something else; the answer appears in …/work
-5. Done → POST …/review { summary }   (Done itself is human-only)
-6. GET …/work again — repeat from 2 until "next" is empty
-7. End of session → POST …/finish { summary }
+Orient       GET /api  /api/docs  /api/schema  /api/app  /api/boards  /api/templates  /api/presence  /api/permissions/me
+             GET /api/boards/:board  …/hash  …/summary  …/brief  …/work  …/metrics  …/listeners
+Tickets      POST …/items  …/items/bulk          GET …/items/:id  …/items/:id/history  …/items/:id/transitions
+             PATCH …/items/:id                   POST …/items/:id/move  …/comments  …/attachments  …/reactions  …/archive
+             DELETE …/items/:id (test tickets)   DELETE …/items/:id/attachments/:att  …/reactions  …/test-items
+Working      POST …/items/:id/start  …/review  …/review/decision (human or grant)  …/attention  …/finish  …/digest
+             PUT …/items/:id/status              DELETE …/items/:id/attention        GET …/digest
+Leases       POST …/items/:id/lease  …/lease/request  …/lease/handover  …/lease/decline   DELETE …/items/:id/lease
+             GET/POST/DELETE …/master            PUT …/master/status
+Requests     GET/POST …/requests                 POST …/requests/:id/reply
+Archive      GET …/archive                       POST …/archive  …/archive/:id/restore
+Columns      GET/POST …/columns                  PATCH/DELETE …/columns/:column    GET …/columns/:column/items
+Schema       GET/PUT …/schema                    POST …/schema/fields              PATCH/DELETE …/schema/fields/:key
+             GET/POST …/ticket-templates         PATCH/DELETE …/ticket-templates/:key
+Rules        GET/PUT …/directives                PATCH /api/boards/:board          POST /api/boards      PATCH /api/app
+Search       GET/POST /api/search
+Events       GET /api/events  /api/events/wait  /api/stream
+             GET/POST /api/subscriptions         DELETE /api/subscriptions/:id     GET …/:id/next   POST …/:id/ack
+Agents       GET/POST /api/agents  /api/agents/roles  /api/agents/:name  …/:name/log     PATCH/DELETE /api/agents/:name
+             POST /api/agents/stop-all  /api/agents/resume-all  /api/agents/:name/pause  …/resume  …/run
+Profiles     GET /api/profiles  /api/profiles/me  /api/names/suggest     PATCH /api/profiles/me     DELETE /api/presence/:name
+Files        GET /avatars/:file  /files/:board/:file
 ```
 
-## 10. Setting up a board in a project
-
-Asked to "set up Intellagent here"? Follow this. **Stop and ask the human at the three ✋ points** — the board is how they will steer you, so its shape is their call.
-
-1. **Check.** `intellagent help` must work (if not: the human installs it with `npm link` from the Intellagent folder). If `intellagent status` already finds a `.intellagent/`, skip to step 5 and offer to reshape the existing board instead.
-2. **Look around** before proposing anything: README, CLAUDE.md / AGENTS.md, package manifests, top-level folders, test setup, `TODO`/`FIXME` count, open issues (`gh issue list` if available).
-3. ✋ **Ask** (one round of questions):
-   - Template: `software`, `research`, `ops`, `default` or `simple` (`intellagent templates`). Recommend one from what you found.
-   - Board name and ticket prefix (default: folder name, e.g. *Acme Billing* → `AB`).
-   - What to seed tickets from: TODO comments, GitHub issues, a plan they give you, or nothing.
-   - `init` also registers the MCP tools (`.mcp.json`), adds a short block to CLAUDE.md pointing agents at `intellagent brief`, sets the default agent name (`claude`; `--agent` to change) and generates the human's sign-in token (`.intellagent/local.json`, git-ignored). Opt out with `--no-mcp`, `--no-claude`.
-4. **Scaffold and start:**
-   `intellagent init --template software --name "Acme Billing" --prefix AB`
-   It starts the board in the background and opens it signed in. Confirm with `intellagent status`; then run `intellagent brief` to see what agents will see.
-5. **Tailor the schema and rules.** Draft, don't write yet:
-   - Field options that fit the project, e.g. the software template's `area` tags from the repo's top-level folders.
-   - Board rules about **how to use the board only** (where work comes from, when to ask, review). Do **not** copy CLAUDE.md or other conventions into them — the board already shows those files read-only next to its rules. If a convention is missing from CLAUDE.md, propose adding it there instead.
-   - Column changes, if the template doesn't fit (`POST/PATCH /api/boards/main/columns`).
-6. ✋ **Show the human** the proposed fields, rules and column changes in one message; apply only what they approve (`POST /schema/fields`, `PUT /directives`).
-7. **Introduce yourself:** `PATCH /api/profiles/me` with a colour, glyph, label and a one-paragraph description of your role.
-8. ✋ **Seed tickets** from the agreed source. Show the list first if there are more than ~10. Then create them with sensible `type`, `priority`, `parent` groups, description checklists and `blockedBy` links. Keep the first batch under ~25; mention what you left out.
-9. **Wire up:** in a git repo, offer `intellagent hook install`. If you will be the only agent, take the master lease. Tell the human how answers reach you: `intellagent wait` in the background while you work, or offer a standing agent (`intellagent agents add <name>`) and `intellagent autostart on` for unattended work.
-10. **Hand over:** post a digest entry describing the setup, raise *needs you* on anything still uncertain, and tell the human the URL (`intellagent open`).
-
-Only touch `.intellagent/`, `.mcp.json`, `CLAUDE.md` and `.git/hooks/` — and only the ones the human agreed to.
+`/api/boards/:board` is shortened to `…` in the table. Human-only actions (pausing or running standing agents, review decisions without a grant) answer `403 HUMAN_ONLY`.

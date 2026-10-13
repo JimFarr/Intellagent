@@ -36,7 +36,7 @@ if (mode === 'stream') {
           body: JSON.stringify({ body: `turn ${turns} in pid ${process.pid} (${kind}${role})` }),
         });
       }
-      process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok' })}\n`);
+      process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 10, output_tokens: 5 } })}\n`);
     }
   });
   process.stdin.on('end', () => process.exit(0));
@@ -45,6 +45,11 @@ if (mode === 'stream') {
 let prompt = '';
 process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
   if (mode === 'fail') process.exit(1);
+  // like `claude -p --output-format json`: one result object, with token counts, as the last line
+  if (mode === 'usage') {
+    process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 500, cache_creation_input_tokens: 40 } })}\n`);
+    return;
+  }
   if (mode === 'flaky-once') {
     const fs = require('fs');
     const { execFileSync } = require('child_process');

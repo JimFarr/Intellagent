@@ -3,6 +3,8 @@
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const { startServer, until, USER } = require('./helpers');
 
 const FAKE = path.join(__dirname, 'fake-agent.js');
@@ -355,6 +357,84 @@ describe('the receptionist supervises other agents', () => {
       await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'still needed' }, USER);
       assert.ok((await sup()).some((x) => x.id === it.id), 'someone else acting makes it eligible again');
       assert.equal((await s.ok('GET', `${B}/work?agent=sleeper`)).supervise, undefined, 'only supervisors get the list');
+    } finally { await s.stop(); }
+  });
+});
+
+describe('lean runs', () => {
+  const { runFor, boardMcpConfig, keepAliveCmd } = require('../lib/agents');
+
+  it('loads only the built-in tools the perms use, and no MCP servers but the board\'s', () => {
+    const reader = runFor(['read']);
+    assert.match(reader, / --tools "Bash,Read,Grep,Glob" --strict-mcp-config --allowedTools /);
+    assert.doesNotMatch(reader, /--mcp-config|acceptEdits/);
+    assert.match(runFor(['edit', 'test', 'git']), / --permission-mode acceptEdits --tools "Bash,Read,Grep,Glob,Edit,Write" /);
+    assert.match(runFor(['read', 'web']), / --tools "Bash,Read,Grep,Glob,WebSearch,WebFetch" /);
+    const b = runFor(['test'], { mcpConfig: '.mcp.json' });
+    assert.match(b, / --strict-mcp-config --mcp-config "\.mcp\.json" --allowedTools "Bash\(intellagent:\*\)" "mcp__intellagent" "Bash\(npm test\)"/);
+    assert.match(keepAliveCmd(b), /--allowedTools .* --input-format stream-json/, 'keep-alive flags still follow the variadic lists');
+  });
+
+  it('finds the board\'s MCP server only when the project registered it', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-mcp-'));
+    try {
+      assert.equal(boardMcpConfig(dir), null, 'no .mcp.json');
+      fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
+      assert.equal(boardMcpConfig(dir), null, 'no intellagent server');
+      fs.writeFileSync(path.join(dir, '.mcp.json'), `﻿${JSON.stringify({ mcpServers: { intellagent: { command: 'node', args: ['mcp.js'] } } })}`);
+      assert.equal(boardMcpConfig(dir), '.mcp.json');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('token usage', () => {
+  const { parseUsage, usageOf, withJsonOutput } = require('../lib/agents');
+
+  it('parses usage from a claude result and says nothing when there is none', () => {
+    const log = '$ claude -p x\n--- prompt ---\n{"type":"user"} not output\n--- output ---\nnoise\n'
+      + `${JSON.stringify({ type: 'result', usage: { input_tokens: 7, output_tokens: 3, cache_read_input_tokens: 100 } })}\n`;
+    assert.deepEqual(parseUsage(log), { input: 7, output: 3, cacheRead: 100, cacheCreated: 0 });
+    assert.equal(parseUsage('--- output ---\njust text, no json\n'), null, 'n/a, not zero');
+    assert.equal(parseUsage('--- output ---\n{"type":"result","result":"ok"}\n'), null);
+    assert.equal(usageOf({ usage: {} }), null);
+    assert.deepEqual(usageOf({ usage: { input_tokens: 0, output_tokens: 0 } }), { input: 0, output: 0, cacheRead: 0, cacheCreated: 0 }, 'a reported zero stays zero');
+  });
+
+  it('asks one-shot claude runs for JSON output and leaves everything else alone', () => {
+    assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --output-format json');
+    assert.equal(withJsonOutput('claude -p "x" --output-format stream-json'), 'claude -p "x" --output-format stream-json');
+    assert.equal(withJsonOutput('node fake.js ok'), 'node fake.js ok');
+  });
+
+  it('records usage per run and per day, keeps it over a restart, and has none for runs that report none', async () => {
+    const agents = { defaults: fast, agents: { metered: { run: run('usage') }, quiet: { run: run('ok') } } };
+    let s = await startServer({ agents });
+    const it = await s.ok('POST', `${B}/items`, { title: 'usage test', column: 'Backlog' }, USER);
+    const poke = async (who, round) => {
+      const before = (await agentState(s, who)).lastRun?.startedAt;
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: `@${who} round ${round}` }, USER);
+      await until(async () => { const a = await agentState(s, who); return a.status === 'idle' && a.lastRun?.endedAt && a.lastRun.startedAt !== before; }, 8000, `${who} run ${round}`);
+    };
+    await poke('metered', 1);
+    let m = await agentState(s, 'metered');
+    assert.deepEqual(m.lastRun.usage, { input: 120, output: 30, cacheRead: 500, cacheCreated: 40 });
+    assert.equal(m.usageToday.runs, 1);
+    await poke('metered', 2);
+    m = await agentState(s, 'metered');
+    assert.deepEqual([m.usageToday.runs, m.usageToday.input, m.usageToday.output], [2, 240, 60]);
+
+    await poke('quiet', 1);
+    const q = await agentState(s, 'quiet');
+    assert.equal(q.lastRun.usage, null, 'no usage reported → null, shown as n/a');
+    assert.equal(q.usageToday, null);
+
+    const dir = s.dir;
+    await s.stop({ keep: true });
+    s = await startServer({ dir, agents });
+    try {
+      m = await agentState(s, 'metered');
+      assert.equal(m.usageToday.input, 240, 'survives a board restart');
+      assert.equal(m.lastRun.usage.output, 30);
     } finally { await s.stop(); }
   });
 });
