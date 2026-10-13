@@ -23,6 +23,8 @@
   --col-shadow: 0 1px 0 color-mix(in oklab, #fff 5%, transparent) inset, 0 18px 50px -30px var(--shadow);
   --modal-shadow: 0 50px 120px -30px rgb(0 0 0 / .6), 0 0 0 1px color-mix(in oklab, #fff 4%, transparent) inset;
   --col-alpha: 84%;
+  /* parent tag colours: oklch(--tag-l --tag-c <hue>), the hue dealt per name in app.js */
+  --tag-l: .74; --tag-c: .13;
   color-scheme: dark;
 }
 /* shadow styles */
@@ -41,7 +43,7 @@
   --modal-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent), 0 40px 120px -30px color-mix(in oklab, var(--accent) 45%, transparent);
 }
 :root[data-shadow="hard"] .card:hover { translate: -2px -2px; }
-:root[data-mode="light"] { color-scheme: light; }
+:root[data-mode="light"] { color-scheme: light; --tag-l: .58; --tag-c: .12; }
 :root[data-density="compact"] { --gap: 6px; }
 
 * { box-sizing: border-box; }
@@ -422,10 +424,18 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 :root[data-tape="corner"] .group .group-cards > .card:first-child .tape { width: 22px; height: 22px; }
 /* spine: the label runs down a rail beside the cards */
 :root[data-groups="spine"] .group { padding-left: 24px; }
-:root[data-groups="spine"] .group-head { position: absolute; left: 0; top: 0; bottom: 0; width: 24px; padding: 2px 0 4px; writing-mode: vertical-rl; gap: 7px; overflow: hidden; }
+/* A collapsed pile is barely taller than one card, so the rail spends its length on the name: no dot or '#'
+   (the tinted name and the rule carry the colour), tight gaps, and the rule is the first thing to give way. */
+:root[data-groups="spine"] .group-head { position: absolute; left: 0; top: 0; bottom: 0; width: 24px; padding: 2px 0 4px; writing-mode: vertical-rl; gap: 5px; overflow: hidden; font-size: 11px; }
+:root[data-groups="spine"] .group-head .g-dot { display: none; }
 :root[data-groups="spine"] .group-head .g-name { min-height: 0; flex: 0 1 auto; }
+:root[data-groups="spine"] .group-head .g-name::before { content: none; }
 :root[data-groups="spine"] .group-head .g-count { text-combine-upright: all; width: 16px; min-width: 0; height: auto; min-height: 18px; padding: 2px 0; }
-:root[data-groups="spine"] .group-head .grow { display: block; flex: 1 1 0; width: 1px; min-height: 8px; align-self: center; background: color-mix(in oklab, var(--tagc) 45%, transparent); }
+:root[data-groups="spine"] .group-head .grow { display: block; flex: 1 1 0; width: 1px; min-height: 0; align-self: center; background: color-mix(in oklab, var(--tagc) 45%, transparent); }
+/* Hard offset shadows: sheets under a collapsed pile drop their own shadow and sit full width, stepped so each
+   shows an even sliver below the front card's shadow, so the pile reads as clean rules, not doubled edges. */
+:root[data-groups="spine"][data-shadow="hard"] .group.stack:not(.open) .group-cards > .card:not(:first-child) { box-shadow: none; transform: translateY(calc(min(var(--si), 2) * 5px + 3px)); }
+:root[data-groups="spine"][data-shadow="hard"] .group.stack:not(.open):hover .group-cards > .card:not(:first-child) { transform: translateY(calc(min(var(--si), 2) * 6px + 3px)); }
 /* foot: a quiet caption under the group */
 :root[data-groups="foot"] .group { display: flex; flex-direction: column; margin-bottom: 6px; }
 :root[data-groups="foot"] .group-head { order: 2; padding: 4px 4px 0 var(--cpx); font-weight: 500; }
@@ -1611,20 +1621,85 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
   .ask-field kbd { display: none; }
   .ask-foot span:not(.grow) { display: none; }
 }
-/* requests */
-.req-compose { display: grid; gap: 8px; margin-bottom: 18px; }
-.req-to { display: flex; align-items: center; gap: 10px; }
-.req-to .dd { flex: 1; }
+/* requests: an IM thread — conversation chips on top, messages, the composer pinned to the bottom.
+   The hub pane is the scroller (padding 4px 22px 24px 20px), so the sticky bars bleed to its edges. */
 .muted { color: var(--muted); }
-.req-list { display: grid; gap: 10px; }
-.req { padding: 12px 14px; border-radius: calc(var(--r-ctl) + 4px); background: var(--hover); border: 1px solid transparent; }
-.req.open { border-color: color-mix(in oklab, var(--accent) 30%, transparent); }
-.req.done { opacity: .78; }
-.req-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12.5px; }
-.req-head .to { rotate: -90deg; opacity: .5; }
-.req-status.open { color: var(--accent); }
-.req-status.done { color: var(--ok); }
-.req-reply { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent); }
+#requestsDrawer { display: flex; flex-direction: column; min-height: 100%; }
+#requestsDrawer .drawer-body { flex: 1; display: flex; flex-direction: column; padding-bottom: 0; }
+.req-chats { position: sticky; top: -4px; z-index: 6; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -22px 0 -20px; padding: 8px 22px 10px 20px; background: var(--surface); box-shadow: 0 14px 18px -18px var(--shadow); }
+.req-chats::-webkit-scrollbar { display: none; }
+.req-chat { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px 0 6px; border-radius: 99px; border: var(--bw) solid color-mix(in oklab, var(--border) 85%, transparent); background: none; color: var(--muted); font: 500 12.5px var(--font); cursor: pointer; transition: background .2s var(--ease), border-color .2s var(--ease), color .2s var(--ease); }
+.req-chat:first-child { padding-left: 10px; }
+.req-chat:hover { color: var(--text); background: var(--hover); }
+.req-chat.on { color: var(--text); background: color-mix(in oklab, var(--accent) 16%, var(--surface)); border-color: color-mix(in oklab, var(--accent) 55%, transparent); }
+.req-chat .avatar { width: 20px; height: 20px; }
+.req-chat .avatar[data-run]::after { display: none; }
+.req-chat .nm { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.req-chat .n { min-width: 17px; height: 17px; padding: 0 5px; border-radius: 99px; display: inline-grid; place-items: center; font: 600 10.5px var(--font); font-variant-numeric: tabular-nums; color: var(--accent); background: color-mix(in oklab, var(--accent) 16%, transparent); }
+
+.req-thread { flex: 1; display: flex; flex-direction: column; padding: 12px 0 16px; }
+.msg-day { display: flex; align-items: center; gap: 10px; margin: 14px 0 6px; font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.msg-day::before, .msg-day::after { content: ''; flex: 1; height: 1px; background: color-mix(in oklab, var(--border) 70%, transparent); }
+.msg { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; }
+.msg.cont { margin-top: 3px; }
+.msg.me { justify-content: flex-end; }
+.msg-av { flex: none; width: 30px; }
+.msg-av .avatar[data-run]::after { display: none; }
+.msg-col { min-width: 0; max-width: min(82%, 560px); display: flex; flex-direction: column; }
+.msg.me .msg-col { align-items: flex-end; }
+.msg-who { font: 600 12px var(--font); color: var(--muted); margin: 0 0 3px 4px; }
+.bubble { min-width: 0; max-width: 100%; padding: 8px 12px; font-size: 13.5px; overflow-wrap: anywhere; border: var(--bw) solid transparent; border-radius: 16px; }
+.msg.them .bubble { background: var(--hover); border-color: color-mix(in oklab, var(--border) 60%, transparent); border-top-left-radius: 6px; }
+.msg.them.cont .bubble { border-top-left-radius: 16px; border-bottom-left-radius: 6px; }
+/* Your own bubbles are accent-tinted with a border of the same hue, in every state, so who said what reads at a
+   glance; the agents' stay neutral. A finished request only fades its tint, it never turns agent-grey. */
+.msg.me .bubble { --me-tint: 18%; background: color-mix(in oklab, var(--accent) var(--me-tint), var(--surface)); border-color: color-mix(in oklab, var(--accent) calc(var(--me-tint) * 2.2), transparent); border-top-right-radius: 6px; }
+.msg.me.cont .bubble { border-top-right-radius: 16px; border-bottom-right-radius: 6px; }
+.msg.me.ask.done .bubble { --me-tint: 9%; color: color-mix(in oklab, var(--text) 85%, var(--muted)); }
+/* Chips and links on the tint: chips sit on a surface plate rather than another accent wash, links lean to the text. */
+.msg.me .bubble .md a { color: color-mix(in oklab, var(--accent) 72%, var(--text)); }
+.msg.me .bubble .md a.ref, .msg.me .bubble .md code { background: color-mix(in oklab, var(--surface) 72%, transparent); }
+.bubble .md > :first-child { margin-top: 0; }
+.bubble .md > :last-child { margin-bottom: 0; }
+.msg-quote { display: flex; align-items: center; gap: 4px; max-width: 100%; margin: 0 4px 3px; padding: 0; border: 0; background: none; color: var(--muted); font: 12px var(--font); text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color .2s var(--ease); }
+.msg-quote .to { flex: none; rotate: 90deg; opacity: .6; }
+.msg-quote:hover { color: var(--text); }
+.msg-meta { display: flex; align-items: center; gap: 6px; min-height: 22px; margin: 2px 4px 0; font: 11px var(--font); color: var(--muted); font-variant-numeric: tabular-nums; }
+.msg-meta .to { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-meta .to::after { content: '·'; margin-left: 6px; }
+.msg-st { display: inline-flex; align-items: center; gap: 2px; font-weight: 600; }
+.msg-st.open { color: var(--accent); }
+.msg-st.open::before { content: ''; width: 6px; height: 6px; margin-right: 3px; border-radius: 50%; background: currentColor; }
+.msg-st.done { color: var(--ok); }
+.msg-act { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .2s var(--ease), background .2s var(--ease), color .2s var(--ease); }
+.msg:hover .msg-act, .msg-act:focus-visible { opacity: 1; }
+.msg-act:hover { background: var(--hover); color: var(--text); }
+@media (hover: none) { .msg-act { opacity: 1; } }
+.msg.new { animation: msg-in .32s var(--ease) backwards; }
+@keyframes msg-in { from { opacity: 0; translate: 0 6px; } }
+.msg.flash .bubble { animation: flash 1.4s var(--ease); }
+
+/* Sticky offsets are measured inside the pane's padding, so bottom: -24px (like the chips' top: -4px) pins the
+   composer to the pane's real bottom edge; at 0 it stopped 24px short and messages scrolled by underneath. */
+.req-compose { position: sticky; bottom: -24px; z-index: 6; display: grid; gap: 8px; margin: 0 -22px -24px -20px; padding: 10px 22px 16px 20px; background: var(--surface); box-shadow: 0 -14px 18px -18px var(--shadow); }
+.req-to { display: flex; align-items: center; gap: 10px; }
+.req-to .dd { flex: 1; min-width: 0; }
+@media (max-width: 640px) {
+  .msg-col { max-width: 88%; }
+  .msg-av { width: 24px; }
+  .msg-av .avatar.lg { width: 24px; height: 24px; font-size: 9.5px; }
+}
+@media (prefers-reduced-motion: reduce) { .msg.new, .msg.flash .bubble { animation: none; } }
+
+/* "Thinking" bubble: a standing agent's run is working on a reply in this thread. Same dots as the Ask
+   popover's "On it"; fades in calmly (not the comments' spring) and stays static with reduced motion. */
+.msg.thinking, .cmt.thinking { animation: msg-in .32s var(--ease) backwards; }
+.msg.thinking .bubble, .think-bubble { display: inline-flex; align-items: center; padding: 11px 14px; }
+.think-bubble { margin-top: 4px; background: var(--hover); border: var(--bw) solid color-mix(in oklab, var(--border) 60%, transparent); border-radius: 6px 16px 16px 16px; }
+.msg.thinking .ai-dots, .think-bubble .ai-dots { margin-left: 0; gap: 4px; }
+.msg.thinking .ai-dots b, .think-bubble .ai-dots b { width: 6px; height: 6px; }
+@media (prefers-reduced-motion: reduce) { .msg.thinking, .cmt.thinking { animation: none; } }
+.reduced .msg.thinking, .reduced .cmt.thinking { animation: none; }
 
 /* headroom for lifted drop targets and focus rings: the board clips vertically (it scrolls sideways) */
 .board { padding-top: 14px; margin-top: -8px; }
