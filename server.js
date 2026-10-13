@@ -1550,6 +1550,21 @@ const filesForEvent = (ctx, atts) => (atts || []).map((a) => ({
 function requestTarget(ctx, to) {
   return (to && str(to, 64).trim()) || ctx.board.coordinator || M.defaultAgent || null;
 }
+// The conversation so far between the human and this agent (earlier requests and their replies), oldest
+// first, so a follow-up question reaches the agent with its context. Bounded: the last 10 messages of the
+// last week, each trimmed.
+function conversation(ctx, req) {
+  const since = Date.now() - 7 * 86_400_000;
+  const msgs = [];
+  for (const q of ctx.board.requests || []) {
+    if (q.id === req.id || q.to !== req.to || Date.parse(q.at) < since) continue;
+    msgs.push({ from: q.by?.name || '?', at: q.at, body: q.body, request: q.id });
+    for (const r of q.replies || []) msgs.push({ from: r.author?.name || '?', at: r.at, body: r.body, request: q.id });
+  }
+  return msgs.sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).slice(-10)
+    .map((m) => ({ ...m, body: m.body.length > 500 ? `${m.body.slice(0, 500)}…` : m.body }));
+}
+
 function createRequest(ctx, d, actor) {
   const body = str(d.body || '', 20_000).trim();
   if (!body && !d.attachments?.length) fail(400, '"body" is required');
@@ -1561,7 +1576,8 @@ function createRequest(ctx, d, actor) {
     if (atts.length) req.attachments = atts;
     (ctx.board.requests ||= []).push(req);
     if (ctx.board.requests.length > 300) ctx.board.requests.splice(0, ctx.board.requests.length - 300);
-    events.push({ board: ctx.id, type: 'request.created', actor, request: { id: req.id, body: trimChange(body), to, ...(atts.length ? { attachments: filesForEvent(ctx, atts) } : {}) }, recipients: [to].filter((n) => n !== actor.name), addressed: [to].filter((n) => n !== actor.name) });
+    const history = conversation(ctx, req);
+    events.push({ board: ctx.id, type: 'request.created', actor, request: { id: req.id, body: trimChange(body), to, ...(atts.length ? { attachments: filesForEvent(ctx, atts) } : {}), ...(history.length ? { history } : {}) }, recipients: [to].filter((n) => n !== actor.name), addressed: [to].filter((n) => n !== actor.name) });
     return req;
   });
 }
@@ -1810,6 +1826,7 @@ function briefing(ctx, name, base, via = 'cli') {
     `# You are "${name}" on the ${b.name} board`,
     `${base}  ·  board id \`${ctx.id}\`  ·  tickets ${b.idPrefix}-1, ${b.idPrefix}-2…  ·  identify every call as "${name}"${b.coordinator === name ? '  ·  you are this board\'s coordinator: requests come to you' : ''}`,
     ...(me.role ? [`Role: **${me.role}**${me.alignment ? ` · alignment: ${me.alignment}` : ''}`] : []),
+    `Project (the code these tickets are about): \`${PROJECT_ROOT.replace(/\\/g, '/')}\`${M.projectRoot ? ' — outside the board\'s folder: work there' : ''}`,
     '',
     ...intro,
     '## What to do next',
@@ -2725,7 +2742,12 @@ route('GET', '/api/boards/:board/summary', 'Compact board overview — cheapest 
 
 // The project's own convention files (e.g. CLAUDE.md) are served read-only next to the board rules,
 // so rules live in one place: the repo for conventions, the board for workflow.
-const PROJECT_ROOT = path.basename(path.dirname(MANIFEST_PATH)) === '.intellagent' ? path.dirname(path.dirname(MANIFEST_PATH)) : path.dirname(MANIFEST_PATH);
+// Where the code is. By default the folder that holds .intellagent/ (or the manifest); "projectRoot" in the
+// manifest points elsewhere, for a board kept outside the project (absolute, or relative to the manifest).
+const PROJECT_ROOT = M.projectRoot
+  ? path.resolve(path.dirname(MANIFEST_PATH), String(M.projectRoot))
+  : path.basename(path.dirname(MANIFEST_PATH)) === '.intellagent' ? path.dirname(path.dirname(MANIFEST_PATH)) : path.dirname(MANIFEST_PATH);
+if (M.projectRoot && !fs.existsSync(PROJECT_ROOT)) console.warn(`projectRoot ${PROJECT_ROOT} does not exist: agents will have no code to work on`);
 function projectRules() {
   return arr(M.projectRules ?? ['CLAUDE.md']).map((f) => {
     const fp = path.resolve(PROJECT_ROOT, String(f));
@@ -3635,7 +3657,7 @@ checkPresence();
 worktrees = require('./lib/worktrees').createWorktrees({
   root: PROJECT_ROOT,
   // .intellagent/worktrees in a project; .worktrees beside a manifest at the repo root (git-ignored either way)
-  dir: path.basename(path.dirname(MANIFEST_PATH)) === '.intellagent' ? path.join(path.dirname(MANIFEST_PATH), 'worktrees') : path.join(PROJECT_ROOT, '.worktrees'),
+  dir: path.basename(path.dirname(MANIFEST_PATH)) === '.intellagent' || M.projectRoot ? path.join(path.dirname(MANIFEST_PATH), 'worktrees') : path.join(PROJECT_ROOT, '.worktrees'),
 });
 standing = require('./lib/agents').createAgents({
   worktrees,

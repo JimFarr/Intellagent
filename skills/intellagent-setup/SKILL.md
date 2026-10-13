@@ -30,6 +30,7 @@ Ask the user in a single round (use the AskUserQuestion tool if available, max 4
 2. **Name and ticket prefix** — default to the folder name and its initials.
 3. **Seed tickets from** — TODO comments / GitHub issues / a plan they paste / nothing for now.
 4. **Wiring** — by default `init` registers the MCP tools (`.mcp.json`, the small core profile), appends a short block to CLAUDE.md that points agents at `intellagent brief`, and names the default agent `claude`. Ask only if they want to opt out (`--no-mcp`, `--no-claude`) or use another agent name (`--agent`). Suggest `intellagent skill install` too: the `intellagent` skill teaches agents the day-to-day loop and the CLI.
+   **Board outside the project?** If the board must live somewhere other than the code, pass `--project <path to the code>` to init (or run `intellagent project <path>` later), and run `intellagent link <board folder>` inside the project so agents working there find the board.
    **Safety:** the board listens on 127.0.0.1 only, and new boards require agent tokens (the default agent gets one in `.intellagent/local.json`, git-ignored; `--open-agents` turns this off). Any other agent needs `intellagent token --agent <name>` from the human; standing agents get theirs automatically.
 
 ## 4. Scaffold and start

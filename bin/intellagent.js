@@ -96,6 +96,8 @@ async function init() {
     auth: { userToken: null, agentTokens: {}, requireAgentTokens: !f['open-agents'] },
     defaultAgent: agent,
     permissions: {},
+    // the code lives somewhere else (a board kept outside the project)
+    ...(f.project ? { projectRoot: path.resolve(String(f.project)) } : {}),
   };
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -188,6 +190,41 @@ function tokenCmd() {
   console.log('The board reads it when it starts:  intellagent stop  then  intellagent start  — then  intellagent open  to sign in.');
 }
 
+// intellagent project [path]: show, or set, the folder with the code this board's agents work on
+function projectCmd() {
+  const mp = requireManifest();
+  const target = rest[0];
+  if (!target) { console.log(projectOf(mp)); return; }
+  const abs = path.resolve(String(target));
+  if (!fs.existsSync(abs)) { console.error(`No such folder: ${abs}`); process.exit(2); }
+  const raw = JSON.parse(fs.readFileSync(mp, 'utf8').replace(/^\uFEFF/, ''));
+  raw.projectRoot = abs;
+  fs.writeFileSync(mp, `${JSON.stringify(raw, null, 2)}\n`);
+  console.log(`This board's agents now work on ${abs}.`);
+  console.log('Restart the board to apply it: intellagent stop, then intellagent start --background.');
+  console.log(`Agents you run yourself in that folder find the board after: cd "${abs}" && intellagent link "${path.dirname(mp)}"`);
+}
+
+// intellagent link <board folder or manifest>: from a project, use a board that lives elsewhere
+function linkCmd() {
+  const target = rest[0];
+  if (!target) { console.error('Usage: intellagent link <board folder | manifest path>   (run it in the project)'); process.exit(2); }
+  let mp = path.resolve(String(target));
+  if (fs.existsSync(mp) && fs.statSync(mp).isDirectory()) mp = [path.join(mp, '.intellagent', 'intellagent.manifest.json'), path.join(mp, 'intellagent.manifest.json')].find((p) => fs.existsSync(p)) || '';
+  if (!mp || !fs.existsSync(mp)) { console.error(`No Intellagent board at ${target} (looked for intellagent.manifest.json)`); process.exit(2); }
+  const dir = path.join(process.cwd(), '.intellagent');
+  if (fs.existsSync(path.join(dir, 'intellagent.manifest.json'))) { console.error('This folder already has its own board (.intellagent/intellagent.manifest.json).'); process.exit(2); }
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'link.json'), `${JSON.stringify({ manifest: mp }, null, 2)}\n`);
+  // the link is this machine's path: keep it out of git
+  const gi = path.join(dir, '.gitignore');
+  if (!fs.existsSync(gi) || !/^link\.json$/m.test(fs.readFileSync(gi, 'utf8'))) fs.appendFileSync(gi, 'link.json\n');
+  console.log(`Linked ${process.cwd()} to the board at ${mp}.`);
+  console.log('intellagent, its MCP tools and agents started here now use that board.');
+  const pr = projectOf(mp);
+  if (path.resolve(pr) !== path.resolve(process.cwd())) console.log(`Note: that board's agents work on ${pr}. To point them here: intellagent project "${process.cwd()}" (in the board's folder), then restart it.`);
+}
+
 function requireManifest() {
   const m = findManifest();
   if (!m) { console.error('No .intellagent/ found here or in any parent folder. Run: intellagent init'); process.exit(1); }
@@ -241,12 +278,19 @@ async function brief() {
   if (!r.ok) process.exit(1);
 }
 
+// Where the board's code is: projectRoot from the manifest, else the folder holding .intellagent/.
+function projectOf(mp, m = readManifest(mp)) {
+  if (m?.projectRoot) return path.resolve(path.dirname(mp), String(m.projectRoot));
+  return path.basename(path.dirname(mp)) === '.intellagent' ? path.dirname(path.dirname(mp)) : path.dirname(mp);
+}
+
 async function status() {
   const mp = findManifest();
   const url = baseUrl(readManifest(mp));
   if (!url) { console.log(NO_BOARD); return; }
   const app = await alive(url);
   console.log(`manifest  ${mp || '(none — using defaults)'}`);
+  if (mp) { const pr = projectOf(mp); console.log(`project   ${pr}${fs.existsSync(pr) ? '' : '  ⚠ missing'}`); }
   console.log(`url       ${url}  ${app ? '● running' : '○ not running'}`);
   if (!app) return;
   const boards = await (await fetch(`${url}/api/boards`)).json();
@@ -588,6 +632,8 @@ const HELP = `intellagent — a kanban for you and your agents
   brief            what an agent needs to start: next steps, columns, templates, rules, calls   --agent --via cli|mcp|http
   open             open the board in a browser (signed in, if the board has a user token)
   merge ID         land an approved ticket's commits from its agent's worktree branch on main
+  project [PATH]   show, or set, the folder with the code (a board kept outside the project)
+  link BOARD       in a project: use the board kept at BOARD (its folder or manifest)
   token --agent N  issue (or --rotate) an agent's token, for boards that require agent tokens
   token [--rotate] give this board a user token so only you can act as the human (older boards)
   status           where it is and whether it's running
@@ -616,6 +662,8 @@ const commands = {
   init, start, stop, status, docs, templates, skill, brief,
   open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
   token: tokenCmd,
+  project: projectCmd,
+  link: linkCmd,
   // land an approved ticket's commits from its agent's worktree branch on main (when approval couldn't)
   merge: () => {
     const id = rest[0];

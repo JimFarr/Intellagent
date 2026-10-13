@@ -166,3 +166,51 @@ describe('waiting from the CLI', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('a board kept outside the project', () => {
+  it('projectRoot sends agents, conventions and the brief to the project; link lets the project find the board', async () => {
+    const { execFileSync } = require('child_process');
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-project-'));
+    const git = (...a) => execFileSync('git', a, { cwd: project, encoding: 'utf8' });
+    git('init', '-q', '-b', 'main'); git('config', 'user.email', 't@e.com'); git('config', 'user.name', 'T');
+    fs.writeFileSync(path.join(project, 'CLAUDE.md'), '# Conventions\nTabs, never spaces.\n');
+    git('add', '.'); git('commit', '-q', '-m', 'init');
+    const fake = path.join(__dirname, 'fake-agent.js');
+    const s = await startServer({ manifest: { projectRoot: project }, agents: { agents: { dev: { run: `node "${fake}" commit`, worktree: false } } } });
+    try {
+      // conventions and the brief come from the project
+      assert.match(JSON.stringify((await s.ok('GET', '/api/boards/main/directives')).projectRules), /Tabs, never spaces/);
+      const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'dev' })).body;
+      assert.ok((typeof brief === 'string' ? brief : brief.markdown).includes(project.split(path.sep).join('/')), 'the brief names the project folder');
+      // a standing agent works in the project, not in the board's folder
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'work', column: 'Ready', assignee: 'dev' }, USER);
+      const deadline = Date.now() + 10000;
+      while (!fs.existsSync(path.join(project, `work-${it.id}.txt`)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+      assert.ok(fs.existsSync(path.join(project, `work-${it.id}.txt`)), 'the agent ran in the project');
+      assert.ok(!fs.existsSync(path.join(s.dir, `work-${it.id}.txt`)));
+      // from the project, the CLI finds the board through a link
+      assert.equal(cli(['do', 'get_my_work'], { cwd: project, env: { INTELLAGENT_AGENT: 'dev' } }).code, 3, 'not found before linking');
+      assert.equal(cli(['link', s.dir], { cwd: project }).code, 0);
+      const w = cli(['do', 'get_my_work'], { cwd: project, env: { INTELLAGENT_AGENT: 'dev' } });
+      assert.equal(w.code, 0, w.err);
+      assert.ok(fs.readFileSync(path.join(project, '.intellagent', '.gitignore'), 'utf8').includes('link.json'));
+    } finally { await s.stop(); }
+  });
+});
+
+describe('Ask an agent keeps the conversation', () => {
+  it('a follow-up request carries the earlier messages with that agent, oldest first', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const r1 = await s.ok('POST', '/api/boards/main/requests', { body: 'What does INT-3 do?', to: 'desk' }, USER);
+      await s.ok('POST', `/api/boards/main/requests/${r1.id}/reply`, { body: 'It adds search.' }, { agent: 'desk' });
+      await s.ok('POST', '/api/boards/main/requests', { body: 'unrelated', to: 'someone-else' }, USER);
+      const { seq } = await s.ok('GET', '/api/app');
+      await s.ok('POST', '/api/boards/main/requests', { body: 'And who reviewed it?', to: 'desk' }, USER);
+      const ev = (await s.ok('GET', `/api/events?since=${seq}&types=request.created`)).events.at(-1);
+      assert.deepEqual(ev.request.history.map((m) => `${m.from}: ${m.body}`), ['James: What does INT-3 do?', 'desk: It adds search.']);
+      const line = require('../lib/agents').eventLine(ev);
+      assert.match(line, /conversation so far[\s\S]*What does INT-3 do\?[\s\S]*It adds search\.[\s\S]*And who reviewed it\?/);
+    } finally { await s.stop(); }
+  });
+});

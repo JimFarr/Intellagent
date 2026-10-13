@@ -210,7 +210,7 @@ The ticket glows on the board. The reply returns a `questionId`. A ticket can ho
 
 **What not to post.** Keep cards and the digest readable: no step-by-step progress logs, nothing git already shows (diffs, file lists), no restating the ticket. Post decisions, blockers, results and how to verify.
 
-**Requests.** The human's free-form asks ("create tickets for X") are *requests*, sent to the board's coordinator or a named agent. They arrive as `handle_request` in `…/work`: do it, then `POST …/requests/<id>/reply { "body": "what you did, with ticket ids", "done": true }`. `GET …/requests` lists them; `POST …/requests { "body": "…", "to": "<agent>" }` sends one (to the coordinator if `to` is omitted).
+**Requests.** The human's free-form asks ("create tickets for X") are *requests*, sent to the board's coordinator or a named agent. They arrive as `handle_request` in `…/work`: do it, then `POST …/requests/<id>/reply { "body": "what you did, with ticket ids", "done": true }`. `GET …/requests` lists them; `POST …/requests { "body": "…", "to": "<agent>" }` sends one (to the coordinator if `to` is omitted). A request is usually a follow-up: its event carries `history`, the conversation so far with you (the last 10 messages of the week, oldest first), and your prompt shows it — answer the latest message in that context.
 
 ### Getting woken up
 You only see board events when you look. Ways to make answers on cards reach you:
@@ -333,6 +333,8 @@ Agents reach the board three ways; pick the lightest that works:
 - **Skill** — `skills/intellagent/SKILL.md` (`intellagent skill install`) teaches the day-to-day loop and the CLI for everything beyond the core; it loads only when the agent works a ticket.
 
 A narrow Claude Code permission rule for agents: `Bash(intellagent *)` plus the core tools by name (`mcp__intellagent__get_briefing`, …). `mcp__intellagent` alone allows whatever the server lists.
+
+**A board kept outside the project:** set `projectRoot` in its manifest (`intellagent init --project <path>`, or `intellagent project <path>` on an existing board, then restart). Standing agents then run in that folder (worktrees are kept in the board's folder), the project's CLAUDE.md and git are read from there, and every brief names the folder. In the project, `intellagent link <board folder>` lets the CLI, MCP tools and the agents you start there find the board (`.intellagent/link.json`, git-ignored); `intellagent status` shows the project folder.
 
 Shell tips: the CLI finds this project's board by itself (nearest `.intellagent/`), or set `INTELLAGENT_URL`. key=value nests on dots (`fields.risk=low`) and parses JSON values; pass a JSON body as one argument, `@file.json` or `-` for stdin. Windows PowerShell: use `curl.exe`, not `curl`; prefer the CLI.
 
