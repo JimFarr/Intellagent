@@ -426,10 +426,12 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 :root[data-tape="clip"] .group .group-cards > .card:first-child .tape { left: 18px; right: auto; rotate: -10deg; }
 :root[data-tape="corner"] .group .group-cards > .card:first-child .tape { width: 22px; height: 22px; }
 /* spine: the label runs down a rail beside the cards */
-:root[data-groups="spine"] .group { padding-left: 24px; }
+/* The rail sits in the list's left padding (12px), so the cards keep about the same inset on both sides (the right
+   one is that padding plus the scrollbar gutter) instead of being pushed off-centre. */
+:root[data-groups="spine"] .group { margin-left: -12px; padding-left: 22px; }
 /* A collapsed pile is barely taller than one card, so the rail spends its length on the name: no dot or '#'
    (the tinted name and the rule carry the colour), tight gaps, and the rule is the first thing to give way. */
-:root[data-groups="spine"] .group-head { position: absolute; left: 0; top: 0; bottom: 0; width: 24px; padding: 2px 0 4px; writing-mode: vertical-rl; gap: 5px; overflow: hidden; font-size: 11px; }
+:root[data-groups="spine"] .group-head { position: absolute; left: 0; top: 0; bottom: 0; width: 20px; padding: 2px 0 4px; writing-mode: vertical-rl; gap: 5px; overflow: hidden; font-size: 11px; }
 :root[data-groups="spine"] .group-head .g-dot { display: none; }
 :root[data-groups="spine"] .group-head .g-name { min-height: 0; flex: 0 1 auto; }
 :root[data-groups="spine"] .group-head .g-name::before { content: none; }
