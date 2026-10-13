@@ -454,3 +454,53 @@ describe('receptionist with pickup "ready"', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('per-agent git worktrees', () => {
+  it('each agent commits on its own branch in its own worktree; approval lands the ticket on main', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-wt-'));
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(dir, 'README.md'), 'hi\n');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    const s = await startServer({ dir, agents: { defaults: fast, agents: { ann: { run: run('commit'), worktree: true }, bob: { run: run('commit'), worktree: true } } } });
+    try {
+      const a = await s.ok('POST', `${B}/items`, { title: 'for ann', column: 'Ready', assignee: 'ann' }, USER);
+      const b = await s.ok('POST', `${B}/items`, { title: 'for bob', column: 'Ready', assignee: 'bob' }, USER);
+      await until(async () => (await comments(s, a.id)).some((c) => c.startsWith('ann: committed')) && (await comments(s, b.id)).some((c) => c.startsWith('bob: committed')), 10000, 'both committed');
+      const where = (await comments(s, a.id)).find((c) => c.startsWith('ann: committed'));
+      assert.ok(where.replace(/\\/g, '/').endsWith('.worktrees/ann'), `ann works in its own worktree: ${where}`);
+      assert.equal(git('status', '--porcelain', '--untracked-files=no'), '', 'the main checkout is untouched');
+      assert.ok(!fs.existsSync(path.join(dir, `work-${a.id}.txt`)), 'nothing on main before approval');
+      assert.ok(git('log', '--format=%s', 'agent/ann').includes(`(${a.id})`));
+      assert.ok(!git('log', '--format=%s', 'agent/ann').includes(`(${b.id})`), "bob's work is not on ann's branch");
+      // review lists the commits; approval lands them
+      await until(async () => (await agentState(s, 'ann')).status === 'idle', 6000, 'ann idle');
+      const r = await s.ok('POST', `${B}/items/${a.id}/review`, { summary: 'done' }, { agent: 'ann' });
+      assert.match(r.comments.at(-1).body, /Commits\*\* on `agent\/ann`/);
+      await s.ok('POST', `${B}/items/${a.id}/review/decision`, { verdict: 'approve' }, USER);
+      assert.ok(fs.existsSync(path.join(dir, `work-${a.id}.txt`)), 'landed on main');
+      assert.ok(git('log', '-1', '--format=%s').includes(`(${a.id})`));
+      assert.match((await comments(s, a.id)).at(-1), /Landed on main/);
+      assert.ok(!fs.existsSync(path.join(dir, `work-${b.id}.txt`)), "bob's unapproved work stays off main");
+      // a dirty main checkout blocks landing, and the card says how to finish
+      fs.writeFileSync(path.join(dir, 'README.md'), 'edited by the human\n');
+      await s.ok('POST', `${B}/items/${b.id}/review`, { summary: 'done' }, { agent: 'bob' });
+      await s.ok('POST', `${B}/items/${b.id}/review/decision`, { verdict: 'approve' }, USER);
+      assert.match((await comments(s, b.id)).at(-1), /Not landed: the main checkout has uncommitted changes.*intellagent merge/);
+      git('checkout', 'README.md');
+      const land = await s.ok('POST', `${B}/items/${b.id}/land`, {}, USER);
+      assert.equal(land.landed.length, 1);
+      assert.ok(fs.existsSync(path.join(dir, `work-${b.id}.txt`)));
+    } finally {
+      await s.stop();
+      try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
+    }
+  });
+});

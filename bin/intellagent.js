@@ -102,7 +102,7 @@ async function init() {
   fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\n');
   const url = `http://127.0.0.1:${port}`;
   fs.writeFileSync(path.join(folder, 'README.md'), `# ${name} · Intellagent board\n\n- \`intellagent start\` runs it (from anywhere in this project); \`intellagent open\` opens it signed in; \`intellagent stop\` stops it.\n- \`intellagent brief\` shows an agent everything it needs.\n- \`local.json\` holds your user token (git-ignored). Only requests with it act as you; \`intellagent open\` signs the browser in.\n\n## Agent instructions\n\n${agentPrompt(url, agent)}\n`);
-  fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\nlocal.json\n');
+  fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\nlocal.json\nworktrees/\n');
   console.log(`\n  ✓ ${path.relative(process.cwd(), manifestPath) || manifestPath}`);
   console.log(`    board "${name}" · ${TEMPLATES[template].label} template · tickets ${manifest.idPrefix}-1, ${manifest.idPrefix}-2… · port ${port}`);
 
@@ -510,6 +510,7 @@ const HELP = `intellagent — a kanban for you and your agents
   stop             stop a board started in the background
   brief            what an agent needs to start: next steps, columns, templates, rules, calls   --agent --via cli|mcp|http
   open             open the board in a browser (signed in, if the board has a user token)
+  merge ID         land an approved ticket's commits from its agent's worktree branch on main
   token [--rotate] give this board a user token so only you can act as the human (older boards)
   status           where it is and whether it's running
   docs             print the agent guide
@@ -533,6 +534,14 @@ const commands = {
   init, start, stop, status, docs, templates, skill, brief,
   open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
   token: tokenCmd,
+  // land an approved ticket's commits from its agent's worktree branch on main (when approval couldn't)
+  merge: () => {
+    const id = rest[0];
+    if (!id) { console.error('Usage: intellagent merge <TICKET-ID> [--agent name] [--board id]'); process.exit(1); }
+    const f = flags(rest.slice(1));
+    const board = f.board || readManifest(requireManifest())?.defaultBoard || 'main';
+    return asHuman('POST', `/api/boards/${board}/items/${id}/land`, f.agent ? { agent: String(f.agent) } : {}).then((r) => console.log(r.landed?.length ? `Landed ${r.landed.join(', ')} on main.` : `Not landed: ${r.reason || r.error || JSON.stringify(r)}`));
+  },
   wait: waitCmd,
   agents: agentsCmd,
   autostart,

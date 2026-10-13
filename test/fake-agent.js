@@ -42,6 +42,26 @@ if (mode === 'stream') {
   process.stdin.on('end', () => process.exit(0));
   return;
 }
+//   node fake-agent.js commit   in its working directory, write a file per ticket in the batch and commit it
+//   with the ticket id, then say where on the card (to test per-agent worktrees)
+if (mode === 'commit') {
+  const fs = require('fs');
+  const { execFileSync } = require('child_process');
+  process.stdin.resume();
+  process.stdin.on('end', async () => {
+    const events = JSON.parse(fs.readFileSync(process.env.INTELLAGENT_EVENTS, 'utf8'));
+    for (const id of new Set(events.map((e) => e.itemId).filter(Boolean))) {
+      fs.writeFileSync(`work-${id}.txt`, `done by ${process.env.INTELLAGENT_AGENT}\n`);
+      execFileSync('git', ['add', `work-${id}.txt`]);
+      execFileSync('git', ['commit', '-q', '-m', `Work on it (${id})`]);
+      await fetch(`${process.env.INTELLAGENT_URL}/api/boards/main/items/${id}/comments`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT },
+        body: JSON.stringify({ body: `committed in ${process.cwd()}` }),
+      });
+    }
+  });
+  return;
+}
 let prompt = '';
 process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
   if (mode === 'fail') process.exit(1);
