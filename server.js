@@ -577,7 +577,9 @@ function itemEvent(ctx, type, item, actor, extra = {}) {
   if (QUIET_TYPES.has(type)) {
     return { board: ctx.id, type, actor, itemId: item.id, columnId: item.columnId, item: snapshot(ctx, item), recipients: [], ...rest };
   }
-  const addressed = [...new Set(mentions.filter((n) => n && n !== actor.name))];
+  // An approval is news, not a task: the requester stays in recipients (inbox, …/work) but isn't woken for it.
+  const approval = type === 'review.approved' || (type === 'attention.resolved' && rest.verdict === 'approve');
+  const addressed = approval ? [] : [...new Set(mentions.filter((n) => n && n !== actor.name))];
   return {
     board: ctx.id, type, actor, itemId: item.id, columnId: item.columnId,
     // The master-lease holder works every ticket without leasing it, so it hears about all of them.

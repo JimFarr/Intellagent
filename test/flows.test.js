@@ -268,6 +268,26 @@ describe('agent flows', () => {
     assert.equal((await s.ok('GET', `${B}/items/${two.id}`)).review.verdict, 'approve');
   });
 
+  it('an approval is heard (recipients) but does not address the requester; changes still do', async () => {
+    const ok = await mk({ title: 'approve quietly' });
+    await s.ok('POST', `${B}/items/${ok.id}/start`, {}, A);
+    await s.ok('POST', `${B}/items/${ok.id}/review`, { changed: 'x', why: 'y', verify: 'z' }, A);
+    const { seq } = await s.ok('GET', '/api/app');
+    await s.ok('POST', `${B}/items/${ok.id}/review/decision`, { verdict: 'approve' }, USER);
+    const heard = (await s.ok('GET', `/api/events?since=${seq}&for=ada&itemId=${ok.id}`)).events;
+    const got = heard.map((e) => e.type);
+    assert.ok(got.includes('review.approved') && got.includes('attention.resolved'), 'still in recipients');
+    assert.equal((await s.ok('GET', `/api/events?since=${seq}&addressed=ada&itemId=${ok.id}`)).events.length, 0);
+
+    const no = await mk({ title: 'changes wake' });
+    await s.ok('POST', `${B}/items/${no.id}/start`, {}, A);
+    await s.ok('POST', `${B}/items/${no.id}/review`, { changed: 'x', why: 'y', verify: 'z' }, A);
+    const mark = (await s.ok('GET', '/api/app')).seq;
+    await s.ok('POST', `${B}/items/${no.id}/review/decision`, { verdict: 'changes', comment: 'redo' }, USER);
+    const types = (await s.ok('GET', `/api/events?since=${mark}&addressed=ada&itemId=${no.id}`)).events.map((e) => e.type);
+    assert.ok(types.includes('review.changes_requested'));
+  });
+
     it('transitions explain where a ticket can go', async () => {
     const it = await mk({ title: 'where to' });
     const t = await s.ok('GET', `${B}/items/${it.id}/transitions`, undefined, A);
