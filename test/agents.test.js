@@ -358,3 +358,19 @@ describe('the receptionist supervises other agents', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('receptionist with pickup "ready"', () => {
+  it('a ticket moved into Ready wakes it to triage (not to start it itself)', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { desk: { role: 'coordinator', pickup: 'ready', run: run('ok') } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'parked idea', column: 'Backlog' }, { agent: 'someone' });
+      const w0 = await s.ok('GET', `${B}/work?agent=desk`);
+      assert.ok(!(w0.triage || []).some((x) => x.id === it.id), 'Backlog is not its job with pickup "ready"');
+      await s.ok('POST', `${B}/items/${it.id}/move`, { column: 'Ready' }, USER);
+      await until(async () => (await s.ok('GET', '/api/events?types=agent.run.started')).events.some((e) => e.agent === 'desk' && e.items.includes(it.id)), 8000, 'woken for the moved ticket');
+      const w = await s.ok('GET', `${B}/work?agent=desk`);
+      assert.ok(w.next.some((n) => n.id === it.id && n.action === 'triage'), 'told to triage it');
+      assert.ok(!w.next.some((n) => n.id === it.id && n.action === 'start'), 'never told to start it');
+    } finally { await s.stop(); }
+  });
+});

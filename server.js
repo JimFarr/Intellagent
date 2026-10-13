@@ -1549,7 +1549,10 @@ function workFor(ctx, name) {
   for (const x of answered) add('resume', x, `Your question was answered: ${String(x.answer || '').slice(0, 120)}`, call(x.id, 'start'));
   for (const x of leases) add('continue', x, x.status ? `You were: ${x.status}` : 'You hold this lease', `${call(x.id, 'review')} { "summary": "…" } when done`);
   for (const x of assigned) add('start', x, 'Assigned to you', call(x.id, 'start'));
-  if (!next.length || next.every((n) => n.action === 'renew')) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
+  // A router (the coordinator role) assigns Ready work; it never picks it up itself.
+  let router = false;
+  try { router = !!standing && standing.get(name).role === 'coordinator'; } catch { /* not a standing agent */ }
+  if (!router && (!next.length || next.every((n) => n.action === 'renew'))) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
   // A supervising agent hears about other agents' stalled tickets.
   const supervise = stalledFor(ctx, name, standing?.superviseOf?.(name) || 0).map((x) => brief(x.it, { assignee: x.who, agentStatus: x.status, idleMinutes: x.idleMin, lastActivity: new Date(x.lastMs).toISOString() }));
   for (const x of supervise) {
@@ -1557,8 +1560,11 @@ function workFor(ctx, name) {
     add('supervise', x, off ? `Assigned to ${x.assignee}, which is ${x.agentStatus} — resume it` : `Assigned to ${x.assignee}, untouched for ${x.idleMinutes} min — nudge it`,
       off ? `POST /api/agents/${x.assignee}/resume` : `POST /api/agents/${x.assignee}/run { "note": "…" } — or comment @${x.assignee} on the card`);
   }
-  // A receptionist (standing agent with pickup "all") triages every open unassigned ticket.
-  const triage = standing?.pickupOf?.(name) === 'all' ? untriaged(ctx).map((it) => brief(it)) : [];
+  // A receptionist triages open unassigned tickets: everywhere with pickup "all", in the pickup columns
+  // (Ready) with pickup "ready".
+  const pk = standing?.pickupOf?.(name);
+  const pickCols = new Set(pickupColumns(ctx).map((c) => c.id));
+  const triage = pk && (router || pk === 'all') ? untriaged(ctx).filter((it) => pk === 'all' || pickCols.has(it.columnId)).map((it) => brief(it)) : [];
   for (const x of triage) add('triage', x, `Unassigned in ${x.column}: assign it, ask on the card, or leave it`, `PATCH /api/boards/${ctx.id}/items/${x.id} { "assignee": "…" }`);
   const blockedByMaster = master && master.holder !== name;
   return {
@@ -1627,11 +1633,13 @@ function pendingWork(name, pickup = false) {
       out.push({ key: `${ctx.id}:${n.action}:${n.requestId || n.id}${tag ? `:${tag}` : ''}`, board: ctx.id, action: n.action, id: n.id || null, requestId: n.requestId || null, title: n.title || null, why: n.why });
     }
     if (!pickup) continue;
+    let router = false;
+    try { router = standing.get(name).role === 'coordinator'; } catch { /* not standing */ }
     const cols = new Set((pickup === 'all' ? b.columns : pickupColumns(ctx)).map((c) => c.id));
     for (const it of untriaged(ctx)) {
       if (!cols.has(it.columnId)) continue;
-      out.push({ key: `${ctx.id}:triage:${it.id}`, board: ctx.id, action: pickup === 'all' ? 'triage' : 'pickup', id: it.id, title: it.title,
-        why: pickup === 'all' ? `Unassigned in ${b.columns.find((c) => c.id === it.columnId)?.name}: triage it — assign, ask, or leave it` : `Ready and unassigned (${it.priority})` });
+      out.push({ key: `${ctx.id}:triage:${it.id}`, board: ctx.id, action: pickup === 'all' || router ? 'triage' : 'pickup', id: it.id, title: it.title,
+        why: pickup === 'all' || router ? `Unassigned in ${b.columns.find((c) => c.id === it.columnId)?.name}: triage it — assign, ask, or leave it` : `Ready and unassigned (${it.priority})` });
     }
   }
   return out;
