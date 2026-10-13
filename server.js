@@ -1550,6 +1550,13 @@ function workFor(ctx, name) {
   for (const x of leases) add('continue', x, x.status ? `You were: ${x.status}` : 'You hold this lease', `${call(x.id, 'review')} { "summary": "…" } when done`);
   for (const x of assigned) add('start', x, 'Assigned to you', call(x.id, 'start'));
   if (!next.length || next.every((n) => n.action === 'renew')) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
+  // A supervising agent hears about other agents' stalled tickets.
+  const supervise = stalledFor(ctx, name, standing?.superviseOf?.(name) || 0).map((x) => brief(x.it, { assignee: x.who, agentStatus: x.status, idleMinutes: x.idleMin, lastActivity: new Date(x.lastMs).toISOString() }));
+  for (const x of supervise) {
+    const off = x.agentStatus === 'paused' || x.agentStatus === 'failed';
+    add('supervise', x, off ? `Assigned to ${x.assignee}, which is ${x.agentStatus} — resume it` : `Assigned to ${x.assignee}, untouched for ${x.idleMinutes} min — nudge it`,
+      off ? `POST /api/agents/${x.assignee}/resume` : `POST /api/agents/${x.assignee}/run { "note": "…" } — or comment @${x.assignee} on the card`);
+  }
   // A receptionist (standing agent with pickup "all") triages every open unassigned ticket.
   const triage = standing?.pickupOf?.(name) === 'all' ? untriaged(ctx).map((it) => brief(it)) : [];
   for (const x of triage) add('triage', x, `Unassigned in ${x.column}: assign it, ask on the card, or leave it`, `PATCH /api/boards/${ctx.id}/items/${x.id} { "assignee": "…" }`);
@@ -1559,8 +1566,35 @@ function workFor(ctx, name) {
     ...(master ? { master: { holder: master.holder, you: master.holder === name, status: master.status || null } } : {}),
     ...(blockedByMaster ? { note: `${master.holder} holds the whole board — you can read, comment and ask, but not change tickets.` } : {}),
     next: blockedByMaster ? [] : next,
-    requests, explain, leases, feedback, answered, waitingOnHuman: waiting, assigned, ready, ...(triage.length ? { triage } : {}),
+    requests, explain, leases, feedback, answered, waitingOnHuman: waiting, assigned, ready, ...(triage.length ? { triage } : {}), ...(supervise.length ? { supervise } : {}),
   };
+}
+
+// Tickets another standing agent was given but is not working on, for a supervising agent (the receptionist).
+// Stalled: the assignee is paused or failed, or nobody holds the ticket, the assignee is neither running nor
+// queued and nothing has happened on it for `minutes`. Never: Done, test tickets, tickets waiting on the human.
+// After two receptionist comments in a row with no answer it stops proposing the ticket (no nagging loop).
+function stalledFor(ctx, name, minutes) {
+  if (!standing || !minutes) return [];
+  const b = ctx.board;
+  const done = doneColumnId(ctx);
+  const out = [];
+  for (const it of b.columns.filter((c) => c.id !== done).flatMap((c) => c.itemIds.map((id) => b.items[id]).filter(Boolean))) {
+    const who = it.assignee;
+    if (!who || who === name || it.test || (it.questions || []).length || activeLease(it)) continue;
+    let a;
+    try { a = standing.get(who); } catch { continue; } // only standing agents can be woken
+    if (standing.isRunning(who)) continue;
+    const off = a.status === 'paused' || a.status === 'failed';
+    if (!off && (a.queued || ['queued', 'waiting', 'throttled', 'retrying'].includes(a.status))) continue;
+    const cs = it.comments || [];
+    if (cs.length >= 2 && cs.slice(-2).every((c) => c.author?.name === name)) continue;
+    const lastMs = Math.max(Date.parse(it.updatedAt || 0), Date.parse(it.enteredColumnAt || 0), ...cs.map((c) => Date.parse(c.createdAt)));
+    const idleMin = Math.round((Date.now() - lastMs) / 60_000);
+    if (!off && idleMin < minutes) continue;
+    out.push({ it, who, status: a.status, idleMin, lastMs });
+  }
+  return out;
 }
 
 // Work already sitting on the boards for a standing agent, so an idle agent wakes without being poked.
@@ -1586,7 +1620,8 @@ function pendingWork(name, pickup = false) {
       if (n.action === 'renew' || n.action === 'continue' || n.action === 'triage') continue; // housekeeping, mid-run, or pickup's job
       const it = n.id && b.items[n.id];
       if (it && n.action === 'start' && (it.assignee !== name || waitingOnHuman(it))) continue; // "ready" suggestions are pickup's job
-      const tag = n.action === 'resume' ? w.answered.find((x) => x.id === n.id)?.questionId
+      const tag = n.action === 'supervise' ? w.supervise?.find((x) => x.id === n.id)?.lastActivity
+        : n.action === 'resume' ? w.answered.find((x) => x.id === n.id)?.questionId
         : n.action === 'address_feedback' ? it?.review?.at
           : n.action === 'explain' ? w.explain.find((x) => x.id === n.id)?.commentId : '';
       out.push({ key: `${ctx.id}:${n.action}:${n.requestId || n.id}${tag ? `:${tag}` : ''}`, board: ctx.id, action: n.action, id: n.id || null, requestId: n.requestId || null, title: n.title || null, why: n.why });

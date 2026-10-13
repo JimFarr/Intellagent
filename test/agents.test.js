@@ -150,6 +150,13 @@ describe('coordinator role', () => {
       await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('triager:')), 8000, 'coordinator triage run');
       const brief = (await s.ok('GET', '/api/agents/triager')).listen;
       assert.deepEqual(brief, ['addressed', 'new-tickets']);
+      // a ticket the human already assigned to someone else needs no triage: no wake
+      await until(async () => (await agentState(s, 'triager')).status === 'idle', 6000, 'triager idle');
+      const runs = (await agentState(s, 'triager')).runsLastHour;
+      const given = await s.ok('POST', `${B}/items`, { title: 'already assigned', column: 'Backlog', assignee: 'someone' }, USER);
+      await new Promise((r) => setTimeout(r, 1200));
+      assert.equal((await agentState(s, 'triager')).runsLastHour, runs, 'no run for a pre-assigned ticket');
+      assert.deepEqual((await comments(s, given.id)).filter((c) => c.startsWith('triager:')), []);
     } finally { await s.stop(); }
   });
 });
@@ -323,6 +330,31 @@ describe('stop all agents', () => {
       await s.ok('DELETE', `${B}/items/${it.id}/lease`, undefined, { agent: 'ghost' });
       await until(async () => (await s.ok('GET', `${B}/items/${it.id}`)).column === 'Ready', 6000, 'swept to Ready');
       assert.match((await s.ok('GET', `${B}/items/${it.id}`)).comments.at(-1).body, /Back to Ready: no activity/);
+    } finally { await s.stop(); }
+  });
+});
+
+describe('the receptionist supervises other agents', () => {
+  it("is told about another agent's stalled ticket, and stops after two unanswered nudges", async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      desk: { role: 'coordinator', run: run('ok') },
+      sleeper: { role: 'builder', enabled: false }, // never runs: its tickets stall
+    } } });
+    try {
+      const sup = async () => (await s.ok('GET', `${B}/work?agent=desk`)).supervise || [];
+      const it = await s.ok('POST', `${B}/items`, { title: 'given to a paused agent', column: 'Ready', assignee: 'sleeper' }, USER);
+      const t = await s.ok('POST', `${B}/items`, { title: 'throwaway', column: 'Ready', assignee: 'sleeper', test: true }, USER);
+      const q = await s.ok('POST', `${B}/items`, { title: 'waiting on you', column: 'Ready', assignee: 'sleeper', needsHuman: 'which way?' }, USER);
+      const ids = (await sup()).map((x) => x.id);
+      assert.ok(ids.includes(it.id), 'a ticket held up by a paused agent is reported');
+      assert.ok(!ids.includes(t.id) && !ids.includes(q.id), 'test tickets and tickets waiting on the human are not');
+      const w = await s.ok('GET', `${B}/work?agent=desk`);
+      assert.match(w.next.find((n) => n.id === it.id)?.call || '', /\/api\/agents\/sleeper\/resume/);
+      for (const body of ['@sleeper please pick this up', '@sleeper reminder']) await s.ok('POST', `${B}/items/${it.id}/comments`, { body }, { agent: 'desk' });
+      assert.ok(!(await sup()).some((x) => x.id === it.id), 'two unanswered nudges: left for the human');
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'still needed' }, USER);
+      assert.ok((await sup()).some((x) => x.id === it.id), 'someone else acting makes it eligible again');
+      assert.equal((await s.ok('GET', `${B}/work?agent=sleeper`)).supervise, undefined, 'only supervisors get the list');
     } finally { await s.stop(); }
   });
 });
