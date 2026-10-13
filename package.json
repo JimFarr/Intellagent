@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Portable human + agent kanban. Zero dependencies.",
+  "license": "Apache-2.0",
+  "author": "James Farrugia",
+  "repository": "github:JimFarr/Intellagent",
   "main": "server.js",
   "bin": {
     "intellagent": "bin/intellagent.js"
@@ -25,6 +28,8 @@
     "cli.js",
     "mcp.js",
     "git-hook.js",
-    "AGENTS.md"
+    "AGENTS.md",
+    "LICENSE",
+    "NOTICE"
   ]
 }
