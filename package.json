@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/api.test.js test/agents.test.js test/flows.test.js test/agent-surface.test.js",
+    "test": "node --test test/api.test.js test/agents.test.js test/flows.test.js test/agent-surface.test.js test/leases.test.js",
     "measure:mcp": "node scripts/measure-mcp.js",
     "eval": "node scripts/eval-agent-modes.js"
   },
@@ -21,6 +21,7 @@
     "lib",
     "public",
     "server.js",
+    "leases-server.js",
     "cli.js",
     "mcp.js",
     "git-hook.js",

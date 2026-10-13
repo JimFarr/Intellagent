@@ -256,6 +256,23 @@ You only see board events when you look. Ways to make answers on cards reach you
 
 Your inbox already includes tickets you created, leased (now or before), commented on, were assigned or @mentioned on — and, while you hold the master lease, every ticket on the board.
 
+### Machine leases: heavy work, rationed
+Several agents on one PC can each run a browser, a simulation or a timing run; all at once they run the machine out of processor or graphics-card memory and spoil each other's timings. The **lease program** (`leases-server.js`, one per PC on `127.0.0.1:7499`, shared by every board; state in `~/.intellagent/leases.json`) rations it. Usually a **Guard** agent asks on the others' behalf; any agent may ask directly.
+```
+intellagent leases ask --holder natasha --cpu 11 --gpu 2048 --minutes 20 --ticket LNZ-3 --purpose "heat solve"
+  → { granted: true, lease: { id: "L4", expiresAt … }, floor, ceiling }
+  → { granted: false, reason: "no room: 11 threads, 2048 MB of card in use of 12 threads, 8192 MB", freesAt: "…" }
+intellagent leases renew L4 --minutes 15      # still at it
+intellagent leases done L4                    # finished: free it at once
+intellagent leases status | machine           # what is leased (the floor) | what the machine is actually doing
+intellagent leases ceiling --cpu 8 --gpu 5000 # the most that may be leased at once (Guard / human)
+```
+- Ask in **threads** (`cpu`) and **MB of card** (`gpu`); `--exclusive` wants the machine to itself (timing runs) and waits until it is empty.
+- A no is not an error: it says why and, where waiting helps, `freesAt`. A request bigger than the ceiling gets `freesAt: null`.
+- Every lease **ends by itself** when its time is up (at most 120 minutes; renew to keep it), so a crashed agent never strands the machine. Declare `done` as soon as you are.
+- The human's own work never asks: the Guard watches `leases machine` and lowers the ceiling to leave them room.
+- HTTP for other tools: `GET /status`, `GET /machine`, `POST /ask`, `POST /leases/<id>/renew|done`, `PUT /ceiling`. The CLI starts the program when it is not running; `intellagent leases start|stop` by hand.
+
 ## 5. Events — know when things change
 
 Every change emits an event with an increasing `seq`. Each event lists `recipients`: the leaseholder and past leaseholders, whoever asked for help, the agent author, the assignee, thread participants, the master-lease holder and @mentions. **`for=<your-name>` is your inbox.**

@@ -12,6 +12,7 @@
  *   intellagent hook install | post-commit | sync-ci
  *   intellagent agents [add|remove|pause|resume|run|log] standing agents the board wakes up itself
  *   intellagent autostart on|off|status  start this board when you log in
+ *   intellagent leases status|machine|ask|renew|done|ceiling|start|stop   the machine's leases for heavy work
  */
 'use strict';
 const fs = require('fs');
@@ -656,6 +657,9 @@ const HELP = `intellagent — a kanban for you and your agents
                    --areas "public/app.css,public/themes/"  --concerns "accessibility,performance"  (its speciality)
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
+
+  leases           the machine's leases for heavy work — browsers, solves, timings (one per PC; every board shares it)
+    status | machine | ask --holder N --cpu T --gpu MB --minutes M [--exclusive] | renew ID | done ID | ceiling | start | stop
 `;
 
 const commands = {
@@ -680,6 +684,7 @@ const commands = {
   do: () => doOp().catch((e) => { console.error(e.message); process.exit(e.exit || 2); }),
   mcp: () => forward('mcp.js', rest),
   hook: () => forward('git-hook.js', rest),
+  leases: () => require('../lib/leasesCli').leases(rest).catch((e) => { console.error(e.message); process.exit(e.exit || 1); }),
   help: () => (rest[0] ? opHelp(rest[0]) : process.stdout.write(HELP)),
 };
 const run = commands[cmd] || commands.help;
