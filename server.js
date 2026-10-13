@@ -825,6 +825,7 @@ const REVIEW_PARTS = [['changed', 'What changed'], ['why', 'Why'], ['verify', 'H
 function requestReview(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
+    if (item.columnId === doneColumnId(ctx)) fail(409, `${item.id} is already done (approved) — it can't go back to review`, { code: 'ALREADY_DONE', hint: 'If something is left to do, file a new ticket or comment on this one' });
     const col = d.column ? findColumn(ctx.board, d.column) : reviewColumn(ctx);
     if (!col) fail(400, 'No review column. Flag one with { "flags": { "review": true } } or pass "column".');
     guardWrite(ctx, item, actor);
@@ -931,7 +932,8 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } 
     if (!from.flags.allowMoveOut) fail(403, `Items cannot leave "${from.name}"`);
     if (!to.flags.allowMoveIn) fail(403, `"${to.name}" does not accept moved items`);
     // Human-only gates: an agent passes only with a column.gate grant (a delegated review carries its own).
-    gated = actor.kind !== 'user' && !!(to.flags.humanOnlyIn || from.flags.humanOnlyOut);
+    const leavingDone = from.id === doneColumnId(ctx);
+    gated = actor.kind !== 'user' && !!(to.flags.humanOnlyIn || from.flags.humanOnlyOut || leavingDone);
     if (gated && !gateBy) {
       if (!grantsOf(actor.name).some((g) => g.power === 'column.gate')) {
         if (to.flags.humanOnlyIn) fail(403, `Only a human can move items into "${to.name}". Move it to the column before and ask for review.`, { code: 'HUMAN_ONLY', hint: 'POST …/items/<id>/review { summary }' });
