@@ -3339,8 +3339,19 @@ function cleanGrants(list) {
   return list.map((g) => {
     const power = typeof g === 'string' ? g : g?.power;
     if (!POWERS[power]) fail(400, `Unknown power "${power}". Powers: ${Object.keys(POWERS).join(', ')}`);
-    const where = isObj(g?.where) ? Object.fromEntries(Object.entries(g.where).map(([k, v]) => [str(k, 80), Array.isArray(v) ? v.map((x) => str(x, 200)) : str(v, 200)]).filter(([k]) => /^[\w.]+$/.test(k))) : null;
-    return where && Object.keys(where).length ? { power, where } : power;
+    // A scope narrows a power, so a malformed one is refused, never dropped: dropping it would turn "only
+    // where risk is low" into "everywhere".
+    if (typeof g === 'string' || g?.where == null) return power;
+    if (!isObj(g.where)) fail(400, `The scope ("where") of ${power} must be an object like { "fields.risk": "low" }`, { code: 'BAD_REQUEST' });
+    const where = {};
+    for (const [k, v] of Object.entries(g.where)) {
+      if (!/^[\w.-]{1,80}$/.test(k)) fail(400, `Scope key "${k}" of ${power} is not a field path`, { code: 'BAD_REQUEST', hint: 'Use column, or a dotted path such as fields.risk or properties.area' });
+      const vs = (Array.isArray(v) ? v : [v]).map((x) => str(x, 200).trim()).filter(Boolean);
+      if (!vs.length) fail(400, `Scope key "${k}" of ${power} has no value`, { code: 'BAD_REQUEST', hint: 'Give a value or a list of values, or leave the key out' });
+      where[k] = Array.isArray(v) ? vs : vs[0];
+    }
+    if (!Object.keys(where).length) fail(400, `The scope of ${power} is empty`, { code: 'BAD_REQUEST', hint: 'Leave "where" out to grant it everywhere, on purpose' });
+    return { power, where };
   });
 }
 // Board access the UI sets: { columns?: [names], readOnly? } (stored as "limits")

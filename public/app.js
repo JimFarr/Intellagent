@@ -4005,12 +4005,15 @@
       ['agents.manage', 'Manage agents', "change other agents' label, model, speciality, narrow their access", 'agents=junior,mid'],
     ];
     const scopeText = (w) => Object.entries(w || {}).map(([k, v]) => `${k}=${[].concat(v).join(',')}`).join('; ');
+    // "fields.risk=low; column=Review". A part that doesn't parse is an error, never skipped: skipping it
+    // could save the grant with no scope at all, i.e. everywhere.
     const parseScope = (t) => {
       const w = {};
       for (const part of String(t || '').split(';')) {
+        if (!part.trim()) continue;
         const [k, ...rest] = part.split('=');
         const v = rest.join('=').trim();
-        if (!k.trim() || !v) continue;
+        if (!k.trim() || !v) throw new Error(`Scope "${part.trim()}" needs the form key=value (e.g. fields.risk=low)`);
         const vs = v.split(',').map((x) => x.trim()).filter(Boolean);
         w[k.trim()] = vs.length > 1 ? vs : vs[0];
       }

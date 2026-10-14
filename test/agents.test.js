@@ -668,6 +668,14 @@ describe('agent permissions from the UI', () => {
       const me = await fetch(`${s2.base}/api/permissions/me`, { headers: { 'x-agent': 'w' } }).then((x) => x.json());
       assert.deepEqual(me.grants.map((x) => x.power), ['agents.control', 'review.decide']);
       assert.equal((await human('POST', '/api/agents', { name: 'w', grants: ['make.coffee'] })).status, 400);
+      // a scope narrows a power: a malformed one is refused, never dropped into "everywhere"
+      const scoped = await human('POST', '/api/agents', { name: 'w', grants: [{ power: 'review.decide', where: { 'fields.my-risk': 'low' } }] });
+      assert.deepEqual(scoped.body.grants, [{ power: 'review.decide', where: { 'fields.my-risk': 'low' } }], 'hyphenated keys are kept');
+      for (const where of [{ 'fields risk': 'low' }, { 'fields.risk': '' }, { 'fields.risk': [] }, {}, 'risk=low', ['low']]) {
+        const bad = await human('POST', '/api/agents', { name: 'w', grants: [{ power: 'review.decide', where }] });
+        assert.equal(bad.status, 400, `refused: ${JSON.stringify(where)}`);
+      }
+      assert.deepEqual((await fetch(`${s2.base}/api/permissions/me`, { headers: { 'x-agent': 'w' } }).then((x) => x.json())).grants[0].where, { 'fields.my-risk': 'low' }, 'a refused save leaves the scoped grant as it was');
       assert.deepEqual((await human('POST', '/api/agents', { name: 'w', grants: [] })).body.grants, [], 'removing all grants');
     } finally { await s2.stop(); }
   });
