@@ -351,6 +351,10 @@
   // Ink, not white, on accent fills where white is too faint: Noir's accent is near-white (white 1.2:1, ink 16:1),
   // Studio Dark's red holds white at only 3.7:1 (ink 4.8:1, and the red stays bright enough to read as text).
   for (const k of ['bauhaus-noir', 'bauhaus-studio-dark']) THEMES[k].vars['on-accent'] = THEMES[k].vars.bg;
+  // Strength of each generated pattern, multiplying --fx-o. The one source: the board gets it as --fx-k (applySettings),
+  // the Background tiles use it directly. `<kind>-<mode>` overrides a kind in light or dark themes.
+  const FXK = { topo: 1.05, squiggles: 0.62, doodles: 0.7, confetti: 1.3, halftone: 0.7, 'halftone-light': 0.55 };
+  const fxk = (kind, mode) => FXK[`${kind}-${mode}`] ?? FXK[kind] ?? 1;
   const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['mesh', 'Mesh'], ['stars', 'Stars'], ['topo', 'Topo'], ['halftone', 'Halftone'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['confetti', 'Confetti'], ['none', 'None']];
   const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES.intellagent).style });
   // A user setting of "theme" (or unset) defers to the theme's own choice.
@@ -399,6 +403,7 @@
       tape: pick('tape'), cards: pick('cards'), attn: pick('attn'), enter: pick('enter'), lanes: pick('lanes'), bg: pick('bg'), md: pick('md'), avstyle: pick('avStyle'), drop: pick('drop'), groups: pick('groups'),
       density: settings.density,
     });
+    r.style.setProperty('--fx-k', fxk(r.dataset.bg, t.mode));
     const texture = settings.texture === 'theme' || settings.texture == null ? st.texture : settings.texture === 'on' || settings.texture === true;
     r.classList.toggle('no-texture', !texture);
     r.classList.toggle('reduced', reduced());
@@ -669,16 +674,13 @@
           const W = 200, H = 80, c = document.createElement('canvas'), o = document.createElement('canvas');
           c.width = o.width = W * 2; c.height = o.height = H * 2;
           const g = o.getContext('2d'); g.scale(2, 2); paint(g, W, H, kind, v, kind === 'topo' || kind === 'halftone' ? 0.5 : 0.6);
-          const x = c.getContext('2d'); x.globalAlpha = Math.min(1, parseFloat(v['fx-o']) * (FXK[kind] || 1) * 1.8); x.drawImage(o, 0, 0);
+          const x = c.getContext('2d'); x.globalAlpha = Math.min(1, parseFloat(v['fx-o']) * fxk(kind, (THEMES[settings.theme] || THEMES.intellagent).mode) * 1.8); x.drawImage(o, 0, 0);
           tiles.set(id, c.toDataURL());
         }
         return `background: url(${tiles.get(id)}) center / cover, var(--bg)`;
       },
     };
   })();
-  // per-kind strength of the generated art (multiplies --fx-o; mirrored in app.css)
-  const FXK = { topo: 1.05, squiggles: 0.62, doodles: 0.7, confetti: 1.3, halftone: 0.7 };
-
   /* ═════════════════════════ state + api ═════════════════════════ */
 
   const state = {

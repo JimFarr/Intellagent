@@ -1438,18 +1438,16 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 /* ───────── generated backgrounds: topo · halftone · squiggles · doodles · confetti ─────────
    Painted once onto canvas#art by app.js (art), tinted with the theme's colours; only the drift animates.
-   Strength per kind = --fx-o × k (keep in step with FXK in app.js). */
+   Strength = --fx-o × --fx-k; --fx-k is set per pattern (and light/dark) from FXK in app.js, its only home. */
 :root[data-bg="topo"] .fx-art, :root[data-bg="halftone"] .fx-art, :root[data-bg="squiggles"] .fx-art,
 :root[data-bg="doodles"] .fx-art, :root[data-bg="confetti"] .fx-art { display: block; }
-.fx-art { inset: -60px; width: calc(100% + 120px); height: calc(100% + 120px); --k: 1; opacity: calc(var(--fx-o) * var(--k)); will-change: transform; animation: art-drift 90s ease-in-out infinite alternate; }
-:root[data-bg="topo"] .fx-art { --k: 1.05; animation-duration: 120s; }
+.fx-art { inset: -60px; width: calc(100% + 120px); height: calc(100% + 120px); opacity: calc(var(--fx-o) * var(--fx-k, 1)); will-change: transform; animation: art-drift 90s ease-in-out infinite alternate; }
+:root[data-bg="topo"] .fx-art { animation-duration: 120s; }
 /* Blueprint draws its own grid on the board; under contours the two fight, so the grid gives way. */
 :root[data-theme="blueprint"][data-bg="topo"] .board { background-image: none; }
-:root[data-bg="halftone"] .fx-art { --k: .7; animation-name: art-drift-x; }
-:root[data-mode="light"][data-bg="halftone"] .fx-art { --k: .55; }
-:root[data-bg="squiggles"] .fx-art { --k: .62; }
-:root[data-bg="doodles"] .fx-art { --k: .7; animation-duration: 110s; }
-:root[data-bg="confetti"] .fx-art { --k: 1.3; animation-name: art-fall; animation-duration: 70s; }
+:root[data-bg="halftone"] .fx-art { animation-name: art-drift-x; }
+:root[data-bg="doodles"] .fx-art { animation-duration: 110s; }
+:root[data-bg="confetti"] .fx-art { animation-name: art-fall; animation-duration: 70s; }
 @keyframes art-drift { from { transform: translate(-34px, -22px) rotate(-.4deg); } to { transform: translate(34px, 22px) rotate(.4deg); } }
 @keyframes art-drift-x { from { transform: translate(-40px, 0); } to { transform: translate(40px, 0); } }
 @keyframes art-fall { from { transform: translate(-14px, -50px) rotate(-.6deg); } to { transform: translate(14px, 50px) rotate(.6deg); } }
