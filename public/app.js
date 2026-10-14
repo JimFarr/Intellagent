@@ -207,7 +207,8 @@
   const BAUHAUS_STUDIO = { md: 'grid', card: 2, col: 2, modal: 4, ctl: 4, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, avatar: 'square', corner: 20, titleW: 600, font: "'Inter'", display: "'Archivo'", colAlpha: 100 };
   const STUDIO_CSS = '.col-name { font-weight: 700; letter-spacing: .1em; font-size: 12px; } .c-title { font-size: 14px; } .app-name { font-weight: 700; letter-spacing: -.01em; }';
   const THEMES = {
-    intellagent: T('Intellagent', 'dark', ['#0d0e1a', '#161829', '#1d2035', '#eceefe', '#8e93b8', '#2b2f4a', '#8b7bff', '#2fe0c4', '#ff6b8b', '#6aa8ff', '#ffc857', '#3ddc97', '#ffb454', '#ff5d73', '#7b5cff', '#00d4b0', '#ff5fa2']),
+    // The first look, now one theme among many: its key stays, so a saved pick still finds it.
+    intellagent: T('Amethyst', 'dark', ['#0d0e1a', '#161829', '#1d2035', '#eceefe', '#8e93b8', '#2b2f4a', '#8b7bff', '#2fe0c4', '#ff6b8b', '#6aa8ff', '#ffc857', '#3ddc97', '#ffb454', '#ff5d73', '#7b5cff', '#00d4b0', '#ff5fa2']),
     daylight: T('Daylight', 'light', ['#f4f1ec', '#ebe6de', '#fffdf9', '#23212b', '#7a7585', '#ddd6cb', '#6c5cff', '#0fb59a', '#e5486b', '#3b7bea', '#e3a019', '#1f9e66', '#d9822b', '#d93c56', '#b6a8ff', '#8ff0dc', '#ffc2d9'],
       { attn: 'glow' }),
     dracula: T('Dracula', 'dark', ['#21222c', '#282a36', '#343746', '#f8f8f2', '#8b93c4', '#44475a', '#bd93f9', '#ff79c6', '#ff5555', '#8be9fd', '#f1fa8c', '#50fa7b', '#ffb86c', '#ff5555', '#bd93f9', '#ff79c6', '#8be9fd'],
@@ -356,12 +357,10 @@
   THEMES.blueprint.vars['topo-index'] = THEMES.blueprint.vars.text;
   // Text on accent fills reaches 4.5:1. White where it does; in a dark theme, else its background ink (a pale accent
   // reads far better with ink); else the fill (--accent-fill) is deepened toward the theme's ink until white reads.
-  // --accent itself is untouched, so links, rings and tints keep the theme's colour. ON_ACCENT pins a theme by hand.
-  const ON_ACCENT = { intellagent: '#fff' }; // the default look; white is 3.3:1 here, the choice is James's (INT-101)
-  for (const [k, t] of Object.entries(THEMES)) {
+  // --accent itself is untouched, so links, rings and tints keep the theme's colour.
+  for (const t of Object.values(THEMES)) {
     const v = t.vars, ink = luminance(v.bg) < luminance(v.text) ? v.bg : v.text;
-    if (ON_ACCENT[k]) v['on-accent'] = ON_ACCENT[k];
-    else if (contrast('#fff', v.accent) >= 4.5) continue;
+    if (contrast('#fff', v.accent) >= 4.5) continue;
     else if (t.mode === 'dark' && contrast(ink, v.accent) >= 4.5) v['on-accent'] = ink;
     else for (let i = 1; i <= 50 && contrast('#fff', v['accent-fill']) < 4.5; i++) v['accent-fill'] = mixHex(v.accent, ink, i / 50);
   }
@@ -370,13 +369,15 @@
   const FXK = { topo: 1.05, squiggles: 0.62, doodles: 0.7, confetti: 1.3, halftone: 0.7, 'halftone-light': 0.55 };
   const fxk = (kind, mode) => FXK[`${kind}-${mode}`] ?? FXK[kind] ?? 1;
   const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['mesh', 'Mesh'], ['stars', 'Stars'], ['topo', 'Topo'], ['halftone', 'Halftone'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['confetti', 'Confetti'], ['none', 'None']];
-  const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES.intellagent).style });
+  // The default, and the fallback for a missing or unknown theme: Bauhaus Studio, or its dark twin.
+  const BASE_THEME = matchMedia('(prefers-color-scheme: light)').matches ? 'bauhaus-studio' : 'bauhaus-studio-dark';
+  const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES[BASE_THEME]).style });
   // A user setting of "theme" (or unset) defers to the theme's own choice.
   const pick = (k) => (settings[k] != null && settings[k] !== 'theme' ? settings[k] : themeStyle()[k]);
 
   const KEY = 'intellagent.settings.v1';
   const DEFAULTS = {
-    theme: matchMedia('(prefers-color-scheme: light)').matches ? 'daylight' : 'intellagent',
+    theme: BASE_THEME,
     v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme', drop: 'theme', groups: 'theme',
     density: 'cozy', colw: 300, ageDays: '7',
     motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full',
@@ -401,7 +402,7 @@
     render();
   }
   function applySettings() {
-    const t = THEMES[settings.theme] || THEMES.intellagent;
+    const t = THEMES[settings.theme] || THEMES[BASE_THEME];
     const st = themeStyle();
     const r = document.documentElement;
     for (const [k, v] of Object.entries(t.vars)) r.style.setProperty(`--${k}`, v);
@@ -412,7 +413,7 @@
     if (st.font) r.style.setProperty('--font', `${st.font}, system-ui, -apple-system, 'Segoe UI', sans-serif`); else r.style.removeProperty('--font');
     if (st.display) r.style.setProperty('--display', `${st.display}, var(--font)`); else r.style.removeProperty('--display');
     Object.assign(r.dataset, {
-      theme: settings.theme in THEMES ? settings.theme : 'intellagent', mode: t.mode, glow: t.glow ? '1' : '',
+      theme: settings.theme in THEMES ? settings.theme : BASE_THEME, mode: t.mode, glow: t.glow ? '1' : '',
       shadow: st.shadow, typeind: st.typeInd, chips: st.chips, heads: st.heads, avatar: st.avatar,
       tape: pick('tape'), cards: pick('cards'), attn: pick('attn'), enter: pick('enter'), lanes: pick('lanes'), bg: pick('bg'), md: pick('md'), avstyle: pick('avStyle'), drop: pick('drop'), groups: pick('groups'),
       density: settings.density,
@@ -663,7 +664,7 @@
 
     let cv = null, key = '', timer = 0;
     const tiles = new Map();
-    const vars = () => (THEMES[settings.theme] || THEMES.intellagent).vars;
+    const vars = () => (THEMES[settings.theme] || THEMES[BASE_THEME]).vars;
     function sync() {
       const kind = document.documentElement.dataset.bg;
       cv ||= document.getElementById('art');
@@ -688,7 +689,7 @@
           const W = 200, H = 80, c = document.createElement('canvas'), o = document.createElement('canvas');
           c.width = o.width = W * 2; c.height = o.height = H * 2;
           const g = o.getContext('2d'); g.scale(2, 2); paint(g, W, H, kind, v, kind === 'topo' || kind === 'halftone' ? 0.5 : 0.6);
-          const x = c.getContext('2d'); x.globalAlpha = Math.min(1, parseFloat(v['fx-o']) * fxk(kind, (THEMES[settings.theme] || THEMES.intellagent).mode) * 1.8); x.drawImage(o, 0, 0);
+          const x = c.getContext('2d'); x.globalAlpha = Math.min(1, parseFloat(v['fx-o']) * fxk(kind, (THEMES[settings.theme] || THEMES[BASE_THEME]).mode) * 1.8); x.drawImage(o, 0, 0);
           tiles.set(id, c.toDataURL());
         }
         return `background: url(${tiles.get(id)}) center / cover, var(--bg)`;
