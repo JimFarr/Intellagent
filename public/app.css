@@ -869,7 +869,10 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .row .seg { min-width: 220px; }
 @media (max-width: 640px) {
   .settings .m-frame { display: flex; flex-direction: column; }
-  .set-nav { flex-direction: row; overflow-x: auto; flex: none; }
+  /* tabs scroll sideways: no scrollbar, a fade at the right edge says there is more */
+  .set-nav { flex-direction: row; overflow-x: auto; flex: none; scrollbar-width: none; padding-right: 32px;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+  .set-nav::-webkit-scrollbar { display: none; }
   .row .seg { min-width: 0; }
 }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(134px, 1fr)); gap: 10px; }
@@ -1111,6 +1114,8 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .car-nav .car-l { rotate: 90deg; }
 .car-nav .car-r { rotate: -90deg; }
 .look-sticky .pv-stage { margin: 0 0 8px; padding: 16px 14px; }
+/* on a phone the pinned strip and preview would take two thirds of the panel; let them scroll away */
+@media (max-width: 640px) { .look-sticky { position: static; box-shadow: none; } }
 
 .settings { height: min(780px, calc(100vh - 32px)); }
 .pv-wide .column { width: auto; flex: 1 1 auto; max-width: 560px; }
@@ -1282,7 +1287,10 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .mdays i { flex: 1; min-height: 2px; border-radius: 3px 3px 0 0; background: color-mix(in oklab, var(--accent) 70%, transparent); }
 .magent { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
 .magent b { margin-left: auto; font-variant-numeric: tabular-nums; }
-@media (max-width: 640px) { .mt[data-mt="answer"], .mt[data-mt="slow"] { display: none; } }
+@media (max-width: 640px) {
+  .mt[data-mt="answer"], .mt[data-mt="slow"] { display: none; }
+  .metrics { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+}
 
 /* ───────── markdown looks: :root[data-md] clean | grid | paper | terminal ─────────
    Every theme picks one (style.md); Settings › Appearance can override it. */
