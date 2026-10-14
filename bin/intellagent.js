@@ -267,6 +267,7 @@ async function start() {
 }
 
 async function stop() {
+  humanOnly('intellagent stop'); // stopping the board stops every standing agent with it
   const mp = requireManifest();
   const pidFile = path.join(path.dirname(mp), 'data', 'server.pid');
   let pid = null;
@@ -722,7 +723,7 @@ const HELP = `intellagent — a kanban for you and your agents
 
 const commands = {
   init, start, stop, status, docs, templates, skill, brief,
-  open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
+  open: () => { humanOnly('intellagent open'); if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
   token: tokenCmd,
   project: projectCmd,
   link: linkCmd,

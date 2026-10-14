@@ -122,7 +122,7 @@ describe('the CLI for agents', () => {
   it('commands that act as the human refuse to run as an agent', () => {
     for (const [args, env] of [[['merge', 'T-1'], { INTELLAGENT_AGENT: 'sneaky' }], [['agents', 'pause', 'x'], { INTELLAGENT_RUN: 'run_1' }],
       [['agents', 'add', 'evil', '--role', 'builder'], { INTELLAGENT_AGENT: 'sneaky' }], [['token', '--rotate'], { INTELLAGENT_AGENT: 'sneaky' }],
-      [['merge', 'T-1', '--as', 'sneaky'], {}]]) {
+      [['merge', 'T-1', '--as', 'sneaky'], {}], [['stop'], { INTELLAGENT_AGENT: 'sneaky' }], [['open'], { INTELLAGENT_AGENT: 'sneaky' }]]) {
       const r = cli(args, { cwd: s.dir, env });
       assert.equal(r.code, 1, args.join(' '));
       assert.match(r.err, /HUMAN_ONLY/, args.join(' '));
