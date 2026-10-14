@@ -14,11 +14,13 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const { baseUrl } = require('./lib/locate');
+const { baseUrl, tokenFor, defaultAgent } = require('./lib/locate');
 const request = require('./lib/request');
 
 const BASE = baseUrl();
-const AGENT = 'git';
+// Nothing issues a token for "git", so on a board that requires agent tokens the hook speaks as the project's
+// default agent, which has one. "git" stays the name where a token for it exists or none is needed.
+const AGENT = tokenFor('git') ? 'git' : (defaultAgent() || 'git');
 const PR_FIELD = process.env.INTELLAGENT_PR_FIELD || 'pr';
 const CI_FIELD = process.env.INTELLAGENT_CI_FIELD || 'ci';
 
@@ -27,7 +29,7 @@ const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 async function api(method, p, body) {
   // Bookkeeping must never hold up a commit: a board that is busy (or waiting on this very commit) is skipped.
   const r = await request.send(method, p, body, { agent: AGENT, base: BASE, timeoutMs: 3000 });
-  if (!r.ok) throw new Error(r.json?.error || `HTTP ${r.status}`);
+  if (!r.ok) throw new Error(`${r.json?.error || `HTTP ${r.status}`}${r.json?.hint ? ` — ${r.json.hint}` : ''}`);
   return r.json ?? {};
 }
 

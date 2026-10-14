@@ -263,6 +263,29 @@ describe('agent tokens on new boards', () => {
   });
 });
 
+describe('the git hook', () => {
+  it('links a commit to its ticket on a board that requires agent tokens, posting as the default agent', async () => {
+    const { execFileSync } = require('child_process');
+    const s = await startServer({ manifest: { idPrefix: 'HK', defaultAgent: 'vera', auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-hook-'));
+    const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' });
+    try {
+      assert.equal(cli(['token', '--agent', 'vera'], { cwd: s.dir }).code, 0);
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'linked', column: 'Ready' }, USER);
+      git('init', '-q', '-b', 'main'); git('config', 'user.email', 't@e.com'); git('config', 'user.name', 'T');
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'a');
+      git('add', '.'); git('commit', '-q', '-m', `Fix the thing (${it.id})`);
+      const r = spawnSync(process.execPath, [path.join(ROOT, 'git-hook.js'), 'post-commit'], {
+        cwd: repo, encoding: 'utf8', timeout: 20000,
+        env: cleanEnv({ INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base }),
+      });
+      assert.match(r.stdout, new RegExp(`linked [0-9a-f]{7} → ${it.id}`), r.stdout + r.stderr);
+      const item = await s.ok('GET', `/api/boards/main/items/${it.id}`, undefined, USER);
+      assert.ok(item.comments.some((c) => /\*\*Commit\*\*/.test(c.body)), 'the commit is a comment on the ticket');
+    } finally { await s.stop(); }
+  });
+});
+
 describe('waiting from the CLI', () => {
   it('wait marks a comment seen (👀) on a board that requires agent tokens', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
