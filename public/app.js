@@ -416,7 +416,19 @@
   // A user setting of "theme" (or unset) defers to the theme's own choice.
   const pick = (k) => (settings[k] != null && settings[k] !== 'theme' ? settings[k] : themeStyle()[k]);
 
+  // The only place that touches localStorage: a missing or unreadable value gives the fallback, and a failed write is dropped.
+  // `raw` keeps a plain string (the token) as it is instead of JSON.
+  const stored = (key, fallback, raw = false) => ({
+    get() {
+      try { return (raw ? localStorage.getItem(key) : JSON.parse(localStorage.getItem(key))) || fallback; } catch { return fallback; }
+    },
+    save(value) {
+      try { localStorage.setItem(key, raw ? value : JSON.stringify(value)); } catch { /* private mode */ }
+    },
+  });
+
   const KEY = 'intellagent.settings.v1';
+  const settingsStore = stored(KEY, {});
   const DEFAULTS = {
     theme: BASE_THEME,
     v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme', drop: 'theme', groups: 'theme',
@@ -428,7 +440,7 @@
   };
   function loadSettings() {
     try {
-      const s = JSON.parse(localStorage.getItem(KEY) || '{}');
+      const s = settingsStore.get();
       if (!s.v2) { if (s.cards === 'sticky') s.cards = 'theme'; s.v2 = true; }
       if (!s.v3) { s.bg = 'theme'; s.texture = 'theme'; s.v3 = true; } // themes now pick background + texture
       return { ...DEFAULTS, ...s, stub: { ...DEFAULTS.stub, ...(s.stub || {}) } };
@@ -437,7 +449,7 @@
   let settings = loadSettings();
   let settingsVersion = 0;
   function saveSettings() {
-    try { localStorage.setItem(KEY, JSON.stringify(settings)); } catch { /* private mode */ }
+    settingsStore.save(settings);
     settingsVersion++;
     applySettings();
     render();
@@ -749,13 +761,14 @@
   };
 
   const TOKEN_KEY = 'intellagent.token';
-  const AUTH = { token: (() => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } })() };
+  const tokenStore = stored(TOKEN_KEY, '', true);
+  const AUTH = { token: tokenStore.get() };
   // `intellagent open` passes the user token in the fragment (#token=…): keep it, then drop it from the address bar.
   {
     const m = /^#token=([\w-]+)/.exec(location.hash);
     if (m) {
       AUTH.token = m[1];
-      try { localStorage.setItem(TOKEN_KEY, m[1]); } catch { /* private mode */ }
+      tokenStore.save(m[1]);
       history.replaceState(null, '', location.pathname);
     }
   }
@@ -3759,9 +3772,10 @@
      composer over it, with the recipient as a chip and the last few requests as a short thread underneath.
      The field itself reports back: the agent's run dot while it works, an accent dot once it has replied. */
   const ASK_KEY = 'intellagent.ask.v1';
-  const askStore = (() => { try { return JSON.parse(localStorage.getItem(ASK_KEY)) || {}; } catch { return {}; } })();
+  const askStorage = stored(ASK_KEY, {});
+  const askStore = askStorage.get();
   askStore.seen ||= {}; askStore.to ||= {};
-  const saveAsk = () => { try { localStorage.setItem(ASK_KEY, JSON.stringify(askStore)); } catch { /* private mode */ } };
+  const saveAsk = () => askStorage.save(askStore);
   const ask = { pop: null, to: {}, draft: {}, closing: null };
   const askOpen = () => !!ask.pop?.isConnected && !ask.pop.classList.contains('leaving');
   // Who a new ask goes to: what you picked this session, else the coordinator, else whoever you asked last, else a standing agent.
@@ -4319,7 +4333,7 @@
         const v = inp.value.trim();
         if (!v) { inp.focus(); return; }
         AUTH.token = v;
-        try { localStorage.setItem(TOKEN_KEY, v); } catch { /* private mode */ }
+        tokenStore.save(v);
         root.remove();
         syncScrimmed();
         tokenPrompt = null;
@@ -4349,8 +4363,9 @@
   /* ═════════════════════════ while you were away ═════════════════════════ */
 
   const SEEN_KEY = 'intellagent.seen.v1';
-  const seen = (() => { try { return JSON.parse(localStorage.getItem(SEEN_KEY) || '{}'); } catch { return {}; } })();
-  function saveSeen() { try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch { /* private mode */ } }
+  const seenStorage = stored(SEEN_KEY, {});
+  const seen = seenStorage.get();
+  function saveSeen() { seenStorage.save(seen); }
   const seenFor = (b) => (seen[b] ||= { seq: null, items: {} });
   const catchupDone = new Set();
   const newsworthy = (ev) => !!ev.itemId && !QUIET.has(ev.type) && ev.type !== 'lease.warning' && !(ev.actor?.kind === 'user' && ev.actor.name === settings.userName);
@@ -4418,8 +4433,9 @@
   /* ═════════════════════════ inbox ═════════════════════════ */
 
   const INBOX_KEY = 'intellagent.inbox.v1';
-  const inboxRead = (() => { try { return JSON.parse(localStorage.getItem(INBOX_KEY) || 'null') || { seq: 0, ids: [] }; } catch { return { seq: 0, ids: [] }; } })();
-  function saveInbox() { try { localStorage.setItem(INBOX_KEY, JSON.stringify(inboxRead)); } catch { /* private mode */ } }
+  const inboxStorage = stored(INBOX_KEY, { seq: 0, ids: [] });
+  const inboxRead = inboxStorage.get();
+  function saveInbox() { inboxStorage.save(inboxRead); }
   const myName = () => (settings.userName || 'You').toLowerCase();
   const forMe = (ev) => ev.actor?.name?.toLowerCase() !== myName() && !QUIET.has(ev.type)
     && ((ev.recipients || []).some((r) => r.toLowerCase() === myName()) || ev.type === 'attention.raised');
@@ -4480,10 +4496,11 @@
   /* ═════════════════════════ digest ═════════════════════════ */
 
   const DIGEST_KEY = 'intellagent.digest.v1';
-  const digestSeen = (() => { try { return JSON.parse(localStorage.getItem(DIGEST_KEY) || '{}'); } catch { return {}; } })();
+  const digestStorage = stored(DIGEST_KEY, {});
+  const digestSeen = digestStorage.get();
   function markDigestSeen() {
     digestSeen[state.boardId] = state.board.digest?.[state.board.digest.length - 1]?.ts || '';
-    try { localStorage.setItem(DIGEST_KEY, JSON.stringify(digestSeen)); } catch { /* private mode */ }
+    digestStorage.save(digestSeen);
     renderHeader();
   }
   function dayLabel(d) {
