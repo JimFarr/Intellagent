@@ -4,6 +4,8 @@
 // Run: npm test   (node --test, no dependencies)
 const { describe, it: test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
 const { startServer, USER } = require('./helpers');
 
 let s;
@@ -92,6 +94,35 @@ describe('board API', () => {
     await s.ok('PATCH', B, { coordinator: 'sneaky' }, USER);
     await s.ok('PATCH', B, { coordinator: null }, USER);
     await s.ok('PATCH', `${B}/columns/Review`, { flags: { wipLimit: 0 } }, USER);
+  });
+
+  test('attachments by path: never tokens or board data; agents only from the project and temp', async () => {
+    const it = await mk({});
+    const att = (p, as) => s.api('POST', `${B}/items/${it.id}/attachments`, { path: p }, as);
+    const refused = async (p, as) => { const r = await att(p, as); assert.equal(r.status, 403, p); assert.equal(r.body.code, 'FORBIDDEN'); assert.ok(r.body.hint); };
+    fs.writeFileSync(path.join(s.dir, 'local.json'), '{"userToken":"secret"}');
+    await refused(path.join(s.dir, 'local.json'));
+    await refused(path.join(s.dir, 'local.json'), USER);
+    const inData = path.join(s.dir, 'data', 'peek.txt');
+    fs.writeFileSync(inData, 'x');
+    await refused(inData);
+    // a junction into the data folder is followed, not trusted
+    const link = path.join(s.dir, 'innocent');
+    fs.symlinkSync(path.join(s.dir, 'data'), link, 'junction');
+    await refused(path.join(link, 'peek.txt'));
+    // outside the project and temp: refused for agents, fine for the human
+    const outside = path.join(__dirname, '..', 'package.json');
+    if (path.relative(require('os').tmpdir(), outside).startsWith('..')) await refused(outside); // a checkout under temp is allowed
+    assert.equal((await att(outside, USER)).status, 201);
+    // the project itself (and the comment route) still work
+    fs.writeFileSync(path.join(s.dir, 'shot.png'), 'png');
+    assert.equal((await att(path.join(s.dir, 'shot.png'))).status, 201);
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'see', attachments: [{ path: path.join(s.dir, 'shot.png') }] });
+    const c = await s.api('POST', `${B}/items/${it.id}/comments`, { body: 'see', attachments: [{ path: path.join(s.dir, 'local.json') }] });
+    assert.equal(c.status, 403);
+    // avatars by path too
+    const av = await s.api('PATCH', '/api/profiles/me', { imagePath: path.join(s.dir, 'local.json') });
+    assert.equal(av.status, 403);
   });
 
   test('leases lock other agents but never the human', async () => {

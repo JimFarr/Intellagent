@@ -74,6 +74,7 @@ POST  /api/boards/main/archive           { "ids": ["INT-1"], "reason": "duplicat
 POST  /api/boards/main/archive/INT-1/restore
 ```
 
+- Attaching by `path`: agents may attach files from the project, their worktree and the OS temp folder (`403 FORBIDDEN` elsewhere; send `dataBase64` instead). Nobody can attach `local.json` or anything in the board's data folder. Avatars by `imagePath` follow the same rule.
 - `properties` is your free-form property bag — **merged** on PATCH; set a key to `null` to delete it; `"replaceProperties": true` to replace wholesale.
 - Send `"version"` (from your last read) on PATCH to avoid overwriting the human's concurrent edits → `409` means re-read and retry.
 - Columns have flags. `allowCreate:false` → `403` on create; `allowMoveIn/Out`, `wipLimit` (hard cap → `409`). Read them via `GET /columns`.

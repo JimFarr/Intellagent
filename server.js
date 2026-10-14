@@ -10,6 +10,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 
 const VERSION = '1.0.0';
 const BUILD = '2026.10.11-1';
@@ -809,6 +810,23 @@ const MIME = {
 };
 const MAX_ATTACHMENT = 15 * 1024 * 1024;
 
+// A file the board reads from disk for someone (attachment or avatar by path). Tokens (local.json) and the
+// board's own data are never read, for anyone; agents read only from the project, their worktrees and the
+// OS temp folder. Agents elsewhere send dataBase64.
+function readablePath(actor, raw) {
+  const given = path.resolve(String(raw));
+  if (!fs.existsSync(given)) fail(400, `File not found: ${given} (use an absolute path)`);
+  const real = fs.realpathSync.native(given); // through symlinks and junctions
+  const norm = (p) => { const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
+  const inside = (dir) => { try { dir = fs.realpathSync.native(dir); } catch { /* not there: compare as is */ } const rel = path.relative(norm(dir), norm(real)); return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel)); };
+  const hint = 'Attach a file from the project, your worktree or the temp folder, or send its contents as dataBase64';
+  if (path.basename(norm(real)) === 'local.json' || inside(DATA)) fail(403, 'The board never reads its own tokens or data as an attachment', { code: 'FORBIDDEN', hint });
+  if (actor.kind !== 'user' && ![PROJECT_ROOT, path.join(path.dirname(MANIFEST_PATH), 'worktrees'), os.tmpdir()].some(inside)) {
+    fail(403, `${real} is outside the folders agents may attach from`, { code: 'FORBIDDEN', hint });
+  }
+  return real;
+}
+
 function saveAttachment(ctx, item, a, actor) {
   if (!isObj(a)) fail(400, 'Attachment must be an object');
   if (a.url && !a.dataBase64 && !a.data && !a.path) {
@@ -818,8 +836,7 @@ function saveAttachment(ctx, item, a, actor) {
   let name = a.name;
   if (a.dataBase64 || a.data) buf = Buffer.from(String(a.dataBase64 || a.data).replace(/^data:[^,]*,/, ''), 'base64');
   else if (a.path) {
-    const p = path.resolve(String(a.path));
-    if (!fs.existsSync(p)) fail(400, `File not found: ${p} (use an absolute path)`);
+    const p = readablePath(actor, a.path);
     buf = fs.readFileSync(p);
     name = name || path.basename(p);
   } else fail(400, 'Attachment needs one of: dataBase64, path, url');
@@ -2698,8 +2715,7 @@ function updateProfile(name, d, actor) {
         if (m) ext = m[1].replace('jpeg', 'jpg').replace('svg+xml', 'svg');
         buf = Buffer.from(String(d.imageBase64).replace(/^data:[^,]*,/, ''), 'base64');
       } else {
-        const fp = path.resolve(String(d.imagePath));
-        if (!fs.existsSync(fp)) fail(400, `File not found: ${fp}`);
+        const fp = readablePath(actor, d.imagePath);
         buf = fs.readFileSync(fp);
         ext = path.extname(fp).slice(1).toLowerCase() || 'png';
       }
