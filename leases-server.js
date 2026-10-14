@@ -8,6 +8,10 @@
 //   POST /leases/<id>/done
 //   PUT  /ceiling  { cpu, gpuMB }
 //   POST /shutdown
+// Only programs on this PC may drive it, never a web page: the Host must be this address (no DNS rebinding),
+// a request carrying an Origin (every browser sends one on a POST) is refused, and writes must say they are JSON
+// (a page can send a cross-site text/plain POST without asking first, but not an application/json one).
+// Errors are { error, code, hint }, like the board's.
 const http = require('http');
 const fs = require('fs');
 const os = require('os');
@@ -40,16 +44,29 @@ async function main() {
 
   const body = (req) => new Promise((resolve, reject) => {
     let s = '';
-    req.on('data', (d) => { s += d; if (s.length > 1e5) reject(Object.assign(new Error('body too large'), { status: 413 })); });
-    req.on('end', () => { try { resolve(s ? JSON.parse(s) : {}); } catch { reject(Object.assign(new Error('body is not JSON'), { status: 400 })); } });
+    req.on('data', (d) => { s += d; if (s.length > 1e5) reject(fail(413, 'body too large', 'TOO_LARGE', 'Send under 100 kB')); });
+    req.on('end', () => { try { resolve(s ? JSON.parse(s) : {}); } catch { reject(fail(400, 'body is not JSON', 'BAD_REQUEST', 'Send a JSON object')); } });
   });
   const send = (res, status, data) => {
     res.writeHead(status, { 'content-type': 'application/json' });
     res.end(JSON.stringify(data, null, 2));
   };
+  const hosts = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+  const guard = (req) => {
+    if (!hosts.has(String(req.headers.host || '').toLowerCase())) {
+      throw fail(403, `Host "${req.headers.host || ''}" is not this program`, 'BAD_HOST', `Call http://127.0.0.1:${PORT} directly`);
+    }
+    if (req.headers.origin !== undefined) {
+      throw fail(403, 'Requests from web pages are refused', 'BAD_ORIGIN', 'Use "intellagent leases …" or call it from a program on this PC, without an Origin header');
+    }
+    if (req.method !== 'GET' && !/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) {
+      throw fail(415, 'Writes must be sent as JSON', 'BAD_REQUEST', 'Send the header content-type: application/json');
+    }
+  };
 
   const server = http.createServer(async (req, res) => {
     try {
+      guard(req);
       const url = new URL(req.url, 'http://x');
       const p = url.pathname.replace(/\/+$/, '') || '/';
       const m = p.match(/^\/leases\/([^/]+)\/(renew|done)$/);
@@ -75,14 +92,19 @@ async function main() {
         send(res, 200, { stopping: true });
         return setImmediate(() => process.exit(0));
       }
-      send(res, 404, { error: `No route for ${req.method} ${p}`, routes: ['GET /status', 'GET /machine', 'POST /ask', 'POST /leases/<id>/renew', 'POST /leases/<id>/done', 'PUT /ceiling', 'POST /shutdown'] });
+      send(res, 404, { error: `No route for ${req.method} ${p}`, code: 'NOT_FOUND', hint: 'See routes', routes: ['GET /status', 'GET /machine', 'POST /ask', 'POST /leases/<id>/renew', 'POST /leases/<id>/done', 'PUT /ceiling', 'POST /shutdown'] });
     } catch (e) {
-      send(res, e.status || 500, { error: e.message });
+      send(res, e.status || 500, { error: e.message, code: e.code || CODES[e.status] || 'ERROR', ...(e.hint || HINTS[e.status] ? { hint: e.hint || HINTS[e.status] } : {}) });
     }
   });
 
   setInterval(() => { if (ledger.sweep().length) save(ledger); }, SWEEP_MS).unref();
   server.listen(PORT, '127.0.0.1', () => console.log(`leases on http://127.0.0.1:${PORT} · ${capacity.cpu} threads${capacity.gpuMB ? `, ${capacity.gpuMB} MB of card` : ''} · ${FILE}`));
 }
+
+function fail(status, message, code, hint) { return Object.assign(new Error(message), { status, code, hint }); }
+// The ledger's own errors carry only a status (lib/leases.js stays free of HTTP): name them here.
+const CODES = { 400: 'BAD_REQUEST', 404: 'NOT_FOUND', 410: 'ENDED' };
+const HINTS = { 404: 'intellagent leases status lists the live leases', 410: 'Ask for a new lease' };
 
 main().catch((e) => { console.error(e); process.exit(1); });

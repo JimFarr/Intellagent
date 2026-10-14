@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 const { Ledger } = require('../lib/leases');
@@ -111,6 +112,23 @@ test('without a card, only threads are counted', () => {
   const a = l.ask({ holder: 'peter', cpu: 2, gpuMB: 99999 });
   assert.equal(a.granted, true);
   assert.equal(a.lease.gpuMB, 0);
+  assert.match(a.note, /no graphics card is counted/, 'says the card memory was not rationed');
+  assert.equal(l.ask({ holder: 'tony', cpu: 1 }).note, undefined, 'no note when no card memory was asked for');
+});
+
+test('renewing only ever extends a lease', () => {
+  const c = clock();
+  const l = machine(c);
+  const a = l.ask({ holder: 'natasha', cpu: 1, minutes: 60 }).lease;
+  assert.equal(l.renew(a.id, 5).expiresAt, a.expiresAt, '5 more minutes leaves the 60 alone');
+  c.pass(58);
+  assert.equal(l.renew(a.id, 15).expiresAt, '2026-10-13T10:13:00.000Z');
+});
+
+test('exclusive must be a real true or false, never a truthy string', () => {
+  const l = machine(clock());
+  assert.throws(() => l.ask({ holder: 'x', cpu: 1, exclusive: 'false' }), /exclusive must be true or false/);
+  assert.equal(l.ask({ holder: 'x', cpu: 1, exclusive: false }).lease.exclusive, false);
 });
 
 test('bad requests are refused with a reason', () => {
@@ -211,6 +229,37 @@ test('the program over HTTP: ask, refuse, done, ceiling, and state kept across a
     const cli = (...args) => JSON.parse(spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'intellagent.js'), 'leases', 'ask', '--holder', 'natasha', ...args], { cwd: dir, env: { ...env, INTELLAGENT_MANIFEST: '' }, encoding: 'utf8' }).stdout);
     assert.equal(cli('--cpu', '1').lease.board, 'Lenza');
     assert.equal(cli('--cpu', '1', '--board', 'Other').lease.board, 'Other');
+    assert.equal(cli('--cpu', '1', '--exclusive=false').lease.exclusive, false, '--exclusive=false is false');
+
+    // errors carry a code and a hint, like the board's
+    const gone = await call('POST', `/leases/${yes.body.lease.id}/done`);
+    assert.equal(gone.status, 410);
+    assert.equal(gone.body.code, 'ENDED');
+    assert.ok(gone.body.hint);
+    assert.equal((await call('POST', '/ask', { cpu: 1 })).body.code, 'BAD_REQUEST');
+
+    // no web page may drive it: a rebound Host, any Origin, or a write that isn't JSON is refused, and nothing changes
+    const raw = (method, p, headers, data) => new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, method, path: p, headers }, (res) => {
+        let s = ''; res.on('data', (d) => { s += d; }); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(s) }));
+      });
+      req.on('error', reject);
+      req.end(data);
+    });
+    const ask = JSON.stringify({ holder: 'evil', cpu: 1 });
+    const before = (await call('GET', '/status')).body.leases.length;
+    const rebound = await raw('POST', '/ask', { host: `evil.example:${port}`, 'content-type': 'application/json' }, ask);
+    assert.equal(rebound.status, 403);
+    assert.equal(rebound.body.code, 'BAD_HOST');
+    assert.equal((await raw('GET', '/status', { host: `evil.example:${port}` })).body.code, 'BAD_HOST', 'reads too');
+    const page = await raw('POST', '/ask', { host: `127.0.0.1:${port}`, origin: 'https://evil.example', 'content-type': 'application/json' }, ask);
+    assert.equal(page.body.code, 'BAD_ORIGIN');
+    assert.equal((await raw('POST', '/ask', { host: `localhost:${port}`, origin: 'null', 'content-type': 'application/json' }, ask)).body.code, 'BAD_ORIGIN', 'a sandboxed page sends Origin: null');
+    const form = await raw('POST', '/shutdown', { host: `127.0.0.1:${port}`, 'content-type': 'text/plain' }, '{}');
+    assert.equal(form.status, 415);
+    assert.equal((await raw('POST', '/shutdown', { host: `127.0.0.1:${port}` })).status, 415, 'no content-type at all');
+    assert.equal((await call('GET', '/status')).body.leases.length, before, 'nothing was granted, and the program is still up');
+    assert.equal((await raw('GET', '/status', { host: `localhost:${port}` })).status, 200, 'localhost is this program too');
   } finally {
     proc.kill();
     fs.rmSync(dir, { recursive: true, force: true });
