@@ -251,12 +251,12 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 }
 :root[data-cards="sticky"] .card:hover { rotate: 0deg; }
 /* card decorations (theme-driven: tape · pin · clip · corner · none) */
-/* Washi tape: translucent, striped, with torn zigzag ends, laid on at a slight angle. */
+/* Washi tape: translucent, a plain tint of its card's colour, with torn zigzag ends, laid on at a slight angle. */
 :root[data-tape="tape"] :is(.card, .group-head) .tape {
   display: block; position: absolute; top: -9px; left: 50%; width: 62px; height: 19px; z-index: 3; translate: -50% 0; rotate: calc(-2.5deg + var(--tilt, 0deg) * -3);
   background:
     linear-gradient(180deg, rgb(255 255 255 / .38), rgb(255 255 255 / .08) 55%, rgb(0 0 0 / .04)),
-    repeating-linear-gradient(-45deg, color-mix(in oklab, var(--tape-c, var(--accent)) 34%, transparent) 0 5px, color-mix(in oklab, var(--tape-c, var(--accent)) 18%, transparent) 5px 10px);
+    color-mix(in oklab, var(--tape-c, var(--accent)) 26%, transparent);
   --z: 4px;
   -webkit-mask: conic-gradient(from 45deg at left, #0000, #000 1deg 89deg, #0000 90deg) left / 51% var(--z) repeat-y, conic-gradient(from -135deg at right, #0000, #000 1deg 89deg, #0000 90deg) right / 51% var(--z) repeat-y;
   mask: conic-gradient(from 45deg at left, #0000, #000 1deg 89deg, #0000 90deg) left / 51% var(--z) repeat-y, conic-gradient(from -135deg at right, #0000, #000 1deg 89deg, #0000 90deg) right / 51% var(--z) repeat-y;
