@@ -236,6 +236,22 @@ describe('waiting from the CLI', () => {
   });
 });
 
+describe('the brief of a sandbox board', () => {
+  it('names the folder the board was set up in as the project, and the code it runs apart', async () => {
+    const code = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-code-'));
+    const s = await startServer({ manifest: { sandbox: true, projectRoot: code } });
+    try {
+      const project = path.join(s.dir, 'project');
+      fs.mkdirSync(project);
+      const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'dev' })).body;
+      const text = typeof brief === 'string' ? brief : brief.markdown;
+      const line = text.split('\n').find((l) => l.startsWith('Project'));
+      assert.ok(line.includes(project.split(path.sep).join('/')), line);
+      assert.match(line, /sandbox: it runs the code of/);
+    } finally { await s.stop(); }
+  });
+});
+
 describe('a board kept outside the project', () => {
   it('projectRoot sends agents, conventions and the brief to the project; link lets the project find the board', async () => {
     const { execFileSync } = require('child_process');

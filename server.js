@@ -2096,6 +2096,17 @@ function pendingWork(name, pickup = false) {
 
 // One page an agent reads first: who it is, what to do next, how this board works, and the exact calls.
 // via: cli (intellagent api …) | mcp (tool names) | http (raw requests).
+// The brief's Project line. A sandbox's projectRoot is the checkout whose code it runs, not where its work
+// happens: name the folder it was set up in (a "project" folder inside it, if init was run there) and the code apart.
+function briefProjectLine() {
+  const slash = (p) => p.replace(/\\/g, '/');
+  if (M.sandbox) {
+    const home = path.dirname(MANIFEST_PATH);
+    const project = fs.existsSync(path.join(home, 'project')) ? path.join(home, 'project') : home;
+    return `Project (the folder this board was set up in): \`${slash(project)}\`  ·  a sandbox: it runs the code of \`${slash(PROJECT_ROOT)}\`, which is not the project`;
+  }
+  return `Project (the code these tickets are about): \`${slash(PROJECT_ROOT)}\`${M.projectRoot ? ' — outside the board\'s folder: work there' : ''}`;
+}
 function briefing(ctx, name, base, via = 'cli') {
   const b = ctx.board;
   const w = workFor(ctx, name);
@@ -2139,7 +2150,7 @@ function briefing(ctx, name, base, via = 'cli') {
     `# You are "${name}" on the ${b.name} board`,
     `${base}  ·  board id \`${ctx.id}\`  ·  tickets ${b.idPrefix}-1, ${b.idPrefix}-2…  ·  identify every call as "${name}"${b.coordinator === name ? '  ·  you are this board\'s coordinator: requests come to you' : ''}`,
     ...(me.role ? [`Role: **${me.role}**${me.alignment ? ` · alignment: ${me.alignment}` : ''}`] : []),
-    `Project (the code these tickets are about): \`${PROJECT_ROOT.replace(/\\/g, '/')}\`${M.projectRoot ? ' — outside the board\'s folder: work there' : ''}`,
+    briefProjectLine(),
     '',
     ...intro,
     '## What to do next',
