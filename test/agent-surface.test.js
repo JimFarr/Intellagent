@@ -99,6 +99,16 @@ describe('the CLI for agents', () => {
     assert.match(h.out, /intellagent do hand_over_lease id=INT-12/);
     assert.equal(cli(['help', 'make_coffee']).code, 2);
   });
+  it('help <command> prints that command\'s usage; an unknown word lists commands and operations', () => {
+    const h = cli(['help', 'init']);
+    assert.equal(h.code, 0);
+    assert.match(h.out, /--template --name --prefix --port/);
+    assert.match(h.out, /--open-agents/);
+    assert.doesNotMatch(h.out, /templates {8}list board templates/, 'only init\'s own lines');
+    assert.match(cli(['help', 'agents']).out, /add NAME .*--role/);
+    const bad = cli(['help', 'make_coffee']);
+    assert.match(bad.err, /No command or operation matches "make_coffee"\. Commands: .*init.*Operations: get_briefing/);
+  });
   it('do <operation> runs it as INTELLAGENT_AGENT and prints JSON', async () => {
     const it = cli(['do', 'create_item', 'title=from the CLI', 'column=Backlog', 'priority=High'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'cli-tester' } });
     assert.equal(it.code, 0, it.err);
@@ -164,6 +174,14 @@ describe('agent tokens on new boards', () => {
     const local = JSON.parse(fs.readFileSync(path.join(dir, '.intellagent', 'local.json'), 'utf8'));
     assert.ok(local.agentTokens[m.defaultAgent], 'the default agent has a token');
     assert.ok(fs.readFileSync(path.join(dir, '.intellagent', '.gitignore'), 'utf8').includes('local.json'));
+  });
+  it('init --no-start names the port in its Next line, and says when it is the default', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-init-'));
+    const a = cli(['init', '--name', 'Port A', '--no-start', '--no-open', '--no-mcp', '--no-claude'], { cwd: dir });
+    assert.match(a.out, /Next: {2}intellagent start --open {3}\(port \d+, the first free one from 7420\)/);
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-init-'));
+    const b = cli(['init', '--name', 'Port B', '--port', '7437', '--no-start', '--no-open', '--no-mcp', '--no-claude'], { cwd: dir2 });
+    assert.match(b.out, /\(port 7437\)/);
   });
   it('an agent without a token is refused with a hint; intellagent token --agent fixes it without a restart', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });

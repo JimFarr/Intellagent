@@ -141,7 +141,7 @@ async function init() {
     const cur = fs.existsSync(md) ? fs.readFileSync(md, 'utf8') : '';
     if (!cur.includes('## Intellagent board')) { fs.writeFileSync(md, cur + block); console.log('  ✓ CLAUDE.md  (agent instructions appended)'); }
   }
-  if (f['no-start']) { console.log('\n  Next:  intellagent start --open\n'); return; }
+  if (f['no-start']) { console.log(`\n  Next:  intellagent start --open   (port ${port}${f.port ? '' : ', the first free one from 7420'})\n`); return; }
   await startBackground(manifestPath, url);
   console.log(`\n  ✓ running at ${url}${f['no-open'] ? '' : ' — opening it signed in'}`);
   if (!f['no-open']) openBoard(manifestPath);
@@ -628,10 +628,29 @@ function findOps(query) {
   const byName = ops.filter((t) => t[0].includes(qy));
   return byName.length ? byName : ops.filter((t) => t[1].toLowerCase().includes(qy));
 }
+// One command's entry from HELP: its line and the indented lines under it ("init", "agents", "leases"…).
+function commandHelp(name) {
+  const out = [];
+  for (const line of HELP.split('\n').slice(1)) {
+    if (/^ {2}\S/.test(line)) {
+      if (out.length) break;
+      if (line.trim().split(/\s+/)[0] === name) out.push(line);
+    } else if (out.length) {
+      if (!line.trim()) break;
+      out.push(line);
+    }
+  }
+  return out.length ? out.join('\n') : null;
+}
 function opHelp(query) {
   const { requestShape } = require('../lib/tools');
+  const q = String(query).toLowerCase().replace(/-/g, '_');
+  if (!operations().some((t) => t[0] === q)) {
+    const entry = commandHelp(String(query).toLowerCase());
+    if (entry) { console.log(entry); return; }
+  }
   const hits = findOps(query);
-  if (!hits.length) { console.error(`No operation matches "${query}". Operations: ${operations().map((t) => t[0]).join(', ')}`); process.exit(2); }
+  if (!hits.length) { console.error(`No command or operation matches "${query}". Commands: ${Object.keys(commands).join(', ')}. Operations: ${operations().map((t) => t[0]).join(', ')}`); process.exit(2); }
   for (const t of hits.slice(0, 6)) {
     const [name, description, props, required] = t;
     const shape = requestShape(t);
@@ -694,6 +713,7 @@ async function sandboxCmd() {
 const HELP = `intellagent — a kanban for you and your agents
 
   init [dir]       set up a board here, start it, open it   --template --name --prefix --port --agent (default claude)
+                   --port N (default: the first free port from 7420)  --prefix XX (ticket ids)  --open-agents (agents need no token)
                    also adds the MCP tools (.mcp.json) and CLAUDE.md instructions; opt out: --no-mcp --no-claude --no-start --no-token
   templates        list board templates (software, research, ops, ...)
   skill install    add the intellagent skills to Claude Code (working a ticket; setting up)   [--project]
@@ -710,7 +730,7 @@ const HELP = `intellagent — a kanban for you and your agents
   docs             print the agent guide
   api M PATH [b]   call the API as an agent      (INTELLAGENT_AGENT=name; body: key=value… | json | @file | -)
   do OP [k=v …]    run an operation by name (the MCP tools, all of them): intellagent do move_item id=INT-12 column=Review
-  help OP          an operation's exact request and parameters (help lease, help search …)
+  help CMD|OP      a command's usage (help init), or an operation's exact request and parameters (help lease, help search …)
                    api/do: JSON on stdout; errors: "error <status> <CODE>: … — hint: …" on stderr, exit 1 (2 unreachable/bad input, 3 no board)
   wait             block until something arrives in your inbox, print it, exit   --agent --types --timeout --json
   watch -- CMD     run CMD each time your inbox gets events (unattended agents)   --agent --claude --once
