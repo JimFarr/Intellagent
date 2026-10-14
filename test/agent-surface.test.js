@@ -381,3 +381,58 @@ describe('reviews carry evidence, and the human can preview the work', () => {
     } finally { await require('../lib/sandbox').stop(path.join(s.dir, 'intellagent.manifest.json'), 'preview'); await s.stop(); }
   });
 });
+
+describe('delegated approval on a reviewer\'s ok', () => {
+  it('Gamora approves only where Nebula said ok, and never over anyone\'s concerns', async () => {
+    const s = await startServer({ agents: { agents: {
+      gamora: { role: 'coordinator', enabled: false, grants: [{ power: 'review.decide', where: { 'reviewers.nebula': 'ok' } }] },
+      nebula: { role: 'reviewer', enabled: false },
+      rocket: { role: 'builder', enabled: false, reviewer: true },
+    } } });
+    try {
+      const inReview = async (title) => {
+        const it = await s.ok('POST', '/api/boards/main/items', { title, column: 'Ready' }, USER);
+        await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+        await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+        await s.ok('POST', `/api/boards/main/items/${it.id}/reviewers`, { name: 'nebula' }, USER);
+        return it;
+      };
+      const decide = (id) => s.api('POST', `/api/boards/main/items/${id}/review/decision`, { verdict: 'approve', comment: 'on Nebula\'s QA' }, { agent: 'gamora' });
+      const verdict = (id, who, v) => s.ok('POST', `/api/boards/main/items/${id}/reviewers/${who}/verdict`, { verdict: v, comment: v === 'ok' ? 'Checked. It holds. @gamora' : 'not yet' }, { agent: who });
+
+      const work = async () => (await s.ok('GET', '/api/boards/main/work', undefined, { agent: 'gamora' })).next.filter((n) => n.action === 'decide' || n.action === 'chase');
+      const a = await inReview('waiting on QA');
+      assert.equal((await decide(a.id)).status, 403, 'no verdict from Nebula yet: out of scope');
+      assert.deepEqual((await work()).filter((n) => n.id === a.id), [], 'Nebula was only just asked: nothing to chase yet');
+      await verdict(a.id, 'nebula', 'ok');
+      assert.equal((await work()).find((n) => n.id === a.id)?.action, 'decide', 'everything is in: decide');
+      const ok = await decide(a.id);
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+      assert.equal((await s.ok('GET', `/api/boards/main/items/${a.id}`)).column, 'Done', 'approved through the gate');
+
+      const b = await inReview('one reviewer worried');
+      await s.ok('POST', `/api/boards/main/items/${b.id}/reviewers`, { name: 'rocket' }, USER);
+      await verdict(b.id, 'nebula', 'ok');
+      await verdict(b.id, 'rocket', 'concerns');
+      const no = await decide(b.id);
+      assert.equal(no.status, 409);
+      assert.equal(no.body.code, 'CONCERNS_OPEN');
+      const ch = (await work()).find((n) => n.id === b.id);
+      assert.equal(ch?.action, 'chase');
+      assert.match(ch.why, /rocket's concerns resolved/);
+
+      // no evidence in the review: never approved on the human's behalf
+      const e = await s.ok('POST', '/api/boards/main/items', { title: 'no evidence', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${e.id}/start`, {}, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${e.id}/review`, { changed: 'c', why: 'w', verify: 'v' }, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${e.id}/reviewers`, { name: 'nebula' }, USER);
+      await verdict(e.id, 'nebula', 'ok');
+      assert.equal((await decide(e.id)).body.code, 'NO_EVIDENCE');
+      assert.match((await work()).find((n) => n.id === e.id)?.why || '', /evidence from dev/);
+
+      const c = await inReview('QA has concerns');
+      await verdict(c.id, 'nebula', 'concerns');
+      assert.equal((await decide(c.id)).status, 403, "Nebula's concerns are out of scope");
+    } finally { await s.stop(); }
+  });
+});

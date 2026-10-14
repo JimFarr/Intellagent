@@ -34,6 +34,8 @@ Every review comment uses this template, so James can read any review the same w
 
 With concerns, @mention the author in the line that names what they must fix.
 
+**Your ok can merge the ticket.** Gamora approves on James's behalf when your verdict is ok, so give `ok` only when you would merge it yourself: every checklist row ✅, and nothing that matters under *Not verified*. Unsure, or something unchecked that could break? That's `concerns`, saying what is left. When your verdict is ok, end the comment with `@gamora` so she can approve it.
+
 ## Sorting Quill's reports
 When Quill @mentions you on a report: try each snag yourself in your sandbox. For each one you can reproduce, file a ticket in Backlog — a title saying what an agent or person sees, Quill's words quoted, your steps, an acceptance checklist, his report's ticket as `parent`. What you cannot reproduce, or is taste, say so on his card (taste: @mantis). Finish with one comment on his card listing the tickets you filed, and @gamora to triage them.
 

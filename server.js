@@ -660,6 +660,12 @@ function inScope(ctx, item, where) {
       const col = ctx.board.columns.find((c) => c.id === item.columnId);
       return wants.includes(item.columnId.toLowerCase()) || wants.includes(String(col?.name).toLowerCase());
     }
+    // reviewers.<name>: that reviewer's current verdict (ok | concerns); no verdict yet matches nothing
+    const rv = /^reviewers\.([\w.-]+)$/.exec(k);
+    if (rv) {
+      const v = (item.reviewers || []).find((r) => r.name.toLowerCase() === rv[1].toLowerCase())?.verdict;
+      return v != null && wants.includes(String(v).toLowerCase());
+    }
     const have = [].concat(getPath(item, k) ?? []).map((v) => String(v).toLowerCase());
     return have.some((v) => wants.includes(v));
   });
@@ -1676,6 +1682,11 @@ function decideReview(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
     const grant = grantFor(ctx, actor, 'review.decide', item, 'decide reviews');
+    // A delegated approval never overrules a reviewer: with any concerns open, only the human approves.
+    const worried = (item.reviewers || []).filter((r) => r.verdict === 'concerns').map((r) => r.name);
+    const evidence = String((item.questions || []).find((x) => x.kind === 'review')?.notes?.evidence || '').trim();
+    if (grant && verdict === 'approve' && !evidence) fail(409, `${item.id}'s review has no evidence: only the human approves without it`, { code: 'NO_EVIDENCE', hint: 'Ask the author for evidence (screenshots, outputs, what to look at in the Preview) and to request review again' });
+    if (grant && verdict === 'approve' && worried.length) fail(409, `${item.id} has concerns from ${worried.join(', ')}: only the human approves over a reviewer's concerns`, { code: 'CONCERNS_OPEN', hint: 'Leave it for the human, or @mention the author to address the concerns' });
     const comment = str(d.comment || '', 20_000).trim();
     if (verdict === 'changes' && !comment) fail(400, 'Say what needs to change in "comment"');
     // Where it goes: approve → through the next gate; changes → back to the working column.
@@ -1825,6 +1836,30 @@ function replyRequest(ctx, id, d, actor) {
 const PRIO_RANK = { Critical: 0, High: 1, Medium: 2, Low: 3 };
 
 // "What needs me now?" — everything an (ephemeral) agent needs to decide its next step, in one call.
+// What an agent with review.decide still needs before it may approve this review for the human: [] when
+// nothing (it may decide), a list of what to chase otherwise, or null when the only gap is a reviewer still
+// within its time (nothing to chase yet).
+function delegationGaps(ctx, it, q, grants) {
+  const gaps = [];
+  let early = false;
+  if (!String(q.notes?.evidence || '').trim()) gaps.push(`evidence from ${q.raisedBy} (the review has none: screenshots, outputs, what to look at in the Preview)`);
+  const worried = (it.reviewers || []).filter((r) => r.verdict === 'concerns').map((r) => r.name);
+  if (worried.length) gaps.push(`${worried.join(', ')}'s concerns resolved (the author fixes them and asks for review again)`);
+  if (!grants.some((g) => inScope(ctx, it, g.where))) {
+    for (const [k, want] of Object.entries(grants[0].where || {})) {
+      const rv = /^reviewers\.([\w.-]+)$/.exec(k);
+      if (!rv) { if (!inScope(ctx, it, { [k]: want })) gaps.push(`${k} to be ${[].concat(want).join(' or ')}`); continue; }
+      const r = (it.reviewers || []).find((x) => x.name.toLowerCase() === rv[1].toLowerCase());
+      if (!r) gaps.push(`${rv[1]} assigned as reviewer`);
+      else if (!r.verdict) {
+        if (Date.now() - Date.parse(r.at || 0) < 30 * 60_000) early = true;
+        else gaps.push(`${rv[1]}'s verdict (asked ${Math.round((Date.now() - Date.parse(r.at)) / 60_000)} min ago)`);
+      } else if (!inScope(ctx, it, { [k]: want })) gaps.push(`${rv[1]}'s verdict to be ${[].concat(want).join(' or ')} (it is ${r.verdict})`);
+    }
+  }
+  return !gaps.length && early ? null : gaps;
+}
+
 function workFor(ctx, name) {
   const b = ctx.board;
   const items = b.columns.flatMap((c) => c.itemIds.map((id) => b.items[id]).filter(Boolean));
@@ -1910,6 +1945,22 @@ function workFor(ctx, name) {
         `POST /api/boards/${ctx.id}/items/${it.id}/reviewers { "name": "…" }`);
     }
   }
+  // An agent the human delegated reviews to (review.decide) hears about each ticket waiting for a decision:
+  // "decide" when everything its grant needs is in, "chase" naming exactly what is missing, so it pushes the
+  // others for it. What they can't provide stays with the human.
+  const decideGrants = grantsOf(name).filter((g) => g.power === 'review.decide');
+  if (decideGrants.length) {
+    for (const it of items) {
+      const q = (it.questions || []).find((x) => x.kind === 'review');
+      if (!q || it.test || ownWork(it, name)) continue;
+      const gaps = delegationGaps(ctx, it, q, decideGrants);
+      if (gaps === null) continue; // nothing to chase yet (a reviewer is still within its time)
+      if (!gaps.length) add('decide', brief(it), 'Everything is in for you to approve it for the human: your grant covers it, the evidence is there and no reviewer has concerns. Approve with a one-line why, or leave it for the human if anything looks off',
+        `POST /api/boards/${ctx.id}/items/${it.id}/review/decision { "verdict": "approve", "comment": "…" }`);
+      else add('chase', brief(it), `To approve this for the human you still need: ${gaps.join('; ')}. @mention whoever owes it and say what you need; if they can't provide it, leave the ticket for the human`,
+        `POST /api/boards/${ctx.id}/items/${it.id}/comments { "body": "@… …" }`);
+    }
+  }
   // A supervising agent hears about other agents' stalled tickets.
   const supervise = stalledFor(ctx, name, standing?.superviseOf?.(name) || 0).map((x) => brief(x.it, { assignee: x.who, agentStatus: x.status, idleMinutes: x.idleMin, lastActivity: new Date(x.lastMs).toISOString() }));
   for (const x of supervise) {
@@ -1986,7 +2037,8 @@ function pendingWork(name, pickup = false) {
       const tag = n.action === 'supervise' ? w.supervise?.find((x) => x.id === n.id)?.lastActivity
         : n.action === 'resume' ? w.answered.find((x) => x.id === n.id)?.questionId
         : n.action === 'address_feedback' ? it?.review?.at
-          : n.action === 'explain' ? w.explain.find((x) => x.id === n.id)?.commentId : '';
+          : n.action === 'explain' ? w.explain.find((x) => x.id === n.id)?.commentId
+            : n.action === 'decide' || n.action === 'chase' ? crypto.createHash('sha1').update(n.why).digest('hex').slice(0, 10) : '';
       out.push({ key: `${ctx.id}:${n.action}:${n.requestId || n.id}${tag ? `:${tag}` : ''}`, board: ctx.id, action: n.action, id: n.id || null, requestId: n.requestId || null, title: n.title || null, why: n.why });
     }
     if (!pickup) continue;

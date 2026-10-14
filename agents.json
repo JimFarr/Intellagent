@@ -13,7 +13,13 @@
       "pickup": "ready",
       "sweepMinutes": 30,
       "grants": [
-        "agents.control"
+        "agents.control",
+        {
+          "power": "review.decide",
+          "where": {
+            "reviewers.nebula": "ok"
+          }
+        }
       ]
     },
     "rocket": {

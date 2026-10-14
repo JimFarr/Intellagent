@@ -604,7 +604,7 @@ describe('grants: powers the human delegates in agents.json', () => {
   const reviewed = async (title, by = 'worker', extra = {}) => {
     const it = await s.ok('POST', `${B}/items`, { title, column: 'Backlog', ...extra }, USER);
     await s.ok('POST', `${B}/items/${it.id}/start`, {}, ag(by));
-    await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'ready' }, ag(by));
+    await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'ready', evidence: 'npm test: green' }, ag(by));
     return it;
   };
 
