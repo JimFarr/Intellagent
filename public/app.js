@@ -1156,16 +1156,19 @@
       const list = $('.list', colEls.get(col.id));
       layoutColumn(col).forEach((n, idx) => {
         let node;
-        if (n.kind === 'card') { node = ensureCard(n.id); seenCards.add(n.id); node.style.removeProperty('--si'); }
+        if (n.kind === 'card') { node = ensureCard(n.id); seenCards.add(n.id); node.style.removeProperty('--si'); node.tabIndex = 0; }
         else {
           node = ensureGroup(n.key);
           seenGroups.add(n.key);
           updateGroup(node, n);
           const inner = $('.group-cards', node);
+          // A closed stack is one Tab stop, its head (a button that fans it out); its cards join the order once open.
+          const shut = node.classList.contains('stack') && !node.classList.contains('open');
           n.ids.forEach((id, j) => {
             const c = ensureCard(id);
             seenCards.add(id);
             c.style.setProperty('--si', j);
+            c.tabIndex = shut ? -1 : 0;
             if (inner.children[j] !== c) inner.insertBefore(c, inner.children[j] || null);
           });
         }
