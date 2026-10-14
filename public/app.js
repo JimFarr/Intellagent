@@ -4015,6 +4015,7 @@
         const v = rest.join('=').trim();
         if (!k.trim() || !v) throw new Error(`Scope "${part.trim()}" needs the form key=value (e.g. fields.risk=low)`);
         const vs = v.split(',').map((x) => x.trim()).filter(Boolean);
+        if (!vs.length) throw new Error(`Scope "${part.trim()}" has no value`);
         w[k.trim()] = vs.length > 1 ? vs : vs[0];
       }
       return Object.keys(w).length ? w : null;

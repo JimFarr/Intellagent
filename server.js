@@ -632,9 +632,21 @@ const POWERS = {
 };
 function grantsOf(name) {
   const raw = [...arr(standing?.grantsOf?.(name)), ...arr(M.permissions[name]?.grants)];
-  return raw.map((g) => (typeof g === 'string' ? { power: g } : isObj(g) ? { power: String(g.power || ''), ...(isObj(g.where) ? { where: g.where } : {}) } : null))
-    .filter((g) => g && POWERS[g.power]);
+  return raw.map((g) => {
+    if (typeof g === 'string') return { power: g };
+    if (!isObj(g)) return null;
+    const power = String(g.power || '');
+    if (g.where == null) return { power };
+    // A scope that can't be read as { key: value(s) } can't be trusted to narrow the power, so the grant is
+    // dropped — no power beats every power (agents.json is hand-written: "fields.risk=low" is an easy slip).
+    const ok = isObj(g.where) && Object.keys(g.where).length && Object.values(g.where).every((v) => [].concat(v).some((x) => String(x ?? '').trim()));
+    if (ok) return { power, where: g.where };
+    const key = `${name}:${power}:${JSON.stringify(g.where)}`;
+    if (!badGrantsWarned.has(key)) { badGrantsWarned.add(key); console.warn(`agents.json: ${name}'s ${power} grant is ignored — its "where" must be an object like { "fields.risk": "low" }`); }
+    return null;
+  }).filter((g) => g && POWERS[g.power]);
 }
+const badGrantsWarned = new Set();
 // Does a grant's scope cover this ticket? where: { column: name|id|[…], "<dotted path>": value|[values] }
 function inScope(ctx, item, where) {
   if (!where || !item) return true;

@@ -679,4 +679,23 @@ describe('agent permissions from the UI', () => {
       assert.deepEqual((await human('POST', '/api/agents', { name: 'w', grants: [] })).body.grants, [], 'removing all grants');
     } finally { await s2.stop(); }
   });
+
+  it('a grant in agents.json whose scope cannot be read is dropped, never widened to everywhere', async () => {
+    const s2 = await startServer({ agents: { agents: {
+      a: { grants: [{ power: 'review.decide', where: 'fields.risk=low' }] },
+      b: { grants: [{ power: 'review.decide', where: {} }, { power: 'column.gate', where: ['Done'] }] },
+      c: { grants: [{ power: 'review.decide', where: { 'fields.risk': '' } }, { power: 'agents.control', where: { column: 'Done' } }] },
+    } } });
+    try {
+      const mine = async (n) => (await s2.ok('GET', '/api/permissions/me', undefined, { agent: n })).grants;
+      assert.deepEqual(await mine('a'), []);
+      assert.deepEqual(await mine('b'), []);
+      assert.deepEqual((await mine('c')).map((g) => g.power), ['agents.control'], 'the well-formed grant stays');
+      const it = await s2.ok('POST', '/api/boards/main/items', { title: 'x', column: 'Ready' }, { agent: 'dev' });
+      await s2.ok('POST', `/api/boards/main/items/${it.id}/review`, { summary: 'done' }, { agent: 'dev' });
+      const d = await s2.api('POST', `/api/boards/main/items/${it.id}/review/decision`, { verdict: 'approve' }, { agent: 'a' });
+      assert.equal(d.status, 403);
+      assert.equal(d.body.code, 'HUMAN_ONLY');
+    } finally { await s2.stop(); }
+  });
 });
