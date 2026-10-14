@@ -235,6 +235,10 @@ describe('sandbox boards', () => {
       const agent = await until(async () => (await s.ok('GET', '/api/agents')).agents.find((a) => a.name === 'dev' && a.status === 'paused'));
       await new Promise((r) => setTimeout(r, 1500));
       assert.ok(!fs.existsSync(path.join(s.dir, `work-${it.id}.txt`)), 'the agent did not run');
+      // and nothing lands from a sandbox: it has no worktrees, so its human can't put commits on a real main
+      const land = await s.api('POST', `/api/boards/main/items/${it.id}/land`, { agent: 'dev' }, USER);
+      assert.equal(land.status, 400);
+      assert.match(JSON.stringify(land.body), /No worktrees/);
     } finally { await s.stop(); }
   });
 

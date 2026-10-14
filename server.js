@@ -3684,7 +3684,9 @@ for (const d of fs.readdirSync(BOARDS_DIR)) {
 }
 if (!boards.size) seed();
 checkPresence();
-worktrees = require('./lib/worktrees').createWorktrees({
+// A sandbox has no worktrees: its projectRoot is a real checkout, and landing there would put commits on
+// main that James never approved on the real board (INT-80).
+if (!M.sandbox) worktrees = require('./lib/worktrees').createWorktrees({
   root: PROJECT_ROOT,
   // .intellagent/worktrees in a project; .worktrees beside a manifest at the repo root (git-ignored either way)
   dir: path.basename(path.dirname(MANIFEST_PATH)) === '.intellagent' || M.projectRoot ? path.join(path.dirname(MANIFEST_PATH), 'worktrees') : path.join(PROJECT_ROOT, '.worktrees'),
