@@ -3,7 +3,7 @@
 // HTTP on 127.0.0.1 only. State is kept in ~/.intellagent/leases.json (INTELLAGENT_LEASES_FILE) across restarts.
 //   GET  /status                       capacity, ceiling, floor, live leases, recently ended
 //   GET  /machine                      what the processor and the card are doing now, with the ledger beside it
-//   POST /ask      { holder, cpu, gpuMB, minutes, exclusive, ticket, purpose }   → { granted, lease | reason, freesAt }
+//   POST /ask      { holder, board, cpu, gpuMB, minutes, exclusive, ticket, purpose }   → { granted, lease | reason, freesAt }
 //   POST /leases/<id>/renew { minutes }
 //   POST /leases/<id>/done
 //   PUT  /ceiling  { cpu, gpuMB }

@@ -2,7 +2,7 @@
 // The machine's leases: the ledger's decisions with a fake clock, the card reading, and the program over HTTP.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -135,6 +135,25 @@ test('picks up where it left off: leases and ceiling survive a restart, expired 
   assert.equal(again.ask({ holder: 'banner', cpu: 1 }).lease.id, 'L3', 'ids keep counting');
 });
 
+test('records the board beside the holder, so two boards\' natashas stay apart; old leases without one still load', () => {
+  const c = clock();
+  const l = machine(c);
+  const lenza = l.ask({ holder: 'natasha', board: 'Lenza', cpu: 2, exclusive: true, minutes: 10 }).lease;
+  assert.equal(lenza.holder, 'natasha', 'the holder stays the bare name');
+  assert.equal(lenza.board, 'Lenza');
+  const no = l.ask({ holder: 'natasha', board: 'Intellagent', cpu: 1 });
+  assert.match(no.reason, /^natasha@Lenza has the machine to itself/);
+  assert.equal(l.ask({ holder: 'x', cpu: 0 }).granted, false);
+  assert.throws(() => l.ask({ holder: 'x', board: 'b'.repeat(65) }), /board must be/);
+  l.done(lenza.id);
+  assert.equal(l.ask({ holder: 'peter', cpu: 1 }).lease.board, null, 'no board: recorded as none');
+
+  // a ledger saved before boards were recorded
+  const old = { seq: 1, ceiling: { cpu: 12, gpuMB: 8192 }, leases: [{ id: 'L1', holder: 'tony', ticket: null, purpose: '', cpu: 2, gpuMB: 0, exclusive: true, grantedAt: c.now(), expiresAt: c.now() + 10 * MIN, renewals: 0 }], history: [] };
+  const again = machine(c, { state: old });
+  assert.match(again.ask({ holder: 'peter', cpu: 1 }).reason, /^tony has the machine to itself/);
+});
+
 test('reads nvidia-smi', () => {
   assert.deepEqual(parseNvidiaSmi('NVIDIA GeForce RTX 3070, 53, 2374, 8192\r\n'), [
     { name: 'NVIDIA GeForce RTX 3070', busyPercent: 53, usedMB: 2374, totalMB: 8192 },
@@ -186,6 +205,12 @@ test('the program over HTTP: ask, refuse, done, ceiling, and state kept across a
     assert.equal((await call('POST', `/leases/${yes.body.lease.id}/done`)).body.ended, 'done');
     assert.deepEqual((await call('GET', '/status')).body.floor, { cpu: 0, gpuMB: 0 });
     assert.equal((await call('GET', '/nowhere')).status, 404);
+
+    // the CLI records the board it belongs to (the nearest manifest's app name) unless told otherwise
+    fs.writeFileSync(path.join(dir, 'intellagent.manifest.json'), JSON.stringify({ appName: 'Lenza' }));
+    const cli = (...args) => JSON.parse(spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'intellagent.js'), 'leases', 'ask', '--holder', 'natasha', ...args], { cwd: dir, env: { ...env, INTELLAGENT_MANIFEST: '' }, encoding: 'utf8' }).stdout);
+    assert.equal(cli('--cpu', '1').lease.board, 'Lenza');
+    assert.equal(cli('--cpu', '1', '--board', 'Other').lease.board, 'Other');
   } finally {
     proc.kill();
     fs.rmSync(dir, { recursive: true, force: true });
