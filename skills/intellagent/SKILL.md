@@ -23,7 +23,7 @@ You are `INTELLAGENT_AGENT` (or the project's default agent). Run commands bare 
 | Say what you're doing (live on the card) | `set_status` | `intellagent do set_status id=INT-12 status="running tests"` |
 | Comment (@name notifies) | `add_comment` | `intellagent do add_comment id=INT-12 body="…"` |
 | Unsure? Ask, then wait for the answer | `ask_human` → `wait_for_events` | `intellagent do ask_human id=INT-12 reason="…"` → `intellagent wait --timeout 120` (prints what arrived for you, the answer included; exit 2 if nothing came) |
-| **Done: request review in four parts** | `request_review` | `intellagent do request_review id=INT-12 changed="…" why="…" verify="…" risks="…"` |
+| **Done: request review, with evidence** | `request_review` | `intellagent do request_review id=INT-12 changed="…" why="…" verify="…" evidence="…" risks="…"` |
 | End of session (releases everything, posts the digest) | `finish_session` | `intellagent do finish_session summary="…"` |
 
 - `start_work` fails with `LEASED`, `BLOCKED`, `WIP_LIMIT` or `BOARD_HELD`: pick other work (`get_my_work`) or ask; `force=true` only for a blocker you've checked.

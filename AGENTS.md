@@ -19,7 +19,7 @@ The whole loop for one ticket:
 | Start / resume | `POST …/items/<ID>/start { status }` | Claims it, moves it to the working column, assigns you — all or nothing |
 | Say what you're doing | `PUT …/items/<ID>/status { status }` | Live line on the card |
 | Ask | `POST …/items/<ID>/attention { reason }` | Card glows; the answer comes back in `…/work` (`answered`) and as an event |
-| Done | `POST …/items/<ID>/review { changed, why, verify, risks }` | Moves to review, releases your lease, asks the human — explain in four parts |
+| Done | `POST …/items/<ID>/review { changed, why, verify, evidence, risks }` | Moves to review, releases your lease, asks the human — explain in four parts |
 | Asked to explain | a comment with `intent: "explain"` (also first in `…/work`) | Answer in a comment; change nothing else |
 | Verdict | (human) `review.approved` / `review.changes_requested` | Feedback shows in `…/work`; `start` again to address it |
 | End of session | `POST …/finish { summary }` | Releases everything you hold, posts the digest |
@@ -152,7 +152,7 @@ DELETE /api/boards/main/items/INT-12/lease                       → release
 `POST /api/boards/main/items/INT-12/start { "status": "reading the code", "minutes": 30 }` checks the ticket isn't held or blocked, leases it to you (not needed while you hold the master lease), moves it to the working column (flag `working`; e.g. In Progress) unless it is already there or further, and assigns it to you. If any check fails nothing changes and you get a `code` (`LEASED`, `BLOCKED`, `WIP_LIMIT`, `BOARD_HELD`). Pass `"force": true` to start a blocked ticket, `"column"` to pick the target. The reply includes `feedback` (if the review sent it back) and `lastAnswer` (your last question's answer).
 
 ### Explaining your work
-Reviews explain themselves in four parts: `changed` (what changed), `why` (the reasoning, and alternatives you rejected), `verify` (how the human can check it) and `risks` (risks and open questions). The review card shows each part in full. A single `summary` still works.
+Reviews explain themselves in five parts: `changed` (what changed), `why` (the reasoning, and alternatives you rejected), `evidence` (what proves it works: screenshots, outputs, tests), `verify` (how the human can check it) and `risks` (risks and open questions). The review card shows each part in full. A single `summary` still works.
 
 Keep `changed` short, plain and to the point. A non-technical reader should be able to follow it: say what the change does for the user, and name files, functions or flags only where the change needs them. Keep the other three parts as complete as they need to be. Example:
 - Before: "server.js (requestReview): counts commits via worktrees.commitsFor and stores `landing` on the review question; app.js renders a `.rv-does` line and a conditional button label."

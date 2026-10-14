@@ -2087,7 +2087,7 @@ function briefing(ctx, name, base, via = 'cli') {
     status: { cli: cli('PUT', `${P}/items/<ID>/status`, 'status="running tests"'), mcp: 'set_status { id, status }', http: `PUT ${P}/items/<ID>/status { status }` },
     comment: { cli: cli('POST', `${P}/items/<ID>/comments`, 'body="…"'), mcp: 'add_comment { id, body }', http: `POST ${P}/items/<ID>/comments { body }` },
     ask: { cli: cli('POST', `${P}/items/<ID>/attention`, 'reason="your question"'), mcp: 'ask_human { id, reason, form? }', http: `POST ${P}/items/<ID>/attention { reason, form? }` },
-    review: { cli: cli('POST', `${P}/items/<ID>/review`, 'changed="…" why="…" verify="…" risks="…"'), mcp: 'request_review { id, changed, why, verify, risks }', http: `POST ${P}/items/<ID>/review { changed, why, verify, risks }` },
+    review: { cli: cli('POST', `${P}/items/<ID>/review`, 'changed="…" why="…" verify="…" evidence="…" risks="…"'), mcp: 'request_review { id, changed, why, verify, evidence, risks }', http: `POST ${P}/items/<ID>/review { changed, why, verify, evidence, risks }` },
     moves: { cli: cli('GET', `${P}/items/<ID>/transitions`), mcp: 'get_transitions { id }', http: `GET ${P}/items/<ID>/transitions` },
     finish: { cli: cli('POST', `${P}/finish`, 'summary="what you did today"'), mcp: 'finish_session { summary }', http: `POST ${P}/finish { summary }` },
   };
