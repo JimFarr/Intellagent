@@ -264,6 +264,22 @@ describe('agent tokens on new boards', () => {
 });
 
 describe('waiting from the CLI', () => {
+  it('wait marks a comment seen (👀) on a board that requires agent tokens', async () => {
+    const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    try {
+      assert.equal(cli(['token', '--agent', 'pat'], { cwd: s.dir }).code, 0);
+      const env = { INTELLAGENT_AGENT: 'pat' };
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'look', column: 'Ready' }, USER);
+      // pat acts first, so wait starts from there; then the human @mentions pat
+      assert.equal(cli(['do', 'add_comment', `id=${it.id}`, 'body=on it'], { cwd: s.dir, env }).code, 0);
+      const c = await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: '@pat what is the plan?' }, USER);
+      const w = cli(['wait', '--timeout', '10'], { cwd: s.dir, env });
+      assert.equal(w.code, 0, w.err || w.out);
+      const item = await s.ok('GET', `/api/boards/main/items/${it.id}`, undefined, USER);
+      const mine = item.comments.find((x) => x.id === (c.comment?.id || c.id));
+      assert.ok(mine?.reactions?.['👀']?.includes('pat'), 'pat marked the comment seen');
+    } finally { await s.stop(); }
+  });
   it('brief and wait work with only INTELLAGENT_URL, and wait catches an answer that came before it was called', async () => {
     const s = await startServer({ agents: { agents: {} } });
     const away = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-away-')); // no board folder here

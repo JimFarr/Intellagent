@@ -9,7 +9,8 @@
  */
 'use strict';
 
-const { baseUrl, tokenFor, defaultAgent, findManifest, NO_BOARD } = require('./lib/locate');
+const { baseUrl, defaultAgent, findManifest, NO_BOARD } = require('./lib/locate');
+const request = require('./lib/request');
 const fs = require('fs');
 const nodePath = require('path');
 
@@ -69,17 +70,12 @@ async function callTool(name, args = {}) {
   const t = tools.find((x) => x.name === name);
   if (!t) throw new Error(`Unknown tool ${name}`);
   if (!BASE) return { text: NO_BOARD, isError: true };
-  const { run, batch } = require('./lib/locate').runContext();
-  const headers = { 'Content-Type': 'application/json', 'X-Agent': AGENT, ...(tokenFor(AGENT) ? { Authorization: `Bearer ${tokenFor(AGENT)}` } : {}), ...(run ? { 'X-Intellagent-Run': run } : {}) };
   // A tool spec may look something up first (e.g. create-or-update), so it can be async and gets a JSON GET helper.
-  const getJson = async (m, p) => (await fetch(BASE + p, { method: m, headers })).json();
+  const getJson = async (m, p) => (await request.send(m, p, undefined, { agent: AGENT })).json;
   const [method, path, body] = await t.call(args, getJson);
-  headers['X-Agent'] = AGENT; // introduce_yourself may have just changed it
-  // In a standing-agent run, identical writes on a retry replay the first reply instead of acting twice.
-  if (batch && method !== 'GET') headers['Idempotency-Key'] = require('crypto').createHash('sha1').update(`${batch}|${method}|${path}|${JSON.stringify(body ?? null)}`).digest('hex');
-  const res = await fetch(BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  const text = await res.text();
-  return { text, isError: !res.ok };
+  // AGENT is read after the call: introduce_yourself may have just changed it
+  const r = await request.send(method, path, body, { agent: AGENT });
+  return { text: r.raw, isError: !r.ok };
 }
 
 function send(msg) { process.stdout.write(`${JSON.stringify(msg)}\n`); }
@@ -97,9 +93,8 @@ async function handle(msg) {
       // A new agent (no role on the board yet) starts by asking the human who it should be.
       let intro = '';
       try {
-        const tok = tokenFor(AGENT);
-        const res = await fetch(`${BASE}/api/profiles/me`, { headers: { 'X-Agent': AGENT, ...(tok ? { Authorization: `Bearer ${tok}` } : {}) } });
-        const me = await res.json();
+        const res = await request.send('GET', '/api/profiles/me', undefined, { agent: AGENT });
+        const me = res.json;
         // an error reply says nothing about the role: do not mistake it for an unintroduced agent
         const unintroduced = BASE && res.ok && !me?.role;
         if (unintroduced) needsIntro = true;

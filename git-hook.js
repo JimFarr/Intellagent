@@ -14,7 +14,8 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const { baseUrl, tokenFor } = require('./lib/locate');
+const { baseUrl } = require('./lib/locate');
+const request = require('./lib/request');
 
 const BASE = baseUrl();
 const AGENT = 'git';
@@ -24,19 +25,10 @@ const CI_FIELD = process.env.INTELLAGENT_CI_FIELD || 'ci';
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
 
 async function api(method, p, body) {
-  const res = await fetch(BASE + p, {
-    method,
-    headers: {
-      'Content-Type': 'application/json', 'X-Agent': AGENT,
-      ...(tokenFor(AGENT) ? { Authorization: `Bearer ${tokenFor(AGENT)}` } : {}),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    // Bookkeeping must never hold up a commit: a board that is busy (or waiting on this very commit) is skipped.
-    signal: AbortSignal.timeout(3000),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  return data;
+  // Bookkeeping must never hold up a commit: a board that is busy (or waiting on this very commit) is skipped.
+  const r = await request.send(method, p, body, { agent: AGENT, base: BASE, timeoutMs: 3000 });
+  if (!r.ok) throw new Error(r.json?.error || `HTTP ${r.status}`);
+  return r.json ?? {};
 }
 
 // https://github.com/owner/repo/commit/<sha> from an origin like git@github.com:owner/repo.git

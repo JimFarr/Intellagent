@@ -119,8 +119,7 @@ async function init() {
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   const agentTokens = f['open-agents'] ? undefined : { [agent]: crypto.randomBytes(18).toString('base64url') };
   if (userToken || agentTokens) fs.writeFileSync(path.join(folder, 'local.json'), `${JSON.stringify({ ...(userToken ? { userToken } : {}), ...(agentTokens ? { agentTokens } : {}) }, null, 2)}\n`);
-  fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\n');
-  const url = `http://127.0.0.1:${port}`;
+  const url =`http://127.0.0.1:${port}`;
   fs.writeFileSync(path.join(folder, 'README.md'), `# ${name} · Intellagent board\n\n- \`intellagent start\` runs it (from anywhere in this project); \`intellagent open\` opens it signed in; \`intellagent stop\` stops it.\n- \`intellagent brief\` shows an agent everything it needs.\n- \`local.json\` holds your user token (git-ignored). Only requests with it act as you; \`intellagent open\` signs the browser in.\n\n## Agent instructions\n\n${agentPrompt(url, agent)}\n`);
   fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\nlocal.json\nworktrees/\n');
   console.log(`\n  ✓ ${path.relative(process.cwd(), manifestPath) || manifestPath}`);
@@ -291,12 +290,10 @@ async function brief() {
   if (!url) { console.error(NO_BOARD); process.exit(3); }
   const agent = String(f.agent || defaultAgent(m) || 'agent');
   const board = String(f.board || process.env.INTELLAGENT_BOARD || m?.defaultBoard || 'main');
-  const { tokenFor } = require('../lib/locate');
-  const tok = tokenFor(agent);
   let r;
-  try { r = await fetch(`${url}/api/boards/${board}/brief?via=${f.via || 'cli'}`, { headers: { 'X-Agent': agent, ...(tok ? { Authorization: `Bearer ${tok}` } : {}) } }); }
+  try { r = await require('../lib/request').send('GET', `/api/boards/${board}/brief?via=${f.via || 'cli'}`, undefined, { agent, base: url }); }
   catch { console.error(`The board isn't running (${url}). Start it in the background: intellagent start --background`); process.exit(1); }
-  process.stdout.write(`${await r.text()}\n`);
+  process.stdout.write(`${r.raw}\n`);
   if (!r.ok) process.exit(1);
 }
 
@@ -380,24 +377,22 @@ async function nextEvents({ agent, types, timeoutSec, quiet, listen = { scope: '
     : path.join(os.tmpdir(), 'intellagent-cursors', `${crypto.createHash('sha1').update(url).digest('hex').slice(0, 10)}-${String(agent).replace(/[^\w.-]+/g, '_')}${listen.scope ? `-${listen.scope}` : ''}.json`);
   let since = null;
   try { since = JSON.parse(fs.readFileSync(file, 'utf8')).cursor; } catch { /* first run */ }
-  const { tokenFor } = require('../lib/locate');
-  const tok = tokenFor(agent);
-  const headers = { 'X-Agent': agent, ...(tok ? { Authorization: `Bearer ${tok}` } : {}) };
+  const get = async (p) => (await require('../lib/request').send('GET', p, undefined, { agent, base: url })).json;
   if (since == null) {
     // First wait: start right after this agent's own last action, so an answer that arrived between
     // "ask" and "wait" is not missed; an agent that has done nothing yet starts from now.
     try {
-      const mine = (await (await fetch(`${url}/api/events?actor=${encodeURIComponent(agent)}&tail=true&limit=1`, { headers })).json()).events || [];
+      const mine = (await get(`/api/events?actor=${encodeURIComponent(agent)}&tail=true&limit=1`)).events || [];
       since = mine.length ? mine[mine.length - 1].seq : null;
     } catch { /* fall back to now */ }
-    if (since == null) since = (await (await fetch(`${url}/api/app`, { headers })).json()).seq;
+    if (since == null) since = (await get('/api/app')).seq;
   }
   const deadline = timeoutSec ? Date.now() + timeoutSec * 1000 : Infinity;
   for (;;) {
     const left = Math.max(1, Math.min(50, Math.ceil((deadline - Date.now()) / 1000)));
     const q = new URLSearchParams({ ...(listen.query || { for: agent }), excludeActor: agent, since: String(since), timeout: String(left), ...(types ? { types } : {}) });
     let r;
-    try { r = await (await fetch(`${url}/api/events/wait?${q}`, { headers })).json(); }
+    try { r = await get(`/api/events/wait?${q}`); }
     catch (e) { if (!quiet) console.error(`board unreachable (${e.message}); retrying…`); await new Promise((res) => setTimeout(res, 5000)); continue; }
     since = r.cursor;
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -422,9 +417,7 @@ async function waitCmd() {
   if (!events.length) { console.log('(no events before timeout)'); process.exit(2); }
   // The agent is about to read these: mark comments as seen (👀) so the human knows.
   const url = baseUrl(readManifest(findManifest()));
-  await Promise.all(events.filter((e) => e.type === 'comment.added' && e.comment?.id).map((e) => fetch(`${url}/api/boards/${e.board}/items/${e.itemId}/reactions`, {
-    method: 'POST', headers: { 'content-type': 'application/json', 'X-Agent': agent }, body: JSON.stringify({ emoji: '👀', commentId: e.comment.id }),
-  }).catch(() => {})));
+  await Promise.all(events.filter((e) => e.type === 'comment.added' && e.comment?.id).map((e) => require('../lib/request').send('POST', `/api/boards/${e.board}/items/${e.itemId}/reactions`, { emoji: '👀', commentId: e.comment.id }, { agent, base: url }).catch(() => {})));
   console.log(f.json ? JSON.stringify(events, null, 2) : events.map(eventLine).join('\n'));
 }
 
@@ -476,14 +469,14 @@ function readAgents(file) {
 }
 
 // The CLI acts as the human here (it runs on the human's machine, with the local manifest).
-// Commands that act as the human (with the user token from local.json) or write the human's files refuse to
-// run as an agent: a standing agent's shell may run "intellagent …", and it must not merge, steer other agents
-// or change grants that way. The board sets INTELLAGENT_AGENT (and the run) for every standing-agent run.
 // Who is running this, if it is an agent ('' for the human). The board sets INTELLAGENT_AGENT (and the run) for
 // every standing-agent run.
 function asAgent() {
   return process.env.INTELLAGENT_AGENT || (process.env.INTELLAGENT_RUN || process.env.INTELLAGENT_RUN_FILE ? 'a standing agent' : '');
 }
+// Commands that act as the human (with the user token from local.json) or write the human's files refuse to
+// run as an agent: a standing agent's shell may run "intellagent …", and it must not merge, steer other agents
+// or change grants that way.
 function humanOnly(what) {
   const agent = asAgent();
   if (!agent) return;
