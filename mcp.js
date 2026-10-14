@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 /*
  * Intellagent MCP server (stdio). Zero dependencies — thin wrapper over the HTTP API.
  *   claude mcp add intellagent -e INTELLAGENT_AGENT=my-agent -- node /abs/path/intellagent/mcp.js

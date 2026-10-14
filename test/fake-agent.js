@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 // Stand-in for `claude -p` in the standing-agent tests.
 //   node fake-agent.js ok          comment "handled <n> event(s)" on each ticket in the batch

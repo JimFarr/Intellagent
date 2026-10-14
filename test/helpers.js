@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 // Starts a real server on a throwaway data folder and talks to it over HTTP, the way agents and the UI do.
 // Tests only depend on the public API, so they keep passing while the code behind it is reorganised.

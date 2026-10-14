@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 /*
  * intellagent — global command.
  *   intellagent init [dir] [--template software] [--name "My App"] [--prefix APP] [--port 7421] [--agent claude] [--no-mcp] [--no-claude] [--no-start]

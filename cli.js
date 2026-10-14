@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 /*
  * Tiny API client so agents don't fight shell quoting.
  *   intellagent api GET  /api/boards/main/summary

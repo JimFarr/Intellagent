@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 // What agents carry and call: the MCP tool profiles (size budget, every tool reachable), the CLI an agent
 // uses beyond the MCP core (do/help, JSON out, errors with code + hint and exit codes, identity), and

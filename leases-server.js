@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 // The machine's lease program: one per PC, shared by every board (lib/leases.js says what it decides).
 // HTTP on 127.0.0.1 only. State is kept in ~/.intellagent/leases.json (INTELLAGENT_LEASES_FILE) across restarts.

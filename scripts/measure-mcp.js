@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 // Measure what the Intellagent MCP server costs an agent to carry: the JSON size of its tools/list
 // (what the client loads into context), per profile. Usage: node scripts/measure-mcp.js [profile|tools=a,b …]

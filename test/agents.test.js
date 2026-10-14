@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 // Standing agents: the board starts runs for agents defined in agents.json.
 const { describe, it, before, after } = require('node:test');

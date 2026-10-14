@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 // Run: npm test   (node --test, no dependencies)
 const { describe, it: test, before, after } = require('node:test');

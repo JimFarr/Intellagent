@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 // Structured agent flows: work → start → ask → answer → review → decision → finish.
 const { describe, it, before, after } = require('node:test');

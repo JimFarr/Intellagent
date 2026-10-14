@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 // The machine's leases: the ledger's decisions with a fake clock, the card reading, and the program over HTTP.
 const { test } = require('node:test');

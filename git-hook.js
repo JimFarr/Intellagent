@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 /*
  * Git ↔ Intellagent.
  *   node intellagent/git-hook.js install     add a post-commit hook to the current repo

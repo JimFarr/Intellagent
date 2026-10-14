@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
 'use strict';
 /*
  * Do agents do as well with less? Runs realistic board tasks with a real model in three modes and checks
