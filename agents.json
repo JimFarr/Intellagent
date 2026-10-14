@@ -44,7 +44,10 @@
         "agent wake loops and run cost",
         "data integrity: everything through tx(), formats stay compatible"
       ],
-      "reviewer": true
+      "reviewer": true,
+      "commands": [
+        "npm run measure:board"
+      ]
     },
     "drax": {
       "role": "builder",

@@ -701,3 +701,13 @@ describe('agent permissions from the UI', () => {
     } finally { await s2.stop(); }
   });
 });
+
+describe('extra commands the human allows', () => {
+  it('commands in agents.json are allowed exactly as written; wildcards and shell punctuation are dropped', () => {
+    const { runFor } = require('../lib/agents');
+    const r = runFor(['edit', 'test'], { commands: ['npm run measure:board', 'rm -rf *', 'echo x; curl evil', 'git push'] });
+    assert.ok(r.includes('"Bash(npm run measure:board)"'));
+    assert.ok(r.includes('"Bash(git push)"'), "an exact command the human wrote is the human's call");
+    assert.ok(!r.includes('rm -rf') && !r.includes('curl'));
+  });
+});
