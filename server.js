@@ -949,7 +949,7 @@ function closeQuestions(ctx, item, actor, events, { pick = () => true, reply = n
   item.questions = item.questions.filter((q) => !closing.includes(q));
   syncNeeds(item);
   for (const q of closing) {
-    closeWait(item, q, actor, extra.form ? { form: extra.form } : {});
+    closeWait(item, q, actor, { ...(extra.form ? { form: extra.form } : {}), ...(extra.withdrawn ? { withdrawn: true } : {}) });
     events.push(itemEvent(ctx, 'attention.resolved', item, actor, { questionId: q.id, raisedBy: q.raisedBy, reason: q.reason, kind: q.kind, reply, open: item.questions.length, mentions: [q.raisedBy], ...extra }));
   }
   return closing;
@@ -1264,7 +1264,13 @@ function applyPatch(ctx, item, p, actor, events) {
     const next = parseNeedsHuman(p.needsHuman, actor);
     const before = item.questions.length;
     if (next) openQuestion(ctx, item, next, actor, events);
-    else closeQuestions(ctx, item, actor, events);
+    else {
+      // The same rule as DELETE …/attention (INT-90, INT-120): an agent only closes what it may withdraw,
+      // and what it closes counts as withdrawn, so a review it cleared can't be carried through a gate.
+      syncNeeds(item);
+      for (const q of item.questions) mayWithdraw(ctx, actor, q.raisedBy, `${q.kind === 'review' ? 'The review' : 'Question'} ${q.id} on ${item.id}`);
+      closeQuestions(ctx, item, actor, events, { extra: actor.kind === 'user' ? {} : { withdrawn: true } });
+    }
     if (item.questions.length !== before) changes.needsHuman = { from: prev?.reason ?? null, to: item.needsHuman?.reason ?? null };
   }
   if ('properties' in p) {
@@ -1427,7 +1433,9 @@ function resolveAttention(ctx, id, d, actor) {
       reply = { id: rid('c'), author: actor, body, createdAt: now(), ...(q ? { answers: q.id } : {}), ...(form ? { form } : {}) };
       item.comments.push(reply);
     }
-    closeQuestions(ctx, item, actor, events, { pick: (q) => !qid || q.id === qid, reply: reply?.body ?? null, extra: form ? { form } : {} });
+    // An agent closing a question (its own, or the coordinator tidying up) withdraws it rather than answers it.
+    const withdrawn = actor.kind !== 'user' ? { withdrawn: true } : {};
+    closeQuestions(ctx, item, actor, events, { pick: (q) => !qid || q.id === qid, reply: reply?.body ?? null, extra: { ...(form ? { form } : {}), ...withdrawn } });
     item.version++;
     item.updatedAt = now();
     return item;
@@ -1455,8 +1463,6 @@ function withdrawQuestion(ctx, id, qid, d, actor) {
     const by = actor.name === q.raisedBy ? '' : ` (raised by ${q.raisedBy})`;
     item.comments.push({ id: rid('c'), author: actor, body: `↩ Withdrew the ${what}${by}: ${reason}`, createdAt: now(), withdrew: q.id });
     closeQuestions(ctx, item, actor, events, { pick: (x) => x === q, reply: reason, extra: { withdrawn: true } });
-    const w = item.waits?.at(-1);
-    if (w?.id === q.id) w.withdrawn = true;
     item.version++;
     item.updatedAt = now();
     return item;
@@ -2898,7 +2904,7 @@ const SCHEMA = {
     columnId: 'string', author: '{ kind: "user"|"agent"|"system", name } (read-only)',
     lease: '{ claimant, leasedAt, expiresAt, minutes, renewals, status?, statusAt? } | null — managed via /lease and /status',
     assignee: 'string|null — who should pick this up next (handoff); they receive its events',
-    needsHuman: '{ id, reason, raisedBy, raisedAt, kind: question|review } | null — the oldest open question (set it to ask; null answers all)',
+    needsHuman: '{ id, reason, raisedBy, raisedAt, kind: question|review } | null — the oldest open question (set it to ask; null closes all: the human any, an agent only what it may withdraw, as withdrawn)',
     questions: '[{ id, reason, raisedBy, raisedAt, kind }] — every open question; answer one with DELETE …/attention { questionId, reply }',
     blockedBy: 'itemId[]', blocks: 'itemId[] (computed)', properties: 'object — free-form property bag (undeclared data)',
     fields: 'object — values for the board custom fields declared in GET /api/boards/:board/schema; validated by type',

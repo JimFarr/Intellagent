@@ -239,6 +239,43 @@ describe('agent flows', () => {
     } finally { await s2.stop(); }
   });
 
+  it('PATCH needsHuman: null follows the same rule, and a review an agent clears any way stays undecided at the gate (INT-120)', async () => {
+    const s2 = await startServer({ agents: { agents: { gamora: { role: 'coordinator', grants: ['column.gate'] } } } });
+    try {
+      const it = await s2.ok('POST', `${B}/items`, { title: 'gated', column: 'Ready' }, USER);
+      const review = async () => {
+        await s2.ok('POST', `${B}/items/${it.id}/start`, {}, { agent: 'dev' });
+        await s2.ok('POST', `${B}/items/${it.id}/review`, { summary: 'done' }, { agent: 'dev' });
+      };
+      const open = async () => (await s2.ok('GET', `${B}/items/${it.id}`)).questions;
+      const clear = (as) => s2.api('PATCH', `${B}/items/${it.id}`, { needsHuman: null }, as);
+      const toDone = (as) => s2.api('POST', `${B}/items/${it.id}/move`, { column: 'Done' }, as);
+      await review();
+      await s2.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'Which cache?' }, { agent: 'eve' });
+
+      // someone else's review: refused, and nothing closes (not even eve's own question)
+      const refused = await clear({ agent: 'eve' });
+      assert.equal(refused.status, 403);
+      assert.equal(refused.body.code, 'FORBIDDEN');
+      assert.equal((await open()).length, 2);
+
+      // the coordinator may clear them, either way, but the review it cleared is withdrawn, not decided
+      await s2.ok('PATCH', `${B}/items/${it.id}`, { needsHuman: null }, { agent: 'gamora' });
+      assert.equal((await open()).length, 0);
+      assert.equal((await toDone({ agent: 'gamora' })).body.code, 'REVIEW_OPEN');
+      await review();
+      await s2.ok('DELETE', `${B}/items/${it.id}/attention`, {}, { agent: 'gamora' });
+      assert.equal((await toDone({ agent: 'gamora' })).body.code, 'REVIEW_OPEN', 'DELETE …/attention is no way around it either');
+
+      // an agent clears its own question; the human clears anything and still carries it through
+      await s2.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'Mine?' }, { agent: 'eve' });
+      await s2.ok('PATCH', `${B}/items/${it.id}`, { needsHuman: null }, { agent: 'eve' });
+      await review();
+      await s2.ok('PATCH', `${B}/items/${it.id}`, { needsHuman: null }, USER);
+      assert.equal((await toDone(USER)).status, 200);
+    } finally { await s2.stop(); }
+  });
+
   it('a request is withdrawn by its sender or the coordinator, never by the agent it was for (INT-90)', async () => {
     await s.ok('PATCH', B, { coordinator: 'gamora' }, USER);
     const r = await s.ok('POST', `${B}/requests`, { body: 'a lease for the heat solve, please', to: 'guard' }, A);
