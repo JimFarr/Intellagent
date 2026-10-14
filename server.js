@@ -1057,6 +1057,7 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } 
         fail(403, `Only a human can move items out of "${from.name}"`, { code: 'HUMAN_ONLY' });
       }
       if (to.flags.humanOnlyIn && (item.questions || []).some((q) => q.kind === 'review')) fail(409, `${item.id} has an open review — decide it instead of moving it`, { code: 'REVIEW_OPEN', hint: `POST /api/boards/${ctx.id}/items/${item.id}/review/decision { "verdict": "approve" | "changes", "comment": "…" } (needs the review.decide grant)` });
+      if (to.flags.humanOnlyIn && reviewWithdrawnUndecided(item)) fail(409, `${item.id}'s review was withdrawn and never decided — it doesn't go through the gate on an agent's move`, { code: 'REVIEW_OPEN', hint: 'Request review again, or leave it for the human' });
       gateBy = grantFor(ctx, actor, 'column.gate', item, `move items ${to.flags.humanOnlyIn ? `into "${to.name}"` : `out of "${from.name}"`}`);
     }
     checkColumnPerm(ctx, actor, [to.id]);
@@ -1285,6 +1286,8 @@ function resolveAttention(ctx, id, d, actor) {
     if (!item.questions.length) return item;
     const qid = d.questionId || d.question;
     if (qid && !item.questions.some((q) => q.id === qid)) fail(404, `No open question "${qid}" on ${item.id}`, { code: 'NOT_FOUND', questions: item.questions.map((q) => q.id) });
+    // The human answers anything; an agent only closes what it may withdraw (else it could close another's review).
+    for (const q of item.questions.filter((x) => !qid || x.id === qid)) mayWithdraw(ctx, actor, q.raisedBy, `${q.kind === 'review' ? 'the review' : 'question'} ${q.id} on ${item.id}`);
     let reply = null;
     if (String(d.reply || '').trim()) {
       const q = qid ? item.questions.find((x) => x.id === qid) : null;
@@ -1296,6 +1299,58 @@ function resolveAttention(ctx, id, d, actor) {
     item.updatedAt = now();
     return item;
   });
+}
+
+/* Withdrawing (INT-90): the agent that raised a question, a review request or a request takes it back once
+   the ask is met or no longer relevant; the coordinator may clean up after others, and the human closes
+   anything. A withdrawal moves nothing: whoever leases the ticket (or the coordinator) decides that. */
+function mayWithdraw(ctx, actor, raisedBy, what) {
+  if (actor.kind === 'user' || actor.name === raisedBy || isCoordinator(ctx, actor.name)) return;
+  fail(403, `${what} was raised by ${raisedBy || 'someone else'}: only they, the coordinator or the human can close it`, { code: 'FORBIDDEN', hint: `Ask ${raisedBy || 'them'} on the card (@mention), or leave it for the human` });
+}
+const withdrawReason = (d) => str(d.reason || '', 2000).trim() || fail(400, 'Say why in "reason" (the ask was met, or is no longer relevant)', { code: 'BAD_REQUEST' });
+
+function withdrawQuestion(ctx, id, qid, d, actor) {
+  const reason = withdrawReason(d);
+  return tx(ctx, (events) => {
+    const item = getItem(ctx, id);
+    syncNeeds(item);
+    const q = item.questions.find((x) => x.id === qid);
+    if (!q) fail(404, `No open question "${qid}" on ${item.id}`, { code: 'NOT_FOUND', hint: 'GET the ticket: its open ones are under "questions"', questions: item.questions.map((x) => x.id) });
+    const what = q.kind === 'review' ? 'review request' : 'question';
+    mayWithdraw(ctx, actor, q.raisedBy, `The ${what} ${q.id} on ${item.id}`);
+    const by = actor.name === q.raisedBy ? '' : ` (raised by ${q.raisedBy})`;
+    item.comments.push({ id: rid('c'), author: actor, body: `↩ Withdrew the ${what}${by}: ${reason}`, createdAt: now(), withdrew: q.id });
+    closeQuestions(ctx, item, actor, events, { pick: (x) => x === q, reply: reason, extra: { withdrawn: true } });
+    const w = item.waits?.at(-1);
+    if (w?.id === q.id) w.withdrawn = true;
+    item.version++;
+    item.updatedAt = now();
+    return item;
+  });
+}
+
+function withdrawRequest(ctx, id, d, actor) {
+  const reason = withdrawReason(d);
+  return tx(ctx, (events) => {
+    const req = getRequest(ctx, id);
+    if (req.status !== 'open') fail(409, `Request ${req.id} is already ${req.withdrawn ? 'withdrawn' : 'done'}`, { code: 'CONFLICT', hint: 'Nothing to withdraw' });
+    mayWithdraw(ctx, actor, req.by?.name, `Request ${req.id}`);
+    // status stays open|done for older readers; `withdrawn` says how it ended
+    req.status = 'done';
+    req.withdrawn = { by: actor.name, reason, at: now() };
+    req.updatedAt = now();
+    // Nobody is woken: there is nothing left to do, and the request is gone from its agent's …/work.
+    events.push({ board: ctx.id, type: 'request.withdrawn', actor, request: { id: req.id, body: trimChange(req.body), to: req.to, by: req.by?.name, status: req.status }, reason, recipients: [] });
+    return req;
+  });
+}
+
+// An agent (other than the human) mustn't carry a ticket through a gate while its last review was withdrawn
+// and never decided: withdrawing would otherwise be a way around "decide it instead of moving it".
+function reviewWithdrawnUndecided(item) {
+  const w = (item.waits || []).filter((x) => x.kind === 'review').at(-1);
+  return !!w?.withdrawn && !(item.review?.at && item.review.at >= w.resolvedAt);
 }
 
 /* reactions: emoji on a card or a comment. They never wake anyone and are allowed even while others
@@ -1500,7 +1555,7 @@ function startWork(ctx, id, d, actor) {
 
 // The human's reply to a closed question: the first comment they wrote after it was asked.
 function replyAfter(item, w) {
-  const c = (w.id && item.comments.find((x) => x.answers === w.id)) || (item.comments || []).find((x) => x.author?.kind === 'user' && x.createdAt >= w.raisedAt);
+  const c = (w.id && item.comments.find((x) => x.answers === w.id || (w.withdrawn && x.withdrew === w.id))) || (item.comments || []).find((x) => x.author?.kind === 'user' && x.createdAt >= w.raisedAt);
   return c ? c.body : null;
 }
 
@@ -1681,7 +1736,8 @@ function workFor(ctx, name) {
     for (const q of mine) waiting.push(brief(it, { questionId: q.id, question: q.reason, kind: q.kind, since: q.raisedAt }));
     if (mine.length) continue;
     const w = (it.waits || []).filter((x) => x.raisedBy === name && x.kind !== 'review').at(-1);
-    if (w && Date.parse(w.resolvedAt) > lastMine(it) && it.columnId !== done) answered.push(brief(it, { questionId: w.id, question: w.reason || null, answer: replyAfter(it, w), answeredBy: w.by }));
+    // your own withdrawal is no answer; someone else's (the coordinator's) is, with its reason
+    if (w && !(w.withdrawn && w.by === name) && Date.parse(w.resolvedAt) > lastMine(it) && it.columnId !== done) answered.push(brief(it, { questionId: w.id, question: w.reason || null, answer: replyAfter(it, w), answeredBy: w.by, ...(w.withdrawn ? { withdrawn: true } : {}) }));
     const rv = it.review;
     if (rv?.verdict === 'changes' && (rv.requestedBy === name || it.workedBy?.includes(name)) && Date.parse(rv.at) > lastMine(it)) feedback.push(brief(it, { feedback: rv.comment, by: rv.by }));
     if (it.assignee === name && it.columnId !== done && !asleep(ctx, it) && !(l && l.claimant !== name) && !leases.some((x) => x.id === it.id)) assigned.push(brief(it));
@@ -3133,6 +3189,10 @@ route('POST', '/api/boards/:board/requests', 'Ask an agent something not tied to
   created(createRequest(getCtx(p.board), body, actor)));
 route('POST', '/api/boards/:board/requests/:id/reply', 'Reply to a request: { body?, done? } — agents: say what you did and pass "done": true', ({ p, body, actor }) =>
   replyRequest(getCtx(p.board), p.id, body, actor));
+route('POST', '/api/boards/:board/requests/:id/withdraw', 'Take back a request you sent, once it is met or no longer relevant: { reason } — the sender, the coordinator or the human', ({ p, body, actor }) =>
+  withdrawRequest(getCtx(p.board), p.id, body, actor));
+route('POST', '/api/boards/:board/items/:id/questions/:qid/withdraw', 'Take back your open question or review request on a ticket: { reason } — whoever raised it, the coordinator or the human. Moves nothing.', ({ p, body, actor }) =>
+  itemView(getCtx(p.board), withdrawQuestion(getCtx(p.board), p.id, p.qid, body, actor)));
 route('GET', '/api/boards/:board/work', 'What needs you now (agent): next actions, your leases, answered questions, review feedback, assigned and ready tickets. ?agent= to look at another agent', ({ p, q, actor }) =>
   workFor(getCtx(p.board), q.agent || actor.name));
 route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move this ticket, and why not elsewhere', ({ p, actor }) => {

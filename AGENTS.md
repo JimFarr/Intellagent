@@ -210,6 +210,8 @@ DELETE /api/boards/main/items/INT-12/attention  { "reply": "…" }   (normally t
 
 The ticket glows on the board. The reply returns a `questionId`. A ticket can hold several open questions (from you and others); each is answered on its own and the answer arrives as an `attention.resolved` event with that `questionId` and `reply`, addressed to whoever asked — and in `GET …/work` under `answered`. Asking the same thing twice reuses the open question. The human answers one with `DELETE …/attention { questionId, reply }` (without `questionId`, every open question is closed).
 
+**Withdrawing.** Once your ask is met or no longer relevant, take it back with a reason instead of leaving it open: `POST …/items/<ID>/questions/<questionId>/withdraw { "reason": "…" }` for a question or a review request on a card, `POST …/requests/<id>/withdraw { "reason": "…" }` for a request you sent. It is recorded on the card (↩) and leaves everyone's `…/work`; it moves nothing (whoever leases the ticket, or the coordinator, decides that). Only whoever raised it, the coordinator or the human may close it: anyone else gets `403 FORBIDDEN`, and the same holds for an agent calling `DELETE …/attention`. A review that was withdrawn and never decided can't be carried through a gate by an agent (`409 REVIEW_OPEN`).
+
 **Where to ask.** While the human is actively chatting with you, quick back-and-forth belongs in chat. Anything that should outlive the conversation — a decision, an approval, a question raised while working unattended — goes on the card, so you never wait in one place while they answer in the other. If you asked in chat about a ticket, record the answer on the card.
 
 **Reactions.** React to a card or a comment with an emoji — `POST …/items/<ID>/reactions { "emoji": "+1", "commentId": "c_…" }` (omit `commentId` for the card; names like `eyes`, `+1`, `tada`, `rocket`, `thinking`, `check` work; `DELETE` with the same body removes it). Reactions never wake anyone and are allowed even while others hold the ticket or the board. ⏳ means "queued": a comment for a standing agent that is busy, settling or throttled gets ⏳ from that agent (hover says when it runs), swapped for 👀 when the run starts. 👀 means "seen": it is added for you on comments you're woken for (standing agents and `intellagent wait`); add it yourself when you read a comment some other way. Use 👍 / ✅ for "done", 🤔 when you're unsure — then say why in a comment.
@@ -353,7 +355,7 @@ The human edits columns in Settings › Columns (rename, colour, icon, flags, or
 ## 8. MCP, CLI and the agent skill
 
 Agents reach the board three ways; pick the lightest that works:
-- **MCP core** — `node intellagent/mcp.js` lists ten tools by default (`get_briefing`, `get_my_work`, `get_item`, `start_work`, `set_status`, `add_comment`, `ask_human`, `request_review`, `wait_for_events`, `finish_session`; plus `introduce_yourself` until the agent has a role): ~4.5k characters of tool definitions instead of ~21k. `INTELLAGENT_MCP_PROFILE=full` (or `--profile full`) lists all 52; `INTELLAGENT_MCP_TOOLS=name,name` lists your own set. Every tool stays callable by name in every profile.
+- **MCP core** — `node intellagent/mcp.js` lists ten tools by default (`get_briefing`, `get_my_work`, `get_item`, `start_work`, `set_status`, `add_comment`, `ask_human`, `request_review`, `wait_for_events`, `finish_session`; plus `introduce_yourself` until the agent has a role): ~4.5k characters of tool definitions instead of ~21k. `INTELLAGENT_MCP_PROFILE=full` (or `--profile full`) lists all 54; `INTELLAGENT_MCP_TOOLS=name,name` lists your own set. Every tool stays callable by name in every profile.
 - **CLI** — `intellagent do <operation> key=value …` runs any of those operations by name (same parameters as the MCP tools); `intellagent help <operation>` prints its exact request; `intellagent api <METHOD> <path> key=value …` calls any route. Output is JSON; on an error the reply stays on stdout and `error <status> <CODE>: <message> — hint: <hint>` goes to stderr with exit 1 (2: board unreachable or bad input, 3: no board). It never prompts; `INTELLAGENT_AGENT` sets who you are.
 - **Skill** — `skills/intellagent/SKILL.md` (`intellagent skill install`) teaches the day-to-day loop and the CLI for everything beyond the core; it loads only when the agent works a ticket.
 
@@ -384,9 +386,10 @@ Tickets      POST …/items  …/items/bulk          GET …/items/:id  …/item
              DELETE …/items/:id (test tickets)   DELETE …/items/:id/attachments/:att  …/reactions  …/test-items
 Working      POST …/items/:id/start  …/review  …/review/decision (human or grant)  …/attention  …/finish  …/digest
              PUT …/items/:id/status              DELETE …/items/:id/attention        GET …/digest
+             POST …/items/:id/questions/:qid/withdraw
 Leases       POST …/items/:id/lease  …/lease/request  …/lease/handover  …/lease/decline   DELETE …/items/:id/lease
              GET/POST/DELETE …/master            PUT …/master/status
-Requests     GET/POST …/requests                 POST …/requests/:id/reply
+Requests     GET/POST …/requests                 POST …/requests/:id/reply  …/requests/:id/withdraw
 Archive      GET …/archive                       POST …/archive  …/archive/:id/restore
 Columns      GET/POST …/columns                  PATCH/DELETE …/columns/:column    GET …/columns/:column/items
 Schema       GET/PUT …/schema                    POST …/schema/fields              PATCH/DELETE …/schema/fields/:key

@@ -90,6 +90,83 @@ describe('agent flows', () => {
     assert.equal((await s.api('DELETE', `${B}/items/${it.id}/attention`, { questionId: 'q_nope' }, USER)).body.code, 'NOT_FOUND');
   });
 
+  it('an agent withdraws its own question or review, the coordinator anyone\'s, others are refused (INT-90)', async () => {
+    await s.ok('PATCH', B, { coordinator: 'gamora' }, USER);
+    const it = await mk({ title: 'withdraw me' });
+    const mine = (await s.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'Which cache?' }, A)).questionId;
+    const bobs = (await s.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'Which queue?' }, { agent: 'bob' })).questionId;
+    const wd = (qid, body, as) => s.api('POST', `${B}/items/${it.id}/questions/${qid}/withdraw`, body, as);
+
+    // refused: someone else's, with a code and a hint; no reason; and DELETE …/attention is no way around it
+    const refused = await wd(bobs, { reason: 'not needed' }, A);
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.code, 'FORBIDDEN');
+    assert.ok(refused.body.hint);
+    assert.equal((await wd(mine, {}, A)).status, 400, 'a reason is required');
+    assert.equal((await s.api('DELETE', `${B}/items/${it.id}/attention`, { questionId: bobs }, A)).body.code, 'FORBIDDEN');
+    assert.equal((await s.api('DELETE', `${B}/items/${it.id}/attention`, {}, A)).body.code, 'FORBIDDEN', 'closing all would close bob\'s too');
+    assert.equal((await s.ok('GET', `${B}/items/${it.id}`)).questions.length, 2, 'nothing closed');
+
+    // the author: gone from the card and from its …/work, recorded on the card, not handed back as an answer
+    const before = (await s.ok('GET', `${B}/items/${it.id}`)).columnId;
+    const after = (await wd(mine, { reason: 'found it in the config' }, A)).body;
+    assert.deepEqual(after.questions.map((q) => q.id), [bobs]);
+    assert.equal(after.columnId, before, 'withdrawing moves nothing');
+    assert.match(after.comments.at(-1).body, /↩ Withdrew the question: found it in the config/);
+    const ada = await work();
+    assert.ok(!ada.waitingOnHuman.some((x) => x.questionId === mine));
+    assert.ok(!ada.answered.some((x) => x.id === it.id), 'your own withdrawal is no answer');
+
+    // the coordinator cleans up after bob; bob hears it as an answer, marked withdrawn
+    const { seq } = await s.ok('GET', '/api/app');
+    await s.ok('POST', `${B}/items/${it.id}/questions/${bobs}/withdraw`, { reason: 'decided in INT-1' }, { agent: 'gamora' });
+    const ev = (await s.ok('GET', `/api/events?since=${seq}&types=attention.resolved`)).events[0];
+    assert.equal(ev.withdrawn, true);
+    assert.ok(ev.recipients.includes('bob'));
+    const bob = (await work({ agent: 'bob' })).answered.find((x) => x.id === it.id);
+    assert.equal(bob.withdrawn, true);
+    assert.match(bob.answer, /decided in INT-1/);
+    assert.equal((await wd(bobs, { reason: 'again' }, { agent: 'gamora' })).status, 404, 'already closed');
+    await s.ok('PATCH', B, { coordinator: null }, USER);
+  });
+
+  it('a withdrawn, undecided review cannot be carried through the gate by an agent; the human still can (INT-90)', async () => {
+    const s2 = await startServer({ agents: { agents: { gamora: { role: 'coordinator', grants: ['column.gate'] } } } });
+    try {
+      const it = await s2.ok('POST', `${B}/items`, { title: 'gated', column: 'Ready' }, USER);
+      await s2.ok('POST', `${B}/items/${it.id}/start`, {}, { agent: 'dev' });
+      await s2.ok('POST', `${B}/items/${it.id}/review`, { summary: 'done' }, { agent: 'dev' });
+      const rq = (await s2.ok('GET', `${B}/items/${it.id}`)).questions.find((q) => q.kind === 'review').id;
+      assert.equal((await s2.api('POST', `${B}/items/${it.id}/questions/${rq}/withdraw`, { reason: 'x' }, { agent: 'eve' })).body.code, 'FORBIDDEN');
+      await s2.ok('POST', `${B}/items/${it.id}/questions/${rq}/withdraw`, { reason: 'superseded' }, { agent: 'gamora' });
+      const sneak = await s2.api('POST', `${B}/items/${it.id}/move`, { column: 'Done' }, { agent: 'gamora' });
+      assert.equal(sneak.status, 409);
+      assert.equal(sneak.body.code, 'REVIEW_OPEN');
+      await s2.ok('POST', `${B}/items/${it.id}/move`, { column: 'Done' }, USER);
+    } finally { await s2.stop(); }
+  });
+
+  it('a request is withdrawn by its sender or the coordinator, never by the agent it was for (INT-90)', async () => {
+    await s.ok('PATCH', B, { coordinator: 'gamora' }, USER);
+    const r = await s.ok('POST', `${B}/requests`, { body: 'a lease for the heat solve, please', to: 'guard' }, A);
+    const wd = (id, as) => s.api('POST', `${B}/requests/${id}/withdraw`, { reason: 'solve finished early' }, as);
+    assert.ok((await work({ agent: 'guard' })).requests.some((x) => x.requestId === r.id));
+    const no = await wd(r.id, { agent: 'guard' });
+    assert.equal(no.status, 403);
+    assert.equal(no.body.code, 'FORBIDDEN');
+    const { seq } = await s.ok('GET', '/api/app');
+    const done = (await wd(r.id, A)).body;
+    assert.equal(done.status, 'done');
+    assert.equal(done.withdrawn.reason, 'solve finished early');
+    assert.ok(!(await work({ agent: 'guard' })).requests.some((x) => x.requestId === r.id), 'gone from its agent\'s work');
+    const ev = (await s.ok('GET', `/api/events?since=${seq}&types=request.withdrawn`)).events[0];
+    assert.deepEqual(ev.recipients, [], 'wakes nobody');
+    assert.equal((await wd(r.id, A)).body.code, 'CONFLICT');
+    const r2 = await s.ok('POST', `${B}/requests`, { body: 'another', to: 'guard' }, A);
+    assert.equal((await wd(r2.id, { agent: 'gamora' })).status, 200, 'the coordinator may');
+    await s.ok('PATCH', B, { coordinator: null }, USER);
+  });
+
   it('review feedback comes back as a structured verdict, and start resumes it', async () => {
     const it = await mk({ title: 'review me' });
     await s.ok('POST', `${B}/items/${it.id}/start`, {}, A);
