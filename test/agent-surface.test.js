@@ -345,6 +345,18 @@ describe('the brief of a sandbox board', () => {
   });
 });
 
+describe('the brief of an empty-seeded board', () => {
+  it('lists the starter ticket templates and says they can be edited', async () => {
+    const s = await startServer();
+    try {
+      const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'dev' })).body;
+      const text = typeof brief === 'string' ? brief : brief.markdown;
+      assert.match(text, /## Ticket templates \(prefer these when creating; a new board starts with some: edit them or add more/);
+      for (const key of ['bug', 'feature', 'question']) assert.match(text, new RegExp(`- \`${key}\``));
+    } finally { await s.stop(); }
+  });
+});
+
 describe('a board kept outside the project', () => {
   it('projectRoot sends agents, conventions and the brief to the project; link lets the project find the board', async () => {
     const { execFileSync } = require('child_process');
