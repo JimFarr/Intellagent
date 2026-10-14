@@ -51,9 +51,8 @@ intellagent brief            # exactly what agents will see: next steps, columns
 ## 6. ✋ Confirm the shape
 
 Show the user, in one message, the proposed fields (key, type, options), the board rules (and any CLAUDE.md additions you suggest), and any column changes. Apply only what they approve:
-- `POST /api/boards/main/schema/fields` or `PATCH /api/boards/main/schema/fields/<key>`
-- `PUT /api/boards/main/directives { "directives": "…" }`
-- `POST` / `PATCH /api/boards/main/columns`
+- Fields, yourself: `POST /api/boards/main/schema/fields` or `PATCH /api/boards/main/schema/fields/<key>`
+- Board rules and column changes are the human's (agents get `403 HUMAN_ONLY`): give the user the final rules text to paste into Settings › Rules, and the column changes to make in Settings › Columns.
 
 ## 7. Introduce yourself
 

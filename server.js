@@ -696,6 +696,12 @@ function grantFor(ctx, actor, power, item, what) {
   return g;
 }
 
+// How the board is governed (gates, coordinator, rules, column order) is the human's: an agent may not
+// loosen the rules it is held to.
+function humanConfig(actor, what) {
+  if (actor.kind !== 'user') fail(403, `Only the human can ${what}`, { code: 'HUMAN_ONLY', hint: 'Ask the human on a card (POST …/items/<id>/attention) to change it' });
+}
+
 // Per-agent column limits from the manifest (humans are never limited).
 function checkColumnPerm(ctx, actor, colIds) {
   if (actor.kind !== 'agent') return;
@@ -3096,12 +3102,14 @@ route('POST', '/api/boards', 'Create a board: { name, id?, idPrefix?, template?:
 
 route('GET', '/api/boards/:board', 'Full board JSON + hash', ({ p }) => boardView(getCtx(p.board)));
 
-route('PATCH', '/api/boards/:board', 'Update board: { name?, idPrefix?, directives?, coordinator? (default agent for requests) }', ({ p, body, actor }) => {
+route('PATCH', '/api/boards/:board', 'Update board: { name?, idPrefix?, directives?, coordinator? (default agent for requests) } — directives and coordinator are human only', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {
     const changes = {};
+    if ('directives' in body && str(body.directives, 50_000) !== ctx.board.directives) humanConfig(actor, 'change the board rules');
     if ('coordinator' in body) {
       const v = body.coordinator ? str(body.coordinator, 64).trim() : null;
+      if (v !== ctx.board.coordinator) humanConfig(actor, 'choose the coordinator');
       if (v !== ctx.board.coordinator) { changes.coordinator = { from: ctx.board.coordinator, to: v }; ctx.board.coordinator = v; }
     }
     for (const k of ['name', 'idPrefix', 'directives']) {
@@ -3158,11 +3166,12 @@ route('PUT', '/api/boards/:board/master/status', 'Live status while holding the 
   });
 });
 route('DELETE', '/api/boards/:board/master', 'Release the board (e.g. before spawning helper agents that use ticket leases)', ({ p, actor }) => releaseMaster(getCtx(p.board), actor));
-route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directives }', ({ p, body, actor }) => {
+route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directives } (human only)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {
     const v = str(body.directives ?? body.markdown, 50_000);
     if (v === ctx.board.directives) return;
+    humanConfig(actor, 'change the board rules');
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { directives: { from: trimChange(ctx.board.directives), to: trimChange(v) } } });
     ctx.board.directives = v;
   });
@@ -3183,7 +3192,11 @@ route('GET', '/api/boards/:board/schema', 'Ticket schema: built-in field config 
 route('PUT', '/api/boards/:board/schema', 'Set schema: { builtins?: { type: { ui, stub, label }, ... }, fields?: FieldDef[] (replaces all) }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   return schemaTx(ctx, actor, () => {
-    if ('builtins' in body) ctx.board.schema.builtins = normBuiltins({ ...ctx.board.schema.builtins, ...body.builtins });
+    if ('builtins' in body) {
+      const next = normBuiltins({ ...ctx.board.schema.builtins, ...body.builtins });
+      if (JSON.stringify(next) !== JSON.stringify(ctx.board.schema.builtins)) humanConfig(actor, 'change the built-in fields (who may edit what)');
+      ctx.board.schema.builtins = next;
+    }
     if ('fields' in body) {
       const defs = arr(body.fields).map((f) => normField(f));
       const keys = defs.map((f) => f.key);
@@ -3262,8 +3275,9 @@ route('DELETE', '/api/boards/:board/schema/fields/:key', 'Remove a field definit
 
 route('GET', '/api/boards/:board/columns', 'List columns with flags', ({ p }) => getCtx(p.board).board.columns);
 
-route('POST', '/api/boards/:board/columns', 'Create column: { name, color?, icon?, position?, flags? } (API only)', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/columns', 'Create column: { name, color?, icon?, position?, flags? } (human only)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
+  humanConfig(actor, 'add columns (a column changes where the gates sit)');
   return created(tx(ctx, (events) => {
     const col = addColumn(ctx.board, body);
     events.push({ board: ctx.id, type: 'column.created', actor, columnId: col.id, column: { id: col.id, name: col.name, flags: col.flags } });
@@ -3271,11 +3285,18 @@ route('POST', '/api/boards/:board/columns', 'Create column: { name, color?, icon
   }));
 });
 
-route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, color?, icon?, position?, flags? (merged) }', ({ p, body, actor }) => {
+route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, color?, icon?, position?, flags? (merged) } — position and known flags are human only', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   return tx(ctx, (events) => {
     const col = findColumn(ctx.board, decodeURIComponent(p.column));
     const before = JSON.stringify({ ...col, itemIds: undefined });
+    if ('flags' in body) {
+      const next = pickFlags(body.flags, col.flags);
+      // every known flag, plus pickup and working, which steer where agents pick up work and get woken
+      const gated = [...Object.keys(DEFAULT_FLAGS), 'pickup', 'working'].filter((k) => JSON.stringify(next[k]) !== JSON.stringify(col.flags[k]));
+      if (gated.length) humanConfig(actor, `change ${gated.join(', ')} on "${col.name}" (name, colour, icon and other custom flags are open)`);
+    }
+    if ('position' in body) humanConfig(actor, 'reorder columns (the order decides where the gates sit)');
     if ('name' in body) { if (!String(body.name).trim()) fail(400, 'name cannot be empty'); col.name = str(body.name, 60).trim(); }
     if ('color' in body) col.color = str(body.color, 32);
     if ('icon' in body) col.icon = str(body.icon, 32);
@@ -3292,8 +3313,9 @@ route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, co
   });
 });
 
-route('DELETE', '/api/boards/:board/columns/:column', 'Delete an EMPTY column', ({ p, actor }) => {
+route('DELETE', '/api/boards/:board/columns/:column', 'Delete an EMPTY column (human only)', ({ p, actor }) => {
   const ctx = getCtx(p.board);
+  humanConfig(actor, 'delete columns');
   return tx(ctx, (events) => {
     const col = findColumn(ctx.board, decodeURIComponent(p.column));
     if (col.itemIds.length) fail(409, `"${col.name}" still has ${col.itemIds.length} item(s). Move or archive them first.`);

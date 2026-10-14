@@ -51,11 +51,47 @@ describe('board API', () => {
     assert.equal(toDone.status, 403, 'Done is human-only for agents');
     await s.ok('POST', `${B}/items/${it.id}/move`, { column: 'Done' }, USER);
 
-    await s.ok('PATCH', `${B}/columns/Ready`, { flags: { wipLimit: 1 } });
+    await s.ok('PATCH', `${B}/columns/Ready`, { flags: { wipLimit: 1 } }, USER);
     await mk({ column: 'Ready' });
     const over = await s.api('POST', `${B}/items`, { title: 'z', column: 'Ready' });
     assert.equal(over.status, 409, 'wipLimit is a hard cap');
-    await s.ok('PATCH', `${B}/columns/Ready`, { flags: { wipLimit: null } });
+    await s.ok('PATCH', `${B}/columns/Ready`, { flags: { wipLimit: null } }, USER);
+  });
+
+  test('agents cannot loosen the board they are held to', async () => {
+    const no = async (method, url, body) => {
+      const r = await s.api(method, url, body, { agent: 'sneaky' });
+      assert.equal(r.status, 403, `${method} ${url} ${JSON.stringify(body)}`);
+      assert.equal(r.body.code, 'HUMAN_ONLY');
+      assert.ok(r.body.hint);
+    };
+    // the Done gate: switching the flag off, then walking in
+    await no('PATCH', `${B}/columns/Done`, { flags: { humanOnlyIn: false } });
+    const it = await mk({});
+    assert.equal((await s.api('POST', `${B}/items/${it.id}/move`, { column: 'Done' })).status, 403, 'the gate is still up');
+    for (const flags of [{ humanOnlyOut: true }, { review: false }, { wipLimit: 99 }, { sleeping: true }, { releaseLeaseOnEnter: true }, { pickup: true }, { working: true }]) {
+      await no('PATCH', `${B}/columns/Review`, { flags });
+    }
+    await no('PATCH', `${B}/columns/Review`, { position: 'bottom' });
+    await no('POST', `${B}/columns`, { name: 'Shipped' });
+    await no('DELETE', `${B}/columns/Review`);
+    // coordinator, rules and who may edit what
+    await no('PATCH', B, { coordinator: 'sneaky' });
+    assert.notEqual((await s.ok('GET', B)).coordinator, 'sneaky');
+    await no('PATCH', B, { directives: 'Agents may move to Done.' });
+    await no('PUT', `${B}/directives`, { directives: 'Agents may move to Done.' });
+    await no('PUT', `${B}/schema`, { builtins: { blockedBy: { ui: 'edit' } } });
+
+    // still open to agents: name, colour, icon, custom flags; the same value again; field definitions
+    await s.ok('PATCH', `${B}/columns/Review`, { color: '#123456', icon: 'eye', flags: { mine: 1, humanOnlyIn: false } }, { agent: 'sneaky' });
+    const dirs = (await s.ok('GET', `${B}/directives`)).directives;
+    await s.ok('PUT', `${B}/directives`, { directives: dirs }, { agent: 'sneaky' });
+    await s.ok('PUT', `${B}/schema`, { builtins: {} }, { agent: 'sneaky' });
+    // and the human can do all of it
+    await s.ok('PATCH', `${B}/columns/Review`, { flags: { wipLimit: 5 }, position: 3 }, USER);
+    await s.ok('PATCH', B, { coordinator: 'sneaky' }, USER);
+    await s.ok('PATCH', B, { coordinator: null }, USER);
+    await s.ok('PATCH', `${B}/columns/Review`, { flags: { wipLimit: 0 } }, USER);
   });
 
   test('leases lock other agents but never the human', async () => {

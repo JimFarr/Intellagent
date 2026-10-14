@@ -97,7 +97,7 @@ PATCH /api/boards/main/items/INT-12    { "fields": { "risk": "high", "estimate":
 - Types: `text markdown number boolean enum tags date url user`. `number` accepts `min`/`max`; `enum`/`tags` take `options` (tags without options are free-form). `required` and `default` apply on create.
 - `ui`: `edit` (humans can change it), `read` (humans see it but **only agents/API can change it**), `hidden` (API only).
 - `stub`: `none` | `top` (badge beside the id) | `meta` (chip in the card footer).
-- Built-ins (`type priority parent description blockedBy attachments cover properties`) take `{ ui, stub, label }`. `blockedBy` defaults to `ui: "read"`.
+- Built-ins (`type priority parent description blockedBy attachments cover properties`) take `{ ui, stub, label }`. `blockedBy` defaults to `ui: "read"`. Only the human changes them.
 - Wrong types or unknown enum values → `400` listing what's allowed. Undeclared keys → `400`; use `properties` for ad-hoc data.
 - Search fields with `fields.<key>` paths or `?f.<key>=value`; subscribe to changes with `fields=fields.risk`.
 
@@ -366,6 +366,8 @@ GET   /api/presence                       → who is connected, their leases and
 ```
 
 The human edits columns in Settings › Columns (rename, colour, icon, flags, order, add; delete only when empty). Custom flags are stored as-is; `pickup` and `working` tell agents where work starts and happens.
+
+**How the board is governed is the human's.** Agents get `403 HUMAN_ONLY` for adding, deleting or reordering columns, changing a column's known flags (`allowCreate`, `allowMoveIn/Out`, `wipLimit`, `releaseLeaseOnEnter`, `autoArchiveAfterDays`, `humanOnlyIn/Out`, `review`, `sleeping`, `pickup`, `working`), choosing the `coordinator`, changing the board rules (`directives`) and the built-in field settings (`PUT …/schema { builtins }`). A column's name, colour, icon and other custom flags, and declared fields, stay open to agents. To change the rest, ask on a card.
 
 ## 8. MCP, CLI and the agent skill
 
