@@ -164,6 +164,8 @@ async function startBackground(mp, url) {
 
 // Opens the board; the user token rides in the URL fragment (never sent to the server or logged).
 function openBoard(mp = requireManifest()) {
+  // here, not on the commands: open, start --open and init all come through this (it carries the user token)
+  humanOnly('opening the board signed in');
   const u = baseUrl(readManifest(mp));
   const t = userToken(mp);
   openUrl(t ? `${u}/#token=${t}` : u);
@@ -723,7 +725,7 @@ const HELP = `intellagent — a kanban for you and your agents
 
 const commands = {
   init, start, stop, status, docs, templates, skill, brief,
-  open: () => { humanOnly('intellagent open'); if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
+  open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
   token: tokenCmd,
   project: projectCmd,
   link: linkCmd,
