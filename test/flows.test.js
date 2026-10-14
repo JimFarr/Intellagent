@@ -404,6 +404,21 @@ describe('agent flows', () => {
     } finally { mcp.kill(); }
   });
 
+  it('an agent leases only as itself; the human may lease in anyone\'s name (INT-121)', async () => {
+    const it = await mk({ title: 'whose lease' });
+    const r = await s.api('POST', `${B}/items/${it.id}/lease`, { claimant: 'bob' }, A);
+    assert.equal(r.status, 403);
+    assert.equal(r.body.code, 'FORBIDDEN');
+    assert.match(r.body.hint, /handover/);
+    const got = await s.ok('GET', `${B}/items/${it.id}`);
+    assert.equal(got.lease, null, 'nothing leased');
+    assert.ok(!(got.workedBy || []).includes('bob'), 'bob is not made an author');
+    assert.equal((await s.ok('POST', `${B}/items/${it.id}/lease`, { claimant: 'ada' }, A)).lease.claimant, 'ada', 'naming yourself is fine');
+    await s.ok('DELETE', `${B}/items/${it.id}/lease`, undefined, A);
+    assert.equal((await s.ok('POST', `${B}/items/${it.id}/lease`, { claimant: 'bob' }, USER)).lease.claimant, 'bob');
+    await s.ok('DELETE', `${B}/items/${it.id}/lease`, undefined, USER);
+  });
+
   it('moving a reviewed ticket into Done approves it; other questions stay; bulk works too', async () => {
     const one = await mk({ title: 'drag-approve' });
     await s.ok('POST', `${B}/items/${one.id}/start`, {}, A);

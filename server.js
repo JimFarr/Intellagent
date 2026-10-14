@@ -1343,6 +1343,11 @@ function claimLease(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
     checkColumnPerm(ctx, actor, [item.columnId]);
+    // Only the human may lease a ticket in someone else's name: a lease makes its holder an author of the ticket
+    // (workedBy: refused as its reviewer, OWN_WORK on grants) and wakes them. An agent leases as itself.
+    if (d.claimant && actor.kind !== 'user' && d.claimant !== actor.name) {
+      fail(403, `${actor.name} can't take a lease in ${d.claimant}'s name`, { code: 'FORBIDDEN', hint: `Leave out "claimant" to lease it yourself; to pass a lease you hold: POST …/items/${item.id}/lease/handover { "to": "${str(d.claimant, 64)}" }` });
+    }
     const claimant = str(d.claimant || actor.name, 64);
     const minutes = clamp(Number(d.minutes) || M.lease.defaultMinutes, 1, M.lease.maxMinutes);
     const cur = activeLease(item);
