@@ -2726,8 +2726,9 @@
           return `<div class="m-ask ${isReview ? 'is-review' : ''}" data-q="${esc(q.id || '')}" data-kind="${isReview ? 'review' : 'question'}"><div class="ask-head">${icon(isReview ? 'eye' : 'ask')}${avatar({ kind: 'agent', name: q.raisedBy })}<b>${esc(q.raisedBy)}</b><span>${rel(q.raisedAt)}</span>${isReview ? '<span class="chip review-chip">Review</span>' : qs.length > 1 ? `<span class="q-count">${i + 1}/${qs.length}</span>` : ''}</div>
           ${isReview ? reviewNotesHTML(it, q) : `<div class="md">${md(q.reason)}</div>`}
           ${q.form?.length && !isReview ? qFormHTML(q) : ''}
+          ${isReview ? `<div class="rv-does">${esc(approveText(q))}</div>` : ''}
           ${isReview
-    ? tboxHTML({ ph: 'Feedback — Send back returns the ticket to the agent…', okIcon: 'send', okTitle: 'Send back (Ctrl+Enter)', hint: 'Ctrl+Enter = Send back', tools: `<button class="btn primary sm" data-r="approve">${icon('check', 'sm')}Approve</button><button class="btn ghost sm" data-r="why" title="Ask why|${esc(q.raisedBy)} explains on the card — nothing else changes and the review stays open">${icon('ask', 'sm')}Ask why</button>${state.app.preview ? `<button class="btn ghost sm" data-r="preview" title="Preview|See it working before you approve: runs ${esc(q.raisedBy)}'s branch on a temporary board with a copy of your tickets, and opens it in a new tab">${icon('eye', 'sm')}Preview</button>` : ''}` })
+    ? tboxHTML({ ph: 'Feedback — Send back returns the ticket to the agent…', okIcon: 'send', okTitle: 'Send back (Ctrl+Enter)', hint: 'Ctrl+Enter = Send back', tools: `<button class="btn primary sm" data-r="approve" title="${esc(approveText(q))}">${icon('check', 'sm')}${q.landing ? 'Approve and land' : 'Approve'}</button><button class="btn ghost sm" data-r="why" title="Ask why|${esc(q.raisedBy)} explains on the card — nothing else changes and the review stays open">${icon('ask', 'sm')}Ask why</button>${state.app.preview ? `<button class="btn ghost sm" data-r="preview" title="Preview|See it working before you approve: runs ${esc(q.raisedBy)}'s branch on a temporary board with a copy of your tickets, and opens it in a new tab">${icon('eye', 'sm')}Preview</button>` : ''}` })
     : tboxHTML({ ph: q.form?.length ? 'Anything to add? (optional)' : 'Reply…', okIcon: 'send', okTitle: q.form?.length ? 'Send answers (Ctrl+Enter)' : 'Reply & resolve (Ctrl+Enter)', tools:`<button class="tb-btn" data-r="resolve" title="Resolve|Mark this question answered without replying">${icon('check')}</button>` })}</div>`;
         }).join('');
         // Long explanations collapse to a few lines; "See more" only when they actually overflow.
@@ -2930,6 +2931,11 @@
     }
     const full = q.notes?.changed || [...(it.comments || [])].reverse().find((c) => c.author?.name === q.raisedBy && c.body && c.body.startsWith(q.reason.slice(0, 60)))?.body;
     return `<div class="rv-clamp"><div class="md rv-body">${md(full || q.reason)}</div></div>`;
+  }
+  // What Approve will do, said on the review card and on its hover text. `landing` = agent commits waiting.
+  function approveText(q) {
+    if (!q.landing) return 'Approve moves it to Done.';
+    return `Approve moves it to Done and lands ${q.landing} commit${q.landing === 1 ? '' : 's'} on main.`;
   }
   // "Ask why": a reply-only question — the agent explains on the card and changes nothing else.
   async function askWhy(id, text, replyTo = null, who = null) {

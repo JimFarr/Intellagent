@@ -1031,8 +1031,10 @@ function requestReview(ctx, id, d, actor) {
       summary = [summary, ...REVIEW_PARTS.filter(([k]) => notes[k]).map(([k, label]) => `**${label}**\n${notes[k]}`)].filter(Boolean).join('\n\n');
     }
     const wt = actor.kind === 'agent' && worktrees ? agentBranch(actor.name) : null;
+    let landing = 0; // commits approval will land on main: the review card and Approve's label read it
     if (wt) {
       const commits = worktrees.commitsFor(actor.name, item.id);
+      landing = commits.length;
       summary = [summary, commits.length
         ? `**Commits** on \`${wt.branch}\` (they land on approval)\n${commits.map((c) => `- \`${c.sha.slice(0, 7)}\` ${c.subject}`).join('\n')}`
         : `⚠ No commits mentioning ${item.id} on \`${wt.branch}\` — approving lands nothing.`].filter(Boolean).join('\n\n');
@@ -1046,6 +1048,7 @@ function requestReview(ctx, id, d, actor) {
     const rq = parseNeedsHuman({ reason: str(d.reason || notes.changed?.split(/\n\s*\n/)[0] || (summary ? summary.split(/\n\s*\n/)[0] : 'Ready for review'), 2000), kind: 'review' }, actor);
     if (Object.keys(notes).length) rq.notes = notes;
     else if (summary) rq.notes = { changed: summary };
+    if (landing) rq.landing = landing;
     item.version++;
     item.updatedAt = now();
     if (lease && !item.lease) events.push(itemEvent(ctx, 'lease.released', item, actor, { claimant: lease.claimant, reason: 'review requested' }));
