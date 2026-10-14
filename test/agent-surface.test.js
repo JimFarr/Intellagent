@@ -282,3 +282,23 @@ describe('sandbox boards', () => {
     } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
   });
 });
+
+describe('agents alert each other with @mentions', () => {
+  it('the brief says so, and naming an agent without @ comes back with a warning', async () => {
+    const s = await startServer({ agents: { agents: { rocket: { role: 'builder', enabled: false }, 'star-lord': { role: 'builder', enabled: false } } } });
+    try {
+      const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'gamora' })).body;
+      assert.match(typeof brief === 'string' ? brief : brief.markdown, /## Alerting other agents[\s\S]*@mention/);
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'route me', column: 'Ready' }, USER);
+      const say = (body) => s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body }, { agent: 'gamora' });
+      const bare = await say('Rocket. It touches the wake loop, so star-lord can wait.');
+      assert.match(bare.warning, /rocket, star-lord without @/);
+      assert.equal((await say('@rocket, it is yours.')).warning, undefined, 'an @mention alerts');
+      assert.equal((await say('`rocket` is in the code; > nothing\n> Rocket said so')).warning, undefined, 'code and quotes do not count');
+      assert.equal((await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: 'Rocket, look' }, USER)).warning, undefined, 'only agents are warned');
+      assert.equal((await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: 'rocket here, done' }, { agent: 'rocket' })).warning, undefined, 'not about yourself');
+      const saved = (await s.ok('GET', `/api/boards/main/items/${it.id}`)).comments;
+      assert.ok(saved.every((c) => !('warning' in c)), 'the warning is never stored');
+    } finally { await s.stop(); }
+  });
+});

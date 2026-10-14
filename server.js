@@ -1203,8 +1203,21 @@ function addComment(ctx, id, d, actor) {
       if (who) mentions.push(who);
     }
     events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(c.body), attachments: atts.length, ...(intent ? { intent } : {}) }, mentions, ...(intent ? { intent } : {}) }));
-    return c;
+    // An agent that names another agent without @ has alerted nobody: say so in the reply (not stored), so it
+    // can comment again with the @mention if it meant to.
+    const bare = actor.kind === 'agent' ? bareAgentNames(c.body, mentions, actor.name) : [];
+    return bare.length ? { ...c, warning: `You named ${bare.join(', ')} without @, so ${bare.length > 1 ? 'they were' : 'it was'} not alerted. If ${bare.length > 1 ? 'they' : 'it'} should act or read this now, comment again with ${bare.map((n) => `@${n}`).join(' ')}.` } : c;
   });
+}
+
+// Standing agents named in a comment without @ (outside code and quotes), other than the author.
+function bareAgentNames(text, mentions, self) {
+  let names = [];
+  try { names = standing?.list().agents.map((a) => a.name) || []; } catch { /* no agents */ }
+  const plain = String(text || '').replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').split('\n').filter((l) => !/^\s*>/.test(l)).join('\n');
+  const at = new Set(mentions.map((m) => m.toLowerCase()));
+  return names.filter((n) => n.toLowerCase() !== String(self).toLowerCase() && !at.has(n.toLowerCase())
+    && new RegExp(`(^|[^@\\w.-])${n.replace(/[.-]/g, '\\$&')}(?![\\w-])`, 'i').test(plain));
 }
 
 function claimLease(ctx, id, d, actor) {
@@ -1913,6 +1926,10 @@ function briefing(ctx, name, base, via = 'cli') {
     '## Board rules',
     b.directives?.trim() || '(none yet)',
     ...(rules.length ? ['', `Project conventions are in ${rules.map((x) => `\`${x.file}\``).join(', ')} — follow them; the board rules only cover how to use the board.`] : []),
+    '',
+    '## Alerting other agents',
+    '- To get another agent to act or read something now (a handoff, a question, a review finding, "your turn"), **@mention it**: `@rocket, this one is yours`. Most agents wake only when they are addressed, so a bare name ("Rocket, take this") wakes nobody. Assigning a ticket (assignee) also wakes its new owner.',
+    '- An @mention inside `code` or a `>` quote does not count, so quoting someone never wakes them. Use @ only when they need to act; to talk *about* an agent, write its name plainly.',
     '',
     '## The calls you need',
     `- Your work, any time: ${c('work')}`,
