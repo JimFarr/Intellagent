@@ -5,6 +5,7 @@
 const { describe, it: test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const http = require('http');
 const path = require('path');
 const { startServer, USER } = require('./helpers');
 
@@ -323,5 +324,47 @@ describe('board API', () => {
   test('cross-origin writes are refused', async () => {
     const r = await fetch(`${s.base}${B}/items`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example', 'x-user': 'James' }, body: '{"title":"x"}' });
     assert.equal(r.status, 403);
+  });
+
+  test('DNS rebinding: a Host the board does not answer to is refused, and a browser write must be JSON', async () => {
+    const port = Number(new URL(s.base).port);
+    const raw = (method, p, headers, data) => new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, method, path: p, headers }, (res) => {
+        let t = ''; res.on('data', (d) => { t += d; }); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(t || '{}') }));
+      });
+      req.on('error', reject);
+      req.end(data);
+    });
+    // after rebinding, a page on evil.example sends Origin and Host both "evil.example:<port>": same-origin, but not us
+    const evil = `evil.example:${port}`;
+    const rebound = await raw('POST', `${B}/items`, { host: evil, origin: `http://${evil}`, 'content-type': 'application/json', 'x-agent': 'page' }, '{"title":"rebound","column":"Backlog"}');
+    assert.equal(rebound.status, 403);
+    assert.equal(rebound.body.code, 'BAD_HOST');
+    assert.match(rebound.body.hint, /allowedHosts/);
+    assert.equal((await raw('GET', '/api/app', { host: evil })).body.code, 'BAD_HOST', 'reads too');
+    assert.equal((await raw('GET', '/', { host: evil })).status, 403, 'and the page itself');
+    // the board's own names still work, in any case
+    for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `LOCALHOST:${port}`]) {
+      assert.equal((await raw('GET', '/api/app', { host })).status, 200, host);
+    }
+    assert.equal((await raw('GET', '/api/app', { host: '127.0.0.1' })).body.code, 'BAD_HOST', 'another port is another program');
+    // a same-origin browser write that isn't JSON (a form) is refused; programs without Origin keep working
+    const form = await raw('POST', `${B}/items`, { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, 'content-type': 'text/plain', 'x-agent': 'page' }, '{"title":"form","column":"Backlog"}');
+    assert.equal(form.status, 415);
+    const curl = await raw('POST', `${B}/items`, { host: `127.0.0.1:${port}`, 'content-type': 'application/x-www-form-urlencoded', 'x-agent': 'curl' }, '{"title":"curl -d","column":"Backlog"}');
+    assert.equal(curl.status, 201, 'curl -d without a content-type header still works');
+    const titles = (await s.ok('POST', '/api/search', { board: 'main', full: true, limit: 1000 })).items.map((i) => i.title);
+    assert.ok(titles.includes('curl -d') && !titles.includes('rebound') && !titles.includes('form'), 'only the curl ticket was created');
+  });
+
+  test('allowedHosts: loopback always, the bound address, every local address on 0.0.0.0, and extra names', () => {
+    const { allowedHosts } = require('../lib/local-only');
+    const local = allowedHosts(7420);
+    assert.deepEqual([...local].sort(), ['127.0.0.1:7420', '[::1]:7420', 'localhost:7420']);
+    assert.ok(allowedHosts(7420, { host: '192.168.1.5' }).has('192.168.1.5:7420'));
+    const all = allowedHosts(7420, { host: '0.0.0.0' });
+    assert.ok(all.has(`${require('os').hostname().toLowerCase()}:7420`));
+    const extra = allowedHosts(7420, { extra: ['Board.Example', 'proxy.example:443', '[fe80::1]'] });
+    assert.ok(extra.has('board.example:7420') && extra.has('proxy.example:443') && extra.has('[fe80::1]:7420'));
   });
 });

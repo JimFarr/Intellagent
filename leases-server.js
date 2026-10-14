@@ -20,6 +20,7 @@ const os = require('os');
 const path = require('path');
 const { Ledger } = require('./lib/leases');
 const machine = require('./lib/machine');
+const { hostProblem, jsonProblem } = require('./lib/local-only');
 
 const PORT = Number(process.env.INTELLAGENT_LEASES_PORT) || 7499;
 const FILE = process.env.INTELLAGENT_LEASES_FILE || path.join(os.homedir(), '.intellagent', 'leases.json');
@@ -55,15 +56,13 @@ async function main() {
   };
   const hosts = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
   const guard = (req) => {
-    if (!hosts.has(String(req.headers.host || '').toLowerCase())) {
-      throw fail(403, `Host "${req.headers.host || ''}" is not this program`, 'BAD_HOST', `Call http://127.0.0.1:${PORT} directly`);
-    }
+    const bad = hostProblem(req, hosts, `http://127.0.0.1:${PORT}`);
+    if (bad) throw fail(bad.status, bad.error, bad.code, bad.hint);
     if (req.headers.origin !== undefined) {
       throw fail(403, 'Requests from web pages are refused', 'BAD_ORIGIN', 'Use "intellagent leases …" or call it from a program on this PC, without an Origin header');
     }
-    if (req.method !== 'GET' && !/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) {
-      throw fail(415, 'Writes must be sent as JSON', 'BAD_REQUEST', 'Send the header content-type: application/json');
-    }
+    const notJson = jsonProblem(req);
+    if (notJson) throw fail(notJson.status, notJson.error, notJson.code, notJson.hint);
   };
 
   const server = http.createServer(async (req, res) => {

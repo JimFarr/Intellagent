@@ -138,6 +138,7 @@ const DEFAULT_FLAGS = {
   sleeping: false,
 };
 const TEMPLATES = require('./lib/templates');
+const { allowedHosts, hostProblem, jsonProblem } = require('./lib/local-only');
 
 /* ── schema: typed custom fields + configurable built-ins ── */
 const FIELD_TYPES = ['text', 'markdown', 'number', 'boolean', 'enum', 'tags', 'date', 'url', 'user'];
@@ -4050,12 +4051,21 @@ function rememberIdem(key, status, body) {
   idemTimer = setTimeout(() => { try { fs.writeFileSync(IDEM_FILE, JSON.stringify(Object.fromEntries(idem))); } catch { /* best effort */ } }, 500);
 }
 
+// The Host names this board answers to (DNS rebinding: lib/local-only.js). "allowedHosts" in the manifest adds
+// names for a proxy or tunnel in front of it.
+const HOSTS = allowedHosts(M.port, { host: M.host, extra: M.allowedHosts || [] });
+
 const server = http.createServer(async (req, res) => {
-  const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
+    const badHost = hostProblem(req, HOSTS, `http://127.0.0.1:${M.port}`);
+    if (badHost) fail(badHost.status, badHost.error, { code: badHost.code, hint: `${badHost.hint}, or add the name to "allowedHosts" in ${MANIFEST_PATH}` });
+    const u = new URL(req.url, 'http://localhost');
     // Block other web pages from driving the API through the browser (CSRF); agents and curl send no Origin.
+    // A browser's writes must also say they are JSON: the UI always does, and a cross-site form cannot.
     const origin = req.headers.origin;
     if (origin && origin !== `http://${req.headers.host}`) fail(403, 'Cross-origin requests are not allowed');
+    const notJson = origin && jsonProblem(req);
+    if (notJson) fail(notJson.status, notJson.error, { code: notJson.code, hint: notJson.hint });
     let m = null;
     for (const r of routes) {
       if (r.method !== req.method) continue;
