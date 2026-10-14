@@ -24,8 +24,7 @@
   --col-shadow: 0 1px 0 color-mix(in oklab, #fff 5%, transparent) inset, 0 18px 50px -30px var(--shadow);
   --modal-shadow: 0 50px 120px -30px rgb(0 0 0 / .6), 0 0 0 1px color-mix(in oklab, #fff 4%, transparent) inset;
   --col-alpha: 84%;
-  /* parent tag colours: oklch(--tag-l --tag-c <hue>), the hue dealt per name in app.js */
-  --tag-l: .74; --tag-c: .13;
+  /* parent tag colours --tag-0…7: app.js takes them from each theme's palette and deals one slot per name */
   color-scheme: dark;
 }
 /* shadow styles */
@@ -44,7 +43,7 @@
   --modal-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent), 0 40px 120px -30px color-mix(in oklab, var(--accent) 45%, transparent);
 }
 :root[data-shadow="hard"] .card:hover { translate: -2px -2px; }
-:root[data-mode="light"] { color-scheme: light; --tag-l: .58; --tag-c: .12; }
+:root[data-mode="light"] { color-scheme: light; }
 :root[data-density="compact"] { --gap: 6px; }
 
 * { box-sizing: border-box; }

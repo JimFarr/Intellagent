@@ -12,13 +12,13 @@
   const hashStr = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   const hue = (s) => hashStr(String(s)) % 360;
   const initials = (n) => String(n).split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
-  // Parent tags take one of eight OKLCH hues spaced around the wheel; lightness and chroma are theme tokens
-  // (--tag-l, --tag-c) so the same tag reads on light and dark. Slots are dealt out board-wide: each name
-  // starts at its hashed slot and moves along only when an earlier name took it, so up to eight parents
-  // never share a colour and a name keeps its colour on chips, groups and menus alike.
-  const TAG_HUES = [25, 70, 115, 160, 205, 250, 295, 340];
+  // Parent tags take one of eight slots, and each theme paints the slots from its own palette (--tag-0…7, see
+  // THEMES). Slots are dealt out board-wide: each name starts at its hashed slot and moves along only when an
+  // earlier name took it, so up to eight parents never share a colour and a name keeps its colour on chips,
+  // groups and menus alike, in every theme.
+  const TAG_SLOTS = 8;
   let tagSlots = new Map(), tagSlotsFor;
-  const tagHome = (p) => hashStr(String(p)) % TAG_HUES.length;
+  const tagHome = (p) => hashStr(String(p)) % TAG_SLOTS;
   function tagSlot(p) {
     const board = state.board;
     // Rebuild when the board is replaced, or when an in-place edit brought in a name we haven't dealt yet.
@@ -29,16 +29,16 @@
       names.sort((a, b) => tagHome(a) - tagHome(b) || (a < b ? -1 : 1));
       let used = new Set();
       for (const n of names) {
-        if (used.size === TAG_HUES.length) used = new Set();
+        if (used.size === TAG_SLOTS) used = new Set();
         let s = tagHome(n);
-        while (used.has(s)) s = (s + 1) % TAG_HUES.length;
+        while (used.has(s)) s = (s + 1) % TAG_SLOTS;
         used.add(s);
         tagSlots.set(n, s);
       }
     }
     return tagSlots.get(p) ?? tagHome(p);
   }
-  const tagColor = (p) => `oklch(var(--tag-l) var(--tag-c) ${TAG_HUES[tagSlot(p)]})`;
+  const tagColor = (p) => `var(--tag-${tagSlot(p)}, var(--accent))`;
   const tilt = (id) => (((hashStr(id) % 1000) / 1000) - 0.5) * 2.6;
   // Each card gets its own decoration placement, stable per ticket: a slot (0–3), a spot along the top
   // edge (18–82%) and a small extra angle, so tape, pins and clips don't line up like stamps.
@@ -187,6 +187,18 @@
   const rgb = (h) => (h.length === 4 ? [...h.slice(1)].map((c) => c + c) : [h.slice(1, 3), h.slice(3, 5), h.slice(5, 7)]).map((x) => parseInt(x, 16));
   const luminance = (h) => rgb(h).map((c) => (c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4).reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
   const contrast = (x, y) => { const [a, b] = [luminance(x), luminance(y)].sort((m, n) => n - m); return (a + 0.05) / (b + 0.05); };
+  const oklab = (h) => {
+    const [r, g, b] = rgb(h).map((c) => (c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    const [l, m, s] = [0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b, 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b, 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b].map(Math.cbrt);
+    return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+  };
+  const fromOklab = ([L, a, b]) => {
+    const [l, m, s] = [L + 0.3963377774 * a + 0.2158037573 * b, L - 0.1055613458 * a - 0.0638541728 * b, L - 0.0894841775 * a - 1.291485548 * b].map((c) => c ** 3);
+    const lin = [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s];
+    return `#${lin.map((c) => Math.round(255 * Math.min(1, Math.max(0, c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055))).toString(16).padStart(2, '0')).join('')}`;
+  };
+  // color-mix(in oklab, x p, y), as CSS does it
+  const mixOklab = (x, p, y) => fromOklab(oklab(x).map((c, i) => c * p + oklab(y)[i] * (1 - p)));
   const mixHex = (x, y, p) => `#${rgb(x).map((c, i) => Math.round(c + (rgb(y)[i] - c) * p).toString(16).padStart(2, '0')).join('')}`;
   const T = (label, mode, c, style = {}, css = '') => ({
     label, mode, style, css, glow: !!style.glow,
@@ -364,6 +376,28 @@
     else if (t.mode === 'dark' && contrast(ink, v.accent) >= 4.5) v['on-accent'] = ink;
     else for (let i = 1; i <= 50 && contrast('#fff', v['accent-fill']) < 4.5; i++) v['accent-fill'] = mixHex(v.accent, ink, i / 50);
   }
+  // Group (parent) colours, --tag-0…7, come from the theme's own palette: in this order, each that shows on the
+  // card surface and differs clearly from those already taken. Each is moved toward the text colour until the text
+  // it tints reads at 4.5:1 (TAG_TEXT). A narrow palette fills the rest with the same colours a step further toward
+  // the text, so groups still differ by shade.
+  const TAG_SRC = ['accent', 'accent-2', 'task', 'spike', 'ok', 'issue', 'warn', 'blob1', 'blob2', 'blob3', 'danger'];
+  // Text tinted by a group colour, mirroring app.css: [share of the tag in the text, share in its ground, ground].
+  // Cover head, folder tab, parent chip, group head.
+  const TAG_TEXT = [[0.42, 0.09, 'surface'], [0.40, 0.14, 'surface'], [0.75, 0.17, 'surface'], [0.50, 0, 'panel']];
+  const tagReads = (c, v) => TAG_TEXT.every(([inText, inGround, ground]) => contrast(mixOklab(c, inText, v.text), mixOklab(c, inGround, v[ground])) >= 4.5);
+  const legible = (c, v) => { for (let i = 1; i <= 100 && !tagReads(c, v); i++) c = mixHex(c, v.text, 0.02); return c; };
+  const apart = (x, y) => Math.hypot(...oklab(x).map((c, i) => c - oklab(y)[i]));
+  // Worked out when a theme is first shown (about 1 ms, at most 12), not for every theme at load.
+  const themeTags = (t) => t.tags ??= (() => {
+    const v = t.vars, tags = [];
+    for (const k of TAG_SRC) {
+      const c = contrast(v[k], v.surface) >= 1.6 && legible(v[k], v);
+      if (c && tags.length < 8 && tags.every((x) => apart(x, c) > 0.1)) tags.push(c);
+    }
+    if (!tags.length) tags.push(legible(v.accent, v));
+    for (let i = 0; tags.length < 8; i++) tags.push(legible(mixHex(tags[i], v.text, 0.45), v));
+    return tags;
+  })();
   // Strength of each generated pattern, multiplying --fx-o. The one source: the board gets it as --fx-k (applySettings),
   // the Background tiles use it directly. `<kind>-<mode>` overrides a kind in light or dark themes.
   const FXK = { topo: 1.05, squiggles: 0.62, doodles: 0.7, confetti: 1.3, halftone: 0.7, 'halftone-light': 0.55 };
@@ -406,6 +440,7 @@
     const st = themeStyle();
     const r = document.documentElement;
     for (const [k, v] of Object.entries(t.vars)) r.style.setProperty(`--${k}`, v);
+    themeTags(t).forEach((c, i) => r.style.setProperty(`--tag-${i}`, c));
     for (const [k, v] of [['--r-card', st.card], ['--r-col', st.col], ['--r-modal', st.modal], ['--r-ctl', st.ctl], ['--bw', st.bw]]) r.style.setProperty(k, `${v}px`);
     r.style.setProperty('--col-alpha', `${st.colAlpha}%`);
     r.style.setProperty('--title-w', st.titleW);
