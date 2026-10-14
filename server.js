@@ -362,8 +362,8 @@ function enterColumn(item, colId) {
 }
 
 // Closed "needs you" requests, kept for metrics (how long agents waited on the human).
-function closeWait(item, prev, actor) {
-  (item.waits ||= []).push({ id: prev.id || null, reason: prev.reason || null, raisedBy: prev.raisedBy, raisedAt: prev.raisedAt, resolvedAt: now(), by: actor.name, kind: prev.kind || 'question' });
+function closeWait(item, prev, actor, more = {}) {
+  (item.waits ||= []).push({ id: prev.id || null, reason: prev.reason || null, raisedBy: prev.raisedBy, raisedAt: prev.raisedAt, resolvedAt: now(), by: actor.name, kind: prev.kind || 'question', ...more });
   if (item.waits.length > 30) item.waits.shift();
 }
 
@@ -814,7 +814,98 @@ function parseNeedsHuman(v, actor) {
   if (!v) return null;
   const reason = typeof v === 'string' ? v : v.reason;
   const kind = isObj(v) && v.kind === 'review' ? 'review' : 'question';
-  return { id: rid('q'), reason: str(reason || 'Needs input', 2000), raisedBy: actor.name, raisedAt: now(), kind };
+  const form = isObj(v) && kind === 'question' ? normForm(v.form) : null;
+  return { id: rid('q'), reason: str(reason || 'Needs input', 2000), raisedBy: actor.name, raisedAt: now(), kind, ...(form ? { form } : {}) };
+}
+
+/* Forms on questions (INT-88): the agent names the fields and the board draws the controls, so nothing an
+   agent writes runs on the human's screen. A question without a form works as before. */
+const FORM_TYPES = ['text', 'longtext', 'choice', 'multi', 'yesno', 'number', 'date', 'note'];
+const FORM_HINT = 'form is a list of { key, label, type: text|longtext|choice|multi|yesno|number|date, options? (choice, multi), required?, default?, help?, min?, max? (number) }, mixed with { type: "note", markdown }';
+const formFail = (msg) => fail(400, `form: ${msg}`, { code: 'BAD_REQUEST', hint: FORM_HINT });
+function normForm(form) {
+  if (form == null) return null;
+  if (!Array.isArray(form) || !form.length) formFail('must be a non-empty list of fields');
+  if (form.length > 40) formFail('at most 40 entries');
+  const keys = new Set();
+  const out = form.map((f, i) => {
+    if (!isObj(f)) formFail(`entry ${i + 1} must be an object`);
+    const type = f.type ?? 'text';
+    if (!FORM_TYPES.includes(type)) formFail(`entry ${i + 1}: unknown type "${type}" (allowed: ${FORM_TYPES.join(', ')})`);
+    if (type === 'note') {
+      const markdown = String(f.markdown ?? f.text ?? '').trim() || formFail(`entry ${i + 1}: a note needs "markdown"`);
+      return { type, markdown: str(markdown, 4000) };
+    }
+    const key = String(f.key ?? '');
+    if (!/^[A-Za-z][\w-]{0,39}$/.test(key)) formFail(`entry ${i + 1}: "key" must start with a letter, then letters, digits, _ or - (40 at most)`);
+    if (keys.has(key)) formFail(`duplicate key "${key}"`);
+    keys.add(key);
+    const field = { key, type, label: str(String(f.label ?? key), 200) };
+    if (f.help) field.help = str(String(f.help), 500);
+    if (f.required) field.required = true;
+    if (type === 'choice' || type === 'multi') {
+      const opts = Array.isArray(f.options) ? f.options : [];
+      if (!opts.length || opts.length > 30) formFail(`"${key}": ${type} needs 1–30 "options"`);
+      field.options = opts.map((o) => {
+        const value = String((isObj(o) ? o.value : o) ?? '').slice(0, 200) || formFail(`"${key}": every option needs a value`);
+        return { value, label: str(String((isObj(o) && o.label) || value), 200) };
+      });
+      if (new Set(field.options.map((o) => o.value)).size !== field.options.length) formFail(`"${key}": options repeat a value`);
+    }
+    if (type === 'number') for (const k of ['min', 'max']) if (f[k] != null) field[k] = Number.isFinite(+f[k]) ? +f[k] : formFail(`"${key}": "${k}" must be a number`);
+    if (f.default != null) field.default = formValue(field, f.default, (m) => formFail(`"${key}": default ${m}`));
+    return field;
+  });
+  if (!keys.size) formFail('needs at least one field to answer (notes alone ask nothing)');
+  return out;
+}
+
+// One answer, checked against its field. `bad` throws.
+function formValue(f, v, bad) {
+  switch (f.type) {
+    case 'text': case 'longtext':
+      if (typeof v !== 'string') bad('must be text');
+      return str(v, f.type === 'text' ? 2000 : 20_000);
+    case 'choice':
+      if (!f.options.some((o) => o.value === v)) bad(`must be one of: ${f.options.map((o) => o.value).join(', ')}`);
+      return v;
+    case 'multi':
+      if (!Array.isArray(v) || v.some((x) => !f.options.some((o) => o.value === x))) bad(`must be a list from: ${f.options.map((o) => o.value).join(', ')}`);
+      return [...new Set(v)];
+    case 'yesno':
+      if (typeof v !== 'boolean') bad('must be true or false');
+      return v;
+    case 'number':
+      if (typeof v !== 'number' || !Number.isFinite(v)) bad('must be a number');
+      if ((f.min != null && v < f.min) || (f.max != null && v > f.max)) bad(`must be between ${f.min ?? '−∞'} and ${f.max ?? '∞'}`);
+      return v;
+    case 'date':
+      if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v))) bad('must be a date, YYYY-MM-DD');
+      return v;
+  }
+  return bad('has no answer type');
+}
+
+// The human's answers to a form: every key known, required ones present; unanswered optional ones are null.
+function formAnswers(form, answers) {
+  const fields = form.filter((f) => f.type !== 'note');
+  const bad = (m) => fail(400, `answers: ${m}`, { code: 'BAD_REQUEST', hint: `answers is { key: value } for this form: ${fields.map((f) => `${f.key} (${f.type}${f.required ? ', required' : ''})`).join(', ')}` });
+  if (!isObj(answers)) bad('must be an object of { key: value }');
+  for (const k of Object.keys(answers)) if (!fields.some((f) => f.key === k)) bad(`unknown field "${k}"`);
+  const out = {};
+  for (const f of fields) {
+    const v = answers[f.key];
+    if (v == null || v === '' || (Array.isArray(v) && !v.length)) { if (f.required) bad(`"${f.key}" is required`); out[f.key] = null; continue; }
+    out[f.key] = formValue(f, v, (m) => bad(`"${f.key}" ${m}`));
+  }
+  return out;
+}
+
+// The answers as a comment anyone can read on the card.
+function formSummary(form, values) {
+  const show = (f, v) => v == null ? '—' : f.type === 'yesno' ? (v ? 'Yes' : 'No')
+    : f.options ? [].concat(v).map((x) => f.options.find((o) => o.value === x)?.label ?? x).join(', ') : String(v);
+  return form.filter((f) => f.type !== 'note').map((f) => `**${f.label}:** ${show(f, values[f.key])}`).join('\n');
 }
 
 // A ticket can carry several open questions. `needsHuman` mirrors the oldest one so older clients,
@@ -824,7 +915,8 @@ function syncNeeds(item) { item.questions ||= item.needsHuman ? [{ id: rid('q'),
 // Open a question (an identical open one from the same asker is reused). Returns it.
 function openQuestion(ctx, item, q, actor, events) {
   syncNeeds(item);
-  const same = item.questions.find((x) => x.raisedBy === q.raisedBy && x.reason === q.reason && x.kind === q.kind);
+  const same = item.questions.find((x) => x.raisedBy === q.raisedBy && x.reason === q.reason && x.kind === q.kind
+    && JSON.stringify(x.form || null) === JSON.stringify(q.form || null));
   if (same) return same;
   item.questions.push(q);
   syncNeeds(item);
@@ -840,7 +932,7 @@ function closeQuestions(ctx, item, actor, events, { pick = () => true, reply = n
   item.questions = item.questions.filter((q) => !closing.includes(q));
   syncNeeds(item);
   for (const q of closing) {
-    closeWait(item, q, actor);
+    closeWait(item, q, actor, extra.form ? { form: extra.form } : {});
     events.push(itemEvent(ctx, 'attention.resolved', item, actor, { questionId: q.id, raisedBy: q.raisedBy, reason: q.reason, kind: q.kind, reply, open: item.questions.length, mentions: [q.raisedBy], ...extra }));
   }
   return closing;
@@ -1288,17 +1380,28 @@ function resolveAttention(ctx, id, d, actor) {
     const item = getItem(ctx, id);
     syncNeeds(item);
     if (!item.questions.length) return item;
-    const qid = d.questionId || d.question;
+    let qid = d.questionId || d.question;
     if (qid && !item.questions.some((q) => q.id === qid)) fail(404, `No open question "${qid}" on ${item.id}`, { code: 'NOT_FOUND', questions: item.questions.map((q) => q.id) });
+    // Answers to a form belong to one question: the one named, or the only one open.
+    let form = null;
+    if (d.answers != null) {
+      if (!qid && item.questions.length === 1) qid = item.questions[0].id;
+      const q = item.questions.find((x) => x.id === qid);
+      if (!q) fail(400, `${item.id} has ${item.questions.length} open questions: say which one the answers are for`, { code: 'BAD_REQUEST', hint: 'Send "questionId" with "answers"', questions: item.questions.map((x) => x.id) });
+      if (!q.form) fail(400, `Question ${q.id} has no form to answer`, { code: 'BAD_REQUEST', hint: 'Answer it with "reply" instead' });
+      form = formAnswers(q.form, d.answers);
+    }
     // The human answers anything; an agent only closes what it may withdraw (else it could close another's review).
     for (const q of item.questions.filter((x) => !qid || x.id === qid)) mayWithdraw(ctx, actor, q.raisedBy, `${q.kind === 'review' ? 'the review' : 'question'} ${q.id} on ${item.id}`);
     let reply = null;
-    if (String(d.reply || '').trim()) {
+    const text = String(d.reply || '').trim() ? str(d.reply, 20_000) : '';
+    if (text || form) {
       const q = qid ? item.questions.find((x) => x.id === qid) : null;
-      reply = { id: rid('c'), author: actor, body: str(d.reply, 20_000), createdAt: now(), ...(q ? { answers: q.id } : {}) };
+      const body = form ? [formSummary(q.form, form), text].filter(Boolean).join('\n\n') : text;
+      reply = { id: rid('c'), author: actor, body, createdAt: now(), ...(q ? { answers: q.id } : {}), ...(form ? { form } : {}) };
       item.comments.push(reply);
     }
-    closeQuestions(ctx, item, actor, events, { pick: (q) => !qid || q.id === qid, reply: reply?.body ?? null });
+    closeQuestions(ctx, item, actor, events, { pick: (q) => !qid || q.id === qid, reply: reply?.body ?? null, extra: form ? { form } : {} });
     item.version++;
     item.updatedAt = now();
     return item;
@@ -1440,11 +1543,11 @@ function declineLease(ctx, id, d, actor) {
 
 // Asking never needs a lease: anyone working near a ticket may ask about it. Questions stack up;
 // each gets an id and is answered on its own.
-function askHuman(ctx, id, reason, actor) {
+function askHuman(ctx, id, reason, actor, form = null) {
   let q;
   const item = tx(ctx, (events) => {
     const it = getItem(ctx, id);
-    q = openQuestion(ctx, it, parseNeedsHuman({ reason: reason || 'Needs input' }, actor), actor, events);
+    q = openQuestion(ctx, it, parseNeedsHuman({ reason: reason || 'Needs input', form }, actor), actor, events);
     it.version++;
     it.updatedAt = now();
     return it;
@@ -1741,7 +1844,7 @@ function workFor(ctx, name) {
     if (mine.length) continue;
     const w = (it.waits || []).filter((x) => x.raisedBy === name && x.kind !== 'review').at(-1);
     // your own withdrawal is no answer; someone else's (the coordinator's) is, with its reason
-    if (w && !(w.withdrawn && w.by === name) && Date.parse(w.resolvedAt) > lastMine(it) && it.columnId !== done) answered.push(brief(it, { questionId: w.id, question: w.reason || null, answer: replyAfter(it, w), answeredBy: w.by, ...(w.withdrawn ? { withdrawn: true } : {}) }));
+    if (w && !(w.withdrawn && w.by === name) && Date.parse(w.resolvedAt) > lastMine(it) && it.columnId !== done) answered.push(brief(it, { questionId: w.id, question: w.reason || null, answer: replyAfter(it, w), ...(w.form ? { form: w.form } : {}), answeredBy: w.by, ...(w.withdrawn ? { withdrawn: true } : {}) }));
     const rv = it.review;
     if (rv?.verdict === 'changes' && (rv.requestedBy === name || it.workedBy?.includes(name)) && Date.parse(rv.at) > lastMine(it)) feedback.push(brief(it, { feedback: rv.comment, by: rv.by }));
     if (it.assignee === name && it.columnId !== done && !asleep(ctx, it) && !(l && l.claimant !== name) && !leases.some((x) => x.id === it.id)) assigned.push(brief(it));
@@ -1909,7 +2012,7 @@ function briefing(ctx, name, base, via = 'cli') {
     start: { cli: cli('POST', `${P}/items/<ID>/start`, 'status="what you are doing"'), mcp: 'start_work { id, status }', http: `POST ${P}/items/<ID>/start { status }` },
     status: { cli: cli('PUT', `${P}/items/<ID>/status`, 'status="running tests"'), mcp: 'set_status { id, status }', http: `PUT ${P}/items/<ID>/status { status }` },
     comment: { cli: cli('POST', `${P}/items/<ID>/comments`, 'body="…"'), mcp: 'add_comment { id, body }', http: `POST ${P}/items/<ID>/comments { body }` },
-    ask: { cli: cli('POST', `${P}/items/<ID>/attention`, 'reason="your question"'), mcp: 'ask_human { id, reason }', http: `POST ${P}/items/<ID>/attention { reason }` },
+    ask: { cli: cli('POST', `${P}/items/<ID>/attention`, 'reason="your question"'), mcp: 'ask_human { id, reason, form? }', http: `POST ${P}/items/<ID>/attention { reason, form? }` },
     review: { cli: cli('POST', `${P}/items/<ID>/review`, 'changed="…" why="…" verify="…" risks="…"'), mcp: 'request_review { id, changed, why, verify, risks }', http: `POST ${P}/items/<ID>/review { changed, why, verify, risks }` },
     moves: { cli: cli('GET', `${P}/items/<ID>/transitions`), mcp: 'get_transitions { id }', http: `GET ${P}/items/<ID>/transitions` },
     finish: { cli: cli('POST', `${P}/finish`, 'summary="what you did today"'), mcp: 'finish_session { summary }', http: `POST ${P}/finish { summary }` },
@@ -3257,12 +3360,12 @@ route('POST', '/api/boards/:board/items/:id/lease/request', 'Ask the holder for 
 route('POST', '/api/boards/:board/items/:id/lease/handover', 'Holder (or human): hand the lease to { to? (default: first requester), note?, status? }', ({ p, body, actor }) => handOverLease(getCtx(p.board), p.id, body, actor));
 route('POST', '/api/boards/:board/items/:id/lease/decline', 'Holder (or human): decline a lease request { to? (default: first requester), reason }', ({ p, body, actor }) => declineLease(getCtx(p.board), p.id, body, actor));
 
-route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason } — allowed even while others hold leases', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason, form? } — form: [{ key, label, type: text|longtext|choice|multi|yesno|number|date, options?, required?, default?, help? } | { type: "note", markdown }]; allowed even while others hold leases', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  const { item, questionId } = askHuman(ctx, p.id, body.reason, actor);
+  const { item, questionId } = askHuman(ctx, p.id, body.reason, actor, body.form ?? null);
   return { ...itemView(ctx, item), questionId };
 });
-route('DELETE', '/api/boards/:board/items/:id/attention', 'Answer: { reply?, questionId? } — one question, or all open ones without questionId (reply becomes a comment)', ({ p, body, actor }) => {
+route('DELETE', '/api/boards/:board/items/:id/attention', 'Answer: { reply?, questionId?, answers? } — one question, or all open ones without questionId (reply becomes a comment); answers: { key: value } for a question with a form', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   return itemView(ctx, resolveAttention(ctx, p.id, body, actor));
 });

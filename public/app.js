@@ -2725,9 +2725,10 @@
           const isReview = q.kind === 'review';
           return `<div class="m-ask ${isReview ? 'is-review' : ''}" data-q="${esc(q.id || '')}" data-kind="${isReview ? 'review' : 'question'}"><div class="ask-head">${icon(isReview ? 'eye' : 'ask')}${avatar({ kind: 'agent', name: q.raisedBy })}<b>${esc(q.raisedBy)}</b><span>${rel(q.raisedAt)}</span>${isReview ? '<span class="chip review-chip">Review</span>' : qs.length > 1 ? `<span class="q-count">${i + 1}/${qs.length}</span>` : ''}</div>
           ${isReview ? reviewNotesHTML(it, q) : `<div class="md">${md(q.reason)}</div>`}
+          ${q.form?.length && !isReview ? qFormHTML(q) : ''}
           ${isReview
     ? tboxHTML({ ph: 'Feedback — Send back returns the ticket to the agent…', okIcon: 'send', okTitle: 'Send back (Ctrl+Enter)', hint: 'Ctrl+Enter = Send back', tools: `<button class="btn primary sm" data-r="approve">${icon('check', 'sm')}Approve</button><button class="btn ghost sm" data-r="why" title="Ask why|${esc(q.raisedBy)} explains on the card — nothing else changes and the review stays open">${icon('ask', 'sm')}Ask why</button>${state.app.preview ? `<button class="btn ghost sm" data-r="preview" title="Preview|See it working before you approve: runs ${esc(q.raisedBy)}'s branch on a temporary board with a copy of your tickets, and opens it in a new tab">${icon('eye', 'sm')}Preview</button>` : ''}` })
-    : tboxHTML({ ph: 'Reply…', okIcon: 'send', okTitle: 'Reply & resolve (Ctrl+Enter)', tools: `<button class="tb-btn" data-r="resolve" title="Resolve|Mark this question answered without replying">${icon('check')}</button>` })}</div>`;
+    : tboxHTML({ ph: q.form?.length ? 'Anything to add? (optional)' : 'Reply…', okIcon: 'send', okTitle: q.form?.length ? 'Send answers (Ctrl+Enter)' : 'Reply & resolve (Ctrl+Enter)', tools:`<button class="tb-btn" data-r="resolve" title="Resolve|Mark this question answered without replying">${icon('check')}</button>` })}</div>`;
         }).join('');
         // Long explanations collapse to a few lines; "See more" only when they actually overflow.
         m.openNotes ||= new Set();
@@ -2753,8 +2754,12 @@
           const resolve = async (withReply) => {
             const ta = $('textarea', box);
             const reply = withReply ? ta.value.trim() : '';
-            if (withReply && !reply) { ta.focus(); return; }
-            try { await api('DELETE', I(m.id, '/attention'), { reply, questionId: qid }); pulseSaved(); scheduleRefresh(0); } catch (e) { toast(e.message, { kind: 'error' }); }
+            // a form is sent with the reply; "resolve" without replying skips it
+            const form = withReply && $('.q-form', card);
+            const answers = form ? readQForm(form, qs.find((x) => x.id === qid)) : undefined;
+            if (answers === null) return;
+            if (withReply && !reply && !answers) { ta.focus(); return; }
+            try { await api('DELETE', I(m.id, '/attention'), { reply, questionId: qid, ...(answers ? { answers } : {}) }); pulseSaved(); scheduleRefresh(0); } catch (e) { toast(e.message, { kind: 'error' }); }
           };
           // One step on the server: verdict recorded, comment posted, moved on (or back), agent told.
           const review = async (approve) => {
@@ -2882,7 +2887,42 @@
 
   /* ─── side panel (schema-driven) ─── */
 
-  const REVIEW_LABELS = [['changed', 'What changed', 'pencil'], ['why', 'Why', 'sparkle'], ['verify', 'How to verify', 'check'], ['evidence', 'Evidence', 'eye'], ['risks', 'Risks & open questions', 'flag']];
+  // A question's form (INT-88): the agent names the fields, we draw the controls. Nothing it writes is HTML.
+  function qFormHTML(q) {
+    return `<div class="q-form">${q.form.map((f) => {
+      if (f.type === 'note') return `<div class="md qf-note">${md(f.markdown)}</div>`;
+      const name = `qf-${q.id}-${f.key}`;
+      const d = f.default;
+      const opt = (type, value, label, on) => `<label class="qf-opt"><input type="${type}" name="${esc(name)}" value="${esc(value)}"${on ? ' checked' : ''}><span>${esc(label)}</span></label>`;
+      const ctl = f.type === 'longtext' ? `<textarea rows="3">${esc(d ?? '')}</textarea>`
+        : f.type === 'choice' ? f.options.map((o) => opt('radio', o.value, o.label, d === o.value)).join('')
+          : f.type === 'multi' ? f.options.map((o) => opt('checkbox', o.value, o.label, [].concat(d ?? []).includes(o.value))).join('')
+            : f.type === 'yesno' ? opt('radio', 'true', 'Yes', d === true) + opt('radio', 'false', 'No', d === false)
+              : f.type === 'number' ? `<input type="number"${f.min != null ? ` min="${f.min}"` : ''}${f.max != null ? ` max="${f.max}"` : ''} value="${esc(d ?? '')}">`
+                : `<input type="${f.type === 'date' ? 'date' : 'text'}" value="${esc(d ?? '')}">`;
+      return `<div class="qf-field" data-key="${esc(f.key)}"><div class="qf-label">${esc(f.label)}${f.required ? '<b class="qf-req" title="Required">*</b>' : ''}</div>${f.help ? `<div class="qf-help">${esc(f.help)}</div>` : ''}<div class="qf-ctl qf-${f.type}">${ctl}</div></div>`;
+    }).join('')}</div>`;
+  }
+  // { key: value } from the controls, or null (and the missing fields marked) when a required one is empty.
+  function readQForm(el, q) {
+    const out = {};
+    let missing = null;
+    for (const f of q.form.filter((x) => x.type !== 'note')) {
+      const box = $$('.qf-field', el).find((x) => x.dataset.key === f.key);
+      const picked = $$('input:checked', box).map((x) => x.value);
+      const raw = $('input:not([type=radio]):not([type=checkbox]), textarea', box)?.value.trim() ?? '';
+      const v = f.type === 'multi' ? picked : f.type === 'choice' ? picked[0] ?? null : f.type === 'yesno' ? (picked.length ? picked[0] === 'true' : null)
+        : f.type === 'number' ? (raw === '' ? null : Number(raw)) : raw || null;
+      const empty = v == null || (Array.isArray(v) && !v.length);
+      box.classList.toggle('missing', !!(f.required && empty));
+      if (f.required && empty) missing ||= box;
+      out[f.key] = v;
+    }
+    if (missing) { missing.scrollIntoView({ block: 'nearest' }); toast('Fill in the fields marked *', { kind: 'error' }); return null; }
+    return out;
+  }
+
+  const REVIEW_LABELS = [['changed', 'What changed', 'pencil'],['why', 'Why', 'sparkle'], ['verify', 'How to verify', 'check'], ['evidence', 'Evidence', 'eye'], ['risks', 'Risks & open questions', 'flag']];
   // The agent's explanation in full: its four parts when it gave them, else its whole review comment.
   function reviewNotesHTML(it, q) {
     if (q.notes && Object.keys(q.notes).length > (q.notes.changed && Object.keys(q.notes).length === 1 ? 1 : 0)) {

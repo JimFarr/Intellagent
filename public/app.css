@@ -641,6 +641,21 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .m-ask .ask-head > .i { color: var(--accent-2); }
 .m-ask .md { font-size: 15px; font-weight: 500; margin-bottom: 12px; }
 .m-ask .tbox { --tb: var(--accent-2); background: color-mix(in oklab, var(--surface) 80%, transparent); }
+/* a question's form (INT-88) */
+.q-form { display: grid; gap: 12px; margin: 0 0 12px; }
+.q-form .qf-note { font-size: 14px; font-weight: 400; margin: 0; }
+.qf-field { display: grid; gap: 4px; padding: 2px 0; border-radius: 10px; }
+.qf-label { font-size: 13.5px; font-weight: 600; }
+.qf-req { color: var(--danger, #ff5d73); margin-left: 3px; }
+.qf-help { font-size: 12.5px; color: var(--muted); }
+.qf-ctl { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.qf-ctl input[type=text], .qf-ctl input[type=number], .qf-ctl input[type=date], .qf-ctl textarea { flex: 1; min-width: 0; font: inherit; color: var(--text);
+  background: color-mix(in oklab, var(--surface) 80%, transparent); border: 1px solid var(--line, color-mix(in oklab, var(--text) 18%, transparent)); border-radius: 10px; padding: 7px 10px; }
+.qf-ctl textarea { resize: vertical; }
+.qf-ctl input:focus-visible, .qf-ctl textarea:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.qf-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; cursor: pointer; }
+.qf-opt input { accent-color: var(--accent-2); }
+.qf-field.missing { box-shadow: 0 0 0 2px color-mix(in oklab, var(--danger, #ff5d73) 60%, transparent); padding: 6px 8px; }
 
 .section { margin-top: 22px; }
 .section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }

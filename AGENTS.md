@@ -211,6 +211,16 @@ DELETE /api/boards/main/items/INT-12/attention  { "reply": "…" }   (normally t
 
 The ticket glows on the board. The reply returns a `questionId`. A ticket can hold several open questions (from you and others); each is answered on its own and the answer arrives as an `attention.resolved` event with that `questionId` and `reply`, addressed to whoever asked — and in `GET …/work` under `answered`. Asking the same thing twice reuses the open question. The human answers one with `DELETE …/attention { questionId, reply }` (without `questionId`, every open question is closed).
 
+**A question with a form.** When the answer has a shape, give the question a `form` and the card draws the controls:
+```
+POST …/items/INT-12/attention { "reason": "Storage setup?", "form": [
+  { "type": "note", "markdown": "Pick what **fits**." },
+  { "key": "db", "label": "Database", "type": "choice", "options": ["postgres", { "value": "sqlite", "label": "SQLite" }], "required": true },
+  { "key": "extras", "label": "Extras", "type": "multi", "options": ["cache", "queue"] },
+  { "key": "migrate", "label": "Migrate now?", "type": "yesno", "default": false } ] }
+```
+Types: `text longtext choice` (radio) `multi` (checkboxes) `yesno number` (`min`/`max`) `date` (YYYY-MM-DD), plus `note` blocks of markdown; each field may have `required`, `default` and `help`. Combine them in any order. The answers come back as `{ key: value }` (unanswered ones `null`) in the event's `form` and in `…/work` under `answered[].form`, and as a readable comment on the card. A form the board cannot draw, or answers that don't fit it, get `400 BAD_REQUEST` with a hint. The human can still reply in words or resolve without filling it in, so read `form` when it is there and `answer` always.
+
 **Withdrawing.** Once your ask is met or no longer relevant, take it back with a reason instead of leaving it open: `POST …/items/<ID>/questions/<questionId>/withdraw { "reason": "…" }` for a question or a review request on a card, `POST …/requests/<id>/withdraw { "reason": "…" }` for a request you sent. It is recorded on the card (↩) and leaves everyone's `…/work`; it moves nothing (whoever leases the ticket, or the coordinator, decides that). Only whoever raised it, the coordinator or the human may close it: anyone else gets `403 FORBIDDEN`, and the same holds for an agent calling `DELETE …/attention`. A review that was withdrawn and never decided can't be carried through a gate by an agent (`409 REVIEW_OPEN`).
 
 **Where to ask.** While the human is actively chatting with you, quick back-and-forth belongs in chat. Anything that should outlive the conversation — a decision, an approval, a question raised while working unattended — goes on the card, so you never wait in one place while they answer in the other. If you asked in chat about a ticket, record the answer on the card.

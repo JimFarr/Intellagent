@@ -130,6 +130,72 @@ describe('agent flows', () => {
     await s.ok('PATCH', B, { coordinator: null }, USER);
   });
 
+  it('a question carries a form the agent composes; the answers come back as { key: value } (INT-88)', async () => {
+    const it = await mk({ title: 'form me' });
+    const form = [
+      { type: 'note', markdown: 'Pick what **fits**.' },
+      { key: 'db', label: 'Database', type: 'choice', options: ['postgres', { value: 'sqlite', label: 'SQLite' }], required: true },
+      { key: 'extras', label: 'Extras', type: 'multi', options: ['cache', 'queue', 'search'] },
+      { key: 'migrate', label: 'Migrate now?', type: 'yesno', default: false },
+      { key: 'replicas', label: 'Replicas', type: 'number', min: 1, max: 5 },
+      { key: 'by', label: 'By', type: 'date' },
+      { key: 'notes', label: 'Notes', type: 'longtext' },
+    ];
+    const qid = (await s.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'Storage setup?', form }, A)).questionId;
+    const q = (await s.ok('GET', `${B}/items/${it.id}`)).questions.find((x) => x.id === qid);
+    assert.equal(q.form.length, 7);
+    assert.deepEqual(q.form[1].options, [{ value: 'postgres', label: 'postgres' }, { value: 'sqlite', label: 'SQLite' }]);
+
+    // answers that don't fit the form are refused with a code and a hint, and close nothing
+    const ans = (answers, qId = qid) => s.api('DELETE', `${B}/items/${it.id}/attention`, { questionId: qId, answers }, USER);
+    for (const [bad, why] of [[{ extras: ['cache'] }, /required/], [{ db: 'mysql' }, /one of/], [{ db: 'sqlite', replicas: 9 }, /between/],
+      [{ db: 'sqlite', nope: 1 }, /unknown field/], [{ db: 'sqlite', by: 'tuesday' }, /date/], [{ db: 'sqlite', migrate: 'yes' }, /true or false/]]) {
+      const r = await ans(bad);
+      assert.equal(r.status, 400, JSON.stringify(bad));
+      assert.equal(r.body.code, 'BAD_REQUEST');
+      assert.match(r.body.error, why);
+      assert.match(r.body.hint, /db \(choice, required\)/);
+    }
+    assert.equal((await s.ok('GET', `${B}/items/${it.id}`)).questions.length, 1, 'still open');
+
+    const { seq } = await s.ok('GET', '/api/app');
+    await ans({ db: 'sqlite', extras: ['cache', 'search'], migrate: true, replicas: 2 });
+    const want = { db: 'sqlite', extras: ['cache', 'search'], migrate: true, replicas: 2, by: null, notes: null };
+    const ev = (await s.ok('GET', `/api/events?since=${seq}&types=attention.resolved`)).events[0];
+    assert.equal(ev.questionId, qid);
+    assert.deepEqual(ev.form, want);
+    assert.ok(ev.recipients.includes('ada'));
+    const a = (await work()).answered.find((x) => x.id === it.id);
+    assert.deepEqual(a.form, want);
+    assert.match(a.answer, /\*\*Database:\*\* SQLite/, 'the answers read as a comment on the card too');
+    assert.match(a.answer, /\*\*Migrate now\?:\*\* Yes/);
+    const c = (await s.ok('GET', `${B}/items/${it.id}`)).comments.at(-1);
+    assert.equal(c.answers, qid);
+    assert.deepEqual(c.form, want);
+  });
+
+  it('a form that cannot be drawn gets 400 with a code and a hint; a plain question still works (INT-88)', async () => {
+    const it = await mk({ title: 'bad forms' });
+    for (const form of [[], 'pick one', [{ key: 'x', type: 'slider' }], [{ key: '1x' }], [{ key: 'a' }, { key: 'a' }],
+      [{ key: 'c', type: 'choice' }], [{ type: 'note', markdown: 'just words' }], [{ key: 'n', type: 'number', default: 'many' }]]) {
+      const r = await s.api('POST', `${B}/items/${it.id}/attention`, { reason: 'Q?', form }, A);
+      assert.equal(r.status, 400, JSON.stringify(form));
+      assert.equal(r.body.code, 'BAD_REQUEST');
+      assert.match(r.body.hint, /type: text\|longtext\|choice/);
+    }
+    assert.equal((await s.ok('GET', `${B}/items/${it.id}`)).questions.length, 0, 'nothing was asked');
+
+    const qid = (await s.ok('POST', `${B}/items/${it.id}/attention`, { reason: 'Plain?' }, A)).questionId;
+    const q = (await s.ok('GET', `${B}/items/${it.id}`)).questions[0];
+    assert.equal(q.form, undefined);
+    const r = await s.api('DELETE', `${B}/items/${it.id}/attention`, { questionId: qid, answers: { x: 1 } }, USER);
+    assert.equal(r.body.code, 'BAD_REQUEST', 'answers to a question without a form');
+    await s.ok('DELETE', `${B}/items/${it.id}/attention`, { questionId: qid, reply: 'plainly yes' }, USER);
+    const a = (await work()).answered.find((x) => x.id === it.id);
+    assert.equal(a.answer, 'plainly yes');
+    assert.equal(a.form, undefined);
+  });
+
   it('a withdrawn, undecided review cannot be carried through the gate by an agent; the human still can (INT-90)', async () => {
     const s2 = await startServer({ agents: { agents: { gamora: { role: 'coordinator', grants: ['column.gate'] } } } });
     try {
