@@ -9,7 +9,7 @@
       "description": "Coordinator: triages James's tickets and requests, and routes them — Rocket (opus) risky core work, Drax (sonnet) everyday API/CLI/MCP, Cosmo (haiku) the smallest tickets, Mantis design; assigns Nebula to review. Turns Quill's reports, once Nebula has sorted them, into tickets.",
       "model": "haiku",
       "throttleMinutes": 0.1,
-      "maxRunsPerHour": 40,
+      "maxRunsPerHour": 60,
       "pickup": "ready",
       "sweepMinutes": 30,
       "grants": [
@@ -19,7 +19,7 @@
     "rocket": {
       "role": "builder",
       "model": "opus",
-      "maxRunsPerHour": 6,
+      "maxRunsPerHour": 30,
       "description": "Senior developer (opus): risky or cross-cutting work — server core, standing agents, worktrees, permissions, data; anything with risk: high.",
       "areas": [
         "server.js",
@@ -37,7 +37,7 @@
     "drax": {
       "role": "builder",
       "model": "sonnet",
-      "maxRunsPerHour": 10,
+      "maxRunsPerHour": 30,
       "description": "Developer (sonnet): everyday features and bugs across the API, CLI and MCP, with tests.",
       "areas": [
         "bin/intellagent.js",
@@ -58,7 +58,7 @@
     "cosmo": {
       "role": "builder",
       "model": "haiku",
-      "maxRunsPerHour": 15,
+      "maxRunsPerHour": 30,
       "description": "Junior developer (haiku): the smallest, best-specified tickets — wording, docs, a missing test, a one-line fix.",
       "areas": [
         "AGENTS.md",
@@ -88,7 +88,7 @@
       "reviewer": true,
       "model": "opus",
       "run": "claude -p \"Handle the Intellagent events described on stdin.\" --permission-mode acceptEdits --tools \"Bash,Read,Grep,Glob,Edit,Write\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-mantis.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Edit\" \"Write\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
-      "maxRunsPerHour": 6
+      "maxRunsPerHour": 30
     },
     "nebula": {
       "role": "reviewer",
@@ -113,7 +113,7 @@
       "throttleMinutes": 0.5,
       "description": "User: uses Intellagent as a newcomer would — as an agent through the CLI and as a person in his browser, on his own sandbox — and reports how hard it was.",
       "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-quill.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
-      "maxRunsPerHour": 8
+      "maxRunsPerHour": 30
     }
   }
 }
