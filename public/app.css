@@ -327,7 +327,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .c-meta .m { display: inline-flex; align-items: center; gap: 3px; font-family: var(--mono); }
 
 .chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 99px; font: 500 11px var(--font); background: color-mix(in oklab, var(--text) 8%, transparent); color: var(--muted); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.chip.parent { --tagc: var(--accent); background: color-mix(in oklab, var(--tagc) 17%, transparent); color: color-mix(in oklab, var(--tagc) 75%, var(--text)); }
+.chip.parent { --tagc: var(--accent); background: color-mix(in oklab, var(--tagc) 17%, transparent); color: color-mix(in oklab, var(--tagc) var(--tag-chip, 55%), var(--text)); }
 .chip.parent::before { content: '#'; opacity: .55; }
 .chip.blocked { background: color-mix(in oklab, var(--danger) 15%, transparent); color: var(--danger); }
 .fchip { --fc: var(--muted); display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 7px; font: 500 11px var(--font); color: color-mix(in oklab, var(--fc) 70%, var(--text)); background: color-mix(in oklab, var(--fc) 13%, transparent); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
@@ -393,7 +393,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 /* decorations that overhang a card's top edge (tape, pin, clip) get room under the header */
 :root:is([data-tape="tape"], [data-tape="pin"], [data-tape="clip"]) .group { --gpad: 13px; }
 .list > .group:first-child { margin-top: 2px; }
-.group-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: color-mix(in oklab, var(--tagc) 50%, var(--text)); font: 600 11.5px/16px var(--mono); padding: 2px 4px var(--gpad) var(--cpx); cursor: pointer; text-align: left; border-radius: 8px; }
+.group-head { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; color: color-mix(in oklab, var(--tagc) var(--tag-head, 50%), var(--text)); font: 600 11.5px/16px var(--mono); padding: 2px 4px var(--gpad) var(--cpx); cursor: pointer; text-align: left; border-radius: 8px; }
 .group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .group-head .g-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--tagc); flex: none; }
 .group-head .g-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -413,7 +413,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 :root[data-groups="rule"] .group-head { padding-bottom: 6px; margin-bottom: calc(var(--gpad) - 2px); box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--text) 12%, transparent); border-radius: 0; }
 /* tab: a folder tab joined to the top edge of the cards (it replaces the first card's own decoration) */
 :root[data-groups="tab"] .group { --tab-x0: var(--tab-x, max(12px, calc(var(--r-card) - 2px))); }
-:root[data-groups="tab"] .group-head { width: fit-content; max-width: calc(100% - var(--tab-x0) - 12px); margin-left: var(--tab-x0); padding: 4px 9px 4px 8px; border-radius: 9px 9px 0 0; background: color-mix(in oklab, var(--tagc) 14%, var(--surface)); color: color-mix(in oklab, var(--tagc) 40%, var(--text)); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--tagc) 30%, transparent); }
+:root[data-groups="tab"] .group-head { width: fit-content; max-width: calc(100% - var(--tab-x0) - 12px); margin-left: var(--tab-x0); padding: 4px 9px 4px 8px; border-radius: 9px 9px 0 0; background: color-mix(in oklab, var(--tagc) 14%, var(--surface)); color: color-mix(in oklab, var(--tagc) var(--tag-tab, 40%), var(--text)); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--tagc) 30%, transparent); }
 :root[data-groups="tab"] .group-head .grow { display: none; }
 :root[data-groups="tab"] .group-cards > .card:first-child .tape { display: none; }
 /* A group is one object, so it gets one decoration: the first card carries it, in the canonical spot for its
@@ -469,7 +469,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
   position: relative; z-index: 30; flex-wrap: wrap; row-gap: 9px; margin: 0; padding: 11px var(--cpx);
   border-radius: var(--cover-r, var(--r-card)); border: var(--bw) solid color-mix(in oklab, var(--tagc) 24%, var(--card-line));
   background: color-mix(in oklab, var(--tagc) 9%, var(--surface)); box-shadow: var(--card-shadow);
-  color: color-mix(in oklab, var(--tagc) 42%, var(--text)); transition: box-shadow .25s, border-color .25s;
+  color: color-mix(in oklab, var(--tagc) var(--tag-cover, 42%), var(--text)); transition: box-shadow .25s, border-color .25s;
 }
 :root[data-groups="cover"] .group-head:hover { box-shadow: var(--card-shadow-hover); border-color: color-mix(in oklab, var(--tagc) 40%, var(--card-line)); }
 :root[data-groups="cover"] .group-head:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }

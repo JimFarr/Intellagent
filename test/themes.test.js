@@ -9,7 +9,7 @@ const path = require('node:path');
 // The theme table lives inside the browser app; evaluate just that slice of public/app.js.
 const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const from = src.indexOf('  // Palette colours are'), to = src.indexOf('  // Strength of each generated pattern');
-const { THEMES, themeTags, contrast, oklab } = new Function(`${src.slice(from, to)}; return { THEMES, themeTags, contrast, oklab };`)();
+const { THEMES, themeGroups, contrast, oklab } = new Function(`${src.slice(from, to)}; return { THEMES, themeGroups, contrast, oklab };`)();
 
 // color-mix(in oklab, x p, y): back from oklab to #rrggbb.
 const fromOklab = ([L, a, b]) => {
@@ -19,14 +19,14 @@ const fromOklab = ([L, a, b]) => {
 };
 const mix = (x, p, y) => fromOklab(oklab(x).map((c, i) => c * p + oklab(y)[i] * (1 - p)));
 
-// Where a group colour carries text: [label, share of the tag in the text, share in its ground, ground, the rule in
-// public/app.css that sets that text colour]. If app.css changes a share, change it here and in TAG_TEXT (app.js).
+// Where a group colour carries text: [label, the theme's share variable, share of the tag in its ground, ground, the
+// rule in public/app.css that sets that text and its ground]. If app.css changes one, change it here and in TAG_TEXT.
 const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8');
 const GROUP_TEXT = [
-  ['cover head', 0.42, 0.09, 'surface', /\[data-groups="cover"\] \.group-head \{[^}]*color: color-mix\(in oklab, var\(--tagc\) 42%, var\(--text\)\)/],
-  ['tab head', 0.40, 0.14, 'surface', /\[data-groups="tab"\] \.group-head \{[^}]*background: color-mix\(in oklab, var\(--tagc\) 14%, var\(--surface\)\); color: color-mix\(in oklab, var\(--tagc\) 40%, var\(--text\)\)/],
-  ['parent chip', 0.75, 0.17, 'surface', /\.chip\.parent \{[^}]*17%, transparent\); color: color-mix\(in oklab, var\(--tagc\) 75%, var\(--text\)\)/],
-  ['group head', 0.50, 0, 'panel', /\n\.group-head \{[^}]*color: color-mix\(in oklab, var\(--tagc\) 50%, var\(--text\)\)/],
+  ['cover head', 'tag-cover', 0.09, 'surface', /\[data-groups="cover"\] \.group-head \{[^}]*background: color-mix\(in oklab, var\(--tagc\) 9%, var\(--surface\)\);[^}]*color: color-mix\(in oklab, var\(--tagc\) var\(--tag-cover, 42%\), var\(--text\)\)/],
+  ['tab head', 'tag-tab', 0.14, 'surface', /\[data-groups="tab"\] \.group-head \{[^}]*background: color-mix\(in oklab, var\(--tagc\) 14%, var\(--surface\)\); color: color-mix\(in oklab, var\(--tagc\) var\(--tag-tab, 40%\), var\(--text\)\)/],
+  ['parent chip', 'tag-chip', 0.17, 'surface', /\.chip\.parent \{[^}]*17%, transparent\); color: color-mix\(in oklab, var\(--tagc\) var\(--tag-chip, 55%\), var\(--text\)\)/],
+  ['group head', 'tag-head', 0, 'panel', /\n\.group-head \{[^}]*background: none; color: color-mix\(in oklab, var\(--tagc\) var\(--tag-head, 50%\), var\(--text\)\)/],
 ];
 
 describe('theme palettes', () => {
@@ -42,20 +42,22 @@ describe('theme palettes', () => {
     });
   }
 
-  it('the group text shares match public/app.css', () => {
+  it('the group text rules match public/app.css', () => {
     for (const [where, , , , rule] of GROUP_TEXT) assert.match(css, rule, where);
   });
 
   for (const [k, t] of Object.entries(THEMES)) {
-    it(`${k}: group colours are eight, and text on them is 4.5:1 or more`, () => {
-      const v = t.vars, tags = themeTags(t), bad = [];
+    it(`${k}: eight group colours that show on the surface, and text tinted by them is 4.5:1 or more`, () => {
+      const v = t.vars, { tags, count, shares } = themeGroups(t), bad = [];
       assert.equal(tags.length, 8);
-      for (let i = 0; i < 8; i++) {
-        const c = tags[i];
-        assert.match(c || '', /^#[0-9a-f]{6}$/i, `tag-${i}`);
-        for (const [where, inText, inGround, ground] of GROUP_TEXT) {
-          const r = contrast(mix(c, inText, v.text), mix(c, inGround, v[ground]));
-          if (r < 4.5) bad.push(`tag-${i} ${c} ${where} ${r.toFixed(2)}`);
+      assert.ok(count >= 2 && count <= 8, `${count} distinct colours`);
+      assert.equal(new Set(tags.slice(0, count)).size, count, 'the first `count` colours differ');
+      for (const [i, c] of tags.entries()) {
+        assert.match(c, /^#[0-9a-f]{6}$/i, `tag-${i}`);
+        if (contrast(c, v.surface) < 3) bad.push(`tag-${i} ${c} on the surface ${contrast(c, v.surface).toFixed(2)}`);
+        for (const [where, key, inGround, ground] of GROUP_TEXT) {
+          const r = contrast(mix(c, shares[key] / 100, v.text), mix(c, inGround, v[ground]));
+          if (r < 4.5) bad.push(`tag-${i} ${c} ${where} at ${shares[key]}%: ${r.toFixed(2)}`);
         }
       }
       assert.deepEqual(bad, []);

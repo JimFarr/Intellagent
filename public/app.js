@@ -12,26 +12,28 @@
   const hashStr = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   const hue = (s) => hashStr(String(s)) % 360;
   const initials = (n) => String(n).split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
-  // Parent tags take one of eight slots, and each theme paints the slots from its own palette (--tag-0…7, see
-  // THEMES). Slots are dealt out board-wide: each name starts at its hashed slot and moves along only when an
-  // earlier name took it, so up to eight parents never share a colour and a name keeps its colour on chips,
-  // groups and menus alike, in every theme.
-  const TAG_SLOTS = 8;
-  let tagSlots = new Map(), tagSlotsFor;
-  const tagHome = (p) => hashStr(String(p)) % TAG_SLOTS;
+  // Parent tags take a slot, and each theme paints its slots from its own palette (--tag-0…7, themeGroups): as
+  // many slots as the theme has distinct group colours, up to eight. Slots are dealt out board-wide: each name
+  // starts at its hashed slot and moves along only when an earlier name took it, so as many parents as there are
+  // colours never share one, and a name keeps its colour on chips, groups and menus alike.
+  let tagSlots = new Map(), tagSlotsFor, tagSlotsOf;
+  const tagCount = () => themeGroups(THEMES[settings.theme] || THEMES[BASE_THEME]).count;
+  const tagHome = (p) => hashStr(String(p)) % tagCount();
   function tagSlot(p) {
-    const board = state.board;
-    // Rebuild when the board is replaced, or when an in-place edit brought in a name we haven't dealt yet.
-    if (tagSlotsFor !== board || (!tagSlots.has(p) && Object.values(board?.items || {}).some((it) => it.parent === p))) {
+    const board = state.board, slots = tagCount();
+    // Rebuild when the board is replaced, the theme has a different number of colours, or an in-place edit
+    // brought in a name we haven't dealt yet.
+    if (tagSlotsFor !== board || tagSlotsOf !== slots || (!tagSlots.has(p) && Object.values(board?.items || {}).some((it) => it.parent === p))) {
       tagSlotsFor = board;
+      tagSlotsOf = slots;
       tagSlots = new Map();
       const names = [...new Set(Object.values(board?.items || {}).map((it) => it.parent).filter(Boolean))];
       names.sort((a, b) => tagHome(a) - tagHome(b) || (a < b ? -1 : 1));
       let used = new Set();
       for (const n of names) {
-        if (used.size === TAG_SLOTS) used = new Set();
+        if (used.size === slots) used = new Set();
         let s = tagHome(n);
-        while (used.has(s)) s = (s + 1) % TAG_SLOTS;
+        while (used.has(s)) s = (s + 1) % slots;
         used.add(s);
         tagSlots.set(n, s);
       }
@@ -377,26 +379,31 @@
     else for (let i = 1; i <= 50 && contrast('#fff', v['accent-fill']) < 4.5; i++) v['accent-fill'] = mixHex(v.accent, ink, i / 50);
   }
   // Group (parent) colours, --tag-0…7, come from the theme's own palette: in this order, each that shows on the
-  // card surface and differs clearly from those already taken. Each is moved toward the text colour until the text
-  // it tints reads at 4.5:1 (TAG_TEXT). A narrow palette fills the rest with the same colours a step further toward
-  // the text, so groups still differ by shade.
+  // card surface (moved toward the text until it reaches 3:1, as any non-text mark must) and differs clearly from
+  // those already taken. A narrow palette adds deeper shades of what it has while they still differ; then repeats.
   const TAG_SRC = ['accent', 'accent-2', 'task', 'spike', 'ok', 'issue', 'warn', 'blob1', 'blob2', 'blob3', 'danger'];
-  // Text tinted by a group colour, mirroring app.css: [share of the tag in the text, share in its ground, ground].
-  // Cover head, folder tab, parent chip, group head.
-  const TAG_TEXT = [[0.42, 0.09, 'surface'], [0.40, 0.14, 'surface'], [0.75, 0.17, 'surface'], [0.50, 0, 'panel']];
-  const tagReads = (c, v) => TAG_TEXT.every(([inText, inGround, ground]) => contrast(mixOklab(c, inText, v.text), mixOklab(c, inGround, v[ground])) >= 4.5);
-  const legible = (c, v) => { for (let i = 1; i <= 100 && !tagReads(c, v); i++) c = mixHex(c, v.text, 0.02); return c; };
+  // Text tinted by a group colour (app.css): [variable, usual share of the tag in the text, share in its ground,
+  // ground]. A theme whose colours can't carry the usual share at 4.5:1 gets a smaller one, never a duller colour.
+  const TAG_TEXT = [['tag-cover', 42, 9, 'surface'], ['tag-tab', 40, 14, 'surface'], ['tag-chip', 55, 17, 'surface'], ['tag-head', 50, 0, 'panel']];
+  const shows = (c, v) => { for (let i = 1; i <= 100 && contrast(c, v.surface) < 3; i++) c = mixHex(c, v.text, 0.02); return c; };
   const apart = (x, y) => Math.hypot(...oklab(x).map((c, i) => c - oklab(y)[i]));
-  // Worked out when a theme is first shown (about 1 ms, at most 12), not for every theme at load.
-  const themeTags = (t) => t.tags ??= (() => {
+  // Worked out when a theme is first shown (about 1 ms), not for every theme at load: { tags, shares }.
+  const themeGroups = (t) => t.groupColours ??= (() => {
     const v = t.vars, tags = [];
-    for (const k of TAG_SRC) {
-      const c = contrast(v[k], v.surface) >= 1.6 && legible(v[k], v);
-      if (c && tags.length < 8 && tags.every((x) => apart(x, c) > 0.1)) tags.push(c);
+    const add = (c, d) => tags.length < 8 && tags.every((x) => apart(x, c) > d) && tags.push(c);
+    for (const k of TAG_SRC) if (contrast(v[k], v.surface) >= 1.6) add(shows(v[k], v), 0.1);
+    if (!tags.length) tags.push(shows(v.accent, v));
+    // a shade has to differ more than a hue does to be told apart at the size of a dot
+    for (const p of [0.35, 0.6]) for (const c of [...tags]) add(shows(mixHex(c, v.text, p), v), 0.16);
+    const count = tags.length; // slots are dealt over this many; the rest repeat so no old theme's colour lingers
+    for (let i = 0; tags.length < 8; i++) tags.push(tags[i]);
+    const shares = {};
+    for (const [key, usual, inGround, ground] of TAG_TEXT) {
+      let s = usual;
+      while (s > 0 && tags.some((c) => contrast(mixOklab(c, s / 100, v.text), mixOklab(c, inGround / 100, v[ground])) < 4.5)) s -= 5;
+      shares[key] = Math.max(0, s);
     }
-    if (!tags.length) tags.push(legible(v.accent, v));
-    for (let i = 0; tags.length < 8; i++) tags.push(legible(mixHex(tags[i], v.text, 0.45), v));
-    return tags;
+    return { tags, count, shares };
   })();
   // Strength of each generated pattern, multiplying --fx-o. The one source: the board gets it as --fx-k (applySettings),
   // the Background tiles use it directly. `<kind>-<mode>` overrides a kind in light or dark themes.
@@ -440,7 +447,9 @@
     const st = themeStyle();
     const r = document.documentElement;
     for (const [k, v] of Object.entries(t.vars)) r.style.setProperty(`--${k}`, v);
-    themeTags(t).forEach((c, i) => r.style.setProperty(`--tag-${i}`, c));
+    const groups = themeGroups(t);
+    groups.tags.forEach((c, i) => r.style.setProperty(`--tag-${i}`, c));
+    for (const [k, s] of Object.entries(groups.shares)) r.style.setProperty(`--${k}`, `${s}%`);
     for (const [k, v] of [['--r-card', st.card], ['--r-col', st.col], ['--r-modal', st.modal], ['--r-ctl', st.ctl], ['--bw', st.bw]]) r.style.setProperty(k, `${v}px`);
     r.style.setProperty('--col-alpha', `${st.colAlpha}%`);
     r.style.setProperty('--title-w', st.titleW);
