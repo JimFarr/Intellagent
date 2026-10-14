@@ -171,6 +171,27 @@ describe('agent tokens on new boards', () => {
       assert.doesNotMatch(r.stdout + r.stderr, /not iterable/);
     } finally { await s.stop(); }
   });
+  it('an agent with a role and a token is not asked to introduce itself over MCP; a wrong token gets a code and a hint', async () => {
+    const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    const env = { INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'vera' };
+    try {
+      assert.equal(cli(['token', '--agent', 'vera'], { cwd: s.dir }).code, 0);
+      const set = cli(['api', 'PATCH', '/api/profiles/me', 'role=builder'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'vera' } });
+      assert.equal(set.code, 0, set.err);
+      const c = mcp(env);
+      try {
+        const init = await c.call('initialize', { clientInfo: { name: 'test' } });
+        assert.doesNotMatch(init.result.instructions, /not introduced yourself/);
+        const names = (await c.call('tools/list', {})).result.tools.map((t) => t.name);
+        assert.equal(names.length, CORE.length, 'ten tools, no introduce_yourself');
+      } finally { c.close(); }
+      const wrong = await fetch(`${s.base}/api/profiles/me`, { headers: { 'X-Agent': 'vera', Authorization: 'Bearer nope' } });
+      const body = await wrong.json();
+      assert.equal(wrong.status, 401);
+      assert.equal(body.code, 'UNAUTHORIZED');
+      assert.ok(body.hint, 'a wrong token comes with a hint');
+    } finally { await s.stop(); }
+  });
   it('a standing agent added to agents.json while the board runs gets its token without a restart', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     try {

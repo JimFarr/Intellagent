@@ -95,9 +95,13 @@ async function handle(msg) {
       // A new agent (no role on the board yet) starts by asking the human who it should be.
       let intro = '';
       try {
-        const me = await (await fetch(`${BASE}/api/profiles/me`, { headers: { 'X-Agent': AGENT } })).json();
-        if (BASE && !me?.role) needsIntro = true;
-        if (BASE && !me?.role) intro = ' FIRST, before any other work: you have not introduced yourself on this board. Ask the human, in one message: (1) your name — blank means you pick a friendly generated one, (2) your role — coordinator, builder, reviewer, researcher, writer or other, (3) your alignment — how you should behave, (4) anything to avoid or focus on. Then call introduce_yourself with the answers.';
+        const tok = tokenFor(AGENT);
+        const res = await fetch(`${BASE}/api/profiles/me`, { headers: { 'X-Agent': AGENT, ...(tok ? { Authorization: `Bearer ${tok}` } : {}) } });
+        const me = await res.json();
+        // an error reply says nothing about the role: do not mistake it for an unintroduced agent
+        const unintroduced = BASE && res.ok && !me?.role;
+        if (unintroduced) needsIntro = true;
+        if (unintroduced) intro = ' FIRST, before any other work: you have not introduced yourself on this board. Ask the human, in one message: (1) your name — blank means you pick a friendly generated one, (2) your role — coordinator, builder, reviewer, researcher, writer or other, (3) your alignment — how you should behave, (4) anything to avoid or focus on. Then call introduce_yourself with the answers.';
       } catch { /* board not running */ }
       return send({ jsonrpc: '2.0', id: rid, result: {
         protocolVersion: params?.protocolVersion || '2025-06-18',
