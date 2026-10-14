@@ -389,7 +389,7 @@ describe('delegated approval on a reviewer\'s ok', () => {
       drax: { role: 'builder', enabled: false, reviewer: true },
       nebula: { role: 'reviewer', enabled: false },
       rocket: { role: 'builder', enabled: false, reviewer: true },
-    } } });
+    } }, manifest: { auth: { agentTokens: { nebula: 't-nebula', drax: 't-drax', rocket: 't-rocket' } } } });
     try {
       const inReview = async (title) => {
         const it = await s.ok('POST', '/api/boards/main/items', { title, column: 'Ready' }, USER);
@@ -399,7 +399,11 @@ describe('delegated approval on a reviewer\'s ok', () => {
         return it;
       };
       const decide = (id) => s.api('POST', `/api/boards/main/items/${id}/review/decision`, { verdict: 'approve', comment: 'on Nebula\'s QA' }, { agent: 'gamora' });
-      const verdict = (id, who, v) => s.ok('POST', `/api/boards/main/items/${id}/reviewers/${who}/verdict`, { verdict: v, comment: v === 'ok' ? 'Checked. It holds. @gamora' : 'not yet' }, { agent: who });
+      // reviewers with a token here: the board checks who gave the verdict, so it may stand in for the human
+      const verdict = async (id, who, v) => {
+        const r = await fetch(`${s.base}/api/boards/main/items/${id}/reviewers/${who}/verdict`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': who, authorization: `Bearer t-${who}` }, body: JSON.stringify({ verdict: v, comment: v === 'ok' ? 'Checked. It holds. @gamora' : 'not yet' }) });
+        assert.ok(r.ok, `${who}'s verdict: ${r.status}`);
+      };
 
       const work = async () => (await s.ok('GET', '/api/boards/main/work', undefined, { agent: 'gamora' })).next.filter((n) => n.action === 'decide' || n.action === 'chase');
       const a = await inReview('waiting on QA');
@@ -444,6 +448,28 @@ describe('delegated approval on a reviewer\'s ok', () => {
       await s.ok('POST', `/api/boards/main/items/${d1.id}/reviewers`, { name: 'drax' }, USER);
       await verdict(d1.id, 'drax', 'ok');
       assert.equal((await decide(d1.id)).status, 200, "Drax's ok is in scope");
+    } finally { await s.stop(); }
+  });
+});
+
+describe('a verdict the board could not check never stands in for the human', () => {
+  it("without the reviewer's token, Nebula's ok is not enough, and the chase says why with a stable wake tag", async () => {
+    const s = await startServer({ agents: { agents: {
+      gamora: { role: 'coordinator', enabled: false, grants: [{ power: 'review.decide', where: { 'reviewers.nebula': 'ok' } }] },
+      nebula: { role: 'reviewer', enabled: false },
+    } } });
+    try {
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'anyone could be nebula here', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${it.id}/reviewers`, { name: 'nebula' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/reviewers/nebula/verdict`, { verdict: 'ok', comment: 'fine' }, { agent: 'nebula' });
+      const d = await s.api('POST', `/api/boards/main/items/${it.id}/review/decision`, { verdict: 'approve', comment: 'x' }, { agent: 'gamora' });
+      assert.equal(d.status, 403, 'an unverified ok is out of scope');
+      const ch = (await s.ok('GET', '/api/boards/main/work', undefined, { agent: 'gamora' })).next.find((n) => n.id === it.id);
+      assert.equal(ch?.action, 'chase');
+      assert.match(ch.why, /doesn't check that reviewer's token/);
+      assert.equal(ch.tag, 'unverified:nebula', 'the wake tag names the gap, not its wording');
     } finally { await s.stop(); }
   });
 });

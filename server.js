@@ -652,6 +652,16 @@ function grantsOf(name) {
 }
 const badGrantsWarned = new Set();
 // Does a grant's scope cover this ticket? where: { column: name|id|[…], "<dotted path>": value|[values] }
+// The commits a ticket would land (its author's, not yet on main), as one string: a verdict records it, so a
+// later commit makes the verdict stale. Empty when the board has no worktrees or the ticket no commits.
+function ticketCommits(item) {
+  const author = (item.questions || []).find((q) => q.kind === 'review')?.raisedBy || item.review?.requestedBy || item.workedBy?.at(-1);
+  if (!author || !worktrees || !agentBranch(author)) return '';
+  try { return worktrees.commitsFor(author, item.id).map((c) => c.sha).join(','); } catch { return ''; }
+}
+// A reviewer's verdict can stand in for the human only when the board checked who gave it (the reviewer has
+// a token here) and nothing was committed on the ticket since.
+const verdictStands = (item, r) => !!r.verified && (r.commits ?? '') === ticketCommits(item);
 function inScope(ctx, item, where) {
   if (!where || !item) return true;
   return Object.entries(where).every(([k, want]) => {
@@ -660,11 +670,12 @@ function inScope(ctx, item, where) {
       const col = ctx.board.columns.find((c) => c.id === item.columnId);
       return wants.includes(item.columnId.toLowerCase()) || wants.includes(String(col?.name).toLowerCase());
     }
-    // reviewers.<name>: that reviewer's current verdict (ok | concerns); no verdict yet matches nothing
+    // reviewers.<name>: that reviewer's current verdict (ok | concerns). It counts only while it stands: given
+    // with the reviewer's own token, and about the commits the ticket has now. No verdict matches nothing.
     const rv = /^reviewers\.([\w.-]+)$/.exec(k);
     if (rv) {
-      const v = (item.reviewers || []).find((r) => r.name.toLowerCase() === rv[1].toLowerCase())?.verdict;
-      return v != null && wants.includes(String(v).toLowerCase());
+      const r = (item.reviewers || []).find((x) => x.name.toLowerCase() === rv[1].toLowerCase());
+      return !!r?.verdict && verdictStands(item, r) && wants.includes(String(r.verdict).toLowerCase());
     }
     const have = [].concat(getPath(item, k) ?? []).map((v) => String(v).toLowerCase());
     return have.some((v) => wants.includes(v));
@@ -1011,7 +1022,9 @@ function reviewerVerdict(ctx, id, name, d, actor) {
     const body = `${verdict === 'ok' ? '✅ **Looks good**' : '⚠ **Concerns**'} — review by ${name}${comment ? `\n\n${comment}` : ''}${ask}`;
     const c = { id: rid('c'), author: actor, body, createdAt: now() };
     item.comments.push(c);
-    Object.assign(r, { verdict, at: c.createdAt, commentId: c.id });
+    // verified: the board checked the reviewer's token (a name with a token must send it); commits: what was
+    // reviewed, so a later commit makes the verdict stale for anyone relying on it.
+    Object.assign(r, { verdict, at: c.createdAt, commentId: c.id, verified: !!M.auth.agentTokens?.[name], commits: ticketCommits(item) });
     item.version++;
     item.updatedAt = c.createdAt;
     events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(body) }, mentions: mentionsIn(body) }));
@@ -1839,26 +1852,32 @@ const PRIO_RANK = { Critical: 0, High: 1, Medium: 2, Low: 3 };
 // What an agent with review.decide still needs before it may approve this review for the human: [] when
 // nothing (it may decide), a list of what to chase otherwise, or null when the only gap is a reviewer still
 // within its time (nothing to chase yet).
+// Each gap is { key, text }: the key names only the kind and who (stable across sweeps, so the same gap wakes
+// the agent once); the text may carry details that change, like how long a verdict has been waited for.
 function delegationGaps(ctx, it, q, grants) {
   const gaps = [];
+  const gap = (key, text) => gaps.push({ key, text });
   let early = false;
-  if (!String(q.notes?.evidence || '').trim()) gaps.push(`evidence from ${q.raisedBy} (the review has none: screenshots, outputs, what to look at in the Preview)`);
+  if (!String(q.notes?.evidence || '').trim()) gap('evidence', `evidence from ${q.raisedBy} (the review has none: screenshots, outputs, what to look at in the Preview)`);
   const worried = (it.reviewers || []).filter((r) => r.verdict === 'concerns').map((r) => r.name);
-  if (worried.length) gaps.push(`${worried.join(', ')}'s concerns resolved (the author fixes them and asks for review again)`);
+  if (worried.length) gap(`concerns:${worried.join(',')}`, `${worried.join(', ')}'s concerns resolved (the author fixes them and asks for review again)`);
   if (!grants.some((g) => inScope(ctx, it, g.where))) {
     // Several grants can each name a reviewer (reviewers.nebula, reviewers.drax): any one of them passing is
-    // enough, so the gap names all of them ("nebula or drax").
-    const who = [...new Set(grants.flatMap((g) => Object.keys(g.where || {}).map((k) => /^reviewers\.([\w.-]+)$/.exec(k)?.[1]).filter(Boolean)))];
-    if (who.length) {
-      const rs = who.map((n) => (it.reviewers || []).find((x) => x.name.toLowerCase() === n.toLowerCase())).filter(Boolean);
-      const waiting = rs.filter((r) => !r.verdict);
-      if (!rs.length) gaps.push(`${who.join(' or ')} assigned as reviewer`);
-      else if (waiting.some((r) => Date.now() - Date.parse(r.at || 0) < 30 * 60_000)) early = true;
-      else if (waiting.length) gaps.push(`${waiting.map((r) => r.name).join(' or ')}'s verdict (asked ${Math.round((Date.now() - Math.min(...waiting.map((r) => Date.parse(r.at)))) / 60_000)} min ago)`);
-      else gaps.push(`an ok from ${who.join(' or ')} (verdicts so far: ${rs.map((r) => `${r.name} ${r.verdict}`).join(', ')})`);
-    } else {
-      for (const [k, want] of Object.entries(grants[0].where || {})) if (!inScope(ctx, it, { [k]: want })) gaps.push(`${k} to be ${[].concat(want).join(' or ')}`);
-    }
+    // enough. Only reviewers who could review this ticket count (never one of its authors).
+    const authors = authorsOf(it);
+    const who = [...new Set(grants.flatMap((g) => Object.keys(g.where || {}).map((k) => /^reviewers\.([\w.-]+)$/.exec(k)?.[1]).filter(Boolean)))].filter((n) => !authors.has(n));
+    const rs = who.map((n) => (it.reviewers || []).find((x) => x.name.toLowerCase() === n.toLowerCase())).filter(Boolean);
+    const waiting = rs.filter((r) => !r.verdict);
+    const oks = rs.filter((r) => r.verdict === 'ok');
+    if (grants.every((g) => !Object.keys(g.where || {}).some((k) => k.startsWith('reviewers.')))) {
+      for (const g of grants.slice(0, 1)) for (const [k, want] of Object.entries(g.where || {})) if (!inScope(ctx, it, { [k]: want })) gap(`scope:${k}`, `${k} to be ${[].concat(want).join(' or ')}`);
+    } else if (!who.length) gap('reviewer:none', 'a reviewer your grant trusts, but every one of them worked on this ticket');
+    else if (oks.some((r) => !r.verified)) gap(`unverified:${oks.map((r) => r.name).join(',')}`, `${oks.map((r) => r.name).join(' or ')}'s ok can't stand in for the human: this board doesn't check that reviewer's token (the human turns on agent tokens)`);
+    else if (oks.length) gap(`stale:${oks.map((r) => r.name).join(',')}`, `a fresh verdict from ${oks.map((r) => r.name).join(' or ')}: there are commits on the ticket since the ok`);
+    else if (!rs.length) gap(`assign:${who.join(',')}`, `${who.join(' or ')} assigned as reviewer`);
+    else if (waiting.some((r) => Date.now() - Date.parse(r.at || 0) < 30 * 60_000)) early = true;
+    else if (waiting.length) gap(`verdict:${waiting.map((r) => r.name).join(',')}`, `${waiting.map((r) => r.name).join(' or ')}'s verdict (asked ${Math.round((Date.now() - Math.min(...waiting.map((r) => Date.parse(r.at)))) / 60_000)} min ago)`);
+    else gap(`ok:${who.join(',')}`, `an ok from ${who.join(' or ')} (verdicts so far: ${rs.map((r) => `${r.name} ${r.verdict}`).join(', ')})`);
   }
   return !gaps.length && early ? null : gaps;
 }
@@ -1960,8 +1979,11 @@ function workFor(ctx, name) {
       if (gaps === null) continue; // nothing to chase yet (a reviewer is still within its time)
       if (!gaps.length) add('decide', brief(it), 'Everything is in for you to approve it for the human: your grant covers it, the evidence is there and no reviewer has concerns. Approve with a one-line why, or leave it for the human if anything looks off',
         `POST /api/boards/${ctx.id}/items/${it.id}/review/decision { "verdict": "approve", "comment": "…" }`);
-      else add('chase', brief(it), `To approve this for the human you still need: ${gaps.join('; ')}. @mention whoever owes it and say what you need; if they can't provide it, leave the ticket for the human`,
+      else add('chase', brief(it), `To approve this for the human you still need: ${gaps.map((g) => g.text).join('; ')}. @mention whoever owes it and say what you need; if they can't provide it, leave the ticket for the human`,
         `POST /api/boards/${ctx.id}/items/${it.id}/comments { "body": "@… …" }`);
+      // the wake tag: what kind of gap, and whose — never the wording (which carries changing minutes)
+      const last = next.at(-1);
+      if (last?.id === it.id && (last.action === 'decide' || last.action === 'chase')) last.tag = last.action === 'decide' ? 'decide' : gaps.map((g) => g.key).join('|');
     }
   }
   // A supervising agent hears about other agents' stalled tickets.
@@ -2041,7 +2063,7 @@ function pendingWork(name, pickup = false) {
         : n.action === 'resume' ? w.answered.find((x) => x.id === n.id)?.questionId
         : n.action === 'address_feedback' ? it?.review?.at
           : n.action === 'explain' ? w.explain.find((x) => x.id === n.id)?.commentId
-            : n.action === 'decide' || n.action === 'chase' ? crypto.createHash('sha1').update(n.why).digest('hex').slice(0, 10) : '';
+            : n.action === 'decide' || n.action === 'chase' ? crypto.createHash('sha1').update(String(n.tag || n.action)).digest('hex').slice(0, 10) : '';
       out.push({ key: `${ctx.id}:${n.action}:${n.requestId || n.id}${tag ? `:${tag}` : ''}`, board: ctx.id, action: n.action, id: n.id || null, requestId: n.requestId || null, title: n.title || null, why: n.why });
     }
     if (!pickup) continue;
