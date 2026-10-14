@@ -153,6 +153,10 @@ DELETE /api/boards/main/items/INT-12/lease                       → release
 
 ### Explaining your work
 Reviews explain themselves in four parts: `changed` (what changed), `why` (the reasoning, and alternatives you rejected), `verify` (how the human can check it) and `risks` (risks and open questions). The review card shows each part in full. A single `summary` still works.
+
+Keep `changed` short, plain and to the point. A non-technical reader should be able to follow it: say what the change does for the user, and name files, functions or flags only where the change needs them. Keep the other three parts as complete as they need to be. Example:
+- Before: "server.js (requestReview): counts commits via worktrees.commitsFor and stores `landing` on the review question; app.js renders a `.rv-does` line and a conditional button label."
+- After: "The review card now says what Approve will do, and the button says *Approve and land* when agent commits are waiting."
 When the human wants more, they **Ask why** — a comment with `intent: "explain"`, addressed to you if it @mentions you or, if not, to whoever requested the review or last worked the ticket. It arrives as an `[EXPLAIN ONLY]` event and tops your `…/work`. Answer in a comment and change nothing else: not the code, the ticket, its column or the review — the review stays open while they read your answer.
 
 ### Request review (preferred way to finish)

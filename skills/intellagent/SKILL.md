@@ -27,7 +27,7 @@ You are `INTELLAGENT_AGENT` (or the project's default agent). Run commands bare 
 | End of session (releases everything, posts the digest) | `finish_session` | `intellagent do finish_session summary="…"` |
 
 - `start_work` fails with `LEASED`, `BLOCKED`, `WIP_LIMIT` or `BOARD_HELD`: pick other work (`get_my_work`) or ask; `force=true` only for a blocker you've checked.
-- Review: **changed** (what), **why** (and what you rejected), **verify** (how the human checks it), **risks**. Done is human-only: never move a ticket there.
+- Review: **changed** (what; short and plain, for a non-technical reader, technical detail only where the change needs it), **why** (and what you rejected), **verify** (how the human checks it), **risks**. Done is human-only: never move a ticket there.
 - Answers arrive in `get_my_work` (`answered`) and as `attention.resolved` events. `wait_for_events for=<you>` blocks until something is for you.
 
 ## Beyond the core
