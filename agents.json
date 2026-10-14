@@ -125,7 +125,8 @@
       "throttleMinutes": 0.5,
       "description": "User: uses Intellagent as a newcomer would — as an agent through the CLI and as a person in his browser, on his own sandbox — and reports how hard it was.",
       "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-quill.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
-      "maxRunsPerHour": 30
+      "maxRunsPerHour": 30,
+      "timeoutMinutes": 120
     }
   }
 }
