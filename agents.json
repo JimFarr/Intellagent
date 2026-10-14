@@ -50,7 +50,8 @@
       "concerns": [
         "API errors carry a code and a hint",
         "CLI, MCP and AGENTS.md stay in step with the API",
-        "a test for every route or behaviour"
+        "a test for every route or behaviour",
+        "reviews code changes: reads the diff and runs the tests on the author's worktree"
       ],
       "reviewer": true
     },
@@ -101,7 +102,7 @@
         "tried in a sandbox, off the checklist too"
       ],
       "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-nebula.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
-      "maxRunsPerHour": 8
+      "maxRunsPerHour": 30
     },
     "quill": {
       "perms": [
