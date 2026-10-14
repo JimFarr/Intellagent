@@ -1521,7 +1521,7 @@ function startWork(ctx, id, d, actor) {
     guardBoard(ctx, actor);
     checkColumnPerm(ctx, actor, [item.columnId]);
     if (actor.kind === 'agent' && asleep(ctx, item)) {
-      fail(409, `${item.id} is in ${findColumnById(ctx.board, item.columnId).name}, which is asleep: it starts once it is moved to Ready`, { code: 'SLEEPING', hint: 'Pick another ticket (GET …/work), or ask on the card' });
+      fail(409, `${item.id} is in ${findColumnById(ctx.board, item.columnId).name}, which is asleep: it starts once it is moved to ${pickupColumns(ctx)[0]?.name || 'the pickup column'}`, { code: 'SLEEPING', hint: 'Pick another ticket (GET …/work), or ask on the card' });
     }
     const cur = activeLease(item);
     if (cur && cur.claimant !== actor.name) fail(423, `${item.id} is leased by ${cur.claimant} until ${cur.expiresAt}`, { code: 'LEASED', hint: 'Pick another ticket (GET …/work)', lease: cur });
@@ -3424,7 +3424,7 @@ function sweepStale() {
     if (!stale.length) continue;
     try {
       tx(ctx, (events) => {
-        for (const it of stale) backToReady(ctx, it, SYSTEM, events, { agent: it.assignee, reason: 'stale', body: `⏸ Back to Ready: no activity for ${mins} min in ${work.name} and nobody holds it.${it.assignee ? ` @${it.assignee} — start it again when you pick it up.` : ''}` });
+        for (const it of stale) backToReady(ctx, it, SYSTEM, events, { agent: it.assignee, reason: 'stale', body: `⏸ Back to ${pickupColumns(ctx)[0]?.name || 'the pickup column'}: no activity for ${mins} min in ${work.name} and nobody holds it.${it.assignee ? ` @${it.assignee} — start it again when you pick it up.` : ''}` });
       });
     } catch { /* e.g. Ready at its WIP limit: try again next sweep */ }
   }
