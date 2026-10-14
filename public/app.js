@@ -2562,7 +2562,7 @@
       if (v !== draftView(m).title && !m.archived) editItem(m, { title: v });
     };
     title.addEventListener('input', () => autosize(title));
-    title.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); title.blur(); view?.click(); } });
+    title.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); title.blur(); if (m.create) view?.click(); } });
     title.addEventListener('blur', saveTitle);
     $('.m-title-wrap .tb-ok', main).addEventListener('pointerdown', (e) => e.preventDefault());
     $('.m-title-wrap .tb-ok', main).onclick = () => title.blur();
