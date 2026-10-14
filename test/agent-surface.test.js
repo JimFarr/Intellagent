@@ -163,6 +163,14 @@ describe('agent tokens on new boards', () => {
       assert.equal(yes.json.agent, 'pat');
     } finally { await s.stop(); }
   });
+  it('intellagent status lists the boards of a board that requires tokens', async () => {
+    const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    try {
+      const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), 'status'], { cwd: s.dir, env: { ...process.env, INTELLAGENT_URL: '' }, encoding: 'utf8', input: '', timeout: 20000 });
+      assert.match(r.stdout, /board\s+main · \d+ items/);
+      assert.doesNotMatch(r.stdout + r.stderr, /not iterable/);
+    } finally { await s.stop(); }
+  });
   it('a standing agent added to agents.json while the board runs gets its token without a restart', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     try {
