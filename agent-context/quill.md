@@ -8,7 +8,7 @@ Intellagent's users are agents and the people who run them. Use it the way a new
 
 ## Using Intellagent
 1. `intellagent sandbox quill --seed empty --fresh` gives you a new, empty board of your own, as if you had just set one up; `--seed demo` gives one with sample tickets. It prints the address and a sign-in link.
-2. **As an agent:** `INTELLAGENT_URL=<its address> INTELLAGENT_AGENT=<a name you pick> intellagent brief`, then do what it says, with `intellagent do …` and `intellagent help …`. Note every guess you had to make.
+2. **As an agent:** `intellagent brief --url <its address> --as <a name you pick>`, then do what it says, with `intellagent do … --url <its address> --as <that name>` and `intellagent help …`. (Put `--url` and `--as` on every call: your shell may only run commands that start with `intellagent`.) Note every guess you had to make.
 3. **As a person:** ask the lease program for a browser lease first (`intellagent leases ask --holder quill --cpu 1 --gpu 300 --minutes 30 --ticket INT-n --purpose "use the board"`), then open the sign-in link with the browser tools (`mcp__playwright__…`) and use the board as a person would: create tickets, drag them, ask an agent, change the theme. Screenshots are saved in `sandboxes/quill/shots/`.
 4. Close the browser, `intellagent leases done <id>`, `intellagent sandbox stop quill`.
 5. When your report is on the card, @nebula to sort it. Then you're done with the ticket — don't request review; a report isn't code.

@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { startServer, until, USER } = require('./helpers');
+const { startServer, until, USER, cleanEnv } = require('./helpers');
 const { measure } = require('../scripts/measure-mcp');
 const { makeTools } = require('../lib/tools');
 
@@ -18,7 +18,7 @@ const CORE = ['get_briefing', 'get_my_work', 'get_item', 'start_work', 'set_stat
 
 // One MCP session: send requests, collect replies by id.
 function mcp(env) {
-  const p = spawn(process.execPath, [path.join(ROOT, 'mcp.js')], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const p = spawn(process.execPath, [path.join(ROOT, 'mcp.js')], { env: cleanEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
   let buf = '';
   const waiting = new Map();
   p.stdout.on('data', (d) => {
@@ -37,7 +37,7 @@ function mcp(env) {
 
 // The CLI as an agent runs it: no TTY, no stdin, JSON out.
 function cli(args, { cwd, env = {} } = {}) {
-  const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), ...args], { cwd, env: { ...process.env, INTELLAGENT_URL: '', ...env }, encoding: 'utf8', input: '', timeout: 20000 });
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv(env), encoding: 'utf8', input: '', timeout: 20000 });
   return { code: r.status, out: r.stdout, err: r.stderr, json: (() => { try { return JSON.parse(r.stdout); } catch { return null; } })() };
 }
 
@@ -118,6 +118,13 @@ describe('the CLI for agents', () => {
     const missing = cli(['do', 'request_review', `id=${it.id}`], { cwd: s.dir });
     assert.equal(missing.code, 2);
     assert.match(missing.err, /needs: changed, why, verify/);
+  });
+  it('--url and --as reach a board from anywhere, for shells that may only run "intellagent …"', () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-nowhere-'));
+    const r = cli(['do', 'create_item', 'title=by flag', 'column=Backlog', '--url', s.base, '--as', 'flagged'], { cwd: elsewhere });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.json.author.name, 'flagged');
+    assert.equal(cli(['api', 'GET', '/api/profiles/me', `--url=${s.base}`, '--as=flagged'], { cwd: elsewhere }).json.name, 'flagged');
   });
 });
 

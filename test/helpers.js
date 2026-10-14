@@ -9,6 +9,10 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 
 // opts: { manifest, agents (agents.json content), dir (reuse a stopped server's folder, e.g. to simulate a reboot) }
+// The environment for a child process, without the caller's own board identity: run inside an agent's
+// session, INTELLAGENT_AGENT, its token and its run would otherwise leak into the servers and CLIs under test.
+const cleanEnv = (extra = {}) => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('INTELLAGENT_'))), ...extra });
+
 async function startServer({ manifest = {}, agents, dir } = {}) {
   dir ||= fs.mkdtempSync(path.join(os.tmpdir(), 'ia-test-'));
   const port = 20000 + Math.floor(Math.random() * 20000);
@@ -16,7 +20,7 @@ async function startServer({ manifest = {}, agents, dir } = {}) {
   fs.writeFileSync(mp, JSON.stringify({ port, dataDir: './data', seed: 'empty', template: 'default', idPrefix: 'T', ...manifest }));
   if (agents) fs.writeFileSync(path.join(dir, 'agents.json'), JSON.stringify(agents, null, 2));
   const proc = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-    env: { ...process.env, INTELLAGENT_MANIFEST: mp, INTELLAGENT_PORT: String(port) },
+    env: cleanEnv({ INTELLAGENT_MANIFEST: mp, INTELLAGENT_PORT: String(port) }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
@@ -71,4 +75,4 @@ async function until(fn, ms = 8000, what = 'condition') {
 }
 
 const USER = { user: 'James' };
-module.exports = { startServer, until, USER };
+module.exports = { cleanEnv, startServer, until, USER };

@@ -10,9 +10,27 @@ Review tickets in Review when Gamora assigns you: never one you worked on. Run t
 1. Tests on the author's code: `npm test --prefix .worktrees/<author>` (e.g. `drax`).
 2. Ask the lease program for a browser lease: `intellagent leases ask --holder nebula --cpu 1 --gpu 300 --minutes 30 --ticket INT-n --purpose "review in sandbox"`. A no carries `freesAt`: wait until then.
 3. `intellagent sandbox nebula --from <author> --seed snapshot` runs the author's code on your own board with a copy of the real tickets, and prints a sign-in link (you are that board's human). `--fresh` starts over.
-4. Open the link with the browser tools (`mcp__playwright__…`) in a fresh tab. For API and CLI changes, also drive it as an agent: `INTELLAGENT_URL=<its address> intellagent do …`.
+4. Open the link with the browser tools (`mcp__playwright__…`) in a fresh tab. For API and CLI changes, also drive it as an agent: `intellagent do … --url <its address>`.
 5. Screenshots are saved in `sandboxes/nebula/shots/`; attach them to your comment by path. Read the console log the browser tool saves beside them.
 6. Close the browser, `intellagent leases done <id>`, `intellagent sandbox stop nebula`.
+
+## Your QA rundown
+Every review comment uses this template, so James can read any review the same way. Your voice goes in the lines, not in the structure. Leave out a section only when it would be empty, never the verdict.
+
+```markdown
+**QA · INT-n** — ✅ ok | ⚠ concerns
+
+| Checklist item | Result | What I saw |
+|---|---|---|
+| (each acceptance item, word for word) | ✅ / ⚠ / ❌ | (one line; a screenshot path if it helps) |
+
+**Did** — sandbox `--from <author> --seed …`; tests `npm test --prefix .worktrees/<author>`: N pass, M fail.
+**Off the checklist** — what I tried that nobody wrote down, and what happened.
+**Not verified** — what I could not check, and why.
+**For James** — the one to three things worth looking at yourself.
+```
+
+With concerns, @mention the author in the line that names what they must fix.
 
 ## Sorting Quill's reports
 When Quill @mentions you on a report: try each snag yourself in your sandbox. For each one you can reproduce, file a ticket in Backlog — a title saying what an agent or person sees, Quill's words quoted, your steps, an acceptance checklist, his report's ticket as `parent`. What you cannot reproduce, or is taste, say so on his card (taste: @mantis). Finish with one comment on his card listing the tickets you filed, and @gamora to triage them.

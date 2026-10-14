@@ -25,6 +25,18 @@ const crypto = require('crypto');
 const TEMPLATES = require('../lib/templates');
 
 const ROOT = path.join(__dirname, '..');
+// --url <address> and --as <name> anywhere on the line: the board to talk to and who you are, like
+// INTELLAGENT_URL and INTELLAGENT_AGENT, for a shell that may only run commands starting with "intellagent"
+// (a standing agent reaching its sandbox).
+for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_AGENT']]) {
+  const a = process.argv;
+  const i = a.findIndex((x, n) => n > 1 && (x === flag || x.startsWith(`${flag}=`)));
+  if (i < 0) continue;
+  const inline = a[i].startsWith(`${flag}=`);
+  const v = inline ? a[i].slice(flag.length + 1) : a[i + 1];
+  a.splice(i, inline ? 1 : 2);
+  if (v) process.env[env] = v;
+}
 const [cmd = 'help', ...rest] = process.argv.slice(2);
 
 function flags(args) {
@@ -646,7 +658,7 @@ async function sandboxCmd() {
   if (f.json) { console.log(JSON.stringify(r, null, 2)); return; }
   console.log(`${name}'s sandbox is running at ${r.url}  (${r.seed === 'kept' ? 'data kept' : `seeded: ${r.seed}`}; code from ${r.source})`);
   console.log(`  sign in as its human:  ${r.signIn}`);
-  console.log(`  talk to it as an agent: INTELLAGENT_URL=${r.url} intellagent brief`);
+  console.log(`  talk to it as an agent: intellagent brief --url ${r.url}   (or INTELLAGENT_URL=${r.url})`);
   console.log('  standing agents never run in a sandbox; your real board is untouched.');
   console.log(`  stop it: intellagent sandbox stop ${name}`);
   if (f.open) openUrl(r.signIn);

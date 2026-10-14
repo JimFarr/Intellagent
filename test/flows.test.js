@@ -2,7 +2,7 @@
 // Structured agent flows: work → start → ask → answer → review → decision → finish.
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, until, USER } = require('./helpers');
+const { startServer, until, USER, cleanEnv } = require('./helpers');
 
 const B = '/api/boards/main';
 const A = { agent: 'ada' };
@@ -244,7 +244,7 @@ describe('agent flows', () => {
   it('MCP: introduce_yourself with a blank name picks a name and switches to it', async () => {
     const { spawn } = require('child_process');
     const path = require('path');
-    const mcp = spawn(process.execPath, [path.join(__dirname, '..', 'mcp.js')], { env: { ...process.env, INTELLAGENT_URL: s.base, INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_AGENT: '' }, stdio: ['pipe', 'pipe', 'inherit'] });
+    const mcp = spawn(process.execPath, [path.join(__dirname, '..', 'mcp.js')], { env: cleanEnv({ INTELLAGENT_URL: s.base, INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json') }), stdio: ['pipe', 'pipe', 'inherit'] });
     let out = '';
     mcp.stdout.on('data', (d) => (out += d));
     const send = (m) => mcp.stdin.write(`${JSON.stringify(m)}\n`);
