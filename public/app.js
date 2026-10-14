@@ -1575,7 +1575,7 @@
   function checklist(d) {
     let total = 0;
     let done = 0;
-    for (const l of String(d || '').split('\n')) { const m = /^\s*[-*+]\s+\[( |x|X)\]/.exec(l); if (m) { total++; if (m[1] !== ' ') done++; } }
+    for (const l of String(d || '').split('\n')) { const m = /^\s*[-*+]\s+\[( |x|X)\]\s+\S/.exec(l); if (m) { total++; if (m[1] !== ' ') done++; } }
     return { total, done };
   }
 
@@ -1975,8 +1975,10 @@
         while (i < lines.length && LIST.test(lines[i])) {
           const nested = /^\s*/.exec(lines[i])[0].length >= 2 ? ' nested' : '';
           const raw = lines[i].replace(LIST, '');
-          const task = /^\[( |x|X)\]\s+(.*)$/.exec(raw);
-          html += task
+          const task = /^\[( |x|X)\](?:\s+(.*))?$/.exec(raw);
+          html += task && !(task[2] || '').trim()
+            ? `<li class="task empty${nested}" title="Empty checklist item"><span class="ck-ph" aria-hidden="true"></span></li>`
+            : task
             ? `<li class="task${nested}"><input type="checkbox" class="ck" data-line="${i}"${task[1] !== ' ' ? ' checked' : ''}${tasks ? '' : ' disabled'}><span>${inline(task[2])}</span></li>`
             : `<li class="${nested.trim()}">${inline(raw)}</li>`;
           i++;
