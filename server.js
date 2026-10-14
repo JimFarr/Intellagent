@@ -292,9 +292,13 @@ const app = readJson(APP_FILE, null) || { name: M.appName, createdAt: now() };
 const saveApp = () => writeFileAtomic(APP_FILE, JSON.stringify(app, null, 2));
 if (!fs.existsSync(APP_FILE)) saveApp();
 
+// The board's code is Intellagent itself (not a sandbox): its tickets' branches can run as a preview board.
+// (Worked out on first use: PROJECT_ROOT is declared further down.)
+let previewOk = null;
+const previewable = () => (previewOk ??= !M.sandbox && (() => { try { return JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8')).name === 'intellagent' && fs.existsSync(path.join(PROJECT_ROOT, 'server.js')); } catch { return false; } })());
 const appInfo = () => ({
   name: app.name, version: VERSION, build: BUILD, defaultBoard: M.defaultBoard,
-  lease: M.lease, serverTime: now(), seq,
+  lease: M.lease, serverTime: now(), seq, preview: previewable(),
 });
 
 const boards = new Map(); // id -> ctx
@@ -851,7 +855,7 @@ function reviewColumn(ctx) {
   return gate > 0 ? cols[gate - 1] : null;
 }
 
-const REVIEW_PARTS = [['changed', 'What changed'], ['why', 'Why'], ['verify', 'How to verify'], ['risks', 'Risks and open questions']];
+const REVIEW_PARTS = [['changed', 'What changed'], ['why', 'Why'], ['verify', 'How to verify'], ['evidence', 'Evidence'], ['risks', 'Risks and open questions']];
 
 /* Agent reviewers (INT-64): specialists the receptionist (or the human) asks to look at a ticket in review.
    They comment — ✅ looks good, or ⚠ concerns with the author @mentioned — and the card shows their ticks.
@@ -1993,7 +1997,8 @@ function briefing(ctx, name, base, via = 'cli') {
     `- Start or resume a ticket (claims it, moves it to ${workingColumn(ctx)?.name || 'the working column'}, assigns you): ${c('start')}`,
     `- Say what you're doing (shows live on the card): ${c('status')}`,
     `- Comment: ${c('comment')}   ·   Ask the human (they answer on the card): ${c('ask')}`,
-    `- Finished? Request review in four parts — what changed, why (incl. alternatives you rejected), how to verify, risks/open questions: ${c('review')}`,
+    `- Finished? Request review — what changed, why (incl. alternatives you rejected), how to verify, **evidence**, risks/open questions: ${c('review')}`,
+    `- **Evidence is required:** the human approves only what they can see working. Give screenshots (attach them to the ticket and name them in evidence), the command you ran and its output, test results${previewable() ? ", and what to look at in the Preview — the review card's Preview button runs your branch on a copy of the board, so commit everything the ticket needs before you ask" : ''}. A review without evidence comes back with a warning.`,
     `- React to a comment or card (never wakes anyone): \`intellagent api POST ${P}/items/<ID>/reactions emoji=+1 commentId=<id>\` — 👀 is added for you on comments you were woken for.`,
     `- Requests (free-form asks like "create tickets for X") arrive as \`handle_request\` in your work: do them, then reply — \`intellagent api POST ${P}/requests/<id>/reply body="what you did, with ticket ids" done=true\`.`,
     `- Need a ticket someone else holds? Ask: \`intellagent api POST ${P}/items/<ID>/lease/request reason="why"\` — the holder hands it over or declines. If someone asks you, answer it (it's in your work).`,
@@ -3132,6 +3137,7 @@ route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call
   const ctx = getCtx(p.board);
   const before = getItem(ctx, p.id);
   const warnings = workWarnings(ctx, before);
+  if (actor.kind === 'agent' && !String(body.evidence || '').trim()) warnings.push(`No evidence: the human approves what they can see working. Add "evidence" — screenshots (attach them to the ticket and name them), the command you ran and its output, the test results — and for anything visible, what to look at in the Preview (${previewable() ? "the review card's Preview button runs your branch" : 'a link to where it runs'}). Request review again with evidence.`);
   const item = itemView(ctx, requestReview(ctx, p.id, body, actor));
   return warnings.length ? { ...item, warnings } : item;
 });
@@ -3139,6 +3145,20 @@ route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call
 // Signs that a ticket's work happened off the board: barely any time in the working column, or commits
 // that mention it from before it was started. Told to the agent at review time so In Progress (and the
 // cycle-time metric) mean something.
+// Preview: the human sees a ticket's work running before approving it. On a board whose code is Intellagent
+// itself, the board starts a sandbox board ("preview") from the author's worktree with a fresh snapshot of
+// the tickets, and hands back its sign-in link (the sandbox's own token, never the human's).
+route('POST', '/api/boards/:board/items/:id/preview', "Human: run this ticket's work on a temporary board (the author's branch, a copy of the tickets) and get its link → { url, from, author }", async ({ p, actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Only the human opens previews', { code: 'HUMAN_ONLY', hint: 'Agents run their own: intellagent sandbox <you> --from <author> --seed snapshot' });
+  if (!previewable()) fail(400, "This board's code isn't Intellagent, so it can't run as a preview", { code: 'NO_PREVIEW', hint: 'Ask the agent for screenshots or a link in its evidence' });
+  const ctx = getCtx(p.board);
+  const item = getItem(ctx, p.id);
+  const author = item.questions?.find((q) => q.kind === 'review')?.raisedBy || item.workedBy?.at(-1) || null;
+  const from = author && worktrees && agentBranch(author) && fs.existsSync(path.join(worktrees.where(author).path, 'server.js')) ? author : 'main';
+  const r = await require('./lib/sandbox').start(MANIFEST_PATH, 'preview', { from, seed: 'snapshot', fresh: true });
+  return { url: r.signIn, from, author, port: r.port };
+});
+
 function workWarnings(ctx, item) {
   const out = [];
   const work = workingColumn(ctx);

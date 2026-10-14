@@ -302,3 +302,39 @@ describe('agents alert each other with @mentions', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('reviews carry evidence, and the human can preview the work', () => {
+  it('a review without evidence warns; evidence shows on the review', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const mk = async () => { const it = await s.ok('POST', '/api/boards/main/items', { title: 'x', column: 'Ready' }, USER); await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' }); return it; };
+      const a = await mk();
+      const bare = await s.ok('POST', `/api/boards/main/items/${a.id}/review`, { changed: 'c', why: 'w', verify: 'v' }, { agent: 'dev' });
+      assert.ok(bare.warnings?.some((w) => /^No evidence/.test(w)));
+      const b = await mk();
+      const ok = await s.ok('POST', `/api/boards/main/items/${b.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'npm test: 12 pass; shot.png attached' }, { agent: 'dev' });
+      assert.ok(!(ok.warnings || []).some((w) => /evidence/i.test(w)));
+      const got = await s.ok('GET', `/api/boards/main/items/${b.id}`);
+      assert.equal(got.questions.find((q) => q.kind === 'review').notes.evidence, 'npm test: 12 pass; shot.png attached');
+      // not an Intellagent checkout: no preview, and only the human may ask
+      assert.equal((await s.ok('GET', '/api/app')).preview, false);
+      assert.equal((await s.api('POST', `/api/boards/main/items/${b.id}/preview`, {}, { agent: 'dev' })).status, 403);
+      assert.equal((await s.api('POST', `/api/boards/main/items/${b.id}/preview`, {}, USER)).body.code, 'NO_PREVIEW');
+    } finally { await s.stop(); }
+  });
+
+  it('on a board whose code is Intellagent, Preview runs the work on a temporary board with the tickets', async () => {
+    const s = await startServer({ manifest: { projectRoot: ROOT }, agents: { agents: {} } });
+    try {
+      assert.equal((await s.ok('GET', '/api/app')).preview, true);
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'see me in the preview', column: 'Ready' }, USER);
+      const r = await s.ok('POST', `/api/boards/main/items/${it.id}/preview`, {}, USER);
+      assert.equal(r.from, 'main', 'no author worktree: main');
+      assert.match(r.url, /^http:\/\/127\.0\.0\.1:\d+\/#token=/);
+      const base = r.url.split('/#')[0];
+      assert.notEqual(base, s.base);
+      const copy = await fetch(`${base}/api/boards/main/items/${it.id}`, { headers: { 'x-agent': 'look' } }).then((x) => x.json());
+      assert.equal(copy.title, 'see me in the preview');
+    } finally { await require('../lib/sandbox').stop(path.join(s.dir, 'intellagent.manifest.json'), 'preview'); await s.stop(); }
+  });
+});

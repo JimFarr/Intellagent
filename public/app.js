@@ -2702,7 +2702,7 @@
           return `<div class="m-ask ${isReview ? 'is-review' : ''}" data-q="${esc(q.id || '')}" data-kind="${isReview ? 'review' : 'question'}"><div class="ask-head">${icon(isReview ? 'eye' : 'ask')}${avatar({ kind: 'agent', name: q.raisedBy })}<b>${esc(q.raisedBy)}</b><span>${rel(q.raisedAt)}</span>${isReview ? '<span class="chip review-chip">Review</span>' : qs.length > 1 ? `<span class="q-count">${i + 1}/${qs.length}</span>` : ''}</div>
           ${isReview ? reviewNotesHTML(it, q) : `<div class="md">${md(q.reason)}</div>`}
           ${isReview
-    ? tboxHTML({ ph: 'Feedback, or a question for “Ask why”…', okIcon: 'send', okTitle: 'Request changes (Ctrl+Enter)', tools: `<button class="btn primary sm" data-r="approve">${icon('check', 'sm')}Approve</button><button class="btn ghost sm" data-r="why" title="Ask why|${esc(q.raisedBy)} explains on the card — nothing else changes and the review stays open">${icon('ask', 'sm')}Ask why</button>` })
+    ? tboxHTML({ ph: 'Feedback, or a question for “Ask why”…', okIcon: 'send', okTitle: 'Request changes (Ctrl+Enter)', tools: `<button class="btn primary sm" data-r="approve">${icon('check', 'sm')}Approve</button><button class="btn ghost sm" data-r="why" title="Ask why|${esc(q.raisedBy)} explains on the card — nothing else changes and the review stays open">${icon('ask', 'sm')}Ask why</button>${state.app.preview ? `<button class="btn ghost sm" data-r="preview" title="Preview|See it working before you approve: runs ${esc(q.raisedBy)}'s branch on a temporary board with a copy of your tickets, and opens it in a new tab">${icon('eye', 'sm')}Preview</button>` : ''}` })
     : tboxHTML({ ph: 'Reply…', okIcon: 'send', okTitle: 'Reply & resolve (Ctrl+Enter)', tools: `<button class="tb-btn" data-r="resolve" title="Resolve|Mark this question answered without replying">${icon('check')}</button>` })}</div>`;
         }).join('');
         // Long explanations collapse to a few lines; "See more" only when they actually overflow.
@@ -2755,6 +2755,19 @@
             wireTbox(box, () => review(false));
             $('[data-r="approve"]', card).onclick = () => review(true);
             $('[data-r="why"]', card).onclick = () => { const ta = $('textarea', box); askWhy(m.id, ta.value.trim()).then((ok) => { if (ok) ta.value = ''; }); };
+            const pv = $('[data-r="preview"]', card);
+            if (pv) pv.onclick = async () => {
+              // Open the tab now (a click may open one; an await later may not), then point it at the preview.
+              const w = window.open('about:blank', '_blank');
+              pv.disabled = true;
+              toast(`Starting a preview of ${m.id}…`, { icon: 'eye', timeout: 4000 });
+              try {
+                const r = await api('POST', I(m.id, '/preview'));
+                if (w) w.location.href = r.url; else window.open(r.url, '_blank');
+                toast(`Preview of ${m.id}: ${r.from === 'main' ? 'main' : `${r.from}'s branch`}`, { icon: 'eye', kind: 'ok', timeout: 3500 });
+              } catch (e) { w?.close(); toast(e.message, { kind: 'error' }); }
+              pv.disabled = false;
+            };
           } else {
             wireTbox(box, () => resolve(true));
             $('[data-r="resolve"]', card).onclick = () => resolve(false);
@@ -2845,7 +2858,7 @@
 
   /* ─── side panel (schema-driven) ─── */
 
-  const REVIEW_LABELS = [['changed', 'What changed', 'pencil'], ['why', 'Why', 'sparkle'], ['verify', 'How to verify', 'check'], ['risks', 'Risks & open questions', 'flag']];
+  const REVIEW_LABELS = [['changed', 'What changed', 'pencil'], ['why', 'Why', 'sparkle'], ['verify', 'How to verify', 'check'], ['evidence', 'Evidence', 'eye'], ['risks', 'Risks & open questions', 'flag']];
   // The agent's explanation in full: its four parts when it gave them, else its whole review comment.
   function reviewNotesHTML(it, q) {
     if (q.notes && Object.keys(q.notes).length > (q.notes.changed && Object.keys(q.notes).length === 1 ? 1 : 0)) {
