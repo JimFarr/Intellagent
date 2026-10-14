@@ -80,6 +80,7 @@ function agentPrompt(url, agent, board = 'main') {
 
 async function init() {
   const f = flags(rest);
+  if (asAgent() && !f['no-open']) { f['no-open'] = true; console.log(`(Running as ${asAgent()}: the board won't be opened signed in — the human opens it with: intellagent open)`); }
   const dir = path.resolve(f._[0] || '.');
   const folder = path.join(dir, '.intellagent');
   const manifestPath = path.join(folder, 'intellagent.manifest.json');
@@ -259,6 +260,7 @@ async function alive(url) {
 
 async function start() {
   const f = flags(rest);
+  if (f.open) humanOnly('intellagent start --open (opening the board signed in)'); // before anything boots
   const mp = requireManifest();
   const url = baseUrl(readManifest(mp));
   if (await alive(url)) { console.log(`Already running at ${url}`); if (f.open) openBoard(mp); return; }
@@ -475,8 +477,13 @@ function readAgents(file) {
 // Commands that act as the human (with the user token from local.json) or write the human's files refuse to
 // run as an agent: a standing agent's shell may run "intellagent …", and it must not merge, steer other agents
 // or change grants that way. The board sets INTELLAGENT_AGENT (and the run) for every standing-agent run.
+// Who is running this, if it is an agent ('' for the human). The board sets INTELLAGENT_AGENT (and the run) for
+// every standing-agent run.
+function asAgent() {
+  return process.env.INTELLAGENT_AGENT || (process.env.INTELLAGENT_RUN || process.env.INTELLAGENT_RUN_FILE ? 'a standing agent' : '');
+}
 function humanOnly(what) {
-  const agent = process.env.INTELLAGENT_AGENT || (process.env.INTELLAGENT_RUN || process.env.INTELLAGENT_RUN_FILE ? 'a standing agent' : '');
+  const agent = asAgent();
   if (!agent) return;
   console.error(`error 403 HUMAN_ONLY: ${what} is the human's — refused for ${agent} — hint: ask the human on the card (intellagent do ask_human id=<ID> reason="…")`);
   process.exit(1);

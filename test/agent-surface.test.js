@@ -130,6 +130,18 @@ describe('the CLI for agents', () => {
     }
     assert.ok(!fs.readFileSync(path.join(s.dir, 'agents.json'), 'utf8').includes('evil'), 'nothing written');
   });
+  it('start --open as an agent refuses before anything boots', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-stopped-'));
+    const port = 20000 + Math.floor(Math.random() * 20000);
+    fs.writeFileSync(path.join(dir, 'intellagent.manifest.json'), JSON.stringify({ port, dataDir: './data', seed: 'empty' }));
+    for (const args of [['start', '--open'], ['start', '--background', '--open']]) {
+      const r = cli(args, { cwd: dir, env: { INTELLAGENT_AGENT: 'sneaky' } });
+      assert.equal(r.code, 1, args.join(' '));
+      assert.match(r.err, /HUMAN_ONLY/);
+    }
+    assert.ok(!fs.existsSync(path.join(dir, 'data')), 'no board was started: no data folder');
+    assert.equal(await fetch(`http://127.0.0.1:${port}/api/app`).then(() => 'up', () => 'down'), 'down');
+  });
   it('--url and --as reach a board from anywhere, for shells that may only run "intellagent …"', () => {
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-nowhere-'));
     const r = cli(['do', 'create_item', 'title=by flag', 'column=Backlog', '--url', s.base, '--as', 'flagged'], { cwd: elsewhere });
