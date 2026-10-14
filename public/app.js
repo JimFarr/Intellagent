@@ -1926,16 +1926,20 @@
   function inline(s) {
     const codes = [];
     s = s.replace(/`([^`]+)`/g, (_, c) => `\u0001${codes.push(c) - 1}\u0001`);
+    // finished tags wait behind \u0002n\u0002 so the ref and mention passes never see a URL or alt text
+    const tags = [];
+    const keep = (html) => `\u0002${tags.push(html) - 1}\u0002`;
     s = esc(s)
-      .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, a, u) => (safeUrl(u) ? `<img alt="${a}" src="${u}" loading="lazy">` : a))
-      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => (safeUrl(u) ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t))
-      .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+      .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, a, u) => (safeUrl(u) ? keep(`<img alt="${a}" src="${u}" loading="lazy">`) : a))
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => (safeUrl(u) ? `${keep(`<a href="${u}" target="_blank" rel="noopener">`)}${t}${keep('</a>')}` : t))
+      .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, pre, u) => `${pre}${keep(`<a href="${u}" target="_blank" rel="noopener">${u}</a>`)}`)
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/(^|[^*\w])\*(?!\s)(.+?)\*(?!\w)/g, '$1<em>$2</em>')
       .replace(/(^|[^\w])_(?!\s)(.+?)_(?!\w)/g, '$1<em>$2</em>')
       .replace(/~~(.+?)~~/g, '<del>$1</del>')
       .replace(/(^|[^\w/-])([A-Z][A-Z0-9]{1,7}-\d+)\b/g, '$1<a class="ref" data-ref="$2">$2</a>')
       .replace(/(^|\s)@([\w.-]+)/g, '$1<span class="mention">@$2</span>');
+    s = s.replace(/\u0002(\d+)\u0002/g, (_, n) => tags[n]);
     return s.replace(/\u0001(\d+)\u0001/g, (_, n) => `<code>${esc(codes[n])}</code>`);
   }
   function md(src, { tasks = false } = {}) {
