@@ -1846,15 +1846,18 @@ function delegationGaps(ctx, it, q, grants) {
   const worried = (it.reviewers || []).filter((r) => r.verdict === 'concerns').map((r) => r.name);
   if (worried.length) gaps.push(`${worried.join(', ')}'s concerns resolved (the author fixes them and asks for review again)`);
   if (!grants.some((g) => inScope(ctx, it, g.where))) {
-    for (const [k, want] of Object.entries(grants[0].where || {})) {
-      const rv = /^reviewers\.([\w.-]+)$/.exec(k);
-      if (!rv) { if (!inScope(ctx, it, { [k]: want })) gaps.push(`${k} to be ${[].concat(want).join(' or ')}`); continue; }
-      const r = (it.reviewers || []).find((x) => x.name.toLowerCase() === rv[1].toLowerCase());
-      if (!r) gaps.push(`${rv[1]} assigned as reviewer`);
-      else if (!r.verdict) {
-        if (Date.now() - Date.parse(r.at || 0) < 30 * 60_000) early = true;
-        else gaps.push(`${rv[1]}'s verdict (asked ${Math.round((Date.now() - Date.parse(r.at)) / 60_000)} min ago)`);
-      } else if (!inScope(ctx, it, { [k]: want })) gaps.push(`${rv[1]}'s verdict to be ${[].concat(want).join(' or ')} (it is ${r.verdict})`);
+    // Several grants can each name a reviewer (reviewers.nebula, reviewers.drax): any one of them passing is
+    // enough, so the gap names all of them ("nebula or drax").
+    const who = [...new Set(grants.flatMap((g) => Object.keys(g.where || {}).map((k) => /^reviewers\.([\w.-]+)$/.exec(k)?.[1]).filter(Boolean)))];
+    if (who.length) {
+      const rs = who.map((n) => (it.reviewers || []).find((x) => x.name.toLowerCase() === n.toLowerCase())).filter(Boolean);
+      const waiting = rs.filter((r) => !r.verdict);
+      if (!rs.length) gaps.push(`${who.join(' or ')} assigned as reviewer`);
+      else if (waiting.some((r) => Date.now() - Date.parse(r.at || 0) < 30 * 60_000)) early = true;
+      else if (waiting.length) gaps.push(`${waiting.map((r) => r.name).join(' or ')}'s verdict (asked ${Math.round((Date.now() - Math.min(...waiting.map((r) => Date.parse(r.at)))) / 60_000)} min ago)`);
+      else gaps.push(`an ok from ${who.join(' or ')} (verdicts so far: ${rs.map((r) => `${r.name} ${r.verdict}`).join(', ')})`);
+    } else {
+      for (const [k, want] of Object.entries(grants[0].where || {})) if (!inScope(ctx, it, { [k]: want })) gaps.push(`${k} to be ${[].concat(want).join(' or ')}`);
     }
   }
   return !gaps.length && early ? null : gaps;

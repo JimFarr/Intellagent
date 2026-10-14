@@ -19,6 +19,12 @@
           "where": {
             "reviewers.nebula": "ok"
           }
+        },
+        {
+          "power": "review.decide",
+          "where": {
+            "reviewers.drax": "ok"
+          }
         }
       ]
     },

@@ -385,7 +385,8 @@ describe('reviews carry evidence, and the human can preview the work', () => {
 describe('delegated approval on a reviewer\'s ok', () => {
   it('Gamora approves only where Nebula said ok, and never over anyone\'s concerns', async () => {
     const s = await startServer({ agents: { agents: {
-      gamora: { role: 'coordinator', enabled: false, grants: [{ power: 'review.decide', where: { 'reviewers.nebula': 'ok' } }] },
+      gamora: { role: 'coordinator', enabled: false, grants: [{ power: 'review.decide', where: { 'reviewers.nebula': 'ok' } }, { power: 'review.decide', where: { 'reviewers.drax': 'ok' } }] },
+      drax: { role: 'builder', enabled: false, reviewer: true },
       nebula: { role: 'reviewer', enabled: false },
       rocket: { role: 'builder', enabled: false, reviewer: true },
     } } });
@@ -433,6 +434,16 @@ describe('delegated approval on a reviewer\'s ok', () => {
       const c = await inReview('QA has concerns');
       await verdict(c.id, 'nebula', 'concerns');
       assert.equal((await decide(c.id)).status, 403, "Nebula's concerns are out of scope");
+
+      // Drax's ok is enough on its own (a code-only review), and the chase names either reviewer
+      const d1 = await s.ok('POST', '/api/boards/main/items', { title: 'code only', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${d1.id}/start`, {}, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${d1.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+      // no reviewer yet: the coordinator's assign_reviewer comes first (one action per ticket)
+      assert.equal((await s.ok('GET', '/api/boards/main/work', undefined, { agent: 'gamora' })).next.find((n) => n.id === d1.id)?.action, 'assign_reviewer');
+      await s.ok('POST', `/api/boards/main/items/${d1.id}/reviewers`, { name: 'drax' }, USER);
+      await verdict(d1.id, 'drax', 'ok');
+      assert.equal((await decide(d1.id)).status, 200, "Drax's ok is in scope");
     } finally { await s.stop(); }
   });
 });
