@@ -1349,18 +1349,7 @@ function claimLease(ctx, id, d, actor) {
     if (cur && cur.claimant !== claimant && !(d.force && actor.kind === 'user')) {
       fail(409, `${item.id} is already leased by ${cur.claimant} until ${cur.expiresAt}`, { code: 'LEASED', hint: 'Pick another ticket (GET …/work)', lease: cur });
     }
-    const renew = !!cur && cur.claimant === claimant;
-    if (!(item.workedBy || []).includes(claimant)) item.workedBy = [...(item.workedBy || []), claimant].slice(-5);
-    const t = Date.now();
-    item.lease = {
-      claimant,
-      leasedAt: renew ? cur.leasedAt : new Date(t).toISOString(),
-      expiresAt: new Date(t + minutes * 60_000).toISOString(),
-      minutes,
-      renewals: renew ? (cur.renewals || 0) + 1 : 0,
-      ...(renew && cur.status ? { status: cur.status, statusAt: cur.statusAt } : {}),
-      ...(d.status ? { status: str(d.status, 140), statusAt: now() } : {}),
-    };
+    const renew = makeLease(item, claimant, minutes, d.status, cur);
     item.version++;
     if (cur && !renew) events.push(itemEvent(ctx, 'lease.revoked', item, actor, { claimant: cur.claimant, mentions: [cur.claimant] }));
     events.push(itemEvent(ctx, renew ? 'lease.renewed' : 'lease.claimed', item, actor, { claimant, expiresAt: item.lease.expiresAt, mentions: [claimant] }));
@@ -1623,9 +1612,14 @@ function transitions(ctx, item, actor) {
   };
 }
 
+// Who last worked a ticket: the five most recent, each once.
+function addWorker(item, name) {
+  if (!(item.workedBy || []).includes(name)) item.workedBy = [...(item.workedBy || []), name].slice(-5);
+}
+
 function makeLease(item, claimant, minutes, status, cur) {
   const renew = !!cur && cur.claimant === claimant;
-  if (!(item.workedBy || []).includes(claimant)) item.workedBy = [...(item.workedBy || []), claimant].slice(-5);
+  addWorker(item, claimant);
   item.lease = {
     claimant,
     leasedAt: renew ? cur.leasedAt : now(),
@@ -1665,7 +1659,7 @@ function startWork(ctx, id, d, actor) {
       const minutes = clamp(Number(d.minutes) || M.lease.defaultMinutes, 1, M.lease.maxMinutes);
       const renew = makeLease(item, actor.name, minutes, d.status, cur);
       events.push(itemEvent(ctx, renew ? 'lease.renewed' : 'lease.claimed', item, actor, { claimant: actor.name, expiresAt: item.lease.expiresAt, via: 'start' }));
-    } else if (!(item.workedBy || []).includes(actor.name)) item.workedBy = [...(item.workedBy || []), actor.name].slice(-5);
+    } else addWorker(item, actor.name);
     if (!item.assignee && actor.kind === 'agent') {
       item.assignee = actor.name;
       events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: actor.name, from: null }));
