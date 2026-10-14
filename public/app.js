@@ -189,6 +189,7 @@
       bg: c[0], panel: c[1], surface: c[2], text: c[3], muted: c[4], border: c[5], accent: c[6], 'accent-2': c[7],
       issue: c[8], task: c[9], spike: c[10], ok: c[11], warn: c[12], danger: c[13], blob1: c[14], blob2: c[15], blob3: c[16],
       shadow: mode === 'dark' ? 'rgb(0 0 0 / .6)' : 'rgb(60 45 30 / .22)', 'fx-o': mode === 'dark' ? '.34' : '.5', grain: mode === 'dark' ? '.07' : '.09',
+      'on-accent': '#fff', // set on every theme, so switching away from one that changes it never leaves it behind
     },
   });
   // The Bauhaus family shares one geometry: a card wears its type as a shape in the top-right corner (issue a
@@ -266,7 +267,7 @@
       { ...BAUHAUS_POSTER, texture: false }, bauhausCss(22, 10)),
     // Black on paper with one red: the shapes alone tell the types apart.
     'bauhaus-mono': T('Bauhaus Mono', 'light', ['#ecebe7', '#e2e1dc', '#f8f8f6', '#151515', '#6b6b6b', '#151515', '#c8281e', '#151515', '#151515', '#151515', '#151515', '#3d3d3d', '#6b6b6b', '#c8281e', '#151515', '#6b6b6b', '#b5b5b5'],
-      { ...BAUHAUS_POSTER, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: #c8281e; box-shadow: 3px 3px 0 var(--text); }')),
+      { ...BAUHAUS_POSTER, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: var(--accent); box-shadow: 3px 3px 0 var(--text); }')),
     // Mono, inverted: white geometry on black, red only for danger.
     'bauhaus-noir': T('Bauhaus Noir', 'dark', ['#0e0e0e', '#161616', '#1c1c1c', '#ededea', '#8c8c88', '#ededea', '#ededea', '#8c8c88', '#ededea', '#ededea', '#ededea', '#bdbdbd', '#a0a0a0', '#ff4a3d', '#ededea', '#8c8c88', '#4a4a4a'],
       { ...BAUHAUS_POSTER, texture: false, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: var(--text); color: var(--bg); box-shadow: none; }')),
@@ -347,6 +348,9 @@
   for (const [k, o] of [['moss', '.62'], ['clay', '.7'], ['tide', '.75'], ['bloom', '.6'], ['cloud', '.8'], ['liquid', '.95']]) if (THEMES[k]) THEMES[k].vars['fx-o'] = o;
   // Blueprint's contours are drawn in one ink, like the sheet itself (index lines in its text white, not gold).
   THEMES.blueprint.vars['topo-index'] = THEMES.blueprint.vars.text;
+  // Ink, not white, on accent fills where white is too faint: Noir's accent is near-white (white 1.2:1, ink 16:1),
+  // Studio Dark's red holds white at only 3.7:1 (ink 4.8:1, and the red stays bright enough to read as text).
+  for (const k of ['bauhaus-noir', 'bauhaus-studio-dark']) THEMES[k].vars['on-accent'] = THEMES[k].vars.bg;
   const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['mesh', 'Mesh'], ['stars', 'Stars'], ['topo', 'Topo'], ['halftone', 'Halftone'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['confetti', 'Confetti'], ['none', 'None']];
   const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES.intellagent).style });
   // A user setting of "theme" (or unset) defers to the theme's own choice.
