@@ -12,6 +12,8 @@ How Intellagent looks and feels: themes, CSS, layout and motion. Change the styl
 3. Open the sign-in link with the browser tools (`mcp__playwright__…`). Look at 1280 and 375 pixels wide at least, in the themes your change touches. Screenshots are saved in `sandboxes/mantis/shots/`; attach them to your comment by path.
 4. Close the browser, then `intellagent leases done <id>`.
 
+Your browser opens only your own sandbox: the real boards and the lease program are blocked in it. On the real board you work through the CLI, as yourself. Never look for or use anyone's token.
+
 ## How the look works
 - **Themes are data.** A theme is a palette plus a `STYLE` spec in `public/app.js`; the spec becomes `data-*` attributes on `<html>`, and `public/app.css` branches on them. Add a look by extending the spec and its CSS branch, not with one-off rules.
 - **Colours are tokens.** Use `var(--accent)`, `var(--text)`, `var(--muted)`, `var(--border)`… and `color-mix()` for tints. Never hard-code a colour: it breaks the other themes.

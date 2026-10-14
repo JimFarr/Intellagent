@@ -14,6 +14,8 @@ Review tickets in Review when Gamora assigns you: never one you worked on. Run t
 5. Screenshots are saved in `sandboxes/nebula/shots/`; attach them to your comment by path. Read the console log the browser tool saves beside them.
 6. Close the browser, `intellagent leases done <id>`, `intellagent sandbox stop nebula`.
 
+Your browser opens only your own sandbox: the real boards and the lease program are blocked in it. On the real board you work through the CLI, as yourself. Never look for or use anyone's token.
+
 ## Your QA rundown
 Every review comment uses this template, so James can read any review the same way. Your voice goes in the lines, not in the structure. Leave out a section only when it would be empty, never the verdict.
 

@@ -172,6 +172,7 @@ function openBoard(mp = requireManifest()) {
 // Give an existing board (made before tokens, or with --no-token) the human's sign-in token, so only
 // requests that carry it can act as the human. --rotate replaces an existing one.
 function tokenCmd() {
+  humanOnly('intellagent token');
   const mp = requireManifest();
   const dir = path.dirname(mp);
   const file = path.join(dir, 'local.json');
@@ -205,6 +206,7 @@ function tokenCmd() {
 
 // intellagent project [path]: show, or set, the folder with the code this board's agents work on
 function projectCmd() {
+  if (rest[0]) humanOnly('intellagent project <path>');
   const mp = requireManifest();
   const target = rest[0];
   if (!target) { console.log(projectOf(mp)); return; }
@@ -467,7 +469,18 @@ function readAgents(file) {
 }
 
 // The CLI acts as the human here (it runs on the human's machine, with the local manifest).
+// Commands that act as the human (with the user token from local.json) or write the human's files refuse to
+// run as an agent: a standing agent's shell may run "intellagent …", and it must not merge, steer other agents
+// or change grants that way. The board sets INTELLAGENT_AGENT (and the run) for every standing-agent run.
+function humanOnly(what) {
+  const agent = process.env.INTELLAGENT_AGENT || (process.env.INTELLAGENT_RUN || process.env.INTELLAGENT_RUN_FILE ? 'a standing agent' : '');
+  if (!agent) return;
+  console.error(`error 403 HUMAN_ONLY: ${what} is the human's — refused for ${agent} — hint: ask the human on the card (intellagent do ask_human id=<ID> reason="…")`);
+  process.exit(1);
+}
+
 async function asHuman(method, p, body) {
+  humanOnly(`intellagent ${cmd}`);
   const mp = requireManifest();
   const m = readManifest(mp);
   const url = baseUrl(m);
@@ -485,6 +498,7 @@ const ago = (t) => { if (!t) return '—'; const m = Math.round((Date.now() - Da
 
 async function agentsCmd() {
   const [sub, name] = rest;
+  if (sub === 'add' || sub === 'remove') humanOnly(`intellagent agents ${sub}`);
   const f = flags(rest.slice(sub === 'add' ? 2 : 0));
   const mp = requireManifest();
   const file = agentsFile(mp);
@@ -557,6 +571,7 @@ async function agentsCmd() {
 
 function autostart() {
   const [sub = 'status'] = rest;
+  if (sub !== 'status') humanOnly(`intellagent autostart ${sub}`);
   const mp = requireManifest();
   const dir = path.basename(path.dirname(mp)) === '.intellagent' ? path.dirname(path.dirname(mp)) : path.dirname(mp);
   const project = path.basename(dir) || 'board';

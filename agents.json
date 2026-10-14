@@ -86,7 +86,8 @@
       ],
       "reviewer": true,
       "model": "opus",
-      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --permission-mode acceptEdits --tools \"Bash,Read,Grep,Glob,Edit,Write\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-mantis.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Edit\" \"Write\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"mcp__playwright\""
+      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --permission-mode acceptEdits --tools \"Bash,Read,Grep,Glob,Edit,Write\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-mantis.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Edit\" \"Write\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
+      "maxRunsPerHour": 6
     },
     "nebula": {
       "role": "reviewer",
@@ -99,7 +100,8 @@
         "npm test on the author's worktree",
         "tried in a sandbox, off the checklist too"
       ],
-      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-nebula.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"mcp__playwright\""
+      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-nebula.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
+      "maxRunsPerHour": 8
     },
     "quill": {
       "perms": [
@@ -109,7 +111,8 @@
       "model": "sonnet",
       "throttleMinutes": 0.5,
       "description": "User: uses Intellagent as a newcomer would — as an agent through the CLI and as a person in his browser, on his own sandbox — and reports how hard it was.",
-      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-quill.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"mcp__playwright\""
+      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-quill.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
+      "maxRunsPerHour": 8
     }
   }
 }

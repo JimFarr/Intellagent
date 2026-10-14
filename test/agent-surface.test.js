@@ -119,6 +119,16 @@ describe('the CLI for agents', () => {
     assert.equal(missing.code, 2);
     assert.match(missing.err, /needs: changed, why, verify/);
   });
+  it('commands that act as the human refuse to run as an agent', () => {
+    for (const [args, env] of [[['merge', 'T-1'], { INTELLAGENT_AGENT: 'sneaky' }], [['agents', 'pause', 'x'], { INTELLAGENT_RUN: 'run_1' }],
+      [['agents', 'add', 'evil', '--role', 'builder'], { INTELLAGENT_AGENT: 'sneaky' }], [['token', '--rotate'], { INTELLAGENT_AGENT: 'sneaky' }],
+      [['merge', 'T-1', '--as', 'sneaky'], {}]]) {
+      const r = cli(args, { cwd: s.dir, env });
+      assert.equal(r.code, 1, args.join(' '));
+      assert.match(r.err, /HUMAN_ONLY/, args.join(' '));
+    }
+    assert.ok(!fs.readFileSync(path.join(s.dir, 'agents.json'), 'utf8').includes('evil'), 'nothing written');
+  });
   it('--url and --as reach a board from anywhere, for shells that may only run "intellagent …"', () => {
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-nowhere-'));
     const r = cli(['do', 'create_item', 'title=by flag', 'column=Backlog', '--url', s.base, '--as', 'flagged'], { cwd: elsewhere });
