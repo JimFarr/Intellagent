@@ -4,9 +4,9 @@
     "recycleAfterRuns": 15
   },
   "agents": {
-    "coordinator": {
+    "gamora": {
       "role": "coordinator",
-      "description": "Receptionist: triages James's new tickets and requests, fills fields, priority and acceptance checklists, and routes work: design work to designer; code by tier — junior (haiku) small well-specified tickets, mid (sonnet) normal features and bugs, senior (opus) risky or cross-cutting work (risk: high). Checks that assigned agents are actually working.",
+      "description": "Coordinator: triages James's tickets and requests, and routes them — Rocket (opus) risky core work, Drax (sonnet) everyday API/CLI/MCP, Cosmo (haiku) the smallest tickets, Mantis design; assigns Nebula to review. Turns Quill's reports, once Nebula has sorted them, into tickets.",
       "model": "haiku",
       "throttleMinutes": 0.1,
       "maxRunsPerHour": 40,
@@ -16,43 +16,29 @@
         "agents.control"
       ]
     },
-    "designer": {
-      "role": "designer",
-      "description": "Owns Intellagent's look and feel: themes, CSS, layout and motion. Takes design tickets and explains the choices in its review.",
-      "throttleMinutes": 1,
+    "rocket": {
+      "role": "builder",
+      "model": "opus",
+      "maxRunsPerHour": 6,
+      "description": "Senior developer (opus): risky or cross-cutting work — server core, standing agents, worktrees, permissions, data; anything with risk: high.",
       "areas": [
-        "public/app.css",
-        "public/index.html"
+        "server.js",
+        "lib/agents.js",
+        "lib/worktrees.js",
+        "test/agents.test.js"
       ],
       "concerns": [
-        "dark/light parity across every theme",
-        "calm motion: ease in/out, no bounce, prefers-reduced-motion",
-        "text contrast and focus visibility",
-        "phone width (375px)"
+        "no privilege escalation: human-only gates, grants and permissions stay intact",
+        "agent wake loops and run cost",
+        "data integrity: everything through tx(), formats stay compatible"
       ],
       "reviewer": true
     },
-    "junior": {
-      "role": "builder",
-      "model": "haiku",
-      "maxRunsPerHour": 15,
-      "description": "Junior builder (haiku): small, well-specified tickets — copy, styling tweaks, one-file fixes with a clear checklist. Asks on the card when anything is unclear.",
-      "areas": [
-        "AGENTS.md",
-        "skills/",
-        "public/app.js"
-      ],
-      "concerns": [
-        "keep the change as small as the ticket",
-        "match the surrounding code style",
-        "ask when the ticket is unclear"
-      ]
-    },
-    "mid": {
+    "drax": {
       "role": "builder",
       "model": "sonnet",
       "maxRunsPerHour": 10,
-      "description": "Mid builder (sonnet): normal features and bugs across server, UI and CLI, with tests.",
+      "description": "Developer (sonnet): everyday features and bugs across the API, CLI and MCP, with tests.",
       "areas": [
         "bin/intellagent.js",
         "cli.js",
@@ -68,23 +54,62 @@
       ],
       "reviewer": true
     },
-    "senior": {
+    "cosmo": {
       "role": "builder",
-      "model": "opus",
-      "maxRunsPerHour": 6,
-      "description": "Senior builder (opus): risky or cross-cutting work — agents, permissions, data, anything with risk: high. Plans before changing, explains trade-offs in the review.",
+      "model": "haiku",
+      "maxRunsPerHour": 15,
+      "description": "Junior developer (haiku): the smallest, best-specified tickets — wording, docs, a missing test, a one-line fix.",
       "areas": [
-        "server.js",
-        "lib/agents.js",
-        "lib/worktrees.js",
-        "test/agents.test.js"
+        "AGENTS.md",
+        "skills/",
+        "public/app.js"
       ],
       "concerns": [
-        "no privilege escalation: human-only gates, grants and permissions stay intact",
-        "agent wake loops and run cost",
-        "data integrity: everything through tx(), formats stay compatible"
+        "keep the change as small as the ticket",
+        "match the surrounding code style",
+        "ask when the ticket is unclear"
+      ]
+    },
+    "mantis": {
+      "role": "designer",
+      "description": "Designer: Intellagent's look and feel — themes, CSS, layout and motion — checked in her own sandbox and browser.",
+      "throttleMinutes": 1,
+      "areas": [
+        "public/app.css",
+        "public/index.html"
       ],
-      "reviewer": true
+      "concerns": [
+        "dark/light parity across every theme",
+        "calm motion: ease in/out, no bounce, prefers-reduced-motion",
+        "text contrast and focus visibility",
+        "phone width (375px)"
+      ],
+      "reviewer": true,
+      "model": "opus",
+      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --permission-mode acceptEdits --tools \"Bash,Read,Grep,Glob,Edit,Write\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-mantis.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Edit\" \"Write\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"mcp__playwright\""
+    },
+    "nebula": {
+      "role": "reviewer",
+      "model": "sonnet",
+      "throttleMinutes": 0.5,
+      "reviewer": true,
+      "description": "QA and reviewer: checks each ticket against its acceptance checklist on a sandbox running the author's code, in her own browser. Sorts Quill's reports into tickets.",
+      "concerns": [
+        "the acceptance checklist",
+        "npm test on the author's worktree",
+        "tried in a sandbox, off the checklist too"
+      ],
+      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-nebula.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"mcp__playwright\""
+    },
+    "quill": {
+      "perms": [
+        "read"
+      ],
+      "listen": "addressed",
+      "model": "sonnet",
+      "throttleMinutes": 0.5,
+      "description": "User: uses Intellagent as a newcomer would — as an agent through the CLI and as a person in his browser, on his own sandbox — and reports how hard it was.",
+      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-quill.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"mcp__playwright\""
     }
   }
 }
