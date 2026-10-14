@@ -12,5 +12,8 @@
   },
   "presenceTimeoutSeconds": 90,
   "readonlyData": true,
-  "backups": 10
+  "backups": 10,
+  "auth": {
+    "requireAgentTokens": true
+  }
 }
