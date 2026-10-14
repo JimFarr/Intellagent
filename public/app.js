@@ -183,13 +183,19 @@
     drop: 'ring', // a column a ticket is dragged over: ring | tint | lift | spotlight | dashed | pulse
     colColor: 'own', // own | accent | ink — column dots and rules
   };
+  // Palette colours are #rgb or #rrggbb. WCAG relative luminance and contrast ratio, and a plain sRGB mix (p = share of y).
+  const rgb = (h) => (h.length === 4 ? [...h.slice(1)].map((c) => c + c) : [h.slice(1, 3), h.slice(3, 5), h.slice(5, 7)]).map((x) => parseInt(x, 16));
+  const luminance = (h) => rgb(h).map((c) => (c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4).reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
+  const contrast = (x, y) => { const [a, b] = [luminance(x), luminance(y)].sort((m, n) => n - m); return (a + 0.05) / (b + 0.05); };
+  const mixHex = (x, y, p) => `#${rgb(x).map((c, i) => Math.round(c + (rgb(y)[i] - c) * p).toString(16).padStart(2, '0')).join('')}`;
   const T = (label, mode, c, style = {}, css = '') => ({
     label, mode, style, css, glow: !!style.glow,
     vars: {
       bg: c[0], panel: c[1], surface: c[2], text: c[3], muted: c[4], border: c[5], accent: c[6], 'accent-2': c[7],
       issue: c[8], task: c[9], spike: c[10], ok: c[11], warn: c[12], danger: c[13], blob1: c[14], blob2: c[15], blob3: c[16],
       shadow: mode === 'dark' ? 'rgb(0 0 0 / .6)' : 'rgb(60 45 30 / .22)', 'fx-o': mode === 'dark' ? '.34' : '.5', grain: mode === 'dark' ? '.07' : '.09',
-      'on-accent': '#fff', // set on every theme, so switching away from one that changes it never leaves it behind
+      // set on every theme, so switching away from one that changes them never leaves them behind
+      'on-accent': '#fff', 'accent-fill': c[6],
     },
   });
   // The Bauhaus family shares one geometry: a card wears its type as a shape in the top-right corner (issue a
@@ -244,7 +250,7 @@
       '.c-title { font-family: var(--display); font-size: 15.5px; } .board { background-image: repeating-linear-gradient(transparent 0 27px, color-mix(in oklab, var(--accent-2) 9%, transparent) 27px 28px); background-size: auto; } .col-name { font-style: italic; }'),
     brutalist: T('Brutalist', 'light', ['#f4f1ea', '#ffffff', '#ffffff', '#111111', '#555555', '#111111', '#ff4d00', '#0047ff', '#ff2e2e', '#0047ff', '#ffcc00', '#00a651', '#ff8a00', '#ff2e2e', '#ffcc00', '#0047ff', '#ff4d00'],
       { md: 'grid', card: 0, col: 0, modal: 0, ctl: 0, bw: 2, shadow: 'hard', tape: 'none', cards: 'clean', typeInd: 'top', attn: 'outline', enter: 'pop', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, avatar: 'square', titleW: 700, font: "'Space Grotesk'", display: "'Space Grotesk'", colAlpha: 100 },
-      '.c-title { font-size: 15px; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; } .btn.primary { background: var(--accent); border: 2px solid var(--text); box-shadow: 3px 3px 0 var(--text); } .pill-btn:hover { translate: -2px -2px; box-shadow: 3px 3px 0 var(--text); }'),
+      '.c-title { font-size: 15px; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; } .btn.primary { background: var(--accent-fill); border: 2px solid var(--text); box-shadow: 3px 3px 0 var(--text); } .pill-btn:hover { translate: -2px -2px; box-shadow: 3px 3px 0 var(--text); }'),
     cork: T('Corkboard', 'light', ['#c9a77c', '#b8946a', '#fff8d2', '#2b2014', '#6b5537', '#9c7a52', '#c0392b', '#2e86ab', '#ff9aa2', '#7fb7e6', '#f4d35e', '#4c9a2a', '#d9822b', '#c0392b', '#e0c39a', '#b88e5f', '#d8b38a'],
       { md: 'paper', card: 2, col: 16, modal: 18, ctl: 10, tape: 'pin', cards: 'sticky', attn: 'ribbon', bg: 'none', avatar: 'round', colAlpha: 55, grain: '.22' },
       ".c-title { font-family: 'Caveat', cursive; font-size: 20px; line-height: 1.1; font-weight: 600; }"),
@@ -267,7 +273,7 @@
       { ...BAUHAUS_POSTER, texture: false }, bauhausCss(22, 10)),
     // Black on paper with one red: the shapes alone tell the types apart.
     'bauhaus-mono': T('Bauhaus Mono', 'light', ['#ecebe7', '#e2e1dc', '#f8f8f6', '#151515', '#6b6b6b', '#151515', '#c8281e', '#151515', '#151515', '#151515', '#151515', '#3d3d3d', '#6b6b6b', '#c8281e', '#151515', '#6b6b6b', '#b5b5b5'],
-      { ...BAUHAUS_POSTER, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: var(--accent); box-shadow: 3px 3px 0 var(--text); }')),
+      { ...BAUHAUS_POSTER, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: var(--accent-fill); box-shadow: 3px 3px 0 var(--text); }')),
     // Mono, inverted: white geometry on black, red only for danger.
     'bauhaus-noir': T('Bauhaus Noir', 'dark', ['#0e0e0e', '#161616', '#1c1c1c', '#ededea', '#8c8c88', '#ededea', '#ededea', '#8c8c88', '#ededea', '#ededea', '#ededea', '#bdbdbd', '#a0a0a0', '#ff4a3d', '#ededea', '#8c8c88', '#4a4a4a'],
       { ...BAUHAUS_POSTER, texture: false, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: var(--text); color: var(--bg); box-shadow: none; }')),
@@ -311,7 +317,7 @@
       '.card { border: 1px solid transparent; background: linear-gradient(var(--surface), var(--surface)) padding-box, conic-gradient(from 210deg, #c084fc, #5eead4, #60a5fa, #f472b6, #fcd34d, #c084fc) border-box; } .card:hover { box-shadow: 0 18px 40px -16px rgb(192 132 252 / .5), 0 0 24px -10px rgb(94 234 212 / .5); } .column { border-color: rgb(255 255 255 / .07); background: rgb(14 14 21 / .55); } .app-name { background: linear-gradient(90deg, #c084fc, #5eead4, #f472b6); -webkit-background-clip: text; background-clip: text; } .btn.primary { background: linear-gradient(120deg, #c084fc, #60a5fa, #5eead4); }'),
     riso: T('Riso', 'light', ['#f5f0e6', '#efe8da', '#fbf8f1', '#1d2b6b', '#5c6aa3', '#1d2b6b', '#ff48b0', '#0078bf', '#ff48b0', '#0078bf', '#ffe800', '#00a95c', '#ff6c2f', '#ff48b0', '#ff48b0', '#0078bf', '#ffe800'],
       { md: 'paper', card: 4, col: 6, modal: 8, ctl: 6, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'tint', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'outline', chips: 'tag', heads: 'caps', bg: 'halftone', texture: true, grain: '.4', titleW: 700, font: "'Bricolage Grotesque'", display: "'Bricolage Grotesque'" },
-      '.card { --card-line: var(--text); box-shadow: 3px 3px 0 var(--accent); } .card:hover { box-shadow: 5px 5px 0 var(--accent), -2px -2px 0 color-mix(in oklab, var(--accent-2) 70%, transparent); } .c-title { text-shadow: 1.5px 1px 0 color-mix(in oklab, var(--accent) 50%, transparent); } .col-name { color: var(--accent-2); text-shadow: 2px 1px 0 color-mix(in oklab, var(--accent) 60%, transparent); } .column { box-shadow: 6px 6px 0 color-mix(in oklab, var(--accent-2) 28%, transparent); } .app-name { background: none; color: var(--accent-2); -webkit-text-fill-color: currentColor; text-shadow: 2px 1.5px 0 var(--accent); } .btn.primary { background: var(--accent); box-shadow: 3px 3px 0 var(--accent-2); }'),
+      '.card { --card-line: var(--text); box-shadow: 3px 3px 0 var(--accent); } .card:hover { box-shadow: 5px 5px 0 var(--accent), -2px -2px 0 color-mix(in oklab, var(--accent-2) 70%, transparent); } .c-title { text-shadow: 1.5px 1px 0 color-mix(in oklab, var(--accent) 50%, transparent); } .col-name { color: var(--accent-2); text-shadow: 2px 1px 0 color-mix(in oklab, var(--accent) 60%, transparent); } .column { box-shadow: 6px 6px 0 color-mix(in oklab, var(--accent-2) 28%, transparent); } .app-name { background: none; color: var(--accent-2); -webkit-text-fill-color: currentColor; text-shadow: 2px 1.5px 0 var(--accent); } .btn.primary { background: var(--accent-fill); box-shadow: 3px 3px 0 var(--accent-2); }'),
   };
   // Each theme's avatar look (kept in one table so the set reads as a whole).
   const AV_STYLE = {
@@ -348,9 +354,17 @@
   for (const [k, o] of [['moss', '.62'], ['clay', '.7'], ['tide', '.75'], ['bloom', '.6'], ['cloud', '.8'], ['liquid', '.95']]) if (THEMES[k]) THEMES[k].vars['fx-o'] = o;
   // Blueprint's contours are drawn in one ink, like the sheet itself (index lines in its text white, not gold).
   THEMES.blueprint.vars['topo-index'] = THEMES.blueprint.vars.text;
-  // Ink, not white, on accent fills where white is too faint: Noir's accent is near-white (white 1.2:1, ink 16:1),
-  // Studio Dark's red holds white at only 3.7:1 (ink 4.8:1, and the red stays bright enough to read as text).
-  for (const k of ['bauhaus-noir', 'bauhaus-studio-dark']) THEMES[k].vars['on-accent'] = THEMES[k].vars.bg;
+  // Text on accent fills reaches 4.5:1. White where it does; in a dark theme, else its background ink (a pale accent
+  // reads far better with ink); else the fill (--accent-fill) is deepened toward the theme's ink until white reads.
+  // --accent itself is untouched, so links, rings and tints keep the theme's colour. ON_ACCENT pins a theme by hand.
+  const ON_ACCENT = { intellagent: '#fff' }; // the default look; white is 3.3:1 here, the choice is James's (INT-101)
+  for (const [k, t] of Object.entries(THEMES)) {
+    const v = t.vars, ink = luminance(v.bg) < luminance(v.text) ? v.bg : v.text;
+    if (ON_ACCENT[k]) v['on-accent'] = ON_ACCENT[k];
+    else if (contrast('#fff', v.accent) >= 4.5) continue;
+    else if (t.mode === 'dark' && contrast(ink, v.accent) >= 4.5) v['on-accent'] = ink;
+    else for (let i = 1; i <= 50 && contrast('#fff', v['accent-fill']) < 4.5; i++) v['accent-fill'] = mixHex(v.accent, ink, i / 50);
+  }
   // Strength of each generated pattern, multiplying --fx-o. The one source: the board gets it as --fx-k (applySettings),
   // the Background tiles use it directly. `<kind>-<mode>` overrides a kind in light or dark themes.
   const FXK = { topo: 1.05, squiggles: 0.62, doodles: 0.7, confetti: 1.3, halftone: 0.7, 'halftone-light': 0.55 };

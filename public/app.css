@@ -5,7 +5,7 @@
   --accent: #8b7bff; --accent-2: #2fe0c4; --issue: #ff6b8b; --task: #6aa8ff; --spike: #ffc857;
   --ok: #3ddc97; --warn: #ffb454; --danger: #ff5d73; --blob1: #7b5cff; --blob2: #00d4b0; --blob3: #ff5fa2;
   --shadow: rgb(0 0 0 / .6); --fx-o: .34; --grain: .07;
-  --on-accent: #fff; /* text and icons on an accent fill; themes with a pale accent set their own */
+  --on-accent: #fff; --accent-fill: #8b7bff; /* text and icons on an accent fill, and that fill; app.js picks both per theme */
   --colw: 300px;
   --gap: 10px;
   --spring: cubic-bezier(.2, .9, .25, 1.15);
@@ -364,9 +364,9 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .bulk .card { cursor: pointer; }
 .bulk .card .ring { opacity: 0; }
 .card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), 0 14px 28px -14px var(--shadow); }
-.card.selected .c-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent); scale: 1.1; }
+.card.selected .c-check { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); scale: 1.1; }
 
-.c-ask { position: absolute; top: -8px; right: -6px; width: 20px; height: 20px; border-radius: 50%; display: none; place-items: center; font: 800 12px var(--display); color: var(--on-accent); background: linear-gradient(135deg, var(--accent-2), var(--accent)); box-shadow: 0 4px 12px -2px color-mix(in oklab, var(--accent-2) 70%, transparent); z-index: 2; }
+.c-ask { position: absolute; top: -8px; right: -6px; width: 20px; height: 20px; border-radius: 50%; display: none; place-items: center; font: 800 12px var(--display); color: var(--on-accent); background: linear-gradient(135deg, var(--accent-2), var(--accent-fill)); box-shadow: 0 4px 12px -2px color-mix(in oklab, var(--accent-2) 70%, transparent); z-index: 2; }
 :root[data-attn="orbit"] .c-ask { animation: bob 2.4s ease-in-out infinite; }
 .card.needs .c-ask { display: grid; }
 .bulk .card.needs .c-ask { display: none; }
@@ -504,7 +504,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .btn { height: 32px; padding: 0 12px; border-radius: var(--r-ctl); border: var(--bw) solid var(--border); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font: 500 13px var(--font); transition: background .2s, border-color .2s, transform .15s var(--spring), filter .2s, color .2s; white-space: nowrap; text-decoration: none; color: var(--text); }
 .btn:hover { border-color: color-mix(in oklab, var(--accent) 50%, var(--border)); }
 .btn:active { transform: scale(.95); }
-.btn.primary { background: linear-gradient(135deg, var(--accent), color-mix(in oklab, var(--accent) 70%, var(--accent-2))); color: var(--on-accent); border-color: transparent; box-shadow: 0 6px 16px -6px color-mix(in oklab, var(--accent) 70%, transparent); }
+.btn.primary { background: linear-gradient(135deg, var(--accent-fill), color-mix(in oklab, var(--accent-fill) 70%, var(--accent-2))); color: var(--on-accent); border-color: transparent; box-shadow: 0 6px 16px -6px color-mix(in oklab, var(--accent) 70%, transparent); }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
 .btn.ghost:hover { color: var(--text); background: var(--hover); }
@@ -708,7 +708,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .att-tools button:hover { transform: scale(1.08); }
 .att-tools button.rm:hover { background: var(--danger); }
 .att-tools button.cv.on { background: var(--accent); opacity: 1; }
-.att .cover-tag { position: absolute; top: 6px; left: 6px; font: 600 9.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 2px 6px; border-radius: 6px; background: var(--accent); color: var(--on-accent); }
+.att .cover-tag { position: absolute; top: 6px; left: 6px; font: 600 9.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 2px 6px; border-radius: 6px; background: var(--accent-fill); color: var(--on-accent); }
 .att .cover-tag.auto { background: rgb(0 0 0 / .5); }
 .att-add { border: 1.5px dashed var(--border); background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; border-radius: 12px; aspect-ratio: 4 / 3; transition: border-color .2s, color .2s, background .2s; }
 .att-add:hover { border-color: var(--accent); color: var(--accent); background: color-mix(in oklab, var(--accent) 6%, transparent); }
@@ -846,7 +846,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 .bulkbar { position: fixed; left: 50%; bottom: 20px; z-index: 80; translate: -50% 160%; display: flex; align-items: center; gap: 6px; padding: 7px; border-radius: calc(var(--r-ctl) + 8px); background: var(--surface); border: var(--bw) solid var(--border); box-shadow: var(--modal-shadow); transition: translate .5s var(--spring); }
 .bulkbar.show { translate: -50% 0; }
-.bulkbar .count { min-width: 34px; height: 32px; padding: 0 10px; display: grid; place-items: center; border-radius: 10px; background: var(--accent); color: var(--on-accent); font: 700 13px var(--mono); }
+.bulkbar .count { min-width: 34px; height: 32px; padding: 0 10px; display: grid; place-items: center; border-radius: 10px; background: var(--accent-fill); color: var(--on-accent); font: 700 13px var(--mono); }
 .bulkbar .count.bump { animation: land .35s var(--spring); }
 
 .lightbox { position: fixed; inset: 0; z-index: 600; display: grid; place-items: center; background: rgb(0 0 0 / .82); cursor: zoom-out; animation: fade-in .2s; padding: 30px; }
@@ -963,7 +963,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .card.unseen { box-shadow: var(--card-shadow), 0 0 0 2px color-mix(in oklab, var(--accent) 70%, transparent), 0 0 22px -4px color-mix(in oklab, var(--accent) 60%, transparent); }
 .card.unseen .c-id::after { content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 5px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
 .catch-btn { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 50%, transparent); font-weight: 700; }
-.pill-btn .badge { position: absolute; top: -5px; right: -5px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 99px; display: grid; place-items: center; font: 700 10px var(--mono); color: var(--on-accent); background: var(--accent); box-shadow: 0 0 0 2px var(--bg); animation: land .4s var(--spring); }
+.pill-btn .badge { position: absolute; top: -5px; right: -5px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 99px; display: grid; place-items: center; font: 700 10px var(--mono); color: var(--on-accent); background: var(--accent-fill); box-shadow: 0 0 0 2px var(--bg); animation: land .4s var(--spring); }
 .feed-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .feed-row { display: grid; grid-template-columns: 8px 22px minmax(0, 1fr) auto; gap: 9px; align-items: start; padding: 10px; border-radius: calc(var(--r-ctl) + 2px); cursor: pointer; transition: background .15s; animation: drop-in .3s var(--spring) backwards; font-size: 12.5px; color: var(--muted); }
 .feed-row:hover { background: var(--hover); }
