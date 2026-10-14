@@ -222,3 +222,41 @@ describe('Ask an agent keeps the conversation', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('sandbox boards', () => {
+  // A restart kills the server behind fetch's pooled keep-alive connection; the first request after it can
+  // hit a dead socket (one per earlier request), so retry a few times.
+  const get = async (url) => { const go = () => fetch(url, { headers: { 'x-agent': 'tester' } }).then((r) => r.json()); for (let i = 0; ; i++) { try { return await go(); } catch (e) { if (i >= 3) throw e; } } };
+  it('standing agents never run on a sandbox board', async () => {
+    const fake = path.join(__dirname, 'fake-agent.js');
+    const s = await startServer({ manifest: { sandbox: true }, agents: { agents: { dev: { run: `node "${fake}" commit`, worktree: false } } } });
+    try {
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'work', column: 'Ready', assignee: 'dev' }, USER);
+      const agent = await until(async () => (await s.ok('GET', '/api/agents')).agents.find((a) => a.name === 'dev' && a.status === 'paused'));
+      await new Promise((r) => setTimeout(r, 1500));
+      assert.ok(!fs.existsSync(path.join(s.dir, `work-${it.id}.txt`)), 'the agent did not run');
+    } finally { await s.stop(); }
+  });
+
+  it('intellagent sandbox starts a board of its own from a snapshot, keeps it across restarts, and stops it', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'copied over', column: 'Ready' }, USER);
+      const r = cli(['sandbox', 'tester', '--seed', 'snapshot', '--json'], { cwd: s.dir });
+      assert.equal(r.code, 0, r.err);
+      assert.notEqual(r.json.url, s.base);
+      const got = await get(`${r.json.url}/api/boards/main/items/${it.id}`);
+      assert.equal(got.title, 'copied over');
+      // writes land in the sandbox, never on the real board
+      await fetch(`${r.json.url}/api/boards/main/items`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': 'tester' }, body: JSON.stringify({ title: 'sandbox only', column: 'Ready' }) });
+      assert.ok(!JSON.stringify(await s.ok('GET', '/api/boards/main/summary')).includes('sandbox only'));
+      // a restart keeps its data and port
+      const again = cli(['sandbox', 'tester', '--json'], { cwd: s.dir });
+      assert.equal(again.json.port, r.json.port);
+      assert.equal(again.json.seed, 'kept');
+      assert.ok(JSON.stringify(await get(`${r.json.url}/api/boards/main/summary`)).includes('sandbox only'));
+      assert.equal(fs.readFileSync(path.join(s.dir, 'sandboxes', '.gitignore'), 'utf8').trim(), '*');
+      assert.match(cli(['sandbox', 'stop', 'tester'], { cwd: s.dir }).out, /stopped/);
+    } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+  });
+});

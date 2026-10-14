@@ -20,7 +20,7 @@ const path = require('path');
 const net = require('net');
 const { spawn } = require('child_process');
 const os = require('os');
-const { findManifest, readManifest, baseUrl, defaultAgent, userToken, NO_BOARD } = require('../lib/locate');
+const { findManifest, readManifest, baseUrl, defaultAgent, userToken, projectOf, NO_BOARD } = require('../lib/locate');
 const crypto = require('crypto');
 const TEMPLATES = require('../lib/templates');
 
@@ -277,12 +277,6 @@ async function brief() {
   catch { console.error(`The board isn't running (${url}). Start it in the background: intellagent start --background`); process.exit(1); }
   process.stdout.write(`${await r.text()}\n`);
   if (!r.ok) process.exit(1);
-}
-
-// Where the board's code is: projectRoot from the manifest, else the folder holding .intellagent/.
-function projectOf(mp, m = readManifest(mp)) {
-  if (m?.projectRoot) return path.resolve(path.dirname(mp), String(m.projectRoot));
-  return path.basename(path.dirname(mp)) === '.intellagent' ? path.dirname(path.dirname(mp)) : path.dirname(mp);
 }
 
 async function status() {
@@ -626,6 +620,38 @@ async function doOp() {
   process.exitCode = report(await send(method, p, body), { compact });
 }
 
+// intellagent sandbox [name] [--from main|<agent>|<dir>] [--seed demo|empty|snapshot] [--fresh] [--open] [--json]
+// intellagent sandbox list | stop <name> | stop --all
+async function sandboxCmd() {
+  const sb = require('../lib/sandbox');
+  const mp = requireManifest();
+  const f = flags(rest);
+  const [sub, arg] = f._;
+  if (sub === 'list') {
+    const all = await sb.list(mp);
+    if (f.json) { console.log(JSON.stringify(all, null, 2)); return; }
+    if (!all.length) { console.log('No sandboxes yet: intellagent sandbox <agent>'); return; }
+    for (const s of all) console.log(`${s.running ? '●' : '○'} ${s.name.padEnd(12)} ${s.url}  ${s.source || ''}`);
+    return;
+  }
+  if (sub === 'stop') {
+    const names = f.all ? (await sb.list(mp)).map((s) => s.name) : [arg].filter(Boolean);
+    if (!names.length) { console.error('Usage: intellagent sandbox stop <name> | --all'); process.exit(2); }
+    for (const n of names) console.log(`${n}: ${(await sb.stop(mp, n)) ? 'stopped' : 'not running'}`);
+    return;
+  }
+  const name = sub || defaultAgent(readManifest(mp));
+  if (!name) { console.error('Usage: intellagent sandbox <agent name>   (or set INTELLAGENT_AGENT)'); process.exit(2); }
+  const r = await sb.start(mp, String(name), { from: String(f.from || 'main'), seed: f.seed ? String(f.seed) : null, fresh: !!f.fresh });
+  if (f.json) { console.log(JSON.stringify(r, null, 2)); return; }
+  console.log(`${name}'s sandbox is running at ${r.url}  (${r.seed === 'kept' ? 'data kept' : `seeded: ${r.seed}`}; code from ${r.source})`);
+  console.log(`  sign in as its human:  ${r.signIn}`);
+  console.log(`  talk to it as an agent: INTELLAGENT_URL=${r.url} intellagent brief`);
+  console.log('  standing agents never run in a sandbox; your real board is untouched.');
+  console.log(`  stop it: intellagent sandbox stop ${name}`);
+  if (f.open) openUrl(r.signIn);
+}
+
 const HELP = `intellagent — a kanban for you and your agents
 
   init [dir]       set up a board here, start it, open it   --template --name --prefix --port --agent (default claude)
@@ -662,6 +688,7 @@ const HELP = `intellagent — a kanban for you and your agents
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 
+  sandbox [NAME]   a throwaway board of your own, running any checkout (--from main|<agent>|<dir>, --seed demo|empty|snapshot, --fresh); sandbox list | stop NAME|--all
   leases           the machine's leases for heavy work — browsers, solves, timings (one per PC; every board shares it)
     status | machine | ask --holder N --cpu T --gpu MB --minutes M [--exclusive] | renew ID | done ID | ceiling | start | stop
 `;
@@ -672,6 +699,7 @@ const commands = {
   token: tokenCmd,
   project: projectCmd,
   link: linkCmd,
+  sandbox: sandboxCmd,
   // land an approved ticket's commits from its agent's worktree branch on main (when approval couldn't)
   merge: () => {
     const id = rest[0];

@@ -3695,6 +3695,7 @@ standing = require('./lib/agents').createAgents({
   stateFile: path.join(DATA, 'agents.state.json'),
   logDir: path.join(DATA, 'agent-runs'),
   cwd: PROJECT_ROOT,
+  noRuns: !!M.sandbox,
   env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
   emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
   pending: (name, def) => pendingWork(name, def.pickup === true ? 'ready' : def.pickup || false),
