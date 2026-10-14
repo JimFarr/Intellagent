@@ -96,6 +96,7 @@ PATCH /api/boards/main/items/INT-12    { "fields": { "risk": "high", "estimate":
 ```
 
 - Types: `text markdown number boolean enum tags date url user`. `number` accepts `min`/`max`; `enum`/`tags` take `options` (tags without options are free-form). `required` and `default` apply on create.
+- Tags with options, e.g. `POST …/schema/fields { "key": "area", "type": "tags", "options": ["server", "ui"] }`, then set it as a JSON array: `PATCH …/items/INT-12 { "fields": { "area": ["ui"] } }`.
 - `ui`: `edit` (humans can change it), `read` (humans see it but **only agents/API can change it**), `hidden` (API only).
 - `stub`: `none` | `top` (badge beside the id) | `meta` (chip in the card footer).
 - Built-ins (`type priority parent description blockedBy attachments cover properties`) take `{ ui, stub, label }`. `blockedBy` defaults to `ui: "read"`. Only the human changes them.
