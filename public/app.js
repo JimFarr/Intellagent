@@ -3555,7 +3555,7 @@
       const agents = who.filter(isAgentName), people = who.filter((n) => !isAgentName(n));
       return [agents.length && mark(e, agents), people.length && pill(e, people)].filter(Boolean);
     });
-    return `<div class="reacts ${compact ? 'compact' : ''}">${chips.join('')}${add ? `<button class="react add" data-react-add data-cid="${esc(cid)}" title="React|Add an emoji — agents see it, it never wakes them">${icon('smile')}</button>` : ''}</div>`;
+    return `<div class="reacts ${compact ? 'compact' : ''}">${chips.join('')}${add ? `<button class="react add" data-react-add data-cid="${esc(cid)}" title="React|Add an emoji — agents see it, it never wakes them">${icon('smile', 'sm')}</button>` : ''}</div>`;
   }
   function reactPicker(anchor, onPick) {
     $$('.react-pick').forEach((x) => x.remove());
