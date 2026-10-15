@@ -253,7 +253,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 /* card decorations (theme-driven: tape · pin · clip · corner · none) */
 /* Washi tape: translucent, a plain tint of its card's colour, with torn zigzag ends, laid on at a slight angle. */
 :root[data-tape="tape"] :is(.card, .group-head) .tape {
-  display: block; position: absolute; top: -9px; left: 50%; width: 62px; height: 19px; z-index: 3; translate: -50% 0; rotate: calc(-2.5deg + var(--tilt, 0deg) * -3);
+  display: block; position: absolute; top: -5px; left: 50%; width: 62px; height: 19px; z-index: 3; translate: -50% 0; rotate: calc(-2.5deg + var(--tilt, 0deg) * -3);
   background:
     linear-gradient(180deg, rgb(255 255 255 / .38), rgb(255 255 255 / .08) 55%, rgb(0 0 0 / .04)),
     color-mix(in oklab, var(--tape-c, var(--accent)) 26%, transparent);
@@ -421,7 +421,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
    other cards drop theirs. On a collapsed stack that single tape/pin/clip holds the whole pile together.
    (In the tab look the folder tab is the group's marker, so no card keeps one.) */
 .group .group-cards > .card:not(:first-child) .tape { display: none; }
-:root[data-tape="tape"] .group .group-cards > .card:first-child .tape { left: 50%; right: auto; top: -9px; width: 62px; translate: -50% 0; rotate: -2deg; }
+:root[data-tape="tape"] .group .group-cards > .card:first-child .tape { left: 50%; right: auto; top: -5px; width: 62px; translate: -50% 0; rotate: -2deg; }
 :root[data-tape="pin"] .group .group-cards > .card:first-child .tape { left: 50%; top: -8px; }
 :root[data-tape="clip"] .group .group-cards > .card:first-child .tape { left: 18px; right: auto; rotate: -10deg; }
 :root[data-tape="corner"] .group .group-cards > .card:first-child .tape { width: 22px; height: 22px; }
@@ -1477,12 +1477,13 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .reduced .fx-art { animation: none; }
 
 /* ───────── decoration placement varies per card (data-slot 0–3, --deco-x, --deco-r) ───────── */
-/* tape: centred strip · across the top-left corner · across the top-right corner · off-centre strip.
-   Corner strips stay within the card's width: the list clips sideways, so nothing may overhang its padding. */
-:root[data-tape="tape"] .card[data-slot="0"] .tape { left: var(--deco-x); rotate: calc(-2.5deg + var(--deco-r) * .4); }
-:root[data-tape="tape"] .card[data-slot="1"] .tape { left: 2px; top: 2px; width: 50px; translate: 0; rotate: -38deg; }
-:root[data-tape="tape"] .card[data-slot="2"] .tape { left: auto; right: 2px; top: 2px; width: 50px; translate: 0; rotate: 38deg; }
-:root[data-tape="tape"] .card[data-slot="3"] .tape { left: var(--deco-x); width: 46px; rotate: calc(4deg + var(--deco-r) * .5); }
+/* tape: always across the middle of the top edge, mostly on the card (INT-167). Slots differ only in width
+   and tilt, and drift at most 12px either side of centre, so no strip hangs off a corner or into the gap. */
+:root[data-tape="tape"] .card .tape { left: calc(50% + clamp(-12px, (var(--deco-x) - 50%) * .4, 12px)); }
+:root[data-tape="tape"] .card[data-slot="0"] .tape { rotate: calc(-2.5deg + var(--deco-r) * .15); }
+:root[data-tape="tape"] .card[data-slot="1"] .tape { width: 54px; rotate: calc(1.5deg + var(--deco-r) * .3); }
+:root[data-tape="tape"] .card[data-slot="2"] .tape { width: 58px; rotate: calc(-1deg + var(--deco-r) * .3); }
+:root[data-tape="tape"] .card[data-slot="3"] .tape { width: 46px; rotate: calc(2deg + var(--deco-r) * .3); }
 /* pin: anywhere along the top, sometimes a little lower */
 :root[data-tape="pin"] .card .tape { left: var(--deco-x); }
 :root[data-tape="pin"] .card[data-slot="3"] .tape { top: -3px; }
