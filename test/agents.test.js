@@ -31,6 +31,7 @@ describe('standing agents', () => {
           coord: { run: run('ok'), listen: 'human', enabled: false },
           calm: { run: run('ok'), throttleMinutes: 0.04 }, // 2.4 s window
           doomed: { run: run('slow', 800) }, // removed by a test
+          sleepy: { run: run('slow', 2500), stallMinutes: 0.01 }, // stalled after 0.6 s without a board call
         },
       },
     });
@@ -39,7 +40,7 @@ describe('standing agents', () => {
 
   it('lists agents from agents.json', async () => {
     const { agents } = await s.ok('GET', '/api/agents');
-    assert.deepEqual(agents.map((a) => a.name), ['bot', 'flaky', 'slowpoke', 'budget', 'coord', 'calm', 'doomed']);
+    assert.deepEqual(agents.map((a) => a.name), ['bot', 'flaky', 'slowpoke', 'budget', 'coord', 'calm', 'doomed', 'sleepy']);
     assert.equal(agents.find((a) => a.name === 'coord').status, 'paused');
   });
 
@@ -93,6 +94,25 @@ describe('standing agents', () => {
     await s.ok('DELETE', '/api/agents/doomed', undefined, USER);
     await until(async () => !(await find('@doomed two'))?.reactions?.['⏳'], 4000, 'hourglass taken back');
     assert.equal((await find('@doomed two')).reactionNotes, undefined);
+  });
+
+  it('a running agent shows its last activity, and is stalled after stallMinutes without any; the run keeps what it was woken for', async () => {
+    const it = await s.ok('POST', `${B}/items`, { title: 'stall test', column: 'Backlog' }, USER);
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@sleepy wake up' }, USER);
+    const live = await until(async () => { const a = await agentState(s, 'sleepy'); return a.status === 'running' ? a : null; }, 4000, 'sleepy running');
+    assert.ok(live.lastActivityAt >= live.runningSince, 'activity is at least the run start');
+    const stuck = await until(async () => { const a = await agentState(s, 'sleepy'); return a.stalled ? a : null; }, 2400, 'stalled');
+    assert.equal(stuck.status, 'running');
+    await s.ok('GET', `${B}/work`, undefined, { agent: 'sleepy' }); // a call to the board is a sign of life
+    assert.equal((await agentState(s, 'sleepy')).stalled, false);
+    const done = await until(async () => { const a = await agentState(s, 'sleepy'); return a.status === 'idle' ? a : null; }, 6000, 'sleepy idle');
+    assert.deepEqual([done.lastActivityAt, done.stalled], [null, false]);
+    assert.deepEqual(done.lastRun.about.comments, [it.id], 'the UI can tell where a run that ended was expected to answer');
+    assert.ok(done.lastRun.endedAt);
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@slowpoke still there?' }, USER);
+    const slow = await until(async () => { const a = await agentState(s, 'slowpoke'); return a.status === 'running' ? a : null; }, 4000, 'slowpoke running');
+    assert.equal(slow.stalled, false, 'the default stall window is minutes, not a second');
+    await until(async () => (await agentState(s, 'slowpoke')).status === 'idle', 6000, 'slowpoke idle');
   });
 
   it('retries a failing agent, then flags it and waits for the human', async () => {

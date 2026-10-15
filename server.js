@@ -4010,6 +4010,7 @@ standing = require('./lib/agents').createAgents({
   env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
   emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
   pending: (name, def) => pendingWork(name, def.pickup === true ? 'ready' : def.pickup || false),
+  lastSeen: (name) => presence.get(name)?.lastSeen || null, // a running agent's last call to the board (stalled runs)
   // A run starting means the agent has the comments in front of it: mark them seen with 👀.
   onRunStart: (name, events) => {
     for (const e of events) {
