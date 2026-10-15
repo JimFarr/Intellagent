@@ -12,7 +12,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/api.test.js test/agents.test.js test/flows.test.js test/agent-surface.test.js test/leases.test.js test/themes.test.js",
+    "test": "node --test test/api.test.js test/agents.test.js test/flows.test.js test/agent-surface.test.js test/leases.test.js test/themes.test.js test/markdown.test.js",
     "measure:mcp": "node scripts/measure-mcp.js",
     "eval": "node scripts/eval-agent-modes.js"
   },

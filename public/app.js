@@ -1993,20 +1993,24 @@
   /* ═════════════════════════ markdown ═════════════════════════ */
 
   const safeUrl = (u) => /^(https?:|\/|#|mailto:|blob:)/i.test(u) || /^data:image\//i.test(u);
+  const emphasis = (s) => s
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*\w])\*(?!\s)(.+?)\*(?!\w)/g, '$1<em>$2</em>')
+    .replace(/(^|[^\w])_(?!\s)(.+?)_(?!\w)/g, '$1<em>$2</em>')
+    .replace(/~~(.+?)~~/g, '<del>$1</del>');
   function inline(s) {
+    // \u0001 and \u0002 mark placeholders below; typed ones would pull in the wrong code span or tag
+    s = s.replace(/[\u0001\u0002]/g, '');
     const codes = [];
     s = s.replace(/`([^`]+)`/g, (_, c) => `\u0001${codes.push(c) - 1}\u0001`);
-    // finished tags wait behind \u0002n\u0002 so the ref and mention passes never see a URL or alt text
+    // finished tags wait behind \u0002n\u0002 so the ref and mention passes never see a URL or alt text; link text
+    // gets emphasis only, so a ticket id in it never becomes a link inside the link
     const tags = [];
     const keep = (html) => `\u0002${tags.push(html) - 1}\u0002`;
-    s = esc(s)
+    s = emphasis(esc(s)
       .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, a, u) => (safeUrl(u) ? keep(`<img alt="${a}" src="${u}" loading="lazy">`) : a))
-      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => (safeUrl(u) ? `${keep(`<a href="${u}" target="_blank" rel="noopener">`)}${t}${keep('</a>')}` : t))
-      .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, pre, u) => `${pre}${keep(`<a href="${u}" target="_blank" rel="noopener">${u}</a>`)}`)
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[^*\w])\*(?!\s)(.+?)\*(?!\w)/g, '$1<em>$2</em>')
-      .replace(/(^|[^\w])_(?!\s)(.+?)_(?!\w)/g, '$1<em>$2</em>')
-      .replace(/~~(.+?)~~/g, '<del>$1</del>')
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => (safeUrl(u) ? keep(`<a href="${u}" target="_blank" rel="noopener">${emphasis(t)}</a>`) : t))
+      .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, pre, u) => `${pre}${keep(`<a href="${u}" target="_blank" rel="noopener">${u}</a>`)}`))
       .replace(/(^|[^\w/-])([A-Z][A-Z0-9]{1,7}-\d+)\b/g, '$1<a class="ref" data-ref="$2">$2</a>')
       .replace(/(^|\s)@([\w.-]+)/g, '$1<span class="mention">@$2</span>');
     s = s.replace(/\u0002(\d+)\u0002/g, (_, n) => tags[n]);
