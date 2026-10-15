@@ -2724,6 +2724,52 @@ function touch(name, action) {
   checkPresence();
 }
 
+/* Leaseless status lines: what an agent's run is doing when it holds no ticket (triage, reviewing, answering a
+   request). Kept in memory only (a run's line means nothing after a restart) and only ever the caller's own.
+   agent.activity has no recipients and standing agents ignore agent.* events, so a line wakes nobody;
+   events are throttled to one per ACTIVITY_GAP_MS per agent, the newest line sent when the gap ends. */
+const activity = new Map(); // name → { line, items, at, sentAt, timer }
+const ACTIVITY_GAP_MS = 2000;
+function sendActivity(name) {
+  const a = activity.get(name);
+  if (!a) return;
+  clearTimeout(a.timer);
+  a.timer = null;
+  a.sentAt = Date.now();
+  emit({ type: 'agent.activity', actor: { kind: 'agent', name }, agent: name, line: a.line, items: a.items, recipients: [] });
+  if (!a.line) activity.delete(name);
+}
+function setActivity(actor, d) {
+  if (actor.kind !== 'agent') fail(403, 'Status lines are for agent runs; people show what they do on the tickets themselves', { code: 'FORBIDDEN' });
+  const line = str(d.status ?? d.line ?? '', 200).trim();
+  const items = [...new Set([].concat(d.items || []).map((x) => String(x).trim().toUpperCase()).filter((x) => /^[\w-]{1,40}$/.test(x)))].slice(0, 10);
+  const prev = activity.get(actor.name);
+  if (!line && !prev) return { agent: actor.name, line: null };
+  const a = prev || { sentAt: 0, timer: null };
+  Object.assign(a, { line: line || null, items: line ? items : [], at: now() });
+  activity.set(actor.name, a);
+  const wait = a.sentAt + ACTIVITY_GAP_MS - Date.now();
+  if (wait <= 0) sendActivity(actor.name);
+  else if (!a.timer) { a.timer = setTimeout(() => sendActivity(actor.name), wait); a.timer.unref?.(); }
+  return { agent: actor.name, line: a.line, items: a.items };
+}
+// The newest of an agent's own line and the lease status of a ticket it holds, since its run started.
+function activityOf(name, since) {
+  const own = activity.get(name);
+  let best = own?.line && own.at >= since ? { line: own.line, at: own.at } : null;
+  const items = own?.line && own.at >= since ? [...own.items] : [];
+  for (const ctx of boards.values()) {
+    for (const it of Object.values(ctx.board.items)) {
+      const l = activeLease(it);
+      if (l?.claimant !== name) continue;
+      items.push(it.id);
+      const at = l.statusAt || l.leasedAt;
+      if (l.status && at >= since && (!best || at > best.at)) best = { line: l.status, at };
+    }
+  }
+  return { line: best?.line || null, items };
+}
+
 function presenceDelta(name, key, d) {
   touch(name);
   const p = presence.get(name);
@@ -3625,7 +3671,7 @@ const controls = (actor, target) => {
   if (!grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
   if (String(target).toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent cannot pause, resume or run itself', { code: 'OWN_WORK' });
 };
-route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run', () => standing.list());
+route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run, now (what a live run is doing), history (last 10 runs). ?recent=N adds the N newest runs across all agents', ({ q }) => standing.list({ recent: Math.min(50, Math.max(0, Number(q.recent) || 0)) }));
 route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents', () => {
   const { ROLES, PERMS } = require('./lib/agents');
   return { roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: Object.fromEntries(Object.entries(PERMS).map(([k, v]) => [k, v.label])) };
@@ -3852,6 +3898,8 @@ route('GET', '/api/permissions/me', 'What you are allowed to do (from the manife
 }));
 route('GET', '/api/profiles', 'Display profiles (colour, glyph, image) for agents and users', () => profiles);
 route('GET', '/api/profiles/me', 'Your display profile', ({ actor }) => ({ name: actor.name, ...(profiles[actor.name] || {}) }));
+route('PUT', '/api/profiles/me/status', 'Agents: a live status line while you hold no lease (triage, reviewing, answering a request): { status ("" clears), items? }. Emits agent.activity, which wakes nobody; cleared when your run ends',
+  ({ body, actor }) => setActivity(actor, body));
 // A friendly generated name for agents that don't want to pick one ("leave blank").
 const NAME_ADJ = ['brisk', 'cosmic', 'dapper', 'fuzzy', 'gentle', 'jolly', 'lucky', 'mellow', 'nimble', 'plucky', 'quirky', 'sunny', 'tidy', 'witty', 'zesty', 'breezy', 'cheeky', 'daring', 'humble', 'snappy'];
 const NAME_NOUN = ['otter', 'heron', 'badger', 'lemur', 'puffin', 'gecko', 'walrus', 'panda', 'falcon', 'quokka', 'narwhal', 'koala', 'marmot', 'pangolin', 'axolotl', 'capybara', 'wombat', 'ibis', 'tapir', 'yak'];
@@ -4011,6 +4059,9 @@ standing = require('./lib/agents').createAgents({
   emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
   pending: (name, def) => pendingWork(name, def.pickup === true ? 'ready' : def.pickup || false),
   lastSeen: (name) => presence.get(name)?.lastSeen || null, // a running agent's last call to the board (stalled runs)
+  activityOf,
+  // a run's leaseless status line ends with it
+  onRunOver: (name) => { const a = activity.get(name); if (a?.line) { a.line = null; a.items = []; sendActivity(name); } },
   // A run starting means the agent has the comments in front of it: mark them seen with 👀.
   onRunStart: (name, events) => {
     for (const e of events) {

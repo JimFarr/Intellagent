@@ -324,6 +324,66 @@ describe('model tiers', () => {
   });
 });
 
+describe('what agents are doing', () => {
+  it('now: since, why, items and the newest status line; a leaseless line of your own that wakes nobody and ends with the run', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { sleepy2: { run: run('slow', 2500) }, watcher: { run: run('ok'), listen: { types: 'agent.activity' } } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'now test', column: 'Backlog' }, USER);
+      const { seq } = await s.ok('GET', '/api/app');
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@sleepy2 have a look' }, USER);
+      const a = await until(async () => { const x = await agentState(s, 'sleepy2'); return x.now ? x : null; }, 4000, 'running');
+      assert.deepEqual([a.now.since, a.now.why, a.now.items, a.now.line], [a.runningSince, 'comment.added', [it.id], null]);
+      const started = (await s.ok('GET', `/api/events?since=${seq}&types=agent.run.started`)).events.find((e) => e.agent === 'sleepy2');
+      assert.equal(started.why, 'comment.added', 'the live event says why');
+
+      assert.equal((await s.api('PUT', '/api/profiles/me/status', { status: 'x' }, USER)).status, 403, 'people have no run line');
+      await s.ok('PUT', '/api/profiles/me/status', { status: 'triaging', items: ['int-99'] }, { agent: 'sleepy2' });
+      await s.ok('PUT', '/api/profiles/me/status', { status: 'triaging 2/4' }, { agent: 'sleepy2' });
+      let now = (await agentState(s, 'sleepy2')).now;
+      assert.deepEqual([now.line, now.items], ['triaging 2/4', [it.id]], 'the newest line; items from the newest call');
+      const lines = await until(async () => {
+        const evs = (await s.ok('GET', `/api/events?since=${seq}&types=agent.activity`)).events;
+        return evs.length >= 2 ? evs : null;
+      }, 4000, 'throttled line arrives');
+      assert.deepEqual(lines.map((e) => e.line), ['triaging', 'triaging 2/4'], 'two quick lines: the first now, the newest after the gap');
+      assert.ok(lines.every((e) => !e.recipients.length && !e.addressed), 'agent.activity is for nobody');
+
+      // a ticket it holds: its lease status counts too, the newest one wins
+      await s.ok('POST', `${B}/items/${it.id}/lease`, { status: 'reading the diff' }, { agent: 'sleepy2' });
+      now = (await agentState(s, 'sleepy2')).now;
+      assert.equal(now.line, 'reading the diff');
+
+      const done = await until(async () => { const x = await agentState(s, 'sleepy2'); return x.status === 'idle' ? x : null; }, 8000, 'run over');
+      assert.equal(done.now, null);
+      assert.deepEqual(done.history.map((h) => [h.code, h.why, h.items]), [[0, 'comment.added', [it.id]]]);
+      const cleared = await until(async () => (await s.ok('GET', `/api/events?since=${seq}&types=agent.activity`)).events.find((e) => e.line === null), 3000, 'line cleared');
+      assert.equal(cleared.agent, 'sleepy2');
+      const w = await agentState(s, 'watcher');
+      assert.deepEqual([w.history.length, w.queued], [0, 0], 'even an agent listening for agent.activity is never woken by it');
+
+      const { recent } = await s.ok('GET', '/api/agents?recent=10');
+      assert.deepEqual(recent[0].agent, 'sleepy2', 'newest run first, across agents');
+      assert.equal((await s.ok('GET', '/api/agents')).recent, undefined, 'only when asked');
+    } finally { await s.stop(); }
+  });
+
+  it('keeps the last 10 runs per agent', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { busybee: { run: run('ok') } } } });
+    try {
+      const starts = [];
+      for (let i = 0; i < 11; i++) {
+        const before = (await agentState(s, 'busybee')).lastRun?.startedAt;
+        await s.ok('POST', '/api/agents/busybee/run', {}, USER);
+        const a = await until(async () => { const x = await agentState(s, 'busybee'); return x.lastRun?.endedAt && x.lastRun.startedAt !== before ? x : null; }, 6000, `run ${i + 1}`);
+        starts.push(a.lastRun.startedAt);
+      }
+      const h = (await agentState(s, 'busybee')).history;
+      assert.deepEqual(h.map((x) => x.startedAt), starts.slice(1), 'the 10 newest, the first run dropped');
+      assert.ok(h.every((x, i) => !i || x.startedAt >= h[i - 1].startedAt), 'oldest first');
+    } finally { await s.stop(); }
+  });
+});
+
 describe('keep-alive standing agents', () => {
   it('one process serves several wakes as turns, is recycled after recycleAfterRuns, restarts after a crash and stops on pause', async () => {
     const marker = path.join(require('os').tmpdir(), `ia-crash-${Date.now()}`);
@@ -529,6 +589,7 @@ describe('token usage', () => {
       m = await agentState(s, 'metered');
       assert.equal(m.usageToday.input, 240, 'survives a board restart');
       assert.equal(m.lastRun.usage.output, 30);
+      assert.equal(m.history.length, 2, 'run history survives a board restart');
     } finally { await s.stop(); }
   });
 });

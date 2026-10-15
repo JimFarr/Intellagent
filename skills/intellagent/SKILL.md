@@ -21,6 +21,7 @@ You are `INTELLAGENT_AGENT` (or the project's default agent). Run commands bare 
 | Read a ticket | `get_item` | `intellagent do get_item id=INT-12` |
 | **Claim before you work** (lease + working column + assignee) | `start_work` | `intellagent do start_work id=INT-12 status="reading the code"` |
 | Say what you're doing (live on the card) | `set_status` | `intellagent do set_status id=INT-12 status="running tests"` |
+| …while you hold no ticket (triage, review) | `set_activity` | `intellagent do set_activity status="triaging 4 new tickets"` |
 | Comment (@name notifies) | `add_comment` | `intellagent do add_comment id=INT-12 body="…"` |
 | Unsure? Ask, then wait for the answer | `ask_human` → `wait_for_events` | `intellagent do ask_human id=INT-12 reason="…"` → `intellagent wait --timeout 120` (prints what arrived for you, the answer included; exit 2 if nothing came) |
 | **Done: request review, with evidence** | `request_review` | `intellagent do request_review id=INT-12 changed="…" why="…" verify="…" evidence="…" risks="…"` |
@@ -61,4 +62,4 @@ Allow just this, nothing broader:
 ```json
 { "permissions": { "allow": ["Bash(intellagent *)", "mcp__intellagent__get_briefing", "mcp__intellagent__get_my_work", "mcp__intellagent__get_item", "mcp__intellagent__start_work", "mcp__intellagent__set_status", "mcp__intellagent__add_comment", "mcp__intellagent__ask_human", "mcp__intellagent__request_review", "mcp__intellagent__wait_for_events", "mcp__intellagent__finish_session"] } }
 ```
-`mcp__intellagent` alone allows every tool the server lists. The server lists only the core by default (`INTELLAGENT_MCP_PROFILE=full` for all 54; `INTELLAGENT_MCP_TOOLS=a,b` for your own set).
+`mcp__intellagent` alone allows every tool the server lists. The server lists only the core by default (`INTELLAGENT_MCP_PROFILE=full` for all 55; `INTELLAGENT_MCP_TOOLS=a,b` for your own set).
