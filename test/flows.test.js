@@ -834,3 +834,24 @@ describe('a sleeping column: work waits there until the human (or the coordinato
     assert.equal(r.body.code, 'SLEEPING');
   });
 });
+
+describe('schema', () => {
+  it('lists every event type the code emits, so agents can trust it', async () => {
+    const fs = require('fs');
+    const path = require('path');
+    const s = await startServer();
+    try {
+      const r = await s.api('GET', '/api/schema');
+      const listed = new Set(r.body.event.type);
+      const root = path.join(__dirname, '..');
+      const files = ['server.js', ...fs.readdirSync(path.join(root, 'lib')).filter((f) => f.endsWith('.js')).map((f) => `lib/${f}`)];
+      const emitted = new Set();
+      for (const f of files) {
+        for (const m of fs.readFileSync(path.join(root, f), 'utf8').matchAll(/(?:itemEvent\([^,()]+,\s*|\btype:\s*)'([a-z]+\.[a-z_.]+)'/g)) emitted.add(m[1]);
+      }
+      assert.ok(emitted.size > 30, 'the scan finds the emitters');
+      const missing = [...emitted].filter((t) => !listed.has(t));
+      assert.deepEqual(missing, [], 'emitted but not in GET /api/schema event.type');
+    } finally { await s.stop(); }
+  });
+});
