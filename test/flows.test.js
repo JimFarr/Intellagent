@@ -847,9 +847,22 @@ describe('schema', () => {
       const files = ['server.js', ...fs.readdirSync(path.join(root, 'lib')).filter((f) => f.endsWith('.js')).map((f) => `lib/${f}`)];
       const emitted = new Set();
       for (const f of files) {
-        for (const m of fs.readFileSync(path.join(root, f), 'utf8').matchAll(/(?:itemEvent\([^,()]+,\s*|\btype:\s*)'([a-z]+\.[a-z_.]+)'/g)) emitted.add(m[1]);
+        const src = fs.readFileSync(path.join(root, f), 'utf8');
+        for (const m of src.matchAll(/\btype:\s*'([a-z]+\.[a-z_.]+)'/g)) emitted.add(m[1]);
+        // itemEvent(ctx, <type>, …): the type is the second argument, a literal or a ternary with a literal in each arm
+        for (const m of src.matchAll(/itemEvent\(/g)) {
+          let depth = 0, commas = 0, from = 0, i = m.index + m[0].length;
+          for (; i < src.length; i++) {
+            const c = src[i];
+            if ('([{'.includes(c)) depth++;
+            else if (')]}'.includes(c)) { if (!depth) break; depth--; }
+            else if (c === ',' && !depth) { if (++commas === 1) from = i + 1; else break; }
+          }
+          for (const q of src.slice(from, i).matchAll(/'([a-z]+\.[a-z_.]+)'/g)) emitted.add(q[1]);
+        }
       }
       assert.ok(emitted.size > 30, 'the scan finds the emitters');
+      assert.ok(emitted.has('lease.renewed') && emitted.has('item.land_failed'), 'and the types that appear only in a ternary');
       const missing = [...emitted].filter((t) => !listed.has(t));
       assert.deepEqual(missing, [], 'emitted but not in GET /api/schema event.type');
     } finally { await s.stop(); }
