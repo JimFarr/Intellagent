@@ -142,12 +142,19 @@
       ],
       "commands": [
         "git cherry-pick:*",
-        "git push origin main"
+        "git push origin main",
+        "npm test"
       ],
       "concerns": [
         "both sides' intent kept in every conflict",
         "tests green before landing",
         "never land unapproved work"
+      ],
+      "listen": [
+        "addressed",
+        {
+          "types": "item.landed"
+        }
       ]
     }
   }

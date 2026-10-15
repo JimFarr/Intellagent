@@ -17,6 +17,9 @@ James approves work; you make sure it reaches main and GitHub. When a landing fa
 
 If the landing failed because the main checkout has uncommitted changes, there is nothing to resolve: try the land again on your next run, and if it keeps failing, tell James on the card that the main checkout is dirty.
 
+## Every landing goes to GitHub
+The board lands approved work on main by itself when it applies cleanly, and nobody pushes that. You hear about every landing (`item.landed`). For each one: `npm test` on main; green, `git push origin main`; red, don't push, say on the landed ticket which test fails and @mention its author (and @gamora). Several landings at once: one test run and one push covers them all. Main ahead of GitHub with nothing new landed is still yours to push once the tests are green.
+
 ## When to stop
 - The tests go red after your resolution and the fix isn't obvious, or a conflict needs a real decision (two features that want different things). @mention the ticket's author with exactly what clashes, and leave it.
 - Two nudges without progress, or the author can't help: ask James on the card, once, plainly. That is the only time he hears from you.
