@@ -973,10 +973,24 @@ describe('lib/jsonfile: the one JSON file reader and writer (INT-148)', () => {
     assert.deepEqual(fs.readdirSync(path.dirname(f)), ['out.json']);
   });
 
+  it('a broken agents.json answers 409 CONFLICT with a hint and is left as it was', async () => {
+    const s = await startServer({ agents: { agents: { w: { enabled: false, role: 'builder' } } } });
+    try {
+      const file = path.join(s.dir, 'agents.json');
+      fs.writeFileSync(file, '{"agents": {');
+      const r = await s.api('PATCH', '/api/agents/w', { model: 'haiku' }, USER);
+      assert.equal(r.status, 409, JSON.stringify(r.body));
+      assert.equal(r.body.code, 'CONFLICT');
+      assert.match(r.body.hint, /does not parse/);
+      assert.equal(fs.readFileSync(file, 'utf8'), '{"agents": {', 'the broken file is not written over');
+    } finally { await s.stop(); }
+  });
+
   it('no hand-written BOM strip is left outside the helper', () => {
     const root = path.join(__dirname, '..');
     for (const f of ['server.js', 'mcp.js', 'bin/intellagent.js', 'lib/agents.js', 'lib/locate.js', 'lib/sandbox.js']) {
-      assert.ok(!/feff/i.test(fs.readFileSync(path.join(root, f), 'utf8')), `${f} strips a BOM by hand`);
+      // the text "feff" (an escape) and the bare character itself
+      assert.ok(!/feff|﻿/i.test(fs.readFileSync(path.join(root, f), 'utf8')), `${f} strips a BOM by hand`);
     }
   });
 });
