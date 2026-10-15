@@ -942,3 +942,41 @@ describe('schema', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('lib/jsonfile: the one JSON file reader and writer (INT-148)', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const jsonfile = require('../lib/jsonfile');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-json-'));
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('reads a file with a byte-order mark, and a missing one gives the fallback only when asked', () => {
+    const f = path.join(dir, 'bom.json');
+    fs.writeFileSync(f, '﻿{"a":1}');
+    assert.deepEqual(jsonfile.read(f), { a: 1 });
+    assert.deepEqual(jsonfile.read(path.join(dir, 'none.json'), { agents: {} }), { agents: {} });
+    assert.throws(() => jsonfile.read(path.join(dir, 'none.json')), { code: 'ENOENT' });
+  });
+
+  it('a broken file is an error, never the fallback; readOr is the lenient one', () => {
+    const f = path.join(dir, 'broken.json');
+    fs.writeFileSync(f, '{"a":');
+    assert.throws(() => jsonfile.read(f, { agents: {} }), SyntaxError);
+    assert.equal(jsonfile.readOr(f, 'dflt'), 'dflt');
+  });
+
+  it('writeAtomic leaves no temp file and reads back through read', () => {
+    const f = path.join(dir, 'sub', 'out.json');
+    jsonfile.writeAtomic(f, { b: [1, 2] });
+    assert.deepEqual(jsonfile.read(f), { b: [1, 2] });
+    assert.deepEqual(fs.readdirSync(path.dirname(f)), ['out.json']);
+  });
+
+  it('no hand-written BOM strip is left outside the helper', () => {
+    const root = path.join(__dirname, '..');
+    for (const f of ['server.js', 'mcp.js', 'bin/intellagent.js', 'lib/agents.js', 'lib/locate.js', 'lib/sandbox.js']) {
+      assert.ok(!/feff/i.test(fs.readFileSync(path.join(root, f), 'utf8')), `${f} strips a BOM by hand`);
+    }
+  });
+});

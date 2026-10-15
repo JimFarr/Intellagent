@@ -24,6 +24,7 @@ const os = require('os');
 const { findManifest, readManifest, baseUrl, defaultAgent, userToken, projectOf, readLocal, NO_BOARD } = require('../lib/locate');
 const crypto = require('crypto');
 const TEMPLATES = require('../lib/templates');
+const jsonfile = require('../lib/jsonfile');
 
 const ROOT = path.join(__dirname, '..');
 // --url <address> and --as <name> anywhere on the line: the board to talk to and who you are, like
@@ -112,7 +113,7 @@ async function init() {
   if (!f['no-mcp']) {
     const mcpPath = path.join(dir, '.mcp.json');
     let mcp = {};
-    try { mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf8')); } catch { /* new file */ }
+    try { mcp = jsonfile.read(mcpPath); } catch { /* new file */ }
     mcp.mcpServers = mcp.mcpServers || {};
     mcp.mcpServers.intellagent = { command: 'node', args: [path.join(ROOT, 'mcp.js').replace(/\\/g, '/')] };
     fs.writeFileSync(mcpPath, `${JSON.stringify(mcp, null, 2)}\n`);
@@ -200,7 +201,7 @@ function projectCmd() {
   if (!target) { console.log(projectOf(mp)); return; }
   const abs = path.resolve(String(target));
   if (!fs.existsSync(abs)) { console.error(`No such folder: ${abs}`); process.exit(2); }
-  const raw = JSON.parse(fs.readFileSync(mp, 'utf8').replace(/^\uFEFF/, ''));
+  const raw = jsonfile.read(mp);
   raw.projectRoot = abs;
   fs.writeFileSync(mp, `${JSON.stringify(raw, null, 2)}\n`);
   console.log(`This board's agents now work on ${abs}.`);
@@ -357,7 +358,7 @@ async function nextEvents({ agent, types, timeoutSec, quiet, listen = { scope: '
   const file = mp ? cursorPath(mp, agent, listen.scope)
     : path.join(os.tmpdir(), 'intellagent-cursors', `${crypto.createHash('sha1').update(url).digest('hex').slice(0, 10)}-${String(agent).replace(/[^\w.-]+/g, '_')}${listen.scope ? `-${listen.scope}` : ''}.json`);
   let since = null;
-  try { since = JSON.parse(fs.readFileSync(file, 'utf8')).cursor; } catch { /* first run */ }
+  try { since = jsonfile.read(file).cursor; } catch { /* first run */ }
   const get = async (p) => (await require('../lib/request').send('GET', p, undefined, { agent, base: url })).json;
   if (since == null) {
     // First wait: start right after this agent's own last action, so an answer that arrived between
@@ -449,7 +450,7 @@ async function watchCmd() {
 
 const agentsFile = (mp) => path.join(path.dirname(mp), readManifest(mp)?.agentsFile || 'agents.json');
 function readAgents(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch { return { defaults: {}, agents: {} }; }
+  return jsonfile.readOr(file, { defaults: {}, agents: {} });
 }
 
 // Who is running this, if it is an agent ('' for the human). The board sets INTELLAGENT_AGENT (and the run) for

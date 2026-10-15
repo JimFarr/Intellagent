@@ -11,6 +11,7 @@
 
 const { baseUrl, defaultAgent, findManifest, NO_BOARD } = require('./lib/locate');
 const request = require('./lib/request');
+const jsonfile = require('./lib/jsonfile');
 const fs = require('fs');
 const nodePath = require('path');
 
@@ -21,13 +22,13 @@ let AGENT = process.env.INTELLAGENT_AGENT || defaultAgent() || 'mcp-agent';
 let CLIENT = 'default';
 // The name an agent chose when it introduced itself is remembered per MCP client, so it keeps it next session.
 const identityFile = () => { const mp = findManifest(); return mp ? nodePath.join(nodePath.dirname(mp), 'cursors', 'mcp-identity.json') : null; };
-function savedIdentity() { try { return JSON.parse(fs.readFileSync(identityFile(), 'utf8'))[CLIENT] || null; } catch { return null; } }
+function savedIdentity() { try { return jsonfile.read(identityFile())[CLIENT] || null; } catch { return null; } }
 function setAgent(name) {
   AGENT = name;
   const f = identityFile();
   if (!f || process.env.INTELLAGENT_AGENT) return;
   let m = {};
-  try { m = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* new */ }
+  try { m = jsonfile.read(f); } catch { /* new */ }
   m[CLIENT] = name;
   fs.mkdirSync(nodePath.dirname(f), { recursive: true });
   fs.writeFileSync(f, JSON.stringify(m, null, 2));

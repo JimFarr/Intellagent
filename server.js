@@ -23,6 +23,7 @@ const PUBLIC = path.join(ROOT, 'public');
 const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join(ROOT, 'intellagent.manifest.json'));
 const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
 const { readLocal } = require('./lib/locate');
+const jsonfile = require('./lib/jsonfile');
 const MANIFEST_DEFAULTS = {
   appName: 'Intellagent',
   host: '127.0.0.1',
@@ -46,7 +47,7 @@ const MANIFEST_DEFAULTS = {
 
 function loadManifest() {
   let m = {};
-  if (fs.existsSync(MANIFEST_PATH)) m = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
+  if (fs.existsSync(MANIFEST_PATH)) m = jsonfile.read(MANIFEST_PATH);
   else fs.writeFileSync(MANIFEST_PATH, JSON.stringify(MANIFEST_DEFAULTS, null, 2));
   const merged = {
     ...MANIFEST_DEFAULTS, ...m,
@@ -115,7 +116,7 @@ function writeFileAtomic(file, text, readonly = M.readonlyData) {
 }
 
 function readJson(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+  return jsonfile.readOr(file, fallback);
 }
 
 /* ───────────────────────── domain constants ───────────────────────── */
@@ -315,7 +316,7 @@ if (!fs.existsSync(APP_FILE)) saveApp();
 // The board's code is Intellagent itself (not a sandbox): its tickets' branches can run as a preview board.
 // (Worked out on first use: PROJECT_ROOT is declared further down.)
 let previewOk = null;
-const previewable = () => (previewOk ??= !M.sandbox && (() => { try { return JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8')).name === 'intellagent' && fs.existsSync(path.join(PROJECT_ROOT, 'server.js')); } catch { return false; } })());
+const previewable = () => (previewOk ??= !M.sandbox && (() => { try { return jsonfile.read(path.join(PROJECT_ROOT, 'package.json')).name === 'intellagent' && fs.existsSync(path.join(PROJECT_ROOT, 'server.js')); } catch { return false; } })());
 const appInfo = () => ({
   name: app.name, version: VERSION, build: BUILD, defaultBoard: M.defaultBoard,
   lease: M.lease, serverTime: now(), seq, preview: previewable(),
