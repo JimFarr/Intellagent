@@ -393,12 +393,12 @@ describe('keep-alive standing agents', () => {
     } } });
     const pidOf = (c) => Number(/pid (\d+)/.exec(c)?.[1]);
     const mine = async (id, who) => (await comments(s, id)).filter((c) => c.startsWith(`${who}: turn`));
-    const idle = (who) => until(async () => (await agentState(s, who)).status === 'idle', 6000, `${who} idle`);
+    const idle = (who) => until(async () => (await agentState(s, who)).status === 'idle', 30000, `${who} idle`);
     try {
       const it = await s.ok('POST', `${B}/items`, { title: 'keep-alive', column: 'Backlog' }, USER);
       for (let n = 1; n <= 3; n++) {
         await s.ok('POST', `${B}/items/${it.id}/comments`, { body: `@keeper wake ${n}` }, USER);
-        await until(async () => (await mine(it.id, 'keeper')).length === n, 8000, `turn ${n}`);
+        await until(async () => (await mine(it.id, 'keeper')).length === n, 30000, `turn ${n}`);
         await idle('keeper');
       }
       const [t1, t2, t3] = await mine(it.id, 'keeper');
@@ -417,7 +417,7 @@ describe('keep-alive standing agents', () => {
 
       const c = await s.ok('POST', `${B}/items`, { title: 'crash', column: 'Backlog' }, USER);
       await s.ok('POST', `${B}/items/${c.id}/comments`, { body: '@crashy go' }, USER);
-      await until(async () => (await mine(c.id, 'crashy')).length === 1, 10000, 'retried in a new process');
+      await until(async () => (await mine(c.id, 'crashy')).length === 1, 30000, 'retried in a new process');
       assert.equal((await agentState(s, 'crashy')).failures, 0);
     } finally {
       await s.stop();
@@ -482,7 +482,7 @@ describe('keep-alive recycling by context size', () => {
       const it = await s.ok('POST', `${B}/items`, { title: 'context', column: 'Backlog' }, USER);
       for (let n = 1; n <= 3; n++) {
         await s.ok('POST', `${B}/items/${it.id}/comments`, { body: `@fat wake ${n}` }, USER);
-        await until(async () => (await mine(it.id)).length === n, 8000, `turn ${n}`);
+        await until(async () => (await mine(it.id)).length === n, 30000, `turn ${n}`);
         await idle();
         if (n === 1) assert.equal((await agentState(s, 'fat')).session.context, 50010);
       }

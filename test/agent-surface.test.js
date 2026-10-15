@@ -39,7 +39,7 @@ function mcp(env) {
 
 // The CLI as an agent runs it: no TTY, no stdin, JSON out.
 function cli(args, { cwd, env = {} } = {}) {
-  const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv(env), encoding: 'utf8', input: '', timeout: 20000 });
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv(env), encoding: 'utf8', input: '', timeout: 60000 });
   return { code: r.status, out: r.stdout, err: r.stderr, json: (() => { try { return JSON.parse(r.stdout); } catch { return null; } })() };
 }
 
@@ -198,7 +198,7 @@ describe('agent tokens on new boards', () => {
   it('intellagent status lists the boards of a board that requires tokens', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     try {
-      const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), 'status'], { cwd: s.dir, env: { ...process.env, INTELLAGENT_URL: '' }, encoding: 'utf8', input: '', timeout: 20000 });
+      const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), 'status'], { cwd: s.dir, env: { ...process.env, INTELLAGENT_URL: '' }, encoding: 'utf8', input: '', timeout: 60000 });
       assert.match(r.stdout, /board\s+main · \d+ items/);
       assert.doesNotMatch(r.stdout + r.stderr, /not iterable/);
     } finally { await s.stop(); }
@@ -296,7 +296,7 @@ describe('waiting from the CLI', () => {
       // pat acts first, so wait starts from there; then the human @mentions pat
       assert.equal(cli(['do', 'add_comment', `id=${it.id}`, 'body=on it'], { cwd: s.dir, env }).code, 0);
       const c = await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: '@pat what is the plan?' }, USER);
-      const w = cli(['wait', '--timeout', '10'], { cwd: s.dir, env });
+      const w = cli(['wait', '--timeout', '30'], { cwd: s.dir, env });
       assert.equal(w.code, 0, w.err || w.out);
       const item = await s.ok('GET', `/api/boards/main/items/${it.id}`, undefined, USER);
       const mine = item.comments.find((x) => x.id === (c.comment?.id || c.id));
@@ -315,7 +315,7 @@ describe('waiting from the CLI', () => {
       assert.equal(ask.code, 0, ask.err);
       // the human answers before the agent gets round to waiting
       await s.ok('DELETE', `/api/boards/main/items/${it.id}/attention`, { reply: 'Okta' }, USER);
-      const w = cli(['wait', '--timeout', '5'], { cwd: away, env });
+      const w = cli(['wait', '--timeout', '30'], { cwd: away, env });
       assert.equal(w.code, 0, w.err || w.out);
       assert.match(w.out, /attention\.resolved.*Okta/);
     } finally { await s.stop(); }

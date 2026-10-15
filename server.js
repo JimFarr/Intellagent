@@ -4083,6 +4083,9 @@ function manageAgent(target, d, actor) {
   const cfg = {};
   if ('role' in d) {
     if (d.role != null && !require('./lib/agents').ROLES[d.role]) fail(400, `Unknown role "${d.role}". Roles: ${Object.keys(require('./lib/agents').ROLES).join(', ')}`);
+    if (agent && (d.role === 'coordinator' || a.role === 'coordinator') && d.role !== a.role) {
+      fail(403, 'The coordinator role is the human\'s to give or take', { code: 'HUMAN_ONLY', hint: 'Ask the human on a card' });
+    }
     cfg.role = d.role || null;
   }
   if ('description' in d) cfg.description = d.description ? str(d.description, 2000) : null;
@@ -4103,6 +4106,13 @@ function manageAgent(target, d, actor) {
     const tools = next || ROLES[('role' in cfg ? cfg.role : a.role) || '']?.perms || null;
     if (agent && (tools ? tools.some((k) => !now.includes(k)) : a.perms != null)) fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}`, { code: 'WIDEN' });
     cfg.perms = next;
+  } else if (agent && 'role' in cfg && a.permsFrom !== 'own') {
+    // its tools come from its role, so a new role is a new set of tools: it may only narrow them
+    const tools = require('./lib/agents').ROLES[cfg.role || '']?.perms || null;
+    const now = a.perms || [];
+    if (tools ? tools.some((k) => !now.includes(k)) : a.perms != null) {
+      fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}, and that role brings ${(tools || []).join(', ') || 'the default run'}`, { code: 'WIDEN', hint: 'Send "perms" with the role to pin its tools to what it has now, or leave it to the human' });
+    }
   }
   if ('permissions' in d) {
     const p = d.permissions || {};
