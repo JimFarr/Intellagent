@@ -896,6 +896,66 @@ describe('per-agent git worktrees', () => {
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
     }
   });
+  it('a conflict the agent resolved by merging main lands by merge; never with another ticket\'s commits', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const { createWorktrees } = require('../lib/worktrees');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-wt-'));
+    const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const write = (cwd, file, text) => fs.writeFileSync(path.join(cwd, file), text);
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 'test@example.com');
+    git(dir, 'config', 'user.name', 'Test');
+    git(dir, 'config', 'core.autocrlf', 'false');
+    write(dir, '.gitignore', '.worktrees/\n');
+    write(dir, 'f.txt', 'start\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'init');
+    const wt = createWorktrees({ root: dir, dir: path.join(dir, '.worktrees') });
+    // ann changes f.txt, main changes the same line, ann merges main and resolves the conflict
+    const setup = (name, id) => {
+      const { path: p } = wt.ensure(name);
+      write(p, 'f.txt', `${name}\n`);
+      git(p, 'commit', '-q', '-am', `${name} edits f (${id})`);
+      return p;
+    };
+    try {
+      const ann = setup('ann', 'T-1');
+      write(dir, 'f.txt', 'main\n');
+      git(dir, 'commit', '-q', '-am', 'main edits f');
+      assert.throws(() => git(ann, 'merge', 'main'));
+      write(ann, 'f.txt', 'ann+main\n');
+      git(ann, 'commit', '-q', '-am', 'merge main, keep both');
+      // a second ticket's commit on the same branch: merging would drag it onto main, so nothing lands
+      write(ann, 'g.txt', 'other\n');
+      git(ann, 'add', 'g.txt');
+      git(ann, 'commit', '-q', '-m', 'other work (T-2)');
+      const head = git(dir, 'rev-parse', 'HEAD');
+      const refused = wt.land('ann', 'T-1');
+      assert.equal(refused.landed.length, 0);
+      assert.match(refused.reason, /doesn't apply cleanly to main, and agent\/ann has 1 commit\(s\) for other tickets/);
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'main is where it was');
+      assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=no'), '', 'and clean');
+      // without the other ticket's commit, the merge lands with ann's resolution
+      git(ann, 'reset', '-q', '--hard', 'HEAD~1');
+      const r = wt.land('ann', 'T-1');
+      assert.equal(r.via, 'merge');
+      assert.equal(r.landed.length, 1);
+      assert.equal(git(dir, 'show', 'main:f.txt'), 'ann+main', 'the resolution is on main');
+      assert.match(git(dir, 'log', '-1', '--format=%s'), /^Land T-1 from agent\/ann$/);
+      assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=no'), '');
+      assert.equal(wt.commitsFor('ann', 'T-1').length, 0, 'nothing left to land');
+      // a plain ticket still lands by cherry-pick
+      const bob = wt.ensure('bob').path;
+      write(bob, 'h.txt', 'bob\n');
+      git(bob, 'add', 'h.txt');
+      git(bob, 'commit', '-q', '-m', 'bob adds h (T-3)');
+      assert.equal(wt.land('bob', 'T-3').via, 'cherry-pick');
+    } finally {
+      try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
+    }
+  });
   it('a side branch open in the main checkout is neither where work lands nor what agents catch up with', async () => {
     const fs = require('fs');
     const os = require('os');

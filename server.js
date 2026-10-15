@@ -1838,12 +1838,12 @@ function landWork(ctx, item, agent, actor, events) {
   const waiting = !r.landed.length && !!r.commits?.length;
   const lands = waiting ? landers().filter((n) => n !== actor.name) : [];
   const body = r.landed.length
-    ? `⤵ Landed on ${r.branch || 'main'}: ${r.landed.map((x) => `\`${x}\``).join(', ')} from \`agent/${agent}\`.`
+    ? `⤵ Landed on ${r.branch || 'main'}: ${r.landed.map((x) => `\`${x}\``).join(', ')} from \`agent/${agent}\`${r.via === 'merge' ? ` by merge commit \`${r.merge}\` (a cherry-pick conflicted; the merge keeps the branch's own conflict resolution)` : ''}.`
     : `⚠ Not landed: ${r.reason}.${waiting ? (lands.length ? ` ${lands.map((n) => `@${n}`).join(' ')} will land it.` : ` When that's sorted${r.hint ? ` (${r.hint})` : ''}, run \`${r.command}\`.`) : ''}`;
   item.comments.push({ id: rid('c'), author: SYSTEM, body, createdAt: now() });
   item.landing = r.landed.length ? { state: 'landed', commits: r.landed, from: agent, at: now() }
     : waiting ? { state: 'failed', reason: r.reason, from: agent, at: now() } : { state: 'nothing', reason: r.reason, at: now() };
-  events.push(itemEvent(ctx, r.landed.length ? 'item.landed' : 'item.land_failed', item, actor, { agent, landed: r.landed, ...(r.reason ? { reason: r.reason } : {}), ...(r.code ? { code: r.code } : {}), mentions: [agent, ...lands] }));
+  events.push(itemEvent(ctx, r.landed.length ? 'item.landed' : 'item.land_failed', item, actor, { agent, landed: r.landed, ...(r.via ? { via: r.via } : {}), ...(r.reason ? { reason: r.reason } : {}), ...(r.code ? { code: r.code } : {}), mentions: [agent, ...lands] }));
   return r;
 }
 
