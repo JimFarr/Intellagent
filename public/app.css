@@ -1684,11 +1684,10 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .lease-box .ring.run-ring .avatar { font-size: 9px; }
 .ring.run-ring svg { display: none; }
 .ring.run-ring > i { right: -2px; bottom: -2px; width: 10px; height: 10px; font-size: 7.5px; }
-.reduced .run-ring::before { animation: none; }
-.reduced .run-ring[data-ring="run"]::before { border-top-color: var(--ring); border-style: dashed; }
+/* still and dashed under reduced motion; same selector as the spin above, so it wins on specificity, not order */
+.reduced .run-ring[data-ring="run"]::before { animation: none; border-top-color: var(--ring); border-style: dashed; }
 @media (prefers-reduced-motion: reduce) {
-  .run-ring::before { animation: none; }
-  .run-ring[data-ring="run"]::before { border-top-color: var(--ring); border-style: dashed; }
+  .run-ring[data-ring="run"]::before { animation: none; border-top-color: var(--ring); border-style: dashed; }
 }
 /* the awake strip: who is running, waiting or failed, beside the Ask field */
 .topbar > .awake { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
