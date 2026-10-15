@@ -4951,7 +4951,8 @@
       for (const r of $$('input[type="range"]', pane)) paintRange(r);
       wirePane(t, pane, show);
     };
-    $$('.set-nav button', root).forEach((b) => { b.onclick = () => show(b.dataset.tab); });
+    // Re-clicking the open tab does nothing: no re-render, scroll kept (INT-197)
+    $$('.set-nav button', root).forEach((b) => { b.onclick = () => { if (b.dataset.tab !== m.tab) show(b.dataset.tab); }; });
     // Live data (schema, profiles) changed elsewhere: redraw quietly unless the user is typing in the pane.
     m.refresh = () => {
       const typing = pane.contains(document.activeElement) && document.activeElement.matches('input, textarea');
