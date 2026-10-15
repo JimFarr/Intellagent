@@ -1247,6 +1247,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .standing-ctl .run-state[data-run="queued"], .standing-ctl .run-state[data-run="retrying"], .standing-ctl .run-state[data-run="throttled"] { color: #f2a541; }
 .standing-meta { font: 11.5px var(--mono); color: var(--muted); margin-top: 6px; }
 .run-log { margin: 0; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; background: var(--hover); border-radius: 12px; padding: 12px; max-height: calc(100vh - 140px); overflow: auto; }
+.reduced .avatar[data-run="running"]::after { animation: none; }
 @media (prefers-reduced-motion: reduce) { .avatar[data-run="running"]::after { animation: none; } }
 
 /* settings: labelled rows of equal-width choices */
