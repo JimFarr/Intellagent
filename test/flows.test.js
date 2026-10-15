@@ -986,6 +986,12 @@ describe('lib/jsonfile: the one JSON file reader and writer (INT-148)', () => {
     } finally { await s.stop(); }
   });
 
+  it('the helper tests the BOM by its number and holds no bare BOM character', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'jsonfile.js'), 'utf8');
+    assert.ok(!src.includes(String.fromCharCode(0xfeff)), 'lib/jsonfile.js holds the invisible character');
+    assert.match(src, /0xfeff/i, 'the helper names the BOM by its number');
+  });
+
   it('no hand-written BOM strip is left outside the helper', () => {
     const root = path.join(__dirname, '..');
     for (const f of ['server.js', 'mcp.js', 'bin/intellagent.js', 'lib/agents.js', 'lib/locate.js', 'lib/sandbox.js']) {
