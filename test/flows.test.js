@@ -992,6 +992,20 @@ describe('lib/jsonfile: the one JSON file reader and writer (INT-148)', () => {
     assert.match(src, /0xfeff/i, 'the helper names the BOM by its number');
   });
 
+  it('a manifest and a local.json saved with a BOM are read by the CLI loaders', () => {
+    const locate = require('../lib/locate');
+    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'bom-'));
+    const bom = String.fromCharCode(0xfeff);
+    try {
+      const mp = path.join(dir, 'intellagent.json');
+      fs.writeFileSync(mp, bom + JSON.stringify({ port: 7777, auth: { userToken: 'tok' } }));
+      fs.writeFileSync(path.join(dir, 'local.json'), bom + JSON.stringify({ userToken: 'secret' }));
+      assert.equal(locate.readManifest(mp).port, 7777);
+      assert.equal(locate.localSecrets(mp).userToken, 'secret');
+      assert.equal(locate.userToken(mp), 'secret');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('no hand-written BOM strip is left outside the helper', () => {
     const root = path.join(__dirname, '..');
     for (const f of ['server.js', 'mcp.js', 'bin/intellagent.js', 'lib/agents.js', 'lib/locate.js', 'lib/sandbox.js']) {
