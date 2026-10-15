@@ -469,7 +469,6 @@ function readAgents(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch { return { defaults: {}, agents: {} }; }
 }
 
-// The CLI acts as the human here (it runs on the human's machine, with the local manifest).
 // Who is running this, if it is an agent ('' for the human). The board sets INTELLAGENT_AGENT (and the run) for
 // every standing-agent run.
 function asAgent() {
@@ -734,7 +733,7 @@ const HELP = `intellagent — a kanban for you and your agents
   hook ...         git: install | post-commit | sync-ci
 
   agents           standing agents the board wakes up itself (defined in .intellagent/agents.json)
-    add NAME       --role coordinator|builder|reviewer|researcher|writer  --allow edit,test,build,git,web,read
+    add NAME       --role coordinator|builder|reviewer|researcher|writer|designer  --allow edit,test,build,git,web,read
                    --listen addressed|inbox|human|new-tickets|"types=…"  --max-runs N|none  --throttle MIN  --run "<command>" (overrides role)
                    --model haiku|sonnet|opus  (junior / mid / senior; the receptionist routes by it)
                    --areas "public/app.css,public/themes/"  --concerns "accessibility,performance"  (its speciality)

@@ -164,7 +164,6 @@ function oneOf(v, list, dflt) {
   return m;
 }
 
-// Known flags are coerced to their type; unknown flags are kept verbatim so agents can invent their own.
 function findColumnById(b, id) { return b.columns.find((c) => c.id === id); }
 // Whether a ticket sits in a sleeping column (see DEFAULT_FLAGS).
 function asleep(ctx, item) { return !!findColumnById(ctx.board, item.columnId)?.flags.sleeping; }
@@ -173,6 +172,7 @@ function isCoordinator(ctx, name) {
   if (name && name === ctx.board.coordinator) return true;
   try { return standing?.get?.(name)?.role === 'coordinator'; } catch { return false; }
 }
+// Known flags are coerced to their type; unknown flags are kept verbatim so agents can invent their own.
 function pickFlags(f, base = DEFAULT_FLAGS) {
   const out = { ...base };
   for (const [k, v] of Object.entries(f || {})) {
@@ -339,7 +339,6 @@ function normalizeBoard(b) {
     it.fields = isObj(it.fields) ? it.fields : {}; it.cover = it.cover || 'auto'; it.assignee = it.assignee || null;
     // flow: when the item entered each column (metrics). Older boards start from what is known.
     if (!Array.isArray(it.flow)) it.flow = [{ col: it.columnId, at: it.enteredColumnAt || it.createdAt }];
-    if (!Array.isArray(it.questions)) it.questions = it.needsHuman ? [{ id: rid('q'), ...it.needsHuman }] : [];
     syncNeeds(it);
   }
   for (const c of b.columns) {
