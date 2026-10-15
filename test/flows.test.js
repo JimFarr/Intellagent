@@ -742,6 +742,7 @@ describe('agent manager: the agents.manage grant', () => {
       scoped: { enabled: false, grants: [{ power: 'agents.manage', where: { agents: ['w1'] } }] },
       w1: { enabled: false, role: 'builder', perms: ['edit', 'test', 'git'] },
       w2: { enabled: false, role: 'builder' },
+      r1: { enabled: false, role: 'researcher' },
     } } });
   });
   after(async () => { await s.stop(); });
@@ -782,6 +783,37 @@ describe('agent manager: the agents.manage grant', () => {
     assert.equal((await s.ok('GET', '/api/permissions/me', undefined, ag('w1'))).permissions, null);
     const me = await s.ok('GET', '/api/permissions/me', undefined, ag('mgr'));
     assert.deepEqual(me.grants.map((g) => g.power), ['agents.manage']);
+  });
+
+  it('a role change never widens the tools of an agent whose tools come from its role (INT-119)', async () => {
+    // r1 is a researcher with no perms of its own: builder would bring edit, test, build and git
+    const wide = await patch(ag('mgr'), 'r1', { role: 'builder' });
+    assert.equal(wide.body.code, 'WIDEN', JSON.stringify(wide.body));
+    assert.match(wide.body.hint, /"perms"/);
+    assert.equal((await patch(ag('mgr'), 'r1', { role: null })).body.code, 'WIDEN', 'no role means the default run');
+    let a = await s.ok('GET', '/api/agents/r1');
+    assert.equal(a.role, 'researcher');
+    assert.deepEqual(a.perms, ['read', 'web']);
+    assert.equal(a.worktree, null);
+    // pinning its tools with the role is fine; widening them that way is not
+    assert.equal((await patch(ag('mgr'), 'r1', { role: 'builder', perms: ['read', 'edit'] })).body.code, 'WIDEN');
+    assert.equal((await patch(ag('mgr'), 'r1', { role: 'builder', perms: ['read', 'web'] })).status, 200);
+    a = await s.ok('GET', '/api/agents/r1');
+    assert.equal(a.role, 'builder');
+    assert.deepEqual(a.perms, ['read', 'web']);
+    assert.equal(a.permsFrom, 'own');
+    // a role that narrows is fine: builder → writer (edit, git)
+    assert.equal((await patch(ag('mgr'), 'w2', { role: 'writer' })).status, 200);
+    assert.deepEqual((await s.ok('GET', '/api/agents/w2')).perms, ['edit', 'git']);
+    // the coordinator role is the human's to give or take
+    assert.equal((await patch(ag('mgr'), 'w2', { role: 'coordinator' })).body.code, 'HUMAN_ONLY');
+    assert.equal((await patch(USER, 'r1', { role: 'coordinator' })).status, 200);
+    assert.equal((await patch(ag('mgr'), 'r1', { role: 'reviewer' })).body.code, 'HUMAN_ONLY');
+    // the human changes roles freely
+    assert.equal((await patch(USER, 'r1', { role: 'builder', perms: null })).status, 200);
+    a = await s.ok('GET', '/api/agents/r1');
+    assert.deepEqual(a.perms, ['edit', 'test', 'build', 'git']);
+    assert.equal(a.permsFrom, 'role');
   });
 });
 
