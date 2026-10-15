@@ -671,7 +671,7 @@ async function doOp() {
   process.exitCode = report(await send(method, p, body), { compact });
 }
 
-// intellagent sandbox [name] [--from main|<agent>|<dir>] [--seed demo|empty|snapshot] [--fresh] [--open] [--json]
+// intellagent sandbox [name] [--from main|<agent>|<dir>] [--seed board|demo|empty|snapshot] [--fresh] [--open] [--json]
 // intellagent sandbox list | stop <name> | stop --all
 async function sandboxCmd() {
   const sb = require('../lib/sandbox');
@@ -695,7 +695,7 @@ async function sandboxCmd() {
   if (!name) { console.error('Usage: intellagent sandbox <agent name>   (or set INTELLAGENT_AGENT)'); process.exit(2); }
   const r = await sb.start(mp, String(name), { from: String(f.from || 'main'), seed: f.seed ? String(f.seed) : null, fresh: !!f.fresh });
   if (f.json) { console.log(JSON.stringify(r, null, 2)); return; }
-  console.log(`${name}'s sandbox is running at ${r.url}  (${r.seed === 'kept' ? 'data kept' : `seeded: ${r.seed}`}; code from ${r.source})`);
+  console.log(`${name}'s sandbox is running at ${r.url}  (${r.seed === 'kept' ? 'data kept' : `seeded: ${r.seed}${r.from ? `, from the board "${r.from}": its columns, fields and rules, no tickets` : ''}`}; code from ${r.source})`);
   console.log(`  sign in as its human:  ${r.signIn}`);
   console.log(`  talk to it as an agent: intellagent brief --url ${r.url}   (or INTELLAGENT_URL=${r.url})`);
   console.log('  standing agents never run in a sandbox; your real board is untouched.');
@@ -740,7 +740,7 @@ const HELP = `intellagent — a kanban for you and your agents
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 
-  sandbox [NAME]   a throwaway board of your own, running any checkout (--from main|<agent>|<dir>, --seed demo|empty|snapshot, --fresh); sandbox list | stop NAME|--all
+  sandbox [NAME]   a throwaway board of your own, running any checkout (--from main|<agent>|<dir>, --seed board|demo|empty|snapshot, --fresh); sandbox list | stop NAME|--all
   leases           the machine's leases for heavy work — browsers, solves, timings (one per PC; every board shares it)
     status | machine | ask --holder N --cpu T --gpu MB --minutes M [--exclusive] | renew ID | done ID | ceiling | start | stop
 `;

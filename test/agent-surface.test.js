@@ -445,6 +445,25 @@ describe('sandbox boards', () => {
       assert.match(cli(['sandbox', 'stop', 'tester'], { cwd: s.dir }).out, /stopped/);
     } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
   });
+
+  it('a sandbox starts from the board init set up: its fields, rules and columns, no tickets, and says which board', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      await s.ok('POST', '/api/boards/main/schema/fields', { key: 'area', label: 'Area', type: 'text' }, USER);
+      await s.ok('PUT', '/api/boards/main/directives', { directives: 'Always say hello.' }, USER);
+      await s.ok('POST', '/api/boards/main/items', { title: 'real work', column: 'Ready' }, USER);
+      const r = cli(['sandbox', 'shape', '--json'], { cwd: s.dir });
+      assert.equal(r.code, 0, r.err);
+      assert.equal(r.json.seed, 'board');
+      assert.ok(r.json.from, 'names the board it started from');
+      const schema = await get(`${r.json.url}/api/boards/main/schema`);
+      assert.ok(JSON.stringify(schema).includes('"area"'));
+      assert.match(JSON.stringify(await get(`${r.json.url}/api/boards/main/directives`)), /Always say hello/);
+      const sum = JSON.stringify(await get(`${r.json.url}/api/boards/main/summary`));
+      assert.ok(!sum.includes('real work'));
+      assert.match(cli(['sandbox', 'shape', '--fresh'], { cwd: s.dir }).out, /from the board/);
+    } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+  });
 });
 
 describe('agents alert each other with @mentions', () => {
