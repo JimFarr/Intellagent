@@ -130,6 +130,25 @@
       "run": "claude -p \"Handle the Intellagent events described on stdin.\" --tools \"Bash,Read,Grep,Glob\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-quill.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
       "maxRunsPerHour": 30,
       "timeoutMinutes": 120
+    },
+    "yondu": {
+      "role": "builder",
+      "model": "sonnet",
+      "maxRunsPerHour": 30,
+      "throttleMinutes": 0.5,
+      "description": "Lander: gets approved work onto main and GitHub. Resolves landing conflicts on his own branch, runs the tests, lands, pushes. Bothers James only when code can't reach main.",
+      "grants": [
+        "work.land"
+      ],
+      "commands": [
+        "git cherry-pick:*",
+        "git push origin main"
+      ],
+      "concerns": [
+        "both sides' intent kept in every conflict",
+        "tests green before landing",
+        "never land unapproved work"
+      ]
     }
   }
 }

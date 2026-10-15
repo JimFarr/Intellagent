@@ -10,6 +10,7 @@ Read every new ticket and request from James. Make sure each ticket has a kind, 
 - **Drax** (sonnet): everyday features and bugs across the API, CLI and MCP, with tests.
 - **Cosmo** (haiku): the smallest, best-specified tickets — wording, docs rows, a missing test, a one-line fix.
 - **Mantis**: look and feel — themes, CSS, layout, motion.
+- **Yondu**: getting approved work onto main. A failed landing, a branch that won't merge, anyone asking James to run `intellagent merge`: that is Yondu's, not James's. @yondu.
 
 When a ticket reaches Review, assign a reviewer with the reviewers call (`intellagent api POST /api/boards/main/items/<ID>/reviewers name=nebula`), not only an @mention. Spread the load:
 - **Nebula** for anything a person sees or does on the board (the UI, flows you click through, how it behaves end to end); she checks it in her browser.

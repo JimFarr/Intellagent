@@ -636,7 +636,10 @@ const POWERS = {
   'column.gate': 'Move tickets into / out of human-only columns',
   'agents.control': 'Pause, resume and run other standing agents',
   'agents.manage': "Change other standing agents' label, role, personality and model (allowlist), and narrow their permissions",
+  'work.land': 'Land work that was already approved on main (resolving conflicts on its own branch first)',
 };
+// Standing agents the human lets land approved work (work.land): a landing that fails goes to them, not the human.
+const landers = () => { try { return standing.list().agents.filter((a) => a.enabled && grantsOf(a.name).some((g) => g.power === 'work.land')).map((a) => a.name); } catch { return []; } };
 function grantsOf(name) {
   const raw = [...arr(standing?.grantsOf?.(name)), ...arr(M.permissions[name]?.grants)];
   return raw.map((g) => {
@@ -1785,11 +1788,16 @@ function recordVerdict(ctx, item, actor, events, verdict, comment = '', grant = 
 function landWork(ctx, item, agent, actor, events) {
   let r;
   try { r = worktrees.land(agent, item.id); } catch (e) { r = { landed: [], reason: e.message, command: `intellagent merge ${item.id}` }; }
+  // A failed landing with commits waiting goes to the agents allowed to land (work.land), not the human.
+  const waiting = !r.landed.length && !!r.commits?.length;
+  const lands = waiting ? landers().filter((n) => n !== actor.name) : [];
   const body = r.landed.length
     ? `⤵ Landed on main: ${r.landed.map((x) => `\`${x}\``).join(', ')} from \`agent/${agent}\`.`
-    : `⚠ Not landed: ${r.reason}.${r.commits?.length ? ` When that's sorted, run \`${r.command}\`.` : ''}`;
+    : `⚠ Not landed: ${r.reason}.${waiting ? (lands.length ? ` ${lands.map((n) => `@${n}`).join(' ')} will land it.` : ` When that's sorted, run \`${r.command}\`.`) : ''}`;
   item.comments.push({ id: rid('c'), author: SYSTEM, body, createdAt: now() });
-  events.push(itemEvent(ctx, r.landed.length ? 'item.landed' : 'item.land_failed', item, actor, { agent, landed: r.landed, ...(r.reason ? { reason: r.reason } : {}), mentions: [agent] }));
+  item.landing = r.landed.length ? { state: 'landed', commits: r.landed, from: agent, at: now() }
+    : waiting ? { state: 'failed', reason: r.reason, from: agent, at: now() } : { state: 'nothing', reason: r.reason, at: now() };
+  events.push(itemEvent(ctx, r.landed.length ? 'item.landed' : 'item.land_failed', item, actor, { agent, landed: r.landed, ...(r.reason ? { reason: r.reason } : {}), mentions: [agent, ...lands] }));
   return r;
 }
 
@@ -2032,6 +2040,17 @@ function workFor(ctx, name) {
       if (last?.id === it.id && (last.action === 'decide' || last.action === 'chase')) last.tag = last.action === 'decide' ? 'decide' : gaps.map((g) => g.key).join('|');
     }
   }
+  // An agent allowed to land (work.land) hears about every approved ticket whose landing failed.
+  if (grantsOf(name).some((g) => g.power === 'work.land')) {
+    for (const it of items) {
+      if (it.landing?.state !== 'failed' || it.review?.verdict !== 'approve') continue;
+      const from = it.landing.from;
+      add('land', brief(it), `Approved, but landing failed: ${it.landing.reason}. In your worktree, catch up with main, cherry-pick ${from}'s commits for ${it.id} (git log main..agent/${from} --grep ${it.id}), resolve any conflicts keeping both sides' intent, run the tests, then land from your branch`,
+        `POST /api/boards/${ctx.id}/items/${it.id}/land { "agent": "${name}" }`);
+      const last = next.at(-1);
+      if (last?.id === it.id && last.action === 'land') last.tag = it.landing.at;
+    }
+  }
   // A supervising agent hears about other agents' stalled tickets.
   const supervise = stalledFor(ctx, name, standing?.superviseOf?.(name) || 0).map((x) => brief(x.it, { assignee: x.who, agentStatus: x.status, idleMinutes: x.idleMin, lastActivity: new Date(x.lastMs).toISOString() }));
   for (const x of supervise) {
@@ -2109,7 +2128,7 @@ function pendingWork(name, pickup = false) {
         : n.action === 'resume' ? w.answered.find((x) => x.id === n.id)?.questionId
         : n.action === 'address_feedback' ? it?.review?.at
           : n.action === 'explain' ? w.explain.find((x) => x.id === n.id)?.commentId
-            : n.action === 'decide' || n.action === 'chase' ? crypto.createHash('sha1').update(String(n.tag || n.action)).digest('hex').slice(0, 10) : '';
+            : n.action === 'decide' || n.action === 'chase' || n.action === 'land' ? crypto.createHash('sha1').update(String(n.tag || n.action)).digest('hex').slice(0, 10) : '';
       out.push({ key: `${ctx.id}:${n.action}:${n.requestId || n.id}${tag ? `:${tag}` : ''}`, board: ctx.id, action: n.action, id: n.id || null, requestId: n.requestId || null, title: n.title || null, why: n.why });
     }
     if (!pickup) continue;
@@ -3520,12 +3539,16 @@ route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move thi
 });
 route('POST', '/api/boards/:board/items/:id/start', 'Start or resume work in one step: lease + move to the working column + status + assign. { status?, minutes?, column?, force? }', ({ p, body, actor }) =>
   startWork(getCtx(p.board), p.id, body, actor));
-route('POST', '/api/boards/:board/items/:id/land', 'Human: put this ticket\'s commits from its agent\'s worktree branch on main (after approval, when landing was blocked) { agent? }', ({ p, body, actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Only the human lands work on main', { code: 'HUMAN_ONLY' });
+route('POST', '/api/boards/:board/items/:id/land', 'Human, or an agent with work.land: put this approved ticket\'s commits from a worktree branch on main (when landing was blocked) { agent? } — agent: whose branch (a lander passes its own after resolving conflicts there)', ({ p, body, actor }) => {
   if (!worktrees) fail(400, 'No worktrees on this board');
   const ctx = getCtx(p.board);
   return tx(ctx, (events) => {
     const item = getItem(ctx, p.id);
+    // An agent may land only work that was approved: landing never decides anything, the approval did.
+    if (actor.kind !== 'user') {
+      grantFor(ctx, actor, 'work.land', null, 'land work on main');
+      if (item.review?.verdict !== 'approve') fail(409, `${item.id} isn't approved: only approved work lands`, { code: 'NOT_APPROVED', hint: 'Landing follows an approval; leave it until the human (or a delegated reviewer) approves it' });
+    }
     const agent = body.agent || item.review?.requestedBy || item.workedBy?.at(-1);
     if (!agent || !agentBranch(agent)) fail(400, `No agent worktree for ${item.id}; pass "agent"`);
     const r = landWork(ctx, item, agent, actor, events);

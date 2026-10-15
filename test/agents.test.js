@@ -668,6 +668,57 @@ describe('per-agent git worktrees', () => {
   });
 });
 
+describe('a lander (work.land) gets approved work onto main', () => {
+  it('a failed landing goes to the lander, not the human; the lander lands only approved work', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-land-'));
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(dir, 'README.md'), 'hi\n');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    const s = await startServer({ dir, agents: { defaults: fast, agents: {
+      bob: { run: run('commit'), worktree: true },
+      yondu: { run: run('ok'), worktree: true, grants: ['work.land'] },
+      eve: { run: run('ok'), worktree: true },
+    } } });
+    try {
+      const b = await s.ok('POST', `${B}/items`, { title: 'for bob', column: 'Ready', assignee: 'bob' }, USER);
+      await until(async () => (await comments(s, b.id)).some((c) => c.startsWith('bob: committed')), 10000, 'bob committed');
+      await until(async () => (await agentState(s, 'bob')).status === 'idle', 6000, 'bob idle');
+      await s.ok('POST', `${B}/items/${b.id}/review`, { summary: 'done', evidence: 'e' }, { agent: 'bob' });
+      // nobody may land before approval
+      assert.equal((await s.api('POST', `${B}/items/${b.id}/land`, { agent: 'bob' }, { agent: 'yondu' })).body.code, 'NOT_APPROVED');
+      // approval with a dirty main checkout: the landing fails and goes to the lander
+      fs.writeFileSync(path.join(dir, 'README.md'), 'edited by the human\n');
+      await s.ok('POST', `${B}/items/${b.id}/review/decision`, { verdict: 'approve' }, USER);
+      const note = (await comments(s, b.id)).at(-1);
+      assert.match(note, /Not landed: the main checkout has uncommitted changes/);
+      assert.match(note, /@yondu will land it/);
+      assert.doesNotMatch(note, /intellagent merge/, 'the human is not asked to run it');
+      assert.equal((await s.ok('GET', `${B}/items/${b.id}`)).landing.state, 'failed');
+      const work = (await s.ok('GET', `${B}/work`, undefined, { agent: 'yondu' })).next;
+      assert.equal(work.find((n) => n.id === b.id)?.action, 'land');
+      // an agent without work.land may not land
+      assert.equal((await s.api('POST', `${B}/items/${b.id}/land`, { agent: 'bob' }, { agent: 'eve' })).body.code, 'HUMAN_ONLY');
+      // the lander lands it once main is clean
+      git('checkout', 'README.md');
+      const landed = await s.ok('POST', `${B}/items/${b.id}/land`, { agent: 'bob' }, { agent: 'yondu' });
+      assert.equal(landed.landed.length, 1);
+      assert.ok(fs.existsSync(path.join(dir, `work-${b.id}.txt`)), 'on main');
+      assert.equal((await s.ok('GET', `${B}/items/${b.id}`)).landing.state, 'landed');
+    } finally {
+      await s.stop();
+      try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
+    }
+  });
+});
+
 describe('specialised agents', () => {
   it('areas, concerns and a context page reach the agent, its brief and the receptionist, and are editable', async () => {
     const fs = require('fs');
