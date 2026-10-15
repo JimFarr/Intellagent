@@ -159,6 +159,22 @@
     .filter((a) => a.status === 'running' && a.lastRun?.about?.[kind]?.includes(id) && !answered(a.name, a.lastRun.startedAt))
     .map((a) => a.name);
   const dotsHTML = '<i class="ai-dots"><b></b><b></b><b></b></i>';
+  // The bubble's age (INT-191): how long the run has gone, or that it has gone quiet (stalled: no board call and no output)
+  const minsSince = (iso) => Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+  const standingOf = (n) => Object.values(state.standing || {}).find((a) => a.name === n) || {};
+  const runAgo = (n) => {
+    const a = standingOf(n);
+    return a.stalled ? `hasn't touched the board for ${minsSince(a.lastActivityAt)} min` : `${minsSince(a.runningSince)} min`;
+  };
+  const thinkAge = (n) => {
+    const stalled = standingOf(n).stalled;
+    return `${stalled ? '' : dotsHTML}<span class="think-age${stalled ? ' stalled' : ''}" data-run="${esc(n)}">${runAgo(n)}</span>`;
+  };
+  // A run that ended without a reply here (INT-191): a quiet line. It goes once the agent replied during the run, or anyone posts after it ended
+  const endedHere = (kind, id, posts) => Object.values(state.standing || {})
+    .filter((a) => a.status !== 'running' && a.lastRun?.endedAt && a.lastRun?.about?.[kind]?.includes(id)
+      && !posts.some((p) => p.at > a.lastRun.endedAt || (p.who === a.name && p.at > a.lastRun.startedAt)))
+    .map((a) => `${nameOf(a.name)}'s run ended ${minsSince(a.lastRun.endedAt)} min ago without replying here`);
 
   /* ═════════════════════════ themes + settings ═════════════════════════ */
 
@@ -1105,12 +1121,14 @@
     }
     renderPresenceButton();
     // a run starting or ending adds / removes "thinking" bubbles in the open threads
-    const think = JSON.stringify(Object.values(state.standing).filter((a) => a.status === 'running').map((a) => [a.name, a.lastRun?.about]));
+    const think = JSON.stringify(Object.values(state.standing).filter((a) => a.status === 'running').map((a) => [a.name, a.lastRun?.about, a.stalled]));
     if (think !== state.thinkSig) {
       state.thinkSig = think;
       $('#requestsDrawer .drawer-body')?._redraw?.();
       if (state.modal?.kind === 'item' && !state.modal.create) state.modal.refresh();
     }
+    // the minutes on a "writing a reply" bubble count up between redraws (INT-191)
+    for (const t of $$('.think-age[data-run]')) t.textContent = runAgo(t.dataset.run);
     if ($('#agentsDrawer') && !$('#agentsDrawer .add-agent')) fillAgents($('#agentsDrawer .drawer-body')); // never wipe a half-filled form
   }
 
@@ -2882,7 +2900,8 @@
     $('.c-n', main).textContent = it.comments.length;
     const cmts = $('.cmts', main);
     const think = m.create ? [] : thinkers('comments', it.id, (n, since) => it.comments.some((c) => c.author?.name === n && c.createdAt > since));
-    const sig = `${it.id}:${it.comments.map((c) => `${c.id}${c.replacedBy || ''}${JSON.stringify(c.reactions || {})}`).join('|')}:${think}`;
+    const ended = m.create ? [] : endedHere('comments', it.id, it.comments.map((c) => ({ who: c.author?.name, at: c.createdAt })));
+    const sig = `${it.id}:${it.comments.map((c) => `${c.id}${c.replacedBy || ''}${JSON.stringify(c.reactions || {})}`).join('|')}:${think}:${think.map((n) => standingOf(n).stalled)}:${ended}`;
     if (cmts.dataset.sig !== sig) {
       cmts.dataset.sig = sig;
       // A review request that a newer one from the same author replaced folds to one muted line (INT-172).
@@ -2892,7 +2911,8 @@
         ? `<details class="cmt-fold" data-cid="${esc(c.id)}"${open.has(c.id) ? ' open' : ''}><summary>${avatar(c.author)}<span class="what">Review request · replaced by the one below</span><span class="when" title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${icon('chev', 'sm')}</summary>${html}</details>`
         : html);
       cmts.innerHTML = it.comments.map((c) => fold(c, `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${nameHTML(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(nameOf(c.author.name))} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}${reactionsHTML(c.reactions, { cid: c.id, add: !m.archived, notes: c.reactionNotes })}</div></div>`)).join('')
-        + think.map((n) => `<div class="cmt thinking" aria-live="polite">${avatar({ kind: 'agent', name: n }, 'lg')}<div><div class="cmt-head"><b>${nameHTML(n)}</b><span class="kind">${icon('bot', 'sm')}</span><span>is writing a reply</span></div><div class="think-bubble" role="status" aria-label="${esc(nameOf(n))} is writing a reply">${dotsHTML}</div></div></div>`).join('');
+        + think.map((n) => `<div class="cmt thinking" aria-live="polite">${avatar({ kind: 'agent', name: n }, 'lg')}<div><div class="cmt-head"><b>${nameHTML(n)}</b><span class="kind">${icon('bot', 'sm')}</span><span>is writing a reply</span></div><div class="think-bubble" role="status" aria-label="${esc(nameOf(n))} is writing a reply">${thinkAge(n)}</div></div></div>`).join('')
+        + ended.map((t) => `<div class="cmt-ended muted">${esc(t)}</div>`).join('');
       if (!cmts._reactWired) { cmts._reactWired = true; wireReactions(cmts, m.id); }
       cmts.querySelectorAll('.cmt-fold').forEach((d) => { d.ontoggle = () => (d.open ? open.add(d.dataset.cid) : open.delete(d.dataset.cid)); });
       cmts.onclick = (e) => {
@@ -3726,7 +3746,9 @@
         .flatMap((q) => thinkers('requests', q.id, (n, since) => q.replies.some((r) => r.author?.name === n && r.at > since))))];
       let day = '';
       box.innerHTML = msgs.length ? msgs.map((m) => (m.day !== day ? `<div class="msg-day"><span>${esc(dayLabel((day = m.day)))}</span></div>` : '') + msgHTML(m)).join('')
-          + think.map((n) => `<div class="msg them thinking" aria-live="polite"><span class="msg-av">${avatar({ kind: 'agent', name: n }, 'lg')}</span><div class="msg-col"><div class="msg-who">${nameHTML(n)}</div><div class="bubble" role="status" aria-label="${esc(nameOf(n))} is writing a reply">${dotsHTML}</div></div></div>`).join('')
+          + think.map((n) => `<div class="msg them thinking" aria-live="polite"><span class="msg-av">${avatar({ kind: 'agent', name: n }, 'lg')}</span><div class="msg-col"><div class="msg-who">${nameHTML(n)}</div><div class="bubble" role="status" aria-label="${esc(nameOf(n))} is writing a reply">${thinkAge(n)}</div></div></div>`).join('')
+          + list.filter((q) => !reqWho || q.to === reqWho).flatMap((q) => endedHere('requests', q.id, (q.replies || []).map((r) => ({ who: r.author?.name, at: r.at }))))
+            .map((t) => `<div class="msg them cmt-ended muted">${esc(t)}</div>`).join('')
         : `<div class="empty-note">${icon('send')}${reqWho ? `<div>No messages with ${esc(nameOf(reqWho))} yet</div>` : ''}</div>`;
       seen = new Set(msgs.map((m) => m.id));
       if (atEnd) pane.scrollTop = pane.scrollHeight;

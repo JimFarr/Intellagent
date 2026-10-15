@@ -1764,6 +1764,9 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .think-bubble { margin-top: 4px; background: var(--hover); border: var(--bw) solid color-mix(in oklab, var(--border) 60%, transparent); border-radius: 6px 16px 16px 16px; }
 .msg.thinking .ai-dots, .think-bubble .ai-dots { margin-left: 0; gap: 4px; }
 .msg.thinking .ai-dots b, .think-bubble .ai-dots b { width: 6px; height: 6px; }
+.think-age { font-size: 12px; color: var(--muted); margin-left: 8px; }
+.think-age.stalled { margin-left: 0; font-style: italic; }
+.cmt-ended { font-size: 12px; padding: 4px 0; }
 @media (prefers-reduced-motion: reduce) { .msg.thinking, .cmt.thinking { animation: none; } }
 .reduced .msg.thinking, .reduced .cmt.thinking { animation: none; }
 
