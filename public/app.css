@@ -744,6 +744,21 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .cmt-atts img { width: 120px; height: 84px; object-fit: cover; border-radius: 9px; border: 1px solid var(--border); cursor: zoom-in; display: block; }
 .cmt-atts a.file { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 8px; background: var(--hover); color: var(--text); text-decoration: none; font-size: 12px; }
 .cmt-compose { margin-top: 12px; }
+/* a review request replaced by a newer one from the same author: one muted line, opens to the full text */
+.cmt-fold + .cmt, .cmt + .cmt-fold, .cmt-fold + .cmt-fold { border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent); }
+.cmt-fold > summary { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 4px; border-radius: var(--r-ctl); list-style: none; cursor: pointer; font-size: 12px; color: var(--muted); transition: background .2s var(--ease-io), color .2s var(--ease-io); }
+.cmt-fold > summary::-webkit-details-marker { display: none; }
+.cmt-fold > summary .avatar { opacity: .7; flex: none; }
+.cmt-fold > summary .what { min-width: 0; line-height: 1.35; } /* wraps on a phone rather than cut "replaced by…" */
+.cmt-fold > summary .when { margin-left: auto; flex: none; }
+.cmt-fold > summary > svg { flex: none; rotate: -90deg; transition: rotate .25s var(--ease-io); }
+.cmt-fold[open] > summary > svg { rotate: 0deg; }
+.cmt-fold > summary:hover { background: var(--hover); color: var(--text); }
+.cmt-fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cmt-fold[open] > .cmt { animation: fold-open .25s var(--ease-io); opacity: .85; }
+@keyframes fold-open { from { opacity: 0; translate: 0 -4px; } }
+.reduced .cmt-fold > summary > svg, .reduced .cmt-fold[open] > .cmt { transition: none; animation: none; }
+@media (prefers-reduced-motion: reduce) { .cmt-fold > summary > svg, .cmt-fold[open] > .cmt { transition: none; animation: none; } }
 
 .act { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 7px 0; font-size: 12.5px; color: var(--muted); }
 .act .i { margin-top: 2px; }

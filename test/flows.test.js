@@ -92,6 +92,31 @@ describe('agent flows', () => {
     assert.equal((await s.api('DELETE', `${B}/items/${it.id}/attention`, { questionId: 'q_nope' }, USER)).body.code, 'NOT_FOUND');
   });
 
+  it('asking for review again before a decision marks the earlier request replaced; decided ones never are (INT-172)', async () => {
+    const it = await mk({ title: 'review twice' });
+    const reviews = async () => (await s.ok('GET', `${B}/items/${it.id}`)).comments.filter((c) => c.body?.includes('**What changed**'));
+    const ask = (changed, as = { agent: 'bob' }) => s.ok('POST', `${B}/items/${it.id}/review`, { changed, why: 'w', verify: 'v', evidence: 'e' }, as);
+
+    await ask('first');
+    await s.ok('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'changes', comment: 'nope' }, USER);
+    await ask('second');
+    let [first, second] = await reviews();
+    assert.equal(first.replacedBy, undefined, 'a decided request never folds');
+
+    await ask('third');
+    let third;
+    [first, second, third] = await reviews();
+    assert.equal(second.replacedBy, third.id);
+    assert.equal(third.replacedBy, undefined);
+    assert.equal(first.replacedBy, undefined);
+    assert.equal(third.body.includes('third'), true, 'nothing is deleted');
+    assert.equal(second.body.includes('second'), true);
+
+    // a different author asking does not fold someone else's request
+    await ask('fourth', A);
+    assert.equal((await reviews())[2].replacedBy, undefined);
+  });
+
   it('an agent withdraws its own question or review, the coordinator anyone\'s, others are refused (INT-90)', async () => {
     await s.ok('PATCH', B, { coordinator: 'gamora' }, USER);
     const it = await mk({ title: 'withdraw me' });

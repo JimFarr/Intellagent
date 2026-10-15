@@ -1058,16 +1058,26 @@ function requestReview(ctx, id, d, actor) {
         ? `**Commits** on \`${wt.branch}\` (they land on approval)\n${commits.map((c) => `- \`${c.sha.slice(0, 7)}\` ${c.subject}`).join('\n')}`
         : `⚠ No commits mentioning ${item.id} on \`${wt.branch}\` — approving lands nothing.`].filter(Boolean).join('\n\n');
     }
-    if (summary) item.comments.push({ id: rid('c'), author: actor, body: summary, createdAt: now(), ...(Object.keys(notes).length ? { review: notes } : {}) });
+    const cid = summary ? rid('c') : null;
+    if (summary) item.comments.push({ id: cid, author: actor, body: summary, createdAt: now(), ...(Object.keys(notes).length ? { review: notes } : {}) });
     const lease = item.lease;
     if (lease && lease.claimant === actor.name) item.lease = null;
     syncNeeds(item);
+    // Asked again before a decision (INT-172): the earlier, undecided request's comment is marked as
+    // replaced, and the thread folds it to one line. Decided reviews closed their question, so never fold.
+    const prev = item.questions.find((q) => q.kind === 'review');
+    if (prev && cid && prev.raisedBy === actor.name) {
+      const old = prev.commentId ? item.comments.find((c) => c.id === prev.commentId)
+        : item.comments.findLast((c) => c.review && c.id !== cid && c.author?.name === actor.name && c.createdAt <= prev.raisedAt);
+      if (old) old.replacedBy = cid;
+    }
     item.questions = item.questions.filter((q) => q.kind !== 'review');
     // The review card shows this text: keep the summary's whole first paragraph, not a clipped line.
     const rq = parseNeedsHuman({ reason: str(d.reason || notes.changed?.split(/\n\s*\n/)[0] || (summary ? summary.split(/\n\s*\n/)[0] : 'Ready for review'), 2000), kind: 'review' }, actor);
     if (Object.keys(notes).length) rq.notes = notes;
     else if (summary) rq.notes = { changed: summary };
     if (landing) rq.landing = landing;
+    if (cid) rq.commentId = cid;
     item.version++;
     item.updatedAt = now();
     if (lease && !item.lease) events.push(itemEvent(ctx, 'lease.released', item, actor, { claimant: lease.claimant, reason: 'review requested' }));
