@@ -1284,6 +1284,7 @@
       const run = state.standing[av.dataset.name]?.status;
       if (run && run !== 'idle') av.dataset.run = run; else delete av.dataset.run;
     }
+    for (const r of $$('.ring[data-claim]')) setRunRing(r);
     renderPresenceButton();
     // a run starting or ending adds / removes "thinking" bubbles in the open threads
     const think = JSON.stringify(Object.values(state.standing).filter((a) => a.status === 'running').map((a) => [a.name, a.lastRun?.about, a.stalled]));
@@ -1894,9 +1895,21 @@
 
   function stripMd(s) { return String(s).replace(/```[\s\S]*?```/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[#>*_`~-]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 
+  // The lease ring around the leaseholder's avatar shows the time left on the lease. While the holder is a standing
+  // agent that is awake, it becomes that agent's run ring instead (INT-164), so the card matches the header strip.
   function ringHTML(lease) {
     const kind = lease.claimant === settings.userName ? 'user' : 'agent';
-    return `<span class="ring" data-exp="${esc(lease.expiresAt)}" data-min="${lease.minutes || 30}" title="Lease|${esc(nameOf(lease.claimant))} is working on this until ${new Date(lease.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}">${avatar({ kind, name: lease.claimant })}<svg viewBox="0 0 24 24"><circle class="trk" cx="12" cy="12" r="10.5" pathLength="100"/><circle class="prg" cx="12" cy="12" r="10.5" pathLength="100"/></svg></span>`;
+    const run = RING[state.standing?.[lease.claimant]?.status];
+    return `<span class="ring${run ? ' run-ring' : ''}" data-claim="${esc(lease.claimant)}"${run ? ` data-ring="${run}" style="${ringPhase()}"` : ''} data-exp="${esc(lease.expiresAt)}" data-min="${lease.minutes || 30}" title="Lease|${esc(nameOf(lease.claimant))} is working on this until ${new Date(lease.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}">${avatar({ kind, name: lease.claimant })}<svg viewBox="0 0 24 24"><circle class="trk" cx="12" cy="12" r="10.5" pathLength="100"/><circle class="prg" cx="12" cy="12" r="10.5" pathLength="100"/></svg>${run === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</span>`;
+  }
+  // the same, in place on a ring already on screen (cards only re-render when they change)
+  function setRunRing(r) {
+    const run = RING[state.standing?.[r.dataset.claim]?.status] || '';
+    if ((r.dataset.ring || '') === run) return;
+    r.classList.toggle('run-ring', !!run);
+    if (run) { r.dataset.ring = run; r.style.cssText = ringPhase(); } else { delete r.dataset.ring; r.style.removeProperty('--phase'); }
+    $(':scope > i', r)?.remove();
+    if (run === 'fail') r.insertAdjacentHTML('beforeend', '<i aria-hidden="true">!</i>');
   }
 
   // Human-readable rendering of a declared field value (cards, read-only views).

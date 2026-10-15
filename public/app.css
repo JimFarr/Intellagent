@@ -1677,6 +1677,13 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .run-ring[data-ring="fail"] { --ring: var(--danger); }
 .run-ring > i { position: absolute; right: -1px; bottom: -1px; display: grid; place-items: center; width: 12px; height: 12px; border-radius: 50%; background: var(--danger); color: var(--bg); font: 800 9px/1 var(--font); font-style: normal; box-shadow: 0 0 0 1.5px var(--bg); }
 @keyframes ring-spin { to { rotate: 360deg; } }
+/* a card's lease ring while its holder's run is awake (INT-164): the run ring at the lease ring's size, the lease arc hidden */
+.ring.run-ring { display: inline-grid; width: 24px; height: 24px; }
+.lease-box .ring.run-ring { width: 34px; height: 34px; }
+.ring.run-ring .avatar { width: 70%; height: 70%; font-size: 7.5px; }
+.lease-box .ring.run-ring .avatar { font-size: 9px; }
+.ring.run-ring svg { display: none; }
+.ring.run-ring > i { right: -2px; bottom: -2px; width: 10px; height: 10px; font-size: 7.5px; }
 .reduced .run-ring::before { animation: none; }
 .reduced .run-ring[data-ring="run"]::before { border-top-color: var(--ring); border-style: dashed; }
 @media (prefers-reduced-motion: reduce) {
