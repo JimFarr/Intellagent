@@ -970,8 +970,9 @@
       <button class="pill-btn master-btn" id="masterBtn" hidden></button>
       <button class="pill-btn needs-btn" id="needsBtn" title="Needs you|Tickets where an agent is waiting for your answer" hidden>${icon('ask')}<span id="needsCount"></span></button>
       <button class="pill-btn catch-btn" id="catchBtn" title="While you were away|Tickets agents changed since you last looked" hidden>${icon('sparkle')}<span id="catchCount"></span></button>
+      <div class="awake" id="awake" role="group" aria-label="Awake agents"></div>
       <label class="search ask-field" id="askField" title="Ask an agent|Plan work, create tickets, explain a blocker — anything not tied to one ticket · A"><span class="ask-av" id="askAv"></span><input id="askIn" readonly autocomplete="off" aria-haspopup="dialog" aria-label="Ask an agent"><kbd>A</kbd><i class="ask-dot" hidden></i></label>
-      <button class="pill-btn hub-btn agents-btn" id="hubBtn" data-tip="Agents & inbox|Your inbox, the digest, agents, standing rules, flow and the archive"><span class="stack-av" id="agentAvs"></span><span id="agentCount"></span><span class="badge" hidden></span><span class="dot" hidden></span></button>
+      <button class="pill-btn hub-btn agents-btn" id="hubBtn" data-tip="Agents & inbox|Your inbox, the digest, agents, standing rules, flow and the archive"><span class="stack-av" id="agentAvs"></span><span id="agentCount"></span><span class="awake-n" id="awakeN" hidden></span><span class="badge" hidden></span><span class="dot" hidden></span></button>
       <button class="pill-btn icon-btn" id="bulkBtn" title="Select|Pick several tickets to move, re-prioritise or archive">${icon('checks')}</button>
       <button class="pill-btn icon-btn" id="settingsBtn" title="Settings|Themes, card contents, ticket fields and alerts">${icon('sliders')}</button>`;
     $('#boardBtn').onclick = (e) => boardMenu(e.currentTarget);
@@ -980,6 +981,10 @@
     $('#needsBtn').onclick = () => { const ids = needsIds(); if (ids.length) openItem(ids[0], cardEls.get(ids[0]), { rail: true }); };
 
     $('#catchBtn').onclick = openCatchup;
+    $('#awake').onclick = (e) => { const b = e.target.closest('[data-wake]'); if (b) openAgents(b.dataset.wake); };
+    // keyboard focus shows the same tooltip as hover
+    $('#awake').addEventListener('focusin', (e) => { const b = e.target.closest('[data-wake]'); if (b?.matches(':focus-visible')) { hideTip(); tipFor = b; showTip(b); } });
+    $('#awake').addEventListener('focusout', hideTip);
     wireAskField();
     // Opens on whatever it is signalling: unread inbox, then a new digest entry, else the agents list
     // (asking an agent has its own field right beside it).
@@ -1106,6 +1111,40 @@
       unread ? `${unread} unread in your inbox` : '', !$('.dot', btn).hidden ? 'new digest entry' : ''].filter(Boolean);
     btn.dataset.tip = `Agents & inbox|${bits.join(' · ')}`;
     btn.setAttribute('aria-label', `Agents and inbox — ${bits.join(', ')}`);
+    renderAwake();
+  }
+
+  // The awake strip (INT-163): standing agents that are running, waiting to run or failed, each in a run ring.
+  // Idle and paused agents are not shown, so a quiet board has an empty strip. On a phone it folds into
+  // the hub button as a count whose dot shows the worst state.
+  const RING = { running: 'run', queued: 'wait', throttled: 'wait', retrying: 'wait', failed: 'fail' };
+  // Order in the strip: failed (needs you), then running, then waiting; past four the rest fold into +n.
+  const RING_ORDER = { fail: 0, run: 1, wait: 2 };
+  function renderAwake() {
+    const box = $('#awake');
+    if (!box) return;
+    const awake = Object.values(state.standing || {}).filter((a) => RING[a.status])
+      .sort((a, b) => RING_ORDER[RING[a.status]] - RING_ORDER[RING[b.status]] || a.name.localeCompare(b.name));
+    const line = (a) => {
+      const n = a.now;
+      const bits = a.status === 'running' && n ? [n.items?.[0], n.line, rel(n.since)] : [RUN_LABEL[a.status], a.queued ? `${a.queued} waiting` : ''];
+      return `${nameOf(a.name)}|${bits.filter(Boolean).join(' · ') || RUN_LABEL[a.status]}`;
+    };
+    const shown = awake.length > 4 ? 3 : 4;
+    const sig = JSON.stringify(awake.map((a) => [a.name, a.status, a.now?.line, a.now?.items, a.now?.since, a.queued]));
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig;
+      box.innerHTML = awake.slice(0, shown).map((a) => `<button class="wk" data-wake="${esc(a.name)}" data-ring="${RING[a.status]}" data-tip="${esc(line(a))}" aria-label="${esc(line(a).replace('|', ': '))}">${avatar({ kind: 'agent', name: a.name })}${RING[a.status] === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</button>`).join('')
+        + (awake.length > shown ? `<button class="wk-more" data-wake="" data-tip="${esc(`${awake.length - shown} more awake|${awake.slice(shown).map((a) => `${a.name} · ${RUN_LABEL[a.status]}`).join(', ')}`)}">+${awake.length - shown}</button>` : '');
+    } else {
+      // only the minutes moved: refresh the tooltips in place
+      for (const b of $$('.wk', box)) { const a = state.standing[b.dataset.wake]; if (a) b.dataset.tip = line(a); }
+    }
+    const n = $('#awakeN');
+    n.hidden = !awake.length;
+    n.textContent = awake.length || '';
+    n.dataset.ring = awake.some((a) => a.status === 'failed') ? 'fail' : awake.some((a) => RING[a.status] === 'wait') ? 'wait' : 'run';
+    n.setAttribute('aria-label', `${awake.length} awake`);
   }
 
   async function refreshPresence() {
@@ -4084,10 +4123,15 @@
     draw();
   }
 
-  function openAgents() {
+  // With a name (from the awake strip), scrolls to that agent's row and marks it for a moment.
+  function openAgents(name) {
     const body = openDrawer('agentsDrawer', 'Agents', 'bot');
     fillAgents(body);
-    refreshPresence();
+    // the refresh redraws the rows, so the spot goes on after it
+    refreshPresence().then(() => {
+      const row = name && $$('.agent-row', body).find((r) => r.dataset.agent === name);
+      if (row) { row.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); row.classList.add('spot'); }
+    });
   }
   const RUN_LABEL = { running: 'running', queued: 'queued', retrying: 'retrying', throttled: 'throttled', failed: 'failed — needs you', paused: 'paused', idle: 'idle' };
   // Controls for a standing agent (one the board runs itself, from agents.json).
