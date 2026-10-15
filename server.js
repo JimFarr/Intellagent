@@ -2233,7 +2233,7 @@ function briefing(ctx, name, base, via = 'cli') {
       const how = {
         'review.decide': `decide: ${cli('POST', `${P}/items/<ID>/review/decision`, 'verdict=approve comment="why"')} (or verdict=changes with what to change)`,
         'column.gate': 'move tickets through human-only columns with a normal move (tickets with an open review: decide the review instead)',
-        'work.land': `${cli('POST', `${P}/items/<ID>/land`, 'agent=<yourself>')} — only approved work (NOT_APPROVED otherwise); resolve conflicts on your own branch first (cherry-pick the author's commits, keep both sides, run the tests), then land with agent=<yourself>`,
+        'work.land': `${cli('POST', `${P}/items/<ID>/land`, 'agent=<yourself>')} — only approved work (NOT_APPROVED otherwise); resolve conflicts on your own branch first (cherry-pick the author's commits, keep both sides, run the tests), then land with agent=<yourself>; push main afterwards only if your agents.json allows it`,
         'agents.control': `${cli('POST', '/api/agents/<name>/pause')} · …/resume · …/run`,
         'agents.manage': `${cli('PATCH', '/api/agents/<name>', 'label="…" model=haiku alignment="…"')} — models: ${MANAGER_MODELS.join(', ')}; perms and permissions can only narrow; never your own record`,
       };
