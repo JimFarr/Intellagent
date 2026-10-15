@@ -532,6 +532,31 @@ describe('stop all agents', () => {
       assert.match((await s.ok('GET', `${B}/items/${it.id}`)).comments.at(-1).body, /Back to Ready: no activity/);
     } finally { await s.stop(); }
   });
+
+  it('the stale sweep leaves a ticket that waits on the human (open question or review) where it is, and wakes nobody (INT-192)', async () => {
+    const s = await startServer({ manifest: { staleWorkMinutes: 0.01, staleSweepSeconds: 0.4 }, agents: { agents: {} } });
+    try {
+      const park = async (title) => {
+        const it = await s.ok('POST', `${B}/items`, { title, column: 'Ready' }, USER);
+        await s.ok('POST', `${B}/items/${it.id}/start`, {}, { agent: 'ghost' });
+        return it;
+      };
+      const asked = await park('asked James');
+      await s.ok('POST', `${B}/items/${asked.id}/attention`, { reason: 'which way?' }, { agent: 'ghost' });
+      await s.ok('DELETE', `${B}/items/${asked.id}/lease`, undefined, { agent: 'ghost' });
+      const plain = await park('abandoned');
+      await s.ok('DELETE', `${B}/items/${plain.id}/lease`, undefined, { agent: 'ghost' });
+      const { cursor } = await s.ok('GET', '/api/events?tail=true');
+      // the plain one is swept: by then the asked one has been idle as long
+      await until(async () => (await s.ok('GET', `${B}/items/${plain.id}`)).column === 'Ready', 6000, 'plain ticket swept');
+      await new Promise((r) => setTimeout(r, 1000)); // two more sweeps
+      const after = await s.ok('GET', `${B}/items/${asked.id}`);
+      assert.equal(after.column, 'In Progress', 'a ticket with an open question stays');
+      assert.ok(!after.comments.some((c) => /Back to/.test(c.body)));
+      const { events } = await s.ok('GET', `/api/events?since=${cursor}&itemId=${asked.id}`);
+      assert.deepEqual(events, [], 'nothing happened to it, so nobody was woken');
+    } finally { await s.stop(); }
+  });
 });
 
 describe('the receptionist supervises other agents', () => {

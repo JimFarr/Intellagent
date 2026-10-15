@@ -3771,6 +3771,7 @@ function sweepStale() {
     const m = activeMaster(ctx);
     const stale = Object.values(ctx.board.items).filter((it) => {
       if (it.columnId !== work.id || activeLease(it) || it.test) return false;
+      if ((it.questions || []).length) return false; // waiting on the human (a question or a review): not stale
       if (it.assignee && !isAgentName(it.assignee)) return false; // a person's own work is theirs to manage
       if (m && it.assignee === m.holder) return false; // the master holder works without leases
       if (it.assignee && standing?.isRunning(it.assignee)) return false;
