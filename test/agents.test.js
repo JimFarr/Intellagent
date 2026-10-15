@@ -734,6 +734,10 @@ describe('a lander (work.land) gets approved work onto main', () => {
       await s.ok('POST', `${B}/items/${b.id}/review`, { summary: 'done', evidence: 'e' }, { agent: 'bob' });
       // nobody may land before approval
       assert.equal((await s.api('POST', `${B}/items/${b.id}/land`, { agent: 'bob' }, { agent: 'yondu' })).body.code, 'NOT_APPROVED');
+      // the lander's brief says how to land
+      const brief = (await s.api('GET', `${B}/brief`, undefined, { agent: 'yondu' })).body;
+      assert.match(brief, /work\.land\*\* — .*\/items\/<ID>\/land.*NOT_APPROVED/);
+      assert.doesNotMatch(brief, /work\.land\*\* — undefined/);
       // approval with a dirty main checkout: the landing fails and goes to the lander
       fs.writeFileSync(path.join(dir, 'README.md'), 'edited by the human\n');
       await s.ok('POST', `${B}/items/${b.id}/review/decision`, { verdict: 'approve' }, USER);
