@@ -8,6 +8,54 @@
 // The comment also says whether the prompt reported an interrupted earlier run.
 //   node fake-agent.js flaky-once <marker>   comment through the real CLI, fail the first time, succeed on retry
 const [mode, arg] = process.argv.slice(2);
+//   node fake-agent.js linger <file> <ms>          one-shot: note its pid in <file>, and "overlap" there if another
+//   node fake-agent.js stream-linger <file> <ms>   pid noted in it is still alive; then work <ms> and behave like ok
+//   (stream-linger: keep-alive, the same per turn, but its first turn ever fails, and an ended session works on
+//   for <ms> before it exits). Tests that an agent never has two live processes.
+if (mode === 'linger' || mode === 'stream-linger') {
+  const fs = require('fs');
+  const ms = Number(process.argv[4]) || 0;
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  const note = () => {
+    const before = fs.existsSync(arg) ? fs.readFileSync(arg, 'utf8').split('\n').map(Number).filter(Boolean) : [];
+    const others = before.filter((p) => p !== process.pid && alive(p));
+    fs.appendFileSync(arg, `${others.length ? `overlap ${others.join(',')}\n` : ''}${process.pid}\n`);
+  };
+  const work = async (events) => {
+    await new Promise((r) => setTimeout(r, ms));
+    for (const id of new Set(events.map((e) => e.itemId).filter(Boolean))) {
+      await fetch(`${process.env.INTELLAGENT_URL}/api/boards/main/items/${id}/comments`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT },
+        body: JSON.stringify({ body: `lingered in pid ${process.pid}` }),
+      }).catch(() => {});
+    }
+  };
+  note();
+  if (mode === 'linger') {
+    process.stdin.resume();
+    process.stdin.on('end', async () => { await work(JSON.parse(fs.readFileSync(process.env.INTELLAGENT_EVENTS, 'utf8'))); });
+  } else {
+    const { runContext } = require('../lib/locate');
+    let buf = '';
+    process.stdin.on('data', async (d) => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        // the first turn ever answers with an error, so the board ends this session and retries in a new one
+        const first = !fs.existsSync(`${arg}.err`);
+        if (first) fs.writeFileSync(`${arg}.err`, '');
+        else await work(JSON.parse(fs.readFileSync(runContext().events, 'utf8')));
+        process.stdout.write(`${JSON.stringify({ type: 'result', subtype: first ? 'error_during_execution' : 'success', is_error: first, result: 'ok', usage: { input_tokens: 1, output_tokens: 1 } })}\n`);
+      }
+    });
+    // a session whose board died: stdin ends, but it keeps working on the turn it has (as claude does)
+    process.stdin.on('end', () => setTimeout(() => process.exit(0), ms));
+  }
+  return;
+}
 //   node fake-agent.js stream [crash-marker]   keep-alive: one process, a turn per stream-json user line; each turn
 //   comments "turn <n> in pid <pid>" on the batch's tickets and answers with a result line. With a marker file
 //   path, the first turn ever crashes the process (to test restart and retry).

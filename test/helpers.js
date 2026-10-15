@@ -53,8 +53,8 @@ async function startServer({ manifest = {}, agents, dir } = {}) {
   }
 
   // keep: leave the folder so a new server can start on it. hard: kill without a clean shutdown (power cut).
-  async function stop({ keep = false } = {}) {
-    proc.kill();
+  async function stop({ keep = false, hard = false } = {}) {
+    proc.kill(hard ? 'SIGKILL' : 'SIGTERM');
     await new Promise((r) => (proc.exitCode != null ? r() : proc.on('exit', r)));
     if (keep) return;
     // data files are read-only by design; make them writable so the temp folder can go

@@ -426,6 +426,50 @@ describe('keep-alive standing agents', () => {
   });
 });
 
+describe('one agent, one process', () => {
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  const pids = (f) => fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
+
+  it('keep-alive: a retry after a failed turn waits for the ended session to exit (INT-199)', async () => {
+    const f = path.join(os.tmpdir(), `ia-linger-${Date.now()}`);
+    const s = await startServer({ agents: { defaults: fast, agents: { twice: { run: run('stream-linger', `"${f}"`, 2000), keepAlive: true } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'linger', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@twice go' }, USER);
+      await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('twice: lingered')), 15000, 'retried turn');
+      const lines = pids(f);
+      assert.equal(lines.length, 2, `one session per attempt: ${lines}`);
+      assert.ok(!lines.some((l) => l.startsWith('overlap')), `the retry started while the failed session still ran: ${lines}`);
+    } finally {
+      await s.stop();
+      for (const x of [f, `${f}.err`]) fs.rmSync(x, { force: true });
+    }
+  });
+
+  it('a board restart stops the run that outlived it before starting the retry (INT-196)', async () => {
+    const f = path.join(os.tmpdir(), `ia-restart-${Date.now()}`);
+    const agents = { defaults: fast, agents: { survivor: { run: run('linger', `"${f}"`, 8000) } } };
+    let s = await startServer({ agents });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'restart', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@survivor go' }, USER);
+      await until(() => fs.existsSync(f), 8000, 'first run started');
+      const first = Number(pids(f)[0]);
+      const dir = s.dir;
+      await s.stop({ keep: true, hard: true }); // a crash: no clean stop, so nothing kills the run
+      assert.ok(alive(first), 'the run outlived its board');      s = await startServer({ dir, agents });
+      await until(() => pids(f).length >= 2, 15000, 'retried run');
+      const lines = pids(f);
+      assert.ok(!lines.some((l) => l.startsWith('overlap')), `two runs at once: ${lines}\n${s.log()}`);
+      assert.ok(!alive(first), 'the run from before the restart was stopped');
+      assert.match(s.log(), /still alive .*stopping it/);
+    } finally {
+      await s.stop();
+      fs.rmSync(f, { force: true });
+    }
+  });
+});
+
 describe('keep-alive recycling by context size', () => {
   it('replaces a session once its context per call passes recycleAboveTokens, and reports the size', async () => {
     // the fake agent's context grows 50k per turn: 50k, 100k, 150k
