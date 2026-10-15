@@ -3567,6 +3567,9 @@
       case 'lease.claimed': return `${nb(ev.claimant)} claimed ${b(id)}`;
       case 'lease.renewed': return `${nb(ev.claimant)} renewed ${b(id)}`;
       case 'lease.released': return `${nb(ev.claimant)} released ${b(id)}`;
+      case 'lease.requested': return `${who} asks ${nb(ev.claimant)} for ${b(id)}${ev.reason ? `: ${html ? esc(ev.reason) : ev.reason}` : ''}`;
+      case 'lease.handed': return `${nb(ev.from)} handed ${b(id)} to ${nb(ev.claimant)}${ev.note ? `: ${html ? esc(ev.note) : ev.note}` : ''}`;
+      case 'lease.declined': return `${who} declined ${nb(ev.requester)}'s request for ${b(id)}${ev.reason ? `: ${html ? esc(ev.reason) : ev.reason}` : ''}`;
       case 'lease.revoked': return `${who} revoked ${nb(ev.claimant)}'s lease on ${b(id)}`;
       case 'lease.warning': return `${nb(ev.claimant)}'s lease on ${b(id)} ends in ${ev.minutesLeft}m`;
       case 'lease.expired': return `${nb(ev.claimant)}'s lease on ${b(id)} expired`;

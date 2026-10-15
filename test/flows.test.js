@@ -434,6 +434,12 @@ describe('agent flows', () => {
     await s.ok('POST', `${B}/items/${it.id}/lease/decline`, { reason: 'nearly done' }, { agent: 'asker2' });
     const [ev] = (await s.ok('GET', `/api/events?since=${seq}&for=holder2&types=lease.declined`)).events;
     assert.equal(ev.reason, 'nearly done');
+    // the card's Activity tab reads the item history: one quiet line per action, no comment
+    const hist = (await s.ok('GET', `${B}/items/${it.id}/history`)).filter((e) => e.type.startsWith('lease.') && /requested|handed|declined/.test(e.type));
+    assert.deepEqual(hist.map((e) => e.type), ['lease.requested', 'lease.handed', 'lease.requested', 'lease.declined']);
+    assert.equal(hist[0].reason, 'I have the fix ready');
+    assert.equal(hist[1].note, 'tests are in test/x');
+    assert.equal((await s.ok('GET', `${B}/items/${it.id}`)).comments.length, 0, 'no comment is written');
     await s.ok('POST', `${B}/finish`, {}, { agent: 'asker2' });
   });
 
