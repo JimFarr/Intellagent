@@ -617,7 +617,19 @@ describe("the human's switch for approvals", () => {
     } finally { await s.stop(); }
   });
   it('a board can start with approvals off (manifest approvalsOff)', async () => {
-    const s = await startServer({ agents: { agents: { gamora: { enabled: false, grants: ['review.decide'] } } }, manifest: { approvalsOff: true } });
-    try { assert.equal((await s.ok('GET', '/api/boards/main/approvals')).on, false); } finally { await s.stop(); }
+    const s = await startServer({ agents: { agents: { gamora: { enabled: false, grants: ['review.decide'] } } }, manifest: { approvalsOff: true, permissions: { session: { grants: ['column.gate'] } } } });
+    try {
+      const v = await s.ok('GET', '/api/boards/main/approvals');
+      assert.equal(v.on, false);
+      // everyone who can approve is listed, also a name granted only in the manifest
+      assert.deepEqual(v.approvers.map((a) => [a.name, a.standing]), [['gamora', true], ['session', false]]);
+      // a malformed switch is refused, never read as off
+      assert.equal((await s.api('PUT', '/api/boards/main/approvals', { on: 1 }, USER)).body.code, 'BAD_REQUEST');
+      assert.equal((await s.api('PUT', '/api/boards/main/approvals', {}, USER)).body.code, 'BAD_REQUEST');
+      // switching off a board that already starts off says nothing
+      const { seq } = await s.ok('GET', '/api/app');
+      await s.ok('PUT', '/api/boards/main/approvals', { on: false }, USER);
+      assert.deepEqual((await s.ok('GET', `/api/events?since=${seq}&types=board.updated`)).events, []);
+    } finally { await s.stop(); }
   });
 });

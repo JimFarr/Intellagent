@@ -4343,7 +4343,7 @@
       const parts = [];
       if (when('review.decide').length) parts.push(`approves when ${when('review.decide').join(', or when ')}`);
       if (when('column.gate').length) parts.push(`moves work past your gates when ${when('column.gate').join(', or when ')}`);
-      return `<div class="appr-who">${avatar({ kind: 'agent', name: a.name })}<b>${esc(nameOf(a.name))}</b><span>${esc(parts.join('; '))}${a.status === 'paused' ? ' · paused' : ''}</span></div>`;
+      return `<div class="appr-who">${avatar({ kind: 'agent', name: a.name })}<b>${esc(nameOf(a.name))}</b><span>${esc(parts.join('; '))}${a.status === 'paused' ? ' · paused' : ''}${a.standing === false ? ' · not a standing agent (granted in the manifest)' : ''}</span></div>`;
     }).join('');
     el.innerHTML = `<div class="cr-label"><span>Approves for you</span><span class="sr-auto">${v.on ? 'On: these agents may approve on your behalf' : 'Off: every approval waits for you'}</span></div>
       <button class="switch ${v.on ? 'on' : ''}" data-appr-toggle title="${v.on ? 'Stop all approvals|Suspend every approval grant on this board until you switch it back on' : 'Allow approvals|Let these agents approve on your behalf again'}"></button>

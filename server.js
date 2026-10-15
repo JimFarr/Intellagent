@@ -3214,16 +3214,22 @@ function approvalsView(ctx) {
   const off = approvalsOff(ctx);
   let agents = [];
   try { agents = standing.list().agents; } catch { /* no standing agents */ }
-  const approvers = agents.map((a) => ({ name: a.name, enabled: a.enabled, status: a.status, grants: grantsOf(a.name).filter((g) => APPROVAL_POWERS.has(g.power)) })).filter((a) => a.grants.length);
+  // Everyone grantsOf can find: standing agents and names with grants in the manifest (e.g. a session with a
+  // token), so the list answers "who can approve for me" without leaving anyone out.
+  const standingNames = new Set(agents.map((a) => a.name));
+  const manifestOnly = Object.keys(M.permissions || {}).filter((n) => n !== '*' && !standingNames.has(n)).map((name) => ({ name, standing: false }));
+  const approvers = [...agents.map((a) => ({ name: a.name, standing: true, enabled: a.enabled, status: a.status })), ...manifestOnly]
+    .map((a) => ({ ...a, grants: grantsOf(a.name).filter((g) => APPROVAL_POWERS.has(g.power)) })).filter((a) => a.grants.length);
   return { on: !off, approvers };
 }
 route('GET', '/api/boards/:board/approvals', 'Who approves for the human on this board, and when (their review.decide / column.gate grants); on: false while the human has approvals switched off', ({ p }) => approvalsView(getCtx(p.board)));
 route('PUT', '/api/boards/:board/approvals', 'Human only: switch approvals for the human on or off { on }. Off suspends every review.decide and column.gate grant on this board until switched back on', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   humanConfig(actor, 'switch approvals on or off');
-  const on = body.on === true || body.on === 'true';
+  if (typeof body.on !== 'boolean') fail(400, '"on" must be true or false', { code: 'BAD_REQUEST', hint: 'PUT …/approvals { "on": true } switches approvals on; { "on": false } switches them off' });
+  const on = body.on;
   tx(ctx, (events) => {
-    if (approvalsOff(ctx) === !on && ctx.board.approvalsOff !== undefined) return;
+    if (approvalsOff(ctx) === !on) return; // already so (also when it comes from the manifest): nothing to say
     ctx.board.approvalsOff = !on;
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { approvals: { from: on ? 'off' : 'on', to: on ? 'on' : 'off' } } });
   });
