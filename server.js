@@ -1501,11 +1501,17 @@ function react(ctx, id, d, actor, add = true) {
     const who = reactions[emoji] || [];
     const has = who.includes(actor.name);
     const on = add === 'toggle' ? !has : add;
+    const key = `${emoji}|${actor.name}`;
+    if (on && has && d.note && target.reactionNotes?.[key] !== String(d.note).slice(0, 200)) {
+      // same reaction, new note (a queued ⏳ whose agent was paused or resumed)
+      (target.reactionNotes ||= {})[key] = String(d.note).slice(0, 200);
+      events.push(itemEvent(ctx, 'reaction.added', item, actor, { emoji, ...(comment ? { commentId: comment.id } : {}), note: target.reactionNotes[key] }));
+      return reactions;
+    }
     if (on === has) return reactions;
     reactions[emoji] = on ? [...who, actor.name] : who.filter((n) => n !== actor.name);
     if (!reactions[emoji].length) delete reactions[emoji];
     const notes = (target.reactionNotes ||= {});
-    const key = `${emoji}|${actor.name}`;
     if (on && d.note) notes[key] = String(d.note).slice(0, 200); else delete notes[key];
     if (!Object.keys(notes).length) delete target.reactionNotes;
     events.push(itemEvent(ctx, on ? 'reaction.added' : 'reaction.removed', item, actor, { emoji, ...(comment ? { commentId: comment.id } : {}) }));
@@ -4015,12 +4021,22 @@ standing = require('./lib/agents').createAgents({
     }
   },
   // A comment for an agent that can't run yet (settling, throttled or busy): ⏳ now, 👀 when its run starts.
+  // Later the note follows the agent (paused, failed, back again: when.refresh, only where a ⏳ still shows),
+  // and when.gone takes the ⏳ off (the agent was removed, or the queue cap dropped the event).
   onQueued: (name, events, when) => {
-    const note = when.busy ? 'queued — runs after its current run'
-      : `queued — runs about ${new Date(when.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    const note = when.gone ? null
+      : when.paused ? 'queued — its agent is paused; runs once it is resumed'
+        : when.failed ? 'queued — its agent failed; runs once the human resumes it'
+          : when.busy ? 'queued — runs after its current run'
+            : `queued — runs about ${new Date(when.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    const me = { kind: 'agent', name };
     for (const e of events) {
       if (e.type !== 'comment.added' || !e.comment?.id || !boards.has(e.board)) continue;
-      try { react(boards.get(e.board), e.itemId, { emoji: '⏳', commentId: e.comment.id, note }, { kind: 'agent', name }); } catch { /* comment gone */ }
+      const ctx = boards.get(e.board);
+      try {
+        if (when.refresh && !ctx.board.items[e.itemId]?.comments?.find((c) => c.id === e.comment.id)?.reactions?.['⏳']?.includes(name)) continue;
+        react(ctx, e.itemId, { emoji: '⏳', commentId: e.comment.id, note }, me, !when.gone);
+      } catch { /* comment gone */ }
     }
   },
   onAgentsChanged: (names) => { for (const n of names) issueAgentToken(n); },

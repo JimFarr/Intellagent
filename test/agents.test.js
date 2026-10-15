@@ -30,6 +30,7 @@ describe('standing agents', () => {
           budget: { run: run('ok'), maxRunsPerHour: 1 },
           coord: { run: run('ok'), listen: 'human', enabled: false },
           calm: { run: run('ok'), throttleMinutes: 0.04 }, // 2.4 s window
+          doomed: { run: run('slow', 800) }, // removed by a test
         },
       },
     });
@@ -38,7 +39,7 @@ describe('standing agents', () => {
 
   it('lists agents from agents.json', async () => {
     const { agents } = await s.ok('GET', '/api/agents');
-    assert.deepEqual(agents.map((a) => a.name), ['bot', 'flaky', 'slowpoke', 'budget', 'coord', 'calm']);
+    assert.deepEqual(agents.map((a) => a.name), ['bot', 'flaky', 'slowpoke', 'budget', 'coord', 'calm', 'doomed']);
     assert.equal(agents.find((a) => a.name === 'coord').status, 'paused');
   });
 
@@ -66,6 +67,32 @@ describe('standing agents', () => {
     assert.deepEqual(seen.reactions, { '👀': ['slowpoke'] }, '⏳ is gone once the run starts');
     assert.equal(seen.reactionNotes, undefined);
     await until(async () => (await agentState(s, 'slowpoke')).status === 'idle', 6000, 'slowpoke idle'); // leave it quiet for the next test
+  });
+
+  it('a queued ⏳ says so when its agent is paused, promises again on resume, and comes off when the agent is removed', async () => {
+    const it = await s.ok('POST', `${B}/items`, { title: 'queued marker, paused', column: 'Backlog' }, USER);
+    const find = async (text) => (await s.ok('GET', `${B}/items/${it.id}`)).comments.find((c) => c.body === text);
+    const note = async (text, who) => (await find(text))?.reactionNotes?.[`⏳|${who}`] || '';
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@slowpoke one' }, USER);
+    await until(async () => (await agentState(s, 'slowpoke')).status === 'running', 4000, 'slowpoke running');
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@slowpoke two' }, USER);
+    await until(async () => /after its current run/.test(await note('@slowpoke two', 'slowpoke')), 4000, 'hourglass');
+    await s.ok('POST', '/api/agents/slowpoke/pause', {}, USER);
+    await until(async () => /paused/.test(await note('@slowpoke two', 'slowpoke')), 4000, 'paused note');
+    await until(async () => !(await agentState(s, 'slowpoke')).runningSince, 6000, 'current run over');
+    assert.match(await note('@slowpoke two', 'slowpoke'), /paused/, 'the end of the run does not bring the old promise back');
+    await s.ok('POST', '/api/agents/slowpoke/resume', {}, USER);
+    await until(async () => (await find('@slowpoke two'))?.reactions?.['👀'], 8000, 'seen after resume');
+    assert.deepEqual((await find('@slowpoke two')).reactions, { '👀': ['slowpoke'] });
+    await until(async () => (await agentState(s, 'slowpoke')).status === 'idle', 6000, 'slowpoke idle');
+
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@doomed one' }, USER);
+    await until(async () => (await agentState(s, 'doomed')).status === 'running', 4000, 'doomed running');
+    await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@doomed two' }, USER);
+    await until(async () => (await find('@doomed two'))?.reactions?.['⏳'], 4000, 'hourglass');
+    await s.ok('DELETE', '/api/agents/doomed', undefined, USER);
+    await until(async () => !(await find('@doomed two'))?.reactions?.['⏳'], 4000, 'hourglass taken back');
+    assert.equal((await find('@doomed two')).reactionNotes, undefined);
   });
 
   it('retries a failing agent, then flags it and waits for the human', async () => {
