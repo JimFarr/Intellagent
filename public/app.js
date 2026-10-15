@@ -5005,7 +5005,7 @@
     const stopRow = sa.length || state.presence.some((p) => p.leases?.length) ? `<div class="stop-row">${allPaused
       ? `<button class="btn sm" data-resume-all title="Resume all|Unpause every standing agent; their queued events run">${icon('play', 'sm')}Resume all agents</button>`
       : `<button class="btn sm danger" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}Stop all agents</button>`}</div>` : '';
-    body.innerHTML = stopRow + '<div class="appr-row" data-appr></div><div class="appr-row idle-row" data-idle></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
+    body.innerHTML = stopRow + agentsNowHTML() + '<div class="appr-row" data-appr></div><div class="appr-row idle-row" data-idle></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
