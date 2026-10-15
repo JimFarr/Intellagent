@@ -3901,12 +3901,14 @@ function manageAgent(target, d, actor) {
     cfg.model = m;
   }
   if ('perms' in d) {
-    const next = [...new Set([].concat(d.perms || []).map(String))];
-    const PERMS = require('./lib/agents').PERMS;
-    const unknown = next.filter((k) => !PERMS[k]);
+    // null: back to the role's tools (or the default run when it has no role)
+    const next = d.perms == null ? null : [...new Set([].concat(d.perms).map(String))];
+    const { PERMS, ROLES } = require('./lib/agents');
+    const unknown = (next || []).filter((k) => !PERMS[k]);
     if (unknown.length) fail(400, `Unknown permission(s): ${unknown.join(', ')}`);
     const now = a.perms || [];
-    if (agent && next.some((k) => !now.includes(k))) fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}`, { code: 'WIDEN' });
+    const tools = next || ROLES[('role' in cfg ? cfg.role : a.role) || '']?.perms || null;
+    if (agent && (tools ? tools.some((k) => !now.includes(k)) : a.perms != null)) fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}`, { code: 'WIDEN' });
     cfg.perms = next;
   }
   if ('permissions' in d) {
