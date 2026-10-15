@@ -2094,19 +2094,16 @@ function pendingWork(name, pickup = false) {
   return out;
 }
 
-// One page an agent reads first: who it is, what to do next, how this board works, and the exact calls.
-// via: cli (intellagent api …) | mcp (tool names) | http (raw requests).
 // The brief's Project line. A sandbox's projectRoot is the checkout whose code it runs, not where its work
-// happens: name the folder it was set up in (a "project" folder inside it, if init was run there) and the code apart.
+// happens: name the sandbox's own folder as the project and the code it runs apart.
 function briefProjectLine() {
   const slash = (p) => p.replace(/\\/g, '/');
-  if (M.sandbox) {
-    const home = path.dirname(MANIFEST_PATH);
-    const project = fs.existsSync(path.join(home, 'project')) ? path.join(home, 'project') : home;
-    return `Project (the folder this board was set up in): \`${slash(project)}\`  ·  a sandbox: it runs the code of \`${slash(PROJECT_ROOT)}\`, which is not the project`;
-  }
+  if (M.sandbox) return `Project (the folder this board was set up in): \`${slash(path.dirname(MANIFEST_PATH))}\`  ·  a sandbox: it runs the code of \`${slash(PROJECT_ROOT)}\`, which is not the project`;
   return `Project (the code these tickets are about): \`${slash(PROJECT_ROOT)}\`${M.projectRoot ? ' — outside the board\'s folder: work there' : ''}`;
 }
+
+// One page an agent reads first: who it is, what to do next, how this board works, and the exact calls.
+// via: cli (intellagent api …) | mcp (tool names) | http (raw requests).
 function briefing(ctx, name, base, via = 'cli') {
   const b = ctx.board;
   const w = workFor(ctx, name);

@@ -241,13 +241,20 @@ describe('the brief of a sandbox board', () => {
     const code = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-code-'));
     const s = await startServer({ manifest: { sandbox: true, projectRoot: code } });
     try {
-      const project = path.join(s.dir, 'project');
-      fs.mkdirSync(project);
-      const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'dev' })).body;
-      const text = typeof brief === 'string' ? brief : brief.markdown;
-      const line = text.split('\n').find((l) => l.startsWith('Project'));
-      assert.ok(line.includes(project.split(path.sep).join('/')), line);
+      const slash = (p) => p.split(path.sep).join('/');
+      const projectLine = async () => {
+        const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'dev' })).body;
+        const text = typeof brief === 'string' ? brief : brief.markdown;
+        return text.split('\n').find((l) => l.startsWith('Project'));
+      };
+      let line = await projectLine();
+      assert.ok(line.includes(`\`${slash(s.dir)}\``), line);
+      assert.ok(line.includes(slash(code)), 'the code it runs is named too');
       assert.match(line, /sandbox: it runs the code of/);
+      // a folder that happens to be called "project" is not guessed at
+      fs.mkdirSync(path.join(s.dir, 'project'));
+      line = await projectLine();
+      assert.ok(!line.includes(`${slash(s.dir)}/project`), line);
     } finally { await s.stop(); }
   });
 });
