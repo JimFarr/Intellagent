@@ -1242,6 +1242,8 @@
   const RING = { running: 'run', queued: 'wait', throttled: 'wait', retrying: 'wait', failed: 'fail' };
   // Order in the strip: failed (needs you), then running, then waiting; past four the rest fold into +n.
   const RING_ORDER = { fail: 0, run: 1, wait: 2 };
+  // every ring spins in step with the clock, so one drawn again carries on at the same angle
+  const ringPhase = () => `--phase:-${Date.now() % 2400}ms`;
   function renderAwake() {
     const box = $('#awake');
     if (!box) return;
@@ -1256,7 +1258,7 @@
     const sig = JSON.stringify(awake.map((a) => [a.name, a.status, a.now?.line, a.now?.items, a.now?.since, a.queued]));
     if (box.dataset.sig !== sig) {
       box.dataset.sig = sig;
-      box.innerHTML = awake.slice(0, shown).map((a) => `<button class="wk" data-wake="${esc(a.name)}" data-ring="${RING[a.status]}" data-tip="${esc(line(a))}" aria-label="${esc(line(a).replace('|', ': '))}">${avatar({ kind: 'agent', name: a.name })}${RING[a.status] === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</button>`).join('')
+      box.innerHTML = awake.slice(0, shown).map((a) => `<button class="wk run-ring" data-wake="${esc(a.name)}" data-ring="${RING[a.status]}" style="${ringPhase()}"data-tip="${esc(line(a))}" aria-label="${esc(line(a).replace('|', ': '))}">${avatar({ kind: 'agent', name: a.name })}${RING[a.status] === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</button>`).join('')
         + (awake.length > shown ? `<button class="wk-more" data-wake="" data-tip="${esc(`${awake.length - shown} more awake|${awake.slice(shown).map((a) => `${a.name} · ${RUN_LABEL[a.status]}`).join(', ')}`)}">+${awake.length - shown}</button>` : '');
     } else {
       // only the minutes moved: refresh the tooltips in place
@@ -3950,6 +3952,7 @@
     if (on) { scheduleRefresh(0); refreshPresence(); }
   }
 
+  let nowTimer = null;
   const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status', 'master.status', 'master.renewed', 'agent.status', 'agent.run.finished', 'reaction.added', 'reaction.removed']);
   function onEvent(ev) {
     if (ev.type === 'hello') return;
@@ -3960,6 +3963,8 @@
     if (/^(item\.moved|item\.archived|attention\.|review\.)/.test(ev.type || '')) loadMetrics();
     if (ev.type === 'permissions.changed') { rolesCache = null; $('#permsDrawer .drawer-body')?._reload?.(); }
     if (ev.type?.startsWith('agent.') || ev.type === 'agents.changed') refreshPresence();
+    // a ticket's live line feeds an agent's Now row (INT-162): refresh the open drawer, at most every 2 s
+    else if (ev.type === 'lease.status' && $('#agentsDrawer') && !nowTimer) nowTimer = setTimeout(() => { nowTimer = null; refreshPresence(); }, 2000);
     if (ev.board && ev.itemId) {
       if (document.hidden) { if (newsworthy(ev)) { noteUnseen(ev); saveSeen(); } }
       else if (ev.board === state.boardId) seenFor(ev.board).seq = ev.seq;
@@ -4476,13 +4481,13 @@
     draw();
   }
 
-  // With a name (from the awake strip), scrolls to that agent's row and marks it for a moment.
+  // With a name (from the awake strip), scrolls to that agent's Now row (else its row below) and marks it for a moment.
   function openAgents(name) {
     const body = openDrawer('agentsDrawer', 'Agents', 'bot');
     fillAgents(body);
     // the refresh redraws the rows, so the spot goes on after it
     refreshPresence().then(() => {
-      const row = name && $$('.agent-row', body).find((r) => r.dataset.agent === name);
+      const row = name && ($$('.now-row', body).find((r) => r.dataset.now === name) || $$('.agent-row', body).find((r) => r.dataset.agent === name));
       if (row) { row.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); row.classList.add('spot'); }
     });
   }
@@ -4681,6 +4686,37 @@
       }
     });
     setTimeout(() => $('[data-aa-name]', f).select(), 50);
+  }
+
+  // The Agents drawer's top (INT-162): Now, one row per awake standing agent, and the last 10 runs across them.
+  const WHY_WORDS = { 'comment.added': 'a comment', 'item.assigned': 'an assignment', 'item.created': 'a new ticket', 'work.pending': 'waiting work',
+    'attention.resolved': 'an answer', 'review.approved': 'a verdict', 'review.changes_requested': 'a verdict', 'request.created': 'a request',
+    'lease.requested': 'a lease request', 'lease.handover': 'a handover', 'agent.poke': 'a nudge', 'item.unblocked': 'an unblock' };
+  const whyWords = (why) => [...new Set(String(why || '').split(/,\s*/).filter(Boolean).map((t) => WHY_WORDS[t] || t.replace(/[._]/g, ' ')))].join(', ');
+  const secs = (ms) => (ms == null ? '' : ms < 60000 ? `${Math.max(1, Math.round(ms / 1000))}s` : ms < 3600000 ? `${Math.round(ms / 60000)}m` : `${(ms / 3600000).toFixed(1)}h`);
+  const runResult = (code) => (code === 0 ? `<span class="rr ok" title="Finished">${icon('check', 'sm')}</span>` : code === 'stopped' ? '<span class="rr" title="Stopped by you">⏹</span>' : `<span class="rr bad" title="Failed|exit ${esc(String(code))}">${icon('x', 'sm')}</span>`);
+  const ticketLinks = (ids) => (ids || []).map((id) => `<span class="mini-chip link" data-board="${esc(state.boardId)}" data-open="${esc(id)}">${esc(id)}</span>`).join('');
+  function agentsNowHTML() {
+    const awake = Object.values(state.standing || {}).filter((a) => RING[a.status])
+      .sort((a, b) => RING_ORDER[RING[a.status]] - RING_ORDER[RING[b.status]] || a.name.localeCompare(b.name));
+    const now = awake.map((a) => {
+      const ring = RING[a.status], lr = a.lastRun || {};
+      const state_ = a.status === 'running' ? `running ${rel(a.now?.since || a.runningSince) || 'now'}`
+        : a.status === 'failed' ? 'failed' : `${a.status === 'queued' ? 'waiting' : RUN_LABEL[a.status]}${a.queued ? ` · ${a.queued} queued` : ''}`;
+      const items = a.status === 'running' ? a.now?.items : a.status === 'failed' ? lr.items : null;
+      const line = a.status === 'running' ? a.now?.line : a.status === 'failed' ? `exit ${lr.code ?? '?'}${lr.durationMs != null ? ` after ${secs(lr.durationMs)}` : ''}` : a.resumesAt ? `runs ${new Date(a.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+      const acts = a.status === 'failed' ? `<span class="now-acts"><button class="btn sm ghost" data-standing="log" data-name="${esc(a.name)}">${icon('terminal', 'sm')}<span>Log</span></button><button class="btn sm ghost" data-standing="resume" data-name="${esc(a.name)}">${icon('play', 'sm')}<span>Resume</span></button></span>` : '';
+      return `<div class="now-row" data-now="${esc(a.name)}" data-ring="${ring}"><span class="run-ring" data-ring="${ring}" style="${ringPhase()}">${avatar({ kind: 'agent', name: a.name })}${ring === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</span>
+        <b class="now-nm">${esc(nameOf(a.name))}</b><span class="now-st">${esc(state_)}</span>
+        <span class="now-line">${ticketLinks(items)}${line ? `<span>${esc(line)}</span>` : ''}</span>${acts}</div>`;
+    }).join('');
+    const runs = Object.values(state.standing || {}).flatMap((a) => (a.history || []).map((h) => ({ agent: a.name, ...h })))
+      .sort((x, y) => y.startedAt.localeCompare(x.startedAt)).slice(0, 10);
+    const recent = runs.map((r) => `<div class="run-row"><time datetime="${esc(r.startedAt)}" title="${esc(new Date(r.startedAt).toLocaleString())}">${new Date(r.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+      <b>${esc(nameOf(r.agent))}</b><span class="run-dur">${secs(r.durationMs)}</span>
+      <span class="run-why">${r.why ? `woken by ${esc(whyWords(r.why))}` : ''}${r.items?.length ? ` on ${ticketLinks(r.items)}` : ''}</span>${runResult(r.code)}</div>`).join('');
+    if (!now && !recent) return '';
+    return `<section class="ag-now"><div class="ag-sec">Now</div>${now || '<div class="now-quiet">Nobody is awake.</div>'}</section>${recent ? `<section class="ag-runs"><div class="ag-sec">Recent runs</div>${recent}</section>` : ''}`;
   }
 
   // "Approves for you": who may approve on the human's behalf and when, in plain words, with the one switch

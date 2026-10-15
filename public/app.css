@@ -1660,29 +1660,34 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .hub-btn .dot { top: -3px; right: -3px; width: 9px; height: 9px; background: var(--accent-2); box-shadow: 0 0 0 2px var(--bg); animation: fade-in .25s var(--ease-io); }
 @keyframes fade-in { from { opacity: 0; } }
 
-/* awake strip (INT-163): who is running, waiting or failed, each avatar in a thin run ring.
+/* run ring (INT-163, shared by the header strip and the Agents drawer's Now rows): an avatar in a thin ring.
    Running spins slowly and evenly; waiting is still; failed is --danger with a ! badge. Reduced motion: a still dashed ring. */
+.run-ring { --ring: var(--accent); position: relative; display: grid; place-items: center; flex: none; width: 32px; height: 32px; border-radius: 50%; }
+.run-ring .avatar { width: 22px; height: 22px; font-size: 9px; pointer-events: none; }
+.run-ring .avatar[data-run]::after { display: none; }
+.run-ring::before { content: ''; position: absolute; inset: 1px; border-radius: 50%; border: 1.5px solid var(--ring); transition: box-shadow .2s var(--ease-io); }
+/* --phase (set from the clock when drawn) keeps a redrawn ring at the same angle instead of snapping back to the top */
+.run-ring[data-ring="run"]::before { border-top-color: transparent; animation: ring-spin 2.4s linear var(--phase, 0s) infinite; }
+.run-ring[data-ring="wait"] { --ring: color-mix(in oklab, var(--muted) 70%, transparent); }
+.run-ring[data-ring="fail"] { --ring: var(--danger); }
+.run-ring i { position: absolute; right: -1px; bottom: -1px; display: grid; place-items: center; width: 12px; height: 12px; border-radius: 50%; background: var(--danger); color: var(--bg); font: 800 9px/1 var(--font); font-style: normal; box-shadow: 0 0 0 1.5px var(--bg); }
+@keyframes ring-spin { to { rotate: 360deg; } }
+.reduced .run-ring::before { animation: none; }
+.reduced .run-ring[data-ring="run"]::before { border-top-color: var(--ring); border-style: dashed; }
+@media (prefers-reduced-motion: reduce) {
+  .run-ring::before { animation: none; }
+  .run-ring[data-ring="run"]::before { border-top-color: var(--ring); border-style: dashed; }
+}
+/* the awake strip: who is running, waiting or failed, beside the Ask field */
 .topbar > .awake { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .awake:empty { display: none; }
-.awake .wk { --ring: var(--accent); position: relative; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; animation: fade-in .3s var(--ease-io); }
-.awake .wk .avatar { width: 22px; height: 22px; font-size: 9px; pointer-events: none; }
-.awake .wk .avatar[data-run]::after { display: none; }
-.awake .wk::before { content: ''; position: absolute; inset: 1px; border-radius: 50%; border: 1.5px solid var(--ring); transition: box-shadow .2s var(--ease-io); }
-.awake .wk[data-ring="run"]::before { border-top-color: transparent; animation: ring-spin 2.4s linear infinite; }
-.awake .wk[data-ring="wait"] { --ring: color-mix(in oklab, var(--muted) 70%, transparent); }
-.awake .wk[data-ring="fail"] { --ring: var(--danger); }
-.awake .wk i { position: absolute; right: -1px; bottom: -1px; display: grid; place-items: center; width: 12px; height: 12px; border-radius: 50%; background: var(--danger); color: var(--bg); font: 800 9px/1 var(--font); font-style: normal; box-shadow: 0 0 0 1.5px var(--bg); }
+.awake .wk { padding: 0; border: 0; background: none; cursor: pointer; animation: fade-in .3s var(--ease-io); }
 .awake .wk:hover::before { box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 18%, transparent); }
 .awake .wk:focus-visible, .awake .wk-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .awake .wk-more { height: 22px; min-width: 22px; padding: 0 6px; border: 0; border-radius: 99px; background: var(--hover); color: var(--muted); font: 600 11.5px var(--font); font-variant-numeric: tabular-nums; cursor: pointer; transition: color .15s; }
 .awake .wk-more:hover { color: var(--text); }
-@keyframes ring-spin { to { rotate: 360deg; } }
-.reduced .awake .wk, .reduced .awake .wk::before { animation: none; }
-.reduced .awake .wk[data-ring="run"]::before { border-top-color: var(--ring); border-style: dashed; }
-@media (prefers-reduced-motion: reduce) {
-  .awake .wk, .awake .wk::before { animation: none; }
-  .awake .wk[data-ring="run"]::before { border-top-color: var(--ring); border-style: dashed; }
-}
+.reduced .awake .wk { animation: none; }
+@media (prefers-reduced-motion: reduce) { .awake .wk { animation: none; } }
 /* on a phone (and below 820px, where four rings no longer fit the bar) the strip folds into the hub button:
    a count, its dot the worst state */
 .hub-btn .awake-n { display: none; }
@@ -1693,11 +1698,39 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
   .hub-btn .awake-n[data-ring="wait"]::before { background: var(--muted); }
   .hub-btn .awake-n[data-ring="fail"]::before { background: var(--danger); }
 }
+/* Agents drawer, top (INT-162): Now, one row per awake agent, then the last 10 runs */
+.ag-now, .ag-runs { margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent); }
+.ag-sec { font: 600 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 0 2px 6px; }
+.now-row { display: grid; grid-template-columns: 32px minmax(0, auto) minmax(0, 1fr) auto; grid-template-areas: "ring nm st acts" "ring line line acts"; align-items: center; gap: 0 10px; padding: 6px 8px 6px 4px; border-radius: 12px; }
+.now-row .run-ring { grid-area: ring; }
+.now-nm { grid-area: nm; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-st { grid-area: st; font: 11.5px var(--mono); color: var(--muted); white-space: nowrap; }
+.now-row[data-ring="run"] .now-st { color: var(--accent); }
+.now-row[data-ring="fail"] .now-st { color: var(--danger); }
+.now-line { grid-area: line; display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--muted); }
+.now-line:empty { display: none; }
+.now-line > span:not(.mini-chip) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-line .mini-chip, .run-why .mini-chip { flex: none; white-space: nowrap; }
+.now-acts { grid-area: acts; display: flex; gap: 2px; }
+.now-quiet { font-size: 12.5px; color: var(--muted); padding: 2px 2px 4px; }
+.run-row { display: grid; grid-template-columns: 42px minmax(0, 88px) 34px minmax(0, 1fr) 18px; align-items: center; gap: 8px; padding: 4px 4px; font-size: 12.5px; color: var(--muted); }
+.run-row time, .run-dur { font: 11.5px var(--mono); font-variant-numeric: tabular-nums; }
+.run-row b { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-why { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-why .mini-chip { vertical-align: 1px; }
+.rr { display: grid; place-items: center; }
+.rr.ok { color: var(--ok); }
+.rr.bad { color: var(--danger); }
+@media (max-width: 640px) {
+  .now-row { grid-template-areas: "ring nm st" "ring line line" "ring acts acts"; grid-template-columns: 32px minmax(0, auto) minmax(0, 1fr); }
+  .run-row { grid-template-columns: 38px minmax(0, 64px) minmax(0, 1fr) 18px; }
+  .run-dur { display: none; }
+}
 /* the Agents drawer opened from the strip: that agent's row is outlined, then the outline fades */
-.agent-row.spot { animation: row-spot 2.8s var(--ease-io) forwards; }
+.now-row.spot, .agent-row.spot { animation: row-spot 2.8s var(--ease-io) forwards; }
 @keyframes row-spot { 0%, 55% { box-shadow: 0 0 0 1.5px var(--accent); } 100% { box-shadow: 0 0 0 1.5px transparent; } }
-.reduced .agent-row.spot { animation: none; box-shadow: 0 0 0 1.5px var(--accent); }
-@media (prefers-reduced-motion: reduce) { .agent-row.spot { animation: none; box-shadow: 0 0 0 1.5px var(--accent); } }
+.reduced :is(.now-row, .agent-row).spot { animation: none; box-shadow: 0 0 0 1.5px var(--accent); }
+@media (prefers-reduced-motion: reduce) { :is(.now-row, .agent-row).spot { animation: none; box-shadow: 0 0 0 1.5px var(--accent); } }
 
 /* the Ask field: a doorway in the top bar (styled as .search, so every theme's field look applies) */
 .topbar > .ask-field { flex: 0 1 230px; min-width: 34px; cursor: text; }
