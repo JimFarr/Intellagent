@@ -232,6 +232,35 @@ describe('agent tokens on new boards', () => {
       await until(async () => cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'late' } }).code === 0, 10000, 'late can call the board');
     } finally { await s.stop(); }
   });
+  it('a local.json saved with a BOM still guards the human, and issuing agent tokens keeps the user token', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-bom-'));
+    const local = path.join(dir, 'local.json');
+    fs.writeFileSync(local, `﻿${JSON.stringify({ userToken: 'bom-secret' })}`); // as PowerShell 5 Set-Content -Encoding UTF8 writes it
+    const s = await startServer({ dir, manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    try {
+      const anon = await fetch(`${s.base}/api/boards/main/work`, { headers: { 'X-User': 'James' } });
+      assert.equal(anon.status, 401, 'X-User without the token is refused');
+      const signed = await fetch(`${s.base}/api/boards/main/work`, { headers: { 'X-User': 'James', Authorization: 'Bearer bom-secret' } });
+      assert.equal(signed.status, 200);
+      // the board issues one for a new standing agent; the CLI issues one by hand
+      fs.writeFileSync(path.join(s.dir, 'agents.json'), JSON.stringify({ agents: { late: { enabled: false, perms: ['read'] } } }));
+      await until(() => JSON.parse(fs.readFileSync(local, 'utf8').replace(/^﻿/, '')).agentTokens?.late, 10000, 'late gets a token');
+      assert.equal(cli(['token', '--agent', 'pat'], { cwd: s.dir }).code, 0);
+      const after = JSON.parse(fs.readFileSync(local, 'utf8'));
+      assert.equal(after.userToken, 'bom-secret', 'the user token survives');
+      assert.ok(after.agentTokens.late && after.agentTokens.pat);
+    } finally { await s.stop(); }
+  });
+  it('a local.json that does not parse stops the board, naming the file, and the CLI will not write over it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-badlocal-'));
+    const local = path.join(dir, 'local.json');
+    fs.writeFileSync(local, '{ "userToken": "half');
+    await assert.rejects(startServer({ dir }), (e) => /will not start: .*local\.json is not valid JSON/.test(e.message));
+    const r = cli(['token', '--agent', 'pat'], { cwd: dir });
+    assert.equal(r.code, 1);
+    assert.match(r.err, /local\.json is not valid JSON/);
+    assert.equal(fs.readFileSync(local, 'utf8'), '{ "userToken": "half', 'left as it was');
+  });
 });
 
 describe('waiting from the CLI', () => {

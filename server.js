@@ -19,6 +19,8 @@ const PUBLIC = path.join(ROOT, 'public');
 /* ───────────────────────── manifest ───────────────────────── */
 
 const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join(ROOT, 'intellagent.manifest.json'));
+const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
+const { readLocal } = require('./lib/locate');
 const MANIFEST_DEFAULTS = {
   appName: 'Intellagent',
   host: '127.0.0.1',
@@ -51,12 +53,12 @@ function loadManifest() {
     permissions: m.permissions || {},
   };
   if (process.env.INTELLAGENT_PORT) merged.port = Number(process.env.INTELLAGENT_PORT);
-  // local.json next to the manifest (git-ignored) carries machine-local secrets, e.g. the user token.
-  try {
-    const local = JSON.parse(fs.readFileSync(path.join(path.dirname(MANIFEST_PATH), 'local.json'), 'utf8'));
-    if (local.userToken) merged.auth.userToken = local.userToken;
-    if (local.agentTokens) merged.auth.agentTokens = { ...(merged.auth.agentTokens || {}), ...local.agentTokens };
-  } catch { /* none */ }
+  // local.json next to the manifest (git-ignored) carries machine-local secrets, e.g. the user token. One that
+  // exists but can't be read stops the board: starting without the user token would let anyone act as the human.
+  let local;
+  try { local = readLocal(LOCAL_PATH); } catch (e) { console.error(`Intellagent will not start: ${e.message}`); process.exit(1); }
+  if (local.userToken) merged.auth.userToken = local.userToken;
+  if (local.agentTokens) merged.auth.agentTokens = { ...(merged.auth.agentTokens || {}), ...local.agentTokens };
   merged.dataDir = path.resolve(path.dirname(MANIFEST_PATH), merged.dataDir);
   return merged;
 }
@@ -2990,15 +2992,15 @@ const tokenEq = (a, b) => typeof a === 'string' && a.length === b.length && cryp
 // Agent tokens in local.json (git-ignored), read fresh; and issue one for a standing agent on a board that
 // requires them, so agents the human adds keep working.
 function readLocalAgentTokens() {
-  try { return JSON.parse(fs.readFileSync(path.join(path.dirname(MANIFEST_PATH), 'local.json'), 'utf8')).agentTokens || {}; } catch { return {}; }
+  try { return readLocal(LOCAL_PATH).agentTokens || {}; } catch { return {}; }
 }
 function issueAgentToken(name) {
   if (!M.auth.requireAgentTokens || !name || M.auth.agentTokens?.[name] || readLocalAgentTokens()[name]) return;
-  const file = path.join(path.dirname(MANIFEST_PATH), 'local.json');
-  let local = {};
-  try { local = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* new */ }
+  // never write over a local.json that can't be read: it may hold the user token
+  let local;
+  try { local = readLocal(LOCAL_PATH); } catch (e) { console.error(`No token issued for ${name}: ${e.message}`); return; }
   local.agentTokens = { ...(local.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') };
-  fs.writeFileSync(file, `${JSON.stringify(local, null, 2)}\n`);
+  fs.writeFileSync(LOCAL_PATH, `${JSON.stringify(local, null, 2)}\n`);
   M.auth.agentTokens = { ...(M.auth.agentTokens || {}), [name]: local.agentTokens[name] };
 }
 

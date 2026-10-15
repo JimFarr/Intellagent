@@ -22,7 +22,7 @@ const path = require('path');
 const net = require('net');
 const { spawn } = require('child_process');
 const os = require('os');
-const { findManifest, readManifest, baseUrl, defaultAgent, userToken, projectOf, NO_BOARD } = require('../lib/locate');
+const { findManifest, readManifest, baseUrl, defaultAgent, userToken, projectOf, readLocal, NO_BOARD } = require('../lib/locate');
 const crypto = require('crypto');
 const TEMPLATES = require('../lib/templates');
 
@@ -181,8 +181,8 @@ function tokenCmd() {
   const mp = requireManifest();
   const dir = path.dirname(mp);
   const file = path.join(dir, 'local.json');
-  let local = {};
-  try { local = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch { /* none yet */ }
+  let local;
+  try { local = readLocal(file); } catch (e) { console.error(e.message); process.exit(1); } // never write over it
   const f = flags(rest);
   // --agent <name>: that agent's token (boards with requireAgentTokens refuse agents without one)
   if (f.agent) {
