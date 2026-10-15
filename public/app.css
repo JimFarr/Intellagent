@@ -1561,6 +1561,15 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .react.add { width: 24px; padding: 0; justify-content: center; color: var(--muted); opacity: 0; }
 .cmt:hover .react.add, .m-reacts .react.add, .react.add:focus-visible { opacity: 1; }
 .reacts:has(.react:not(.add)) .react.add { opacity: .6; }
+/* touch screens have no hover: the add button always shows, and every chip gets a 32px tap area
+   around its 24px look (INT-188). Insets count from inside the 1px border; sideways a chip reaches 2px
+   into the 5px gap (it is wide already) and the 24px-wide add button 4px. */
+@media (hover: none) {
+  .react.add { opacity: .6; }
+  .react { position: relative; }
+  .react::after { content: ""; position: absolute; inset: -5px -3px; }
+  .react.add::after { inset: -5px; }
+}
 .m-reacts .reacts { margin: 8px 0 0; }
 .react-pick { position: fixed; z-index: 5000; display: flex; gap: 2px; padding: 5px; border-radius: 99px; background: var(--surface); border: var(--bw) solid var(--border); box-shadow: 0 16px 40px -14px rgb(0 0 0 / .5); animation: menu-in .16s cubic-bezier(.16, 1, .3, 1); }
 .react-pick button { width: 32px; height: 32px; border: 0; border-radius: 50%; background: none; font-size: 18px; cursor: pointer; transition: background .15s var(--ease-io); }
