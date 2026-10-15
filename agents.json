@@ -46,7 +46,7 @@
       ],
       "reviewer": true,
       "commands": [
-        "npm run measure:board"
+        "npm run measure:board:*"
       ]
     },
     "drax": {

@@ -709,5 +709,8 @@ describe('extra commands the human allows', () => {
     assert.ok(r.includes('"Bash(npm run measure:board)"'));
     assert.ok(r.includes('"Bash(git push)"'), "an exact command the human wrote is the human's call");
     assert.ok(!r.includes('rm -rf') && !r.includes('curl'));
+    const withArgs = runFor(['edit'], { commands: ['npm run measure:board:*', 'npm *:run'] });
+    assert.ok(withArgs.includes('"Bash(npm run measure:board:*)"'), 'a trailing :* allows that one command with any arguments');
+    assert.ok(!withArgs.includes('npm *:run'), 'no other wildcards');
   });
 });
