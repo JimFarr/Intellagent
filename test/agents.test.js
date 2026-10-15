@@ -666,6 +666,46 @@ describe('per-agent git worktrees', () => {
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
     }
   });
+  it('a side branch open in the main checkout is neither where work lands nor what agents catch up with', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-wt-'));
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    // the human is on a feature branch with a commit main doesn't have
+    git('switch', '-q', '-c', 'side');
+    fs.writeFileSync(path.join(dir, 'side.txt'), 'wip\n');
+    git('add', 'side.txt');
+    git('commit', '-q', '-m', 'side work');
+    const s = await startServer({ dir, agents: { defaults: fast, agents: { ann: { run: run('commit'), worktree: true } } } });
+    try {
+      const a = await s.ok('POST', `${B}/items`, { title: 'for ann', column: 'Ready', assignee: 'ann' }, USER);
+      await until(async () => (await comments(s, a.id)).some((c) => c.startsWith('ann: committed')), 10000, 'ann committed');
+      assert.ok(!git('log', '--format=%s', 'agent/ann').includes('side work'), "ann's branch starts from main, not the open side branch");
+      await until(async () => (await agentState(s, 'ann')).status === 'idle', 6000, 'ann idle');
+      await s.ok('POST', `${B}/items/${a.id}/review`, { summary: 'done' }, { agent: 'ann' });
+      await s.ok('POST', `${B}/items/${a.id}/review/decision`, { verdict: 'approve' }, USER);
+      assert.match((await comments(s, a.id)).at(-1), /Not landed: the main checkout has `side` open, not `main`.*git switch main.*intellagent merge/);
+      const failed = (await s.ok('GET', `/api/events?types=item.land_failed&itemId=${a.id}`)).events.at(-1);
+      assert.equal(failed.code, 'NOT_ON_MAIN');
+      assert.ok(!git('log', '--format=%s', 'side').includes(`(${a.id})`), 'nothing landed on side');
+      git('switch', '-q', 'main');
+      const land = await s.ok('POST', `${B}/items/${a.id}/land`, {}, USER);
+      assert.equal(land.landed.length, 1);
+      assert.equal(land.branch, 'main');
+      assert.ok(git('log', '-1', '--format=%s', 'main').includes(`(${a.id})`));
+      assert.match((await comments(s, a.id)).at(-1), /Landed on main/);
+    } finally {
+      await s.stop();
+      try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
+    }
+  });
 });
 
 describe('a lander (work.land) gets approved work onto main', () => {

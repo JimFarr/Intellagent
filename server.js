@@ -1793,12 +1793,12 @@ function landWork(ctx, item, agent, actor, events) {
   const waiting = !r.landed.length && !!r.commits?.length;
   const lands = waiting ? landers().filter((n) => n !== actor.name) : [];
   const body = r.landed.length
-    ? `⤵ Landed on main: ${r.landed.map((x) => `\`${x}\``).join(', ')} from \`agent/${agent}\`.`
-    : `⚠ Not landed: ${r.reason}.${waiting ? (lands.length ? ` ${lands.map((n) => `@${n}`).join(' ')} will land it.` : ` When that's sorted, run \`${r.command}\`.`) : ''}`;
+    ? `⤵ Landed on ${r.branch || 'main'}: ${r.landed.map((x) => `\`${x}\``).join(', ')} from \`agent/${agent}\`.`
+    : `⚠ Not landed: ${r.reason}.${waiting ? (lands.length ? ` ${lands.map((n) => `@${n}`).join(' ')} will land it.` : ` When that's sorted${r.hint ? ` (${r.hint})` : ''}, run \`${r.command}\`.`) : ''}`;
   item.comments.push({ id: rid('c'), author: SYSTEM, body, createdAt: now() });
   item.landing = r.landed.length ? { state: 'landed', commits: r.landed, from: agent, at: now() }
     : waiting ? { state: 'failed', reason: r.reason, from: agent, at: now() } : { state: 'nothing', reason: r.reason, at: now() };
-  events.push(itemEvent(ctx, r.landed.length ? 'item.landed' : 'item.land_failed', item, actor, { agent, landed: r.landed, ...(r.reason ? { reason: r.reason } : {}), mentions: [agent, ...lands] }));
+  events.push(itemEvent(ctx, r.landed.length ? 'item.landed' : 'item.land_failed', item, actor, { agent, landed: r.landed, ...(r.reason ? { reason: r.reason } : {}), ...(r.code ? { code: r.code } : {}), mentions: [agent, ...lands] }));
   return r;
 }
 
@@ -4142,6 +4142,7 @@ checkPresence();
 // main that James never approved on the real board (INT-80).
 if (!M.sandbox) worktrees = require('./lib/worktrees').createWorktrees({
   root: PROJECT_ROOT,
+  mainBranch: typeof M.mainBranch === 'string' && /^[\w./-]{1,100}$/.test(M.mainBranch) && !M.mainBranch.startsWith('-') ? M.mainBranch : null,
   // .intellagent/worktrees in a project; .worktrees beside a manifest at the repo root (git-ignored either way)
   dir: path.basename(path.dirname(MANIFEST_PATH)) === '.intellagent' || M.projectRoot ? path.join(path.dirname(MANIFEST_PATH), 'worktrees') : path.join(PROJECT_ROOT, '.worktrees'),
 });
