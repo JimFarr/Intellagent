@@ -946,8 +946,8 @@ function formAnswers(form, answers) {
   const out = {};
   for (const f of fields) {
     const v = answers[f.key];
-    if (v == null || v === '' || (Array.isArray(v) && !v.length)) { if (f.required) bad(`"${f.key}" is required`); out[f.key] = null; continue; }
-    out[f.key] = formValue(f, v, (m) => bad(`"${f.key}" ${m}`));
+    if (v == null || v === '' || (Array.isArray(v) && !v.length)) { if (f.required) bad(`"${f.label}" is required`); out[f.key] = null; continue; }
+    out[f.key] = formValue(f, v, (m) => bad(`"${f.label}" ${m}`));
   }
   return out;
 }

@@ -3046,10 +3046,11 @@
       return `<div class="qf-field" data-key="${esc(f.key)}"><div class="qf-label">${esc(f.label)}${f.required ? '<b class="qf-req" title="Required">*</b>' : ''}</div>${f.help ? `<div class="qf-help">${esc(f.help)}</div>` : ''}<div class="qf-ctl qf-${f.type}">${ctl}</div></div>`;
     }).join('')}</div>`;
   }
-  // { key: value } from the controls, or null (and the missing fields marked) when a required one is empty.
+  // { key: value } from the controls, or null (and the missing fields marked) when a required one is empty or a number is out of its range (INT-205).
   function readQForm(el, q) {
     const out = {};
     let missing = null;
+    let outside = null;
     for (const f of q.form.filter((x) => x.type !== 'note')) {
       const box = $$('.qf-field', el).find((x) => x.dataset.key === f.key);
       const picked = $$('input:checked', box).map((x) => x.value);
@@ -3057,11 +3058,20 @@
       const v = f.type === 'multi' ? picked : f.type === 'choice' ? picked[0] ?? null : f.type === 'yesno' ? (picked.length ? picked[0] === 'true' : null)
         : f.type === 'number' ? (raw === '' ? null : Number(raw)) : raw || null;
       const empty = v == null || (Array.isArray(v) && !v.length);
-      box.classList.toggle('missing', !!(f.required && empty));
+      const range = f.type === 'number' && v != null && ((f.min != null && v < f.min) || (f.max != null && v > f.max));
+      box.classList.toggle('missing', !!((f.required && empty) || range));
       if (f.required && empty) missing ||= box;
+      if (range) outside ||= { box, f };
       out[f.key] = v;
     }
     if (missing) { missing.scrollIntoView({ block: 'nearest' }); toast('Fill in the fields marked *', { kind: 'error' }); return null; }
+    if (outside) {
+      const { box, f } = outside;
+      const bounds = f.min != null && f.max != null ? `between ${f.min} and ${f.max}` : f.min != null ? `at least ${f.min}` : `at most ${f.max}`;
+      box.scrollIntoView({ block: 'nearest' });
+      toast(`${f.label} must be ${bounds}`, { kind: 'error' });
+      return null;
+    }
     return out;
   }
 
