@@ -141,8 +141,10 @@
     const color = p?.color || `hsl(${hue(name)} 62% 56%)`;
     const style = `--av:${esc(color)}${p?.image ? `;background-image:url(&quot;${esc(p.image)}&quot;)` : ''}`;
     const run = state.standing[name]?.status;
-    return `<span class="avatar ${kind} ${p?.image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}"${run && run !== 'idle' ? ` data-run="${run}"` : ''} style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${p?.image ? '' : esc(p?.glyph || initials(name))}</span>`;
+    return `<span class="avatar ${kind} ${p?.image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}"${run && run !== 'idle' ? ` data-run="${run}"` : ''} style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${p?.image ? '' : p?.glyph ? `<i class="gl">${esc(emojiGlyph(p.glyph))}</i>` : esc(initials(name))}</span>`;
   }
+  // A glyph like 🗡 or ⚔ draws as a flat text symbol unless U+FE0F follows it; add it so it shows as the emoji.
+  const emojiGlyph = (g) => (/^\p{Extended_Pictographic}$/u.test(g) && !/\p{Emoji_Presentation}/u.test(g) ? `${g}️` : g);
 
   // How an agent or person is called on screen: the profile's label when it has one ("Receptionist"),
   // else the id. The id is what routes (@mentions, assignee), so it stays in tooltips and muted suffixes.

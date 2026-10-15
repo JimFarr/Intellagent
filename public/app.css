@@ -990,8 +990,14 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 /* ───────── profiles ───────── */
 .avatar.img { background-size: cover; background-position: center; background-repeat: no-repeat; text-shadow: none; }
-.avatar.glyph { font-size: 11px; }
-.avatar.lg.glyph { font-size: 15px; }
+/* an emoji glyph is sized from its box, not from font-size (INT-200). The small places (card footers, rings, ticks)
+   set font-size for two initials, which left the emoji at 7–9 px; here it is 66% of the box up to 24 px wide, where
+   detail is scarce and every pixel counts, 56% from 26 px and 50% from 44 px, where it needs room around it. No text shadow:
+   it blurs emoji detail at this size. */
+.avatar.glyph { container-type: size; text-shadow: none; }
+.avatar .gl { display: block; font: normal 66cqw/1 "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", var(--font); letter-spacing: 0; }
+@container (min-width: 26px) { .avatar .gl { font-size: 56cqw; } }
+@container (min-width: 44px) { .avatar .gl { font-size: 50cqw; } }
 .swatches { display: flex; flex-wrap: wrap; gap: 6px; }
 .swatch { width: 24px; height: 24px; border-radius: 8px; border: 0; padding: 0; cursor: pointer; background: var(--c); box-shadow: inset 0 0 0 1px rgb(0 0 0 / .15); transition: transform .2s var(--spring), box-shadow .2s; display: grid; place-items: center; color: var(--muted); }
 .swatch:hover { transform: scale(1.12); }
@@ -1086,7 +1092,6 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .avatar[data-name] { cursor: pointer; }
 .avatar.xl { width: 58px; height: 58px; font-size: 20px; border-radius: 50%; }
 .avatar.xl.agent { border-radius: 17px; }
-.avatar.xl.glyph { font-size: 28px; }
 .agent-hero { display: flex; gap: 14px; align-items: center; margin: 4px 0 16px; }
 .ah-name { font: 700 19px/1.2 var(--display); }
 .ah-sub { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font: 11.5px var(--mono); color: var(--muted); margin-top: 4px; }
