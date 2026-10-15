@@ -1646,7 +1646,7 @@
     if (s.checklist && ck.total) meta.push(`<span class="m" title="Checklist|${ck.done} of ${ck.total} done">${icon('checks', 'sm')}${ck.done}/${ck.total}</span>`);
     if (s.listeners && ls?.length) meta.push(`<span class="m listen" title="Listening|${esc(ls.join(', '))} ${ls.length > 1 ? 'get' : 'gets'} events about this ticket">${icon('radio', 'sm')}<span class="stack-av">${ls.slice(0, 3).map((n) => avatar({ kind: 'agent', name: n })).join('')}</span>${ls.length > 3 ? `+${ls.length - 3}` : ''}</span>`);
     const rx = Object.entries(it.reactions || {}).filter(([, w]) => w.length);
-    if (rx.length) meta.push(`<span class="c-reacts" title="Reactions|${esc(rx.map(([e, w]) => `${e} ${w.join(', ')}`).join(' · '))}">${rx.slice(0, 3).map(([e, w]) => `<span>${e}${w.length > 1 ? `<b>${w.length}</b>` : ''}</span>`).join('')}</span>`);
+    if (rx.length) meta.push(`<span class="c-reacts" title="Reactions|${esc(rx.map(([e, w]) => `${e} ${w.join(', ')}`).join(' · '))}">${rx.slice(0, 3).map(([e, w]) => `<span>${e}${w.length > 1 ? `<b>${w.length}</b>` : ''}</span>`).join('')}${rx.length > 3 ? `<span class="more">+${rx.length - 3}</span>` : ''}</span>`);
     const hasMeta = meta.length > 0;
     if (s.author) meta.push('<span class="grow"></span>', avatar(it.author));
     const desc = s.description && shown('description') && it.description ? `<p class="c-desc">${esc(stripMd(it.description).slice(0, 220))}</p>` : '';
