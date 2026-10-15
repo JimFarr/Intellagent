@@ -278,7 +278,8 @@ async function stop() {
   let pid = null;
   try { pid = Number(fs.readFileSync(pidFile, 'utf8')); } catch { /* not started by us */ }
   if (!pid) { console.log('Not running (no server.pid).'); return; }
-  try { process.kill(pid); console.log('Stopped.'); } catch { console.log('Not running.'); }
+  // the whole tree: the board and the agent runs it started (else they live on as orphans beside the next board's)
+  console.log(require('../lib/kill').killTree(pid) ? 'Stopped.' : 'Not running.');
   try { fs.rmSync(pidFile); } catch { /* gone */ }
 }
 
