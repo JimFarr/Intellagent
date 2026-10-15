@@ -598,6 +598,37 @@ describe('lean runs', () => {
     assert.match(keepAliveCmd(b), /--allowedTools .* --input-format stream-json/, 'keep-alive flags still follow the variadic lists');
   });
 
+  it('denies Claude\'s file tools on the board\'s own files, and no Bash rule lets node --test take flags (INT-195)', async () => {
+    const { PERMS } = require('../lib/agents');
+    const r = runFor(['edit', 'test'], { protect: ['C:\\board\\local.json'], protectWrites: ['C:\\board\\data\\**'] });
+    const deny = /--disallowedTools (.*)$/.exec(r)[1];
+    for (const t of ['Read', 'Edit', 'Write']) {
+      for (const p of ['**/.intellagent/local.json', '**/agents.json', '**/agent-context/**', '**/.git/hooks/**']) assert.ok(deny.includes(`"${t}(${p})"`), `${t}(${p})`);
+    }
+    if (process.platform === 'win32') {
+      assert.ok(deny.includes('"Read(//c/board/local.json)"'), 'absolute paths in the POSIX form Claude Code matches');
+      assert.ok(deny.includes('"Edit(//c/board/data/**)"') && deny.includes('"Write(//c/board/data/**)"'));
+      assert.ok(!deny.includes('Read(//c/board/data'), 'a run still reads its own events file in data/');
+    }
+    // Claude Code's Bash rules: "Bash(x)" is exactly x, "Bash(x:*)" is x followed by anything
+    const fits = (rule, cmd) => { const m = /^Bash\((.*)\)$/.exec(rule); if (!m) return false; return m[1].endsWith(':*') ? cmd.startsWith(m[1].slice(0, -2)) : cmd === m[1]; };
+    const rules = [...Object.values(PERMS).flatMap((p) => p.tools), 'Bash(intellagent:*)'];
+    for (const cmd of ['node --test --import x', 'node --test --import=data:text/javascript,x', 'node --test x.js']) {
+      assert.deepEqual(rules.filter((t) => fits(t, cmd)), [], cmd);
+    }
+    assert.ok(rules.some((t) => fits(t, 'node --test')) && rules.some((t) => fits(t, 'npm test')), 'plain test runs still fit');
+
+    // on a board: runs built from a role carry the rules with the board's real paths; a custom run is left alone
+    const s = await startServer({ agents: { agents: { b: { role: 'builder', enabled: false }, c: { run: 'claude -p "mine"', enabled: false } } } });
+    try {
+      const { agents } = await s.ok('GET', '/api/agents');
+      const b = agents.find((a) => a.name === 'b').run;
+      assert.match(b, /--disallowedTools .*"Read\(\/\/.*agents\.json\)"/);
+      assert.match(b, /"Edit\(\/\/.*\/data\/\*\*\)"/);
+      assert.equal(agents.find((a) => a.name === 'c').run, 'claude -p "mine"', "the human's own run wins");
+    } finally { await s.stop(); }
+  });
+
   it('finds the board\'s MCP server only when the project registered it', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-mcp-'));
     try {

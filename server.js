@@ -4189,6 +4189,7 @@ standing = require('./lib/agents').createAgents({
   stateFile: path.join(DATA, 'agents.state.json'),
   logDir: path.join(DATA, 'agent-runs'),
   cwd: PROJECT_ROOT,
+  protect: [LOCAL_PATH], // beside the manifest, which agents.json may not be
   noRuns: !!M.sandbox,
   env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
   emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
