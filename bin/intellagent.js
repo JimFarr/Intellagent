@@ -437,16 +437,19 @@ async function watchCmd() {
     let events = await nextEvents({ agent, types: f.types, timeoutSec: 0, quiet: true, listen });
     await new Promise((res) => setTimeout(res, 3000)); // let a burst of edits settle into one run
     events = events.concat(await nextEvents({ agent, types: f.types, timeoutSec: 1, quiet: true, listen }));
+    // Beside the cursors; a board reached by --url or INTELLAGENT_URL has no manifest, so a temp folder.
     const mp = findManifest();
-    const evFile = path.join(path.dirname(mp), 'cursors', `${agent.replace(/[^\w.-]+/g, '_')}-events.json`);
+    const evDir = mp ? path.join(path.dirname(mp), 'cursors') : path.join(os.tmpdir(), 'intellagent-cursors');
+    const evFile = path.join(evDir, `${agent.replace(/[^\w.-]+/g, '_')}-events.json`);
+    fs.mkdirSync(evDir, { recursive: true });
     fs.writeFileSync(evFile, JSON.stringify(events, null, 2));
     const prompt = [
       listen.query
         ? `You are "${agent}", coordinating this project's Intellagent board. New activity (${what}):`
         : `You are "${agent}", working on this project's Intellagent board. These events are addressed to you:`,
-      ...events.map((e) => `- ${eventLine(e)}`),
+      ...events.map((e) => `- ${e.board && e.board !== 'main' ? `[board ${e.board}] ` : ''}${eventLine(e)}`),
       '',
-      `Read each ticket for context (intellagent api GET /api/boards/main/items/<ID>), act on it following the board's standing rules and the project's CLAUDE.md, and reply on the card.`,
+      `Read each ticket for context (intellagent api GET /api/boards/<board>/items/<ID>; the board is ${[...new Set(events.map((e) => e.board).filter(Boolean))].join(', ') || 'main'}), act on it following the board's standing rules and the project's CLAUDE.md, and reply on the card.`,
       `Use INTELLAGENT_AGENT=${agent} for API calls. Full event JSON: ${evFile}`,
     ].join('\n');
     console.log(`\n▶ ${events.length} event(s): ${events.map((e) => e.itemId || e.type).join(', ')}`);

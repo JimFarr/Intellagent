@@ -322,6 +322,24 @@ describe('waiting from the CLI', () => {
   });
 });
 
+describe('watching from the CLI', () => {
+  it('watch --once runs with only INTELLAGENT_URL and names the event\'s board in its prompt', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    const away = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-away-')); // no board folder here
+    try {
+      const env = { INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'watcher' };
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'watched', column: 'Ready' }, USER);
+      assert.equal(cli(['do', 'add_comment', `id=${it.id}`, 'body=on it'], { cwd: away, env }).code, 0);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: '@watcher please look' }, USER);
+      const w = cli(['watch', '--once', '--', 'node', '-e', 'process.stdin.pipe(process.stdout)'], { cwd: away, env });
+      assert.equal(w.code, 0, w.err || w.out);
+      assert.match(w.out, /the board is main/);
+      assert.match(w.out, /intellagent api GET \/api\/boards\/<board>\/items\/<ID>/);
+      assert.ok(!/path\" argument/.test(w.err), w.err);
+    } finally { await s.stop(); }
+  });
+});
+
 describe('the brief of a sandbox board', () => {
   it('names the folder the board was set up in as the project, and the code it runs apart', async () => {
     const code = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-code-'));
