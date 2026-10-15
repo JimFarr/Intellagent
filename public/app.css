@@ -1785,6 +1785,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .msg-st.open { color: var(--accent); }
 .msg-st.open::before { content: ''; width: 6px; height: 6px; margin-right: 3px; border-radius: 50%; background: currentColor; }
 .msg-st.done { color: var(--ok); }
+.msg-stuck { margin: 2px 4px 0; font: 11px var(--font); color: var(--warn); }
 .msg-act { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .2s var(--ease), background .2s var(--ease), color .2s var(--ease); }
 .msg:hover .msg-act, .msg-act:focus-visible { opacity: 1; }
 .msg-act:hover { background: var(--hover); color: var(--text); }

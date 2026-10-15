@@ -175,6 +175,19 @@
     .filter((a) => a.status !== 'running' && a.lastRun?.endedAt && a.lastRun?.about?.[kind]?.includes(id)
       && !posts.some((p) => p.at > a.lastRun.endedAt || (p.who === a.name && p.at > a.lastRun.startedAt)))
     .map((a) => `${nameOf(a.name)}'s run ended ${minsSince(a.lastRun.endedAt)} min ago without replying here`);
+  // An open request its agent will not pick up soon (INT-203): what the human can do, or when it runs. Clears once the agent replies or starts
+  const requestStuck = (q) => {
+    if (q.status !== 'open' || (q.replies || []).some((r) => r.author?.name === q.to && r.at > q.at)) return null;
+    const sa = state.standing?.[q.to];
+    if (!sa) return state.presence.find((p) => p.name === q.to)?.online ? null : 'Offline: nothing is listening. Ask someone else.';
+    if (sa.status === 'paused') return 'Paused: it won’t run until you resume it on the Agents page, or ask someone else.';
+    if (sa.status === 'failed') return 'Failed: needs you. Resume it on the Agents page, or ask someone else.';
+    if (sa.status === 'throttled' || sa.status === 'queued' || sa.status === 'waiting') {
+      const when = sa.resumesAt && new Date(sa.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return when ? `Runs about ${when}` : sa.status === 'throttled' ? 'Throttled: runs later' : 'Queued: runs shortly';
+    }
+    return null;
+  };
 
   /* ═════════════════════════ themes + settings ═════════════════════════ */
 
@@ -3785,7 +3798,8 @@
       const time = new Date(m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const quote = m.quote ? `<button class="msg-quote" data-req-jump="${esc(q.id)}" title="Re|Show the request this answers">${icon('chev', 'to')}${esc(String(q.body || '').replace(/\s+/g, ' ').slice(0, 90))}</button>` : '';
       const status = m.ask ? `<span class="msg-st ${q.status}">${q.status === 'done' ? `${icon('check', 'sm')}Done` : 'Open'}</span><button class="msg-act" data-req-toggle="${esc(q.id)}" title="${q.status === 'done' ? 'Reopen|Put this request back on the agent’s list' : 'Mark done|Nothing more needed on this one'}">${icon(q.status === 'done' ? 'restore' : 'check', 'sm')}</button>` : '';
-      const meta = m.last || m.ask ? `<div class="msg-meta">${m.ask && !reqWho ? `<span class="to">to ${nameHTML(q.to)}</span>` : ''}<span title="${esc(m.at)}">${time}</span>${status}</div>` : '';
+      const stuck = m.ask ? requestStuck(q) : null;
+      const meta = m.last || m.ask ? `<div class="msg-meta">${m.ask && !reqWho ? `<span class="to">to ${nameHTML(q.to)}</span>` : ''}<span title="${esc(m.at)}">${time}</span>${status}</div>${stuck ? `<div class="msg-stuck">${esc(stuck)}</div>` : ''}` : '';
       return `<div class="msg ${m.mine ? 'me' : 'them'} ${m.cont ? 'cont' : ''} ${m.ask ? `ask ${q.status}` : ''} ${seen && !seen.has(m.id) ? 'new' : ''}" data-mid="${esc(m.id)}"${m.ask ? ` data-q="${esc(q.id)}"` : ''}>
         ${m.mine ? '' : `<span class="msg-av">${m.cont ? '' : avatar(m.author, 'lg')}</span>`}
         <div class="msg-col">${!m.cont && !m.mine ? `<div class="msg-who">${nameHTML(m.author?.name)}</div>` : ''}${quote}<div class="bubble">${m.body ? `<div class="md">${md(m.body)}</div>` : ''}${commentAtts(m)}</div>${meta}</div></div>`;
