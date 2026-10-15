@@ -4326,6 +4326,36 @@
     setTimeout(() => $('[data-aa-name]', f).select(), 50);
   }
 
+  // "Approves for you": who may approve on the human's behalf and when, in plain words, with the one switch
+  // that stops all of it (the board enforces it: approval grants are suspended while it is off).
+  const scopeWords = (where) => (!where ? 'any review' : Object.entries(where).map(([k, v]) => {
+    const vs = [].concat(v).join(' or ');
+    const rv = /^reviewers\.(.+)$/.exec(k);
+    return rv ? `${nameOf(rv[1])} says ${vs}` : k === 'column' ? `it's in ${vs}` : `${k.replace(/^(fields|properties)\./, '')} is ${vs}`;
+  }).join(' and '));
+  async function fillApprovals(el) {
+    if (!el || !state.board) return;
+    let v;
+    try { v = await api('GET', `/api/boards/${state.board.id}/approvals`); } catch { el.innerHTML = ''; return; }
+    if (!v.approvers.length) { el.innerHTML = ''; return; }
+    const who = v.approvers.map((a) => {
+      const when = (power) => a.grants.filter((g) => g.power === power).map((g) => scopeWords(g.where));
+      const parts = [];
+      if (when('review.decide').length) parts.push(`approves when ${when('review.decide').join(', or when ')}`);
+      if (when('column.gate').length) parts.push(`moves work past your gates when ${when('column.gate').join(', or when ')}`);
+      return `<div class="appr-who">${avatar({ kind: 'agent', name: a.name })}<b>${esc(nameOf(a.name))}</b><span>${esc(parts.join('; '))}${a.status === 'paused' ? ' · paused' : ''}</span></div>`;
+    }).join('');
+    el.innerHTML = `<div class="cr-label"><span>Approves for you</span><span class="sr-auto">${v.on ? 'On: these agents may approve on your behalf' : 'Off: every approval waits for you'}</span></div>
+      <button class="switch ${v.on ? 'on' : ''}" data-appr-toggle title="${v.on ? 'Stop all approvals|Suspend every approval grant on this board until you switch it back on' : 'Allow approvals|Let these agents approve on your behalf again'}"></button>
+      <div class="appr-list ${v.on ? '' : 'off'}">${who}</div>`;
+    $('[data-appr-toggle]', el).onclick = async () => {
+      try {
+        await api('PUT', `/api/boards/${state.board.id}/approvals`, { on: !v.on });
+        toast(v.on ? 'Approvals stopped: everything waits for you' : 'Approvals on', { icon: v.on ? 'x' : 'check', kind: v.on ? '' : 'ok', timeout: 2500 });
+        fillApprovals(el);
+      } catch (e) { toast(e.message, { kind: 'error' }); }
+    };
+  }
   function fillAgents(body) {
     const seen = new Set(state.presence.map((p) => p.name));
     const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
@@ -4339,7 +4369,7 @@
     const stopRow = sa.length || state.presence.some((p) => p.leases?.length) ? `<div class="stop-row">${allPaused
       ? `<button class="btn sm" data-resume-all title="Resume all|Unpause every standing agent; their queued events run">${icon('play', 'sm')}Resume all agents</button>`
       : `<button class="btn sm danger" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}Stop all agents</button>`}</div>` : '';
-    body.innerHTML = stopRow + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
+    body.innerHTML = stopRow + '<div class="appr-row" data-appr></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
@@ -4348,6 +4378,7 @@
         <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(nameOf(p.name))}${nameOf(p.name) !== p.name ? `<span class="nm-id">@${esc(p.name)}</span>` : ''}${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from the Ask field go to this agent unless you pick another">takes requests</span>' : ''}${!p.online && !sa && !p.leases.length ? `<button class="forget" data-forget="${esc(p.name)}" title="Forget|Remove from this list — it reappears if it connects again">${icon('x', 'sm')}Forget</button>` : ''}</div><div class="sub" title="${esc(p.lastAction || '')}">${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(p.lastAction)}` : ''}</div></div>
         ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}${p.name !== coord ? `<button class="make-coord" data-make-coord="${esc(p.name)}" title="Make coordinator|Requests go to this agent by default">${icon('send', 'sm')}Make coordinator</button>` : ''}</div>`;
     }).join('') : `<div class="empty-note">${icon('bot')}</div>`);
+    fillApprovals($('[data-appr]', body));
     body.onclick = async (e) => {
       const co = e.target.closest('[data-coord]');
       if (co) {

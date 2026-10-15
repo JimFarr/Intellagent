@@ -15,5 +15,6 @@
   "backups": 10,
   "auth": {
     "requireAgentTokens": true
-  }
+  },
+  "approvalsOff": true
 }

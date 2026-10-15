@@ -691,10 +691,16 @@ function inScope(ctx, item, where) {
 const ownWork = (item, name) => !!item && ((item.workedBy || []).includes(name) || (item.questions || []).some((q) => q.kind === 'review' && q.raisedBy === name)
   || item.review?.requestedBy === name);
 // The grant an agent would use for this action, or a fail() saying why not. Humans never need one.
+// The human's one switch for approvals made on their behalf. Off suspends every grant that approves or moves
+// work past a human gate (review.decide, column.gate) on this board until they switch it back on; landing work
+// that was already approved goes on. The manifest's approvalsOff says where a board starts.
+const APPROVAL_POWERS = new Set(['review.decide', 'column.gate']);
+const approvalsOff = (ctx) => !!(ctx?.board?.approvalsOff ?? M.approvalsOff);
 function grantFor(ctx, actor, power, item, what) {
   if (actor.kind === 'user') return null;
   const mine = grantsOf(actor.name).filter((g) => g.power === power);
   if (!mine.length) fail(403, `Only the human can ${what}`, { code: 'HUMAN_ONLY', hint: `The human can delegate this by adding "grants": ["${power}"] to your entry in agents.json` });
+  if (APPROVAL_POWERS.has(power) && approvalsOff(ctx)) fail(403, 'Approvals for the human are switched off on this board', { code: 'APPROVALS_OFF', hint: 'Leave it for the human: they switch approvals back on from the Agents page' });
   if (item && ownWork(item, actor.name)) fail(403, `${actor.name} worked on ${item.id} or asked for its review — an agent never approves its own work`, { code: 'OWN_WORK', hint: 'Leave it for the human or another agent' });
   const g = mine.find((x) => inScope(ctx, item, x.where));
   if (!g) fail(403, `${item?.id || 'This'} is outside your ${power} grant (${JSON.stringify(mine.map((x) => x.where || 'any'))})`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
@@ -2026,7 +2032,7 @@ function workFor(ctx, name) {
   // "decide" when everything its grant needs is in, "chase" naming exactly what is missing, so it pushes the
   // others for it. What they can't provide stays with the human.
   const decideGrants = grantsOf(name).filter((g) => g.power === 'review.decide');
-  if (decideGrants.length) {
+  if (decideGrants.length && !approvalsOff(ctx)) {
     for (const it of items) {
       const q = (it.questions || []).find((x) => x.kind === 'review');
       if (!q || it.test || ownWork(it, name)) continue;
@@ -2232,7 +2238,8 @@ function briefing(ctx, name, base, via = 'cli') {
       };
       return ['', '## Powers the human delegated to you',
         ...g.map((x) => `- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}: ${how[x.power]}`),
-        'Your verdicts and moves are final and recorded as made on the human\'s behalf; the human can still override them. Never use a power on your own work (a ticket you worked on or asked to have reviewed) — the board refuses it. Explain each decision in its comment.'];
+        'Your verdicts and moves are final and recorded as made on the human\'s behalf; the human can still override them. Never use a power on your own work (a ticket you worked on or asked to have reviewed) — the board refuses it. Explain each decision in its comment.',
+        ...(approvalsOff(ctx) && g.some((x) => APPROVAL_POWERS.has(x.power)) ? ['**Approvals are switched off on this board right now:** the human paused them, so review.decide and column.gate are suspended (403 APPROVALS_OFF). Leave reviews for the human until they switch approvals back on.'] : [])];
     })(),
     '',
     '## Columns (left to right)',
@@ -3202,6 +3209,26 @@ route('PUT', '/api/boards/:board/master/status', 'Live status while holding the 
   });
 });
 route('DELETE', '/api/boards/:board/master', 'Release the board (e.g. before spawning helper agents that use ticket leases)', ({ p, actor }) => releaseMaster(getCtx(p.board), actor));
+// Who approves for the human on this board, and when — and the human's switch for all of it.
+function approvalsView(ctx) {
+  const off = approvalsOff(ctx);
+  let agents = [];
+  try { agents = standing.list().agents; } catch { /* no standing agents */ }
+  const approvers = agents.map((a) => ({ name: a.name, enabled: a.enabled, status: a.status, grants: grantsOf(a.name).filter((g) => APPROVAL_POWERS.has(g.power)) })).filter((a) => a.grants.length);
+  return { on: !off, approvers };
+}
+route('GET', '/api/boards/:board/approvals', 'Who approves for the human on this board, and when (their review.decide / column.gate grants); on: false while the human has approvals switched off', ({ p }) => approvalsView(getCtx(p.board)));
+route('PUT', '/api/boards/:board/approvals', 'Human only: switch approvals for the human on or off { on }. Off suspends every review.decide and column.gate grant on this board until switched back on', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  humanConfig(actor, 'switch approvals on or off');
+  const on = body.on === true || body.on === 'true';
+  tx(ctx, (events) => {
+    if (approvalsOff(ctx) === !on && ctx.board.approvalsOff !== undefined) return;
+    ctx.board.approvalsOff = !on;
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { approvals: { from: on ? 'off' : 'on', to: on ? 'on' : 'off' } } });
+  });
+  return approvalsView(ctx);
+});
 route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directives } (human only)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {

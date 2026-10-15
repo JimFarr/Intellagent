@@ -582,3 +582,42 @@ describe('a verdict the board could not check never stands in for the human', ()
     } finally { await s.stop(); }
   });
 });
+
+describe("the human's switch for approvals", () => {
+  it('lists who approves and when; off suspends every approval grant until the human switches it back on', async () => {
+    const s = await startServer({ agents: { agents: {
+      gamora: { role: 'coordinator', enabled: false, grants: [{ power: 'review.decide', where: { 'reviewers.nebula': 'ok' } }] },
+      nebula: { role: 'reviewer', enabled: false },
+    } }, manifest: { auth: { agentTokens: { nebula: 't-nebula' } } } });
+    try {
+      const v = await s.ok('GET', '/api/boards/main/approvals');
+      assert.equal(v.on, true);
+      assert.deepEqual(v.approvers.map((a) => a.name), ['gamora']);
+      assert.equal((await s.api('PUT', '/api/boards/main/approvals', { on: false }, { agent: 'gamora' })).body.code, 'HUMAN_ONLY', 'agents never flip it');
+      // a ticket fully in Gamora's scope
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'in scope', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${it.id}/reviewers`, { name: 'nebula' }, USER);
+      const r = await fetch(`${s.base}/api/boards/main/items/${it.id}/reviewers/nebula/verdict`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': 'nebula', authorization: 'Bearer t-nebula' }, body: JSON.stringify({ verdict: 'ok', comment: 'fine' }) });
+      assert.ok(r.ok);
+      const actions = async () => (await s.ok('GET', '/api/boards/main/work', undefined, { agent: 'gamora' })).next.filter((n) => n.id === it.id).map((n) => n.action);
+      assert.deepEqual(await actions(), ['decide']);
+      // the human switches approvals off
+      assert.equal((await s.ok('PUT', '/api/boards/main/approvals', { on: false }, USER)).on, false);
+      const d = await s.api('POST', `/api/boards/main/items/${it.id}/review/decision`, { verdict: 'approve', comment: 'x' }, { agent: 'gamora' });
+      assert.equal(d.status, 403);
+      assert.equal(d.body.code, 'APPROVALS_OFF');
+      assert.deepEqual(await actions(), [], 'nothing wakes the approver while it is off');
+      const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'gamora' })).body;
+      assert.match(typeof brief === 'string' ? brief : brief.markdown, /Approvals are switched off/);
+      // and back on
+      await s.ok('PUT', '/api/boards/main/approvals', { on: true }, USER);
+      assert.equal((await s.api('POST', `/api/boards/main/items/${it.id}/review/decision`, { verdict: 'approve', comment: 'on again' }, { agent: 'gamora' })).status, 200);
+    } finally { await s.stop(); }
+  });
+  it('a board can start with approvals off (manifest approvalsOff)', async () => {
+    const s = await startServer({ agents: { agents: { gamora: { enabled: false, grants: ['review.decide'] } } }, manifest: { approvalsOff: true } });
+    try { assert.equal((await s.ok('GET', '/api/boards/main/approvals')).on, false); } finally { await s.stop(); }
+  });
+});
