@@ -1558,6 +1558,15 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .react:active { transform: scale(.96); }
 .react.mine { border-color: color-mix(in oklab, var(--accent) 60%, transparent); background: color-mix(in oklab, var(--accent) 14%, transparent); }
 .react.mine b { color: var(--accent); }
+/* an agent's ⏳ or 👀 is a status mark, not a vote (INT-189): no pill edge, a muted tint, nothing to click,
+   and ⏳ says inline when it runs. It fades in, so ⏳ turning into 👀 is a plain fade. */
+.react.status { border-color: transparent; background: color-mix(in oklab, var(--muted) 10%, transparent); color: var(--muted); cursor: default; gap: 5px; min-width: 0; max-width: 100%; animation: mark-in .3s var(--ease-io); }
+.react.status:hover { background: color-mix(in oklab, var(--muted) 10%, transparent); }
+.react.status:active { transform: none; }
+.react.status i { font-style: normal; font-size: 11.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes mark-in { from { opacity: .25; } }
+.reduced .react.status { animation: none; }
+@media (prefers-reduced-motion: reduce) { .react.status { animation: none; } }
 .react.add { width: 24px; padding: 0; justify-content: center; color: var(--muted); opacity: 0; }
 .cmt:hover .react.add, .m-reacts .react.add, .react.add:focus-visible { opacity: 1; }
 .reacts:has(.react:not(.add)) .react.add { opacity: .6; }
@@ -1567,7 +1576,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 @media (hover: none) {
   .react.add { opacity: .6; }
   .react { position: relative; }
-  .react::after { content: ""; position: absolute; inset: -5px -3px; }
+  .react:not(.status)::after { content: ""; position: absolute; inset: -5px -3px; }
   .react.add::after { inset: -5px; }
 }
 .m-reacts .reacts { margin: 8px 0 0; }

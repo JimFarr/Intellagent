@@ -2901,7 +2901,7 @@
     const cmts = $('.cmts', main);
     const think = m.create ? [] : thinkers('comments', it.id, (n, since) => it.comments.some((c) => c.author?.name === n && c.createdAt > since));
     const ended = m.create ? [] : endedHere('comments', it.id, it.comments.map((c) => ({ who: c.author?.name, at: c.createdAt })));
-    const sig = `${it.id}:${it.comments.map((c) => `${c.id}${c.replacedBy || ''}${JSON.stringify(c.reactions || {})}`).join('|')}:${think}:${think.map((n) => standingOf(n).stalled)}:${ended}`;
+    const sig = `${it.id}:${it.comments.map((c) => `${c.id}${c.replacedBy || ''}${JSON.stringify(c.reactions || {})}${JSON.stringify(c.reactionNotes || {})}`).join('|')}:${think}:${think.map((n) => standingOf(n).stalled)}:${ended}:${Object.keys(state.profiles).length}`;
     if (cmts.dataset.sig !== sig) {
       cmts.dataset.sig = sig;
       // A review request that a newer one from the same author replaced folds to one muted line (INT-172).
@@ -3238,12 +3238,28 @@
   /* ─── reactions: emoji on cards and comments ─── */
 
   const REACT_SET = ['👍', '👀', '🎉', '❤️', '🚀', '🤔', '✅', '😄'];
+  // An agent's ⏳ (queued) and 👀 (its run started) report status; they are not votes (INT-186, INT-189).
+  const STATUS_MARKS = { '⏳': 'Queued', '👀': 'Seen' };
+  // Anyone but me without a person's profile counts as an agent: agents need no profile to react.
+  const isAgentName = (n) => n !== settings.userName && state.profiles[n]?.kind !== 'user';
   // Chips for a reactions map; mine are highlighted. data-react carries the emoji, data-cid the comment.
+  // Agents' status marks draw as quiet spans nobody can toggle; a person's 👀 stays a pill of its own.
   function reactionsHTML(reactions, { cid = '', add = true, compact = false, notes = {} } = {}) {
     const entries = Object.entries(reactions || {}).filter(([, who]) => who.length);
     if (!entries.length && !add) return '';
     const me = settings.userName;
-    return `<div class="reacts ${compact ? 'compact' : ''}">${entries.map(([e, who]) => `<button class="react ${who.includes(me) ? 'mine' : ''}" data-react="${esc(e)}" data-cid="${esc(cid)}" title="${esc(e)}|${esc(who.map((n) => (notes?.[`${e}|${n}`] ? `${n} — ${notes[`${e}|${n}`]}` : n)).join(', '))}"><span>${e}</span><b>${who.length}</b></button>`).join('')}${add ? `<button class="react add" data-react-add data-cid="${esc(cid)}" title="React|Add an emoji — agents see it, it never wakes them">${icon('smile', 'sm')}</button>` : ''}</div>`;
+    const named = (e, who) => who.map((n) => (notes?.[`${e}|${n}`] ? `${n} — ${notes[`${e}|${n}`]}` : n)).join(', ');
+    const pill = (e, who) => `<button class="react ${who.includes(me) ? 'mine' : ''}" data-react="${esc(e)}" data-cid="${esc(cid)}" title="${esc(e)}|${esc(named(e, who))}"><span>${e}</span><b>${who.length}</b></button>`;
+    const mark = (e, who) => {
+      const line = e === '⏳' ? (notes?.[`${e}|${who[0]}`] || 'queued').replace(/^queued — /, 'queued · ') : '';
+      return `<span class="react status" title="${esc(STATUS_MARKS[e])}|${esc(named(e, who))}"><span>${e}</span>${who.length > 1 ? `<b>${who.length}</b>` : ''}${line ? `<i>${esc(line)}</i>` : ''}</span>`;
+    };
+    const chips = entries.flatMap(([e, who]) => {
+      if (!STATUS_MARKS[e]) return [pill(e, who)];
+      const agents = who.filter(isAgentName), people = who.filter((n) => !isAgentName(n));
+      return [agents.length && mark(e, agents), people.length && pill(e, people)].filter(Boolean);
+    });
+    return `<div class="reacts ${compact ? 'compact' : ''}">${chips.join('')}${add ? `<button class="react add" data-react-add data-cid="${esc(cid)}" title="React|Add an emoji — agents see it, it never wakes them">${icon('smile', 'sm')}</button>` : ''}</div>`;
   }
   function reactPicker(anchor, onPick) {
     $$('.react-pick').forEach((x) => x.remove());
