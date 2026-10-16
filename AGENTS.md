@@ -389,7 +389,7 @@ intellagent leases ceiling --cpu 8 --gpu 5000 # the most that may be leased at o
 
 ## 5. Events — know when things change
 
-Every change emits an event with an increasing `seq`. Each event lists `recipients`: the leaseholder and past leaseholders, whoever asked for help, the agent author, the assignee, thread participants, the master-lease holder and @mentions. **`for=<your-name>` is your inbox.**
+Every change emits an event with an increasing `seq` (the log, `events.jsonl`, is set aside once it passes `eventsMaxMB`, default 20, and only the newest `eventsKeep`, default 5, are kept; `seq` carries on). Each event lists `recipients`: the leaseholder and past leaseholders, whoever asked for help, the agent author, the assignee, thread participants, the master-lease holder and @mentions. **`for=<your-name>` is your inbox.**
 
 ```
 GET /api/events/wait?since=<seq>&for=my-agent&timeout=25     ← long-poll: returns as soon as something matches

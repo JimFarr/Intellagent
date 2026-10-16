@@ -270,6 +270,27 @@ describe('board API', () => {
     } finally { await t.stop(); }
   });
 
+  test('the event log rotates while the board runs, keeps only the newest rotations, and numbering goes on (INT-138)', async () => {
+    const t = await startServer({ manifest: { eventsMaxMB: 0.004, eventsKeep: 2 } }); // ~4 KB
+    const data = path.join(t.dir, 'data');
+    const rotated = () => fs.readdirSync(data).filter((f) => /^events-\d+\.jsonl$/.test(f));
+    try {
+      const start = (await t.ok('GET', '/api/app')).seq;
+      for (let i = 0; i < 40; i++) await t.ok('POST', `${B}/items`, { title: `noise ${i}`, column: 'Backlog' });
+      assert.equal(rotated().length, 2, 'older rotations are removed');
+      assert.ok(fs.statSync(path.join(data, 'events.jsonl')).size < 8 * 1024, 'the live log stays near the limit');
+      const { seq } = await t.ok('GET', '/api/app');
+      assert.ok(seq >= start + 40);
+      assert.equal((await t.ok('GET', `/api/events?since=${seq - 3}`)).events.length, 3, 'recent events are still served');
+      await t.stop({ keep: true });
+      const t2 = await startServer({ dir: t.dir, manifest: { eventsMaxMB: 0.004, eventsKeep: 2 } });
+      try {
+        await t2.ok('POST', `${B}/items`, { title: 'after restart', column: 'Backlog' });
+        assert.ok((await t2.ok('GET', '/api/app')).seq > seq, 'numbering goes on after a restart');
+      } finally { await t2.stop(); }
+    } catch (e) { await t.stop().catch(() => {}); throw e; }
+  });
+
   test('board.json is compact, survives a restart, and a failed write changes nothing (INT-11)', async () => {
     const t = await startServer();
     try {

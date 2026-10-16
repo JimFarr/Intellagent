@@ -2964,19 +2964,34 @@ const RECENT_MAX = 5000;
 const recent = [];
 let seq = 0;
 
+// events.jsonl is set aside as events-<ms>.jsonl once it passes eventsMaxMB (manifest, default 20), while the
+// board runs and at boot; only the newest eventsKeep (default 5) of those are kept.
+const EVENTS_MAX = Math.max(0.001, Number(M.eventsMaxMB) || 20) * 1024 * 1024;
+const EVENTS_KEEP = M.eventsKeep == null ? 5 : Math.max(0, Number(M.eventsKeep) || 0);
+let eventsBytes = 0;
+function rotateEvents() {
+  try { fs.renameSync(EVENTS_FILE, path.join(DATA, `events-${Date.now()}.jsonl`)); } catch (e) { console.warn(`event log not rotated: ${e.message}`); return; }
+  eventsBytes = 0;
+  const old = fs.readdirSync(DATA).filter((f) => /^events-\d+\.jsonl$/.test(f)).sort((a, b) => Number(a.slice(7, -6)) - Number(b.slice(7, -6)));
+  for (const f of old.slice(0, Math.max(0, old.length - EVENTS_KEEP))) {
+    try { fs.unlinkSync(path.join(DATA, f)); } catch (e) { console.warn(`old event log ${f} not removed: ${e.message}`); }
+  }
+}
+
 (function loadEvents() {
   if (!fs.existsSync(EVENTS_FILE)) return;
   const size = fs.statSync(EVENTS_FILE).size;
-  if (size > 20 * 1024 * 1024) {
+  if (size > EVENTS_MAX) {
     // Keep numbering going: every agent's saved cursor refers to it.
     const fd = fs.openSync(EVENTS_FILE, 'r');
     const buf = Buffer.alloc(Math.min(size, 256 * 1024));
     fs.readSync(fd, buf, 0, buf.length, size - buf.length);
     fs.closeSync(fd);
     for (const l of buf.toString('utf8').split('\n').reverse()) { try { seq = JSON.parse(l).seq; break; } catch { /* partial line */ } }
-    fs.renameSync(EVENTS_FILE, path.join(DATA, `events-${Date.now()}.jsonl`));
+    rotateEvents();
     return;
   }
+  eventsBytes = size;
   const lines = fs.readFileSync(EVENTS_FILE, 'utf8').split('\n').filter(Boolean).slice(-RECENT_MAX);
   for (const l of lines) { try { recent.push(JSON.parse(l)); } catch { /* skip torn line */ } }
   seq = recent.length ? recent[recent.length - 1].seq : 0;
@@ -3059,7 +3074,10 @@ const waiters = new Set();
 function emit(ev, sync = null) {
   const e = { seq: ++seq, ts: now(), ...ev };
   if (e.board && boards.has(e.board)) e.hash = boards.get(e.board).hash;
-  fs.appendFileSync(EVENTS_FILE, `${JSON.stringify(e)}\n`);
+  const line = `${JSON.stringify(e)}\n`;
+  fs.appendFileSync(EVENTS_FILE, line);
+  eventsBytes += Buffer.byteLength(line);
+  if (eventsBytes > EVENTS_MAX) rotateEvents();
   recent.push(e);
   if (recent.length > RECENT_MAX) recent.splice(0, recent.length - RECENT_MAX);
   let forUi = null;
@@ -3381,6 +3399,8 @@ setInterval(() => { reconcileLandings().catch((e) => console.warn(`landing sweep
 setInterval(() => { try { sweepStale(); } catch (e) { console.warn(`stale sweep: ${e.message}`); } }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => { codeState.refresh().catch((e) => console.warn(`code state: ${e.message}`)); }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => {
+  // a warning is keyed by the lease's expiry: once that has passed, the key can never match again
+  for (const k of warned) if (Date.parse(k.slice(k.lastIndexOf('@') + 1)) <= Date.now()) warned.delete(k);
   for (const ctx of boards.values()) {
     const ms = ctx.board.master;
     // An open-ended master lease ends when its holder has gone quiet (crashed, PC restarted) —
