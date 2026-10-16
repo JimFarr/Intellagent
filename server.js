@@ -3914,15 +3914,24 @@ route('POST', '/api/subscriptions', 'Create a durable subscription with a server
   touch(actor.name, 'subscribe');
   return created(s);
 });
-route('DELETE', '/api/subscriptions/:id', 'Remove a subscription', ({ p }) => {
+// Removing a subscription or moving its cursor is for whoever made it, or the human: anyone else could make
+// its owner silently skip events. Reading it with ?peek=true moves nothing, so that stays open.
+const ownSub = (s, actor) => {
+  if (actor.kind !== 'user' && String(s.agent).toLowerCase() !== String(actor.name).toLowerCase()) {
+    fail(403, `Subscription ${s.id} belongs to ${s.agent}`, { code: 'FORBIDDEN', hint: 'Make your own with POST /api/subscriptions, or read this one with ?peek=true' });
+  }
+};
+route('DELETE', '/api/subscriptions/:id', 'Remove a subscription (its owner or the human)', ({ p, actor }) => {
   if (!subs[p.id]) fail(404, 'Subscription not found');
+  ownSub(subs[p.id], actor);
   delete subs[p.id];
   saveSubs();
   return { deleted: p.id };
 });
-route('POST', '/api/subscriptions/:id/ack', 'Advance the cursor after handling events read with ?peek=true: { cursor } (at-least-once delivery)', ({ p, body }) => {
+route('POST', '/api/subscriptions/:id/ack', 'Advance the cursor after handling events read with ?peek=true: { cursor } (at-least-once delivery; its owner or the human)', ({ p, body, actor }) => {
   const sub = subs[p.id];
   if (!sub) fail(404, `No subscription "${p.id}"`);
+  ownSub(sub, actor);
   const c = Number(body.cursor);
   if (!Number.isFinite(c)) fail(400, '"cursor" is required');
   sub.cursor = Math.max(sub.cursor, Math.min(c, seq));
@@ -3930,9 +3939,10 @@ route('POST', '/api/subscriptions/:id/ack', 'Advance the cursor after handling e
   saveSubs();
   return { id: sub.id, cursor: sub.cursor };
 });
-route('GET', '/api/subscriptions/:id/next', 'Long-poll the subscription; advances its cursor. ?timeout=25&limit=50&peek=true', ({ res, p, q }) => {
+route('GET', '/api/subscriptions/:id/next', 'Long-poll the subscription; advances its cursor (its owner or the human; anyone may ?peek=true). ?timeout=25&limit=50&peek=true', ({ res, p, q, actor }) => {
   const s = subs[p.id];
   if (!s) fail(404, 'Subscription not found');
+  if (q.peek !== 'true') ownSub(s, actor);
   return longPoll(res, {
     filter: s.filter, since: s.cursor, timeout: clamp(Number(q.timeout) || 25, 0, 120), limit: clamp(Number(q.limit) || 50, 1, 500), agent: s.agent,
     onDeliver: q.peek === 'true' ? null : (cursor) => { s.cursor = cursor; s.lastDelivery = now(); saveSubs(); },
@@ -4257,7 +4267,7 @@ route('POST', '/api/agents/resume-all', 'Human (or the agents.control grant): re
 });
 route('POST', '/api/agents/:name/pause', 'Human: pause (current run finishes; events keep queueing)', ({ p, actor }) => { controls(actor, p.name); return standing.pause(p.name); });
 route('POST', '/api/agents/:name/resume', 'Human: resume a paused or failed agent', ({ p, actor }) => { controls(actor, p.name); return standing.unpause(p.name); });
-route('POST', '/api/agents/:name/run', 'Human: start a run now: { note? }', ({ p, body, actor }) => { controls(actor, p.name); return standing.runNow(p.name, body.note); });
+route('POST', '/api/agents/:name/run', 'Human: start a run now: { note? }', ({ p, body, actor }) => { controls(actor, p.name); return standing.runNow(p.name, body.note, actor); });
 
 route('GET', '/api/presence', 'Agents seen by this instance, online state, leases, subscriptions', () => presenceView());
 // Forget an offline agent: it leaves the agents list (its profile stays, and it reappears if it calls again).

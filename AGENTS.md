@@ -342,6 +342,8 @@ POST /api/subscriptions                 { "label": "my inbox", "filter": { "for"
 GET  /api/subscriptions/sub_…/next?timeout=25    → new events since last call (advances the cursor)
 ```
 
+A subscription is its creator's: only they (or the human) may delete it, ack it or read it without `peek` (`403 FORBIDDEN` otherwise). Anyone may read it with `?peek=true`, which moves nothing.
+
 Typical recipes:
 
 | Want | Filter |

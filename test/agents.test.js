@@ -382,6 +382,24 @@ describe('what agents are doing', () => {
       assert.ok(h.every((x, i) => !i || x.startedAt >= h[i - 1].startedAt), 'oldest first');
     } finally { await s.stop(); }
   });
+
+  it('a run started by an agent with agents.control names that agent, not the human (INT-126)', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { boss: { enabled: false, grants: ['agents.control'] }, poked: { run: run('ok') } } } });
+    try {
+      const pokes = async () => {
+        const dir = path.join(s.dir, 'data', 'agent-runs', 'poked');
+        await until(async () => (await agentState(s, 'poked')).lastRun?.endedAt, 6000, 'run over');
+        const files = fs.readdirSync(dir).filter((f) => f.endsWith('.events.json')).sort();
+        return JSON.parse(fs.readFileSync(path.join(dir, files.at(-1)), 'utf8')).filter((e) => e.type === 'agent.poke');
+      };
+      await s.ok('POST', '/api/agents/poked/run', { note: 'from boss' }, { agent: 'boss' });
+      assert.deepEqual((await pokes()).map((e) => e.actor), [{ kind: 'agent', name: 'boss' }]);
+      const before = (await agentState(s, 'poked')).lastRun.startedAt;
+      await s.ok('POST', '/api/agents/poked/run', {}, USER);
+      await until(async () => (await agentState(s, 'poked')).lastRun?.startedAt !== before, 6000, 'second run');
+      assert.deepEqual((await pokes()).map((e) => e.actor), [{ kind: 'user', name: 'James' }]);
+    } finally { await s.stop(); }
+  });
 });
 
 describe('keep-alive standing agents', () => {

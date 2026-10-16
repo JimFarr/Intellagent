@@ -376,8 +376,26 @@ describe('board API', () => {
     const peek = await s.ok('GET', `/api/subscriptions/${sub.id}/next?timeout=1&peek=true`);
     assert.equal(peek.events.length, 1);
     assert.equal((await s.ok('GET', `/api/subscriptions/${sub.id}/next?timeout=1&peek=true`)).events.length, 1, 'still there until acked');
-    await s.ok('POST', `/api/subscriptions/${sub.id}/ack`, { cursor: peek.cursor });
+    await s.ok('POST', `/api/subscriptions/${sub.id}/ack`, { cursor: peek.cursor }, { agent: 'acker' });
     assert.equal((await s.ok('GET', `/api/subscriptions/${sub.id}/next?timeout=1&peek=true`)).events.length, 0);
+  });
+
+  test('subscriptions: only the owner or the human may delete one or move its cursor (INT-126)', async () => {
+    const sub = await s.ok('POST', '/api/subscriptions', { filter: { types: 'item.created' } }, { agent: 'owner' });
+    await mk({ title: 'mine to read' });
+    for (const [method, url, body] of [
+      ['DELETE', `/api/subscriptions/${sub.id}`],
+      ['POST', `/api/subscriptions/${sub.id}/ack`, { cursor: 1e9 }],
+      ['GET', `/api/subscriptions/${sub.id}/next?timeout=0`],
+    ]) {
+      const r = await s.api(method, url, body, { agent: 'meddler' });
+      assert.equal(r.status, 403, `${method} ${url}`);
+      assert.equal(r.body.code, 'FORBIDDEN');
+    }
+    assert.equal((await s.ok('GET', `/api/subscriptions/${sub.id}/next?timeout=0&peek=true`, undefined, { agent: 'meddler' })).events.length, 1, 'peeking moves nothing, so anyone may');
+    assert.equal((await s.ok('GET', `/api/subscriptions/${sub.id}/next?timeout=0`, undefined, { agent: 'OWNER' })).events.length, 1, 'the owner, any case');
+    await s.ok('DELETE', `/api/subscriptions/${sub.id}`, undefined, USER);
+    assert.ok(!(await s.ok('GET', '/api/subscriptions')).some((x) => x.id === sub.id), 'the human may remove it');
   });
 
   test('forgetting offline agents', async () => {
