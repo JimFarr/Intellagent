@@ -306,6 +306,19 @@ describe('board API', () => {
     assert.equal(hits.length, 1);
   });
 
+  test('search and column lists report the same blocks as a single ticket, in the same order (INT-136)', async () => {
+    const root = await mk({ title: 'blocks-root' }, USER);
+    const other = await mk({ title: 'blocks-other' }, USER);
+    const a = await mk({ title: 'blocks-a', blockedBy: [root.id] }, USER);
+    const b = await mk({ title: 'blocks-b', blockedBy: [other.id, root.id] }, USER);
+    const one = async (id) => (await s.ok('GET', `${B}/items/${id}`)).blocks;
+    assert.deepEqual(await one(root.id), [a.id, b.id]);
+    const hits = (await s.ok('POST', '/api/search', { board: 'main', q: 'blocks-', full: true })).items;
+    for (const h of hits) assert.deepEqual(h.blocks, await one(h.id), `search: ${h.id}`);
+    const col = (await s.ok('GET', `${B}/columns/Backlog/items?full=true`)).items;
+    for (const id of [root.id, other.id, a.id]) assert.deepEqual(col.find((x) => x.id === id).blocks, await one(id), `column: ${id}`);
+  });
+
   test('durable subscription keeps its own cursor', async () => {
     const sub = await s.ok('POST', '/api/subscriptions', { filter: { types: 'item.created' } }, { agent: 'subber' });
     await mk({ title: 'one' });

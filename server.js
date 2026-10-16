@@ -2622,9 +2622,19 @@ function dropFromFocus(ctx, id, archived) {
   }
 }
 
-function itemView(ctx, item, archived = false) {
+// id → ids of the board's tickets it blocks, in board order. Built once by callers that view many tickets, so
+// they don't scan the whole board again for every one of them.
+function blocksIndex(ctx) {
+  const idx = new Map();
+  for (const x of Object.values(ctx.board.items)) {
+    for (const b of new Set(x.blockedBy || [])) (idx.get(b) || idx.set(b, []).get(b)).push(x.id);
+  }
+  return idx;
+}
+
+function itemView(ctx, item, archived = false, blocksOf = null) {
   const col = ctx.board.columns.find((c) => c.id === (archived ? item.archivedFrom : item.columnId));
-  const blocks = Object.values(ctx.board.items).filter((x) => x.blockedBy?.includes(item.id)).map((x) => x.id);
+  const blocks = blocksOf ? [...(blocksOf.get(item.id) || [])] : Object.values(ctx.board.items).filter((x) => x.blockedBy?.includes(item.id)).map((x) => x.id);
   const focus = archived ? [] : focusNames(ctx, item.id);
   return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived, ...(focus.length ? { focus } : {}) };
 }
@@ -2708,9 +2718,10 @@ function search(d) {
   for (const ctx of ctxs) {
     const pools = [ctx.board.columns.flatMap((c) => c.itemIds.map((id) => [ctx.board.items[id], false]))];
     if (d.includeArchived === true || d.includeArchived === 'true') pools.push(Object.values(ctx.archive.items).map((x) => [x, true]));
+    const blocksOf = blocksIndex(ctx);
     for (const [item, archived] of pools.flat()) {
       const v = {
-        ...itemView(ctx, item, archived),
+        ...itemView(ctx, item, archived, blocksOf),
         claimant: activeLease(item)?.claimant ?? null,
         authorName: item.author?.name, authorKind: item.author?.kind,
       };
@@ -3675,7 +3686,8 @@ route('DELETE', '/api/boards/:board/columns/:column', 'Delete an EMPTY column (h
 route('GET', '/api/boards/:board/columns/:column/items', 'All items in a column, in order (?full=true for everything)', ({ p, q }) => {
   const ctx = getCtx(p.board);
   const col = findColumn(ctx.board, decodeURIComponent(p.column));
-  const items = col.itemIds.map((id) => itemView(ctx, ctx.board.items[id]));
+  const blocksOf = blocksIndex(ctx);
+  const items = col.itemIds.map((id) => itemView(ctx, ctx.board.items[id], false, blocksOf));
   return {
     column: { id: col.id, name: col.name, flags: col.flags },
     items: q.full === 'true' ? items : items.map((v) => Object.fromEntries(SUMMARY_FIELDS.map((f) => [f, f === 'claimant' ? v.lease?.claimant ?? null : v[f]]))),

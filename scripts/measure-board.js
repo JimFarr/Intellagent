@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 James Farrugia
 'use strict';
-// Measure what a big board costs (INT-11, INT-142, INT-155): load, save, the board payload, and what the
+// Measure what a big board costs (INT-11, INT-136, INT-142, INT-155): load, save, search, the board payload, and what the
 // browser spends redrawing it on each change and during a burst of agent writes.
 // It builds a throwaway board in a temp folder by cloning the tickets of a real one, so comments, flow and
 // reviews have real shapes, and starts its own server on it. The real board is only read.
@@ -199,6 +199,12 @@ async function main() {
     out.getBoards = { bytes: listBytes, medianMs: +median(gl).toFixed(1) };
     const sum = await get(`${B}/summary`);
     out.getSummary = { KB: kb(sum.bytes), ms: +sum.ms.toFixed(1) };
+    // search views every ticket (INT-136): with no words, and with a word most tickets lack
+    for (const [k, q] of [['searchAll', ''], ['searchWord', 'zebra']]) {
+      const t = [];
+      for (let i = 0; i < 5; i++) t.push((await get(`/api/search?board=${board.id}&limit=500${q ? `&q=${q}` : ''}`)).ms);
+      out[k] = { medianMs: +median(t).toFixed(1) };
+    }
 
     const wr = [];
     for (let i = 0; i < WRITES; i++) {
