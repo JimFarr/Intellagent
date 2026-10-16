@@ -76,6 +76,26 @@ describe('presets: the library', () => {
     assert.ok(list.some((x) => /board rules/.test(x)));
     assert.deepEqual(presets.powers({ board: { columns: [{ name: 'A' }] } }), []);
   });
+  it('powers names every column flag and built-in field setting, so the prompt never says "no powers" over a changed rule', () => {
+    const list = presets.powers({ board: {
+      columns: [{ name: 'A', flags: { allowMoveOut: false, allowCreate: false, review: true, sleeping: true, pickup: true, working: true, shiny: true } }],
+      schema: { builtins: { blockedBy: { ui: 'hidden' }, type: { label: 'Kind' } } },
+    } });
+    const text = list.join('\n');
+    for (const k of ['allowMoveOut off', 'allowCreate off', 'review', 'sleeping', 'pickup', 'working', 'shiny']) assert.match(text, new RegExp(`column "A": ${k}`), k);
+    assert.match(text, /built-in field "blockedBy": ui "hidden" \(changes who can edit it\)/);
+    assert.match(text, /built-in field "type": label "Kind"/);
+  });
+  it('built-in field settings are a piece of the preset: builtin:<key>', () => {
+    const p = presets.resolve('stories', null);
+    assert.deepEqual(presets.parts(p)['builtin:type'], { label: 'Kind' });
+    const state = (live) => Object.fromEntries(presets.plan(p, undefined, live).map((s) => [s.id, s.state]))['builtin:type'];
+    assert.equal(state({ schema: { builtins: { type: { ui: 'edit', stub: true, label: 'Type' } } } }), 'new', 'the default is not an edit');
+    const lock = { 'builtin:type': { label: 'Kind' } };
+    assert.equal(Object.fromEntries(presets.plan(p, lock, { schema: { builtins: { type: { label: 'Mine' } } } }).map((s) => [s.id, s.state]))['builtin:type'], 'edited', 'once installed, a change by the human is kept');
+    assert.equal(state({ schema: { builtins: { type: { ui: 'edit', label: 'Kind' } } } }), 'same');
+    assert.equal(state({ schema: {} }), 'new');
+  });
   it('plan: new, same, update, edited, dropped and gone are told apart, and an edit is never an update', () => {
     const v1 = presets.parts({ board: mini('1').board });
     const next = mini('2');
@@ -180,6 +200,22 @@ describe('presets: preset add, diff and update on a board that exists', () => {
       assert.equal(again.code, 1);
       assert.match(again.err, /error 409 CONFLICT: mini@1 is already on this board.*hint: intellagent preset diff mini/);
     } finally { await s.stop(); }
+  });
+  it('init --preset and init then preset add give the same built-in fields; diff of an installed preset says it is up to date', async () => {
+    const s = await startServer();
+    const t = await startServer({ manifest: { template: 'stories' } });
+    try {
+      const add = cli(['preset', 'add', 'stories', '--yes'], { cwd: s.dir });
+      assert.equal(add.code, 0, add.err);
+      assert.match(add.out, /built-in field "type": label "Kind"/, 'the prompt lists it');
+      const a = (await board(s)).schema.builtins, b = (await board(t)).schema.builtins;
+      assert.equal(a.type.label, 'Kind');
+      assert.deepEqual(a, b, 'the same preset gives the same board either way');
+      const diff = cli(['preset', 'diff', 'stories'], { cwd: s.dir });
+      assert.equal(diff.code, 0, diff.err);
+      assert.match(diff.out, /up to date/);
+      assert.match(cli(['preset', 'diff'], { cwd: s.dir }).err, /Usage: intellagent preset diff <name\|folder>/);
+    } finally { await s.stop(); await t.stop(); }
   });
   it('update shows a new version as a diff and takes it piece by piece; what the human edited is never overwritten', async () => {
     const s = await startServer();

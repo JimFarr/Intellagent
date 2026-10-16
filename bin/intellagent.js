@@ -366,6 +366,7 @@ async function applyStep(board, s) {
   const [kind, key] = s.id.includes(':') ? [s.id.slice(0, s.id.indexOf(':')), s.id.slice(s.id.indexOf(':') + 1)] : [s.id, ''];
   const fresh = s.state === 'new';
   if (kind === 'column') return fresh ? asHuman('POST', `${b}/columns`, s.value) : asHuman('PATCH', `${b}/columns/${encodeURIComponent(key)}`, s.value);
+  if (kind === 'builtin') return asHuman('PUT', `${b}/schema`, { builtins: { [key]: s.value } });
   if (kind === 'field') return fresh ? asHuman('POST', `${b}/schema/fields`, s.value) : asHuman('PATCH', `${b}/schema/fields/${encodeURIComponent(key)}`, s.value);
   if (kind === 'ticket-template') return fresh ? asHuman('POST', `${b}/ticket-templates`, s.value) : asHuman('PATCH', `${b}/ticket-templates/${encodeURIComponent(key)}`, s.value);
   if (kind === 'directives') return asHuman('PUT', `${b}/directives`, { directives: s.value });
@@ -384,8 +385,8 @@ async function presetCmd() {
     }
     return;
   }
-  if (!['add', 'diff', 'update'].includes(sub)) { console.error('Usage: intellagent preset list | add <name|folder> [--yes] | diff <name> | update <name|folder> [--accept all|id,id]'); process.exit(1); }
-  if (!spec) { console.error(`Usage: intellagent preset ${sub} <name${sub === 'diff' ? '' : '|folder'}>`); process.exit(1); }
+  if (!['add', 'diff', 'update'].includes(sub)) { console.error('Usage: intellagent preset list | add <name|folder> [--yes] | diff <name|folder> | update <name|folder> [--accept all|id,id]'); process.exit(1); }
+  if (!spec) { console.error(`Usage: intellagent preset ${sub} <name|folder>`); process.exit(1); }
   humanOnly(`intellagent preset ${sub}`);
   const mp = requireManifest();
   const dir = path.dirname(mp);
@@ -408,7 +409,9 @@ async function presetCmd() {
   }
   if (!lock) { console.error(`error 404 NOT_FOUND: ${p.name} is not installed on this board — hint: intellagent preset add ${p.name}`); process.exit(1); }
   console.log(`\n  ${p.name}: installed ${lock.version}, available ${p.version}`);
-  printPlan(steps.filter((s) => s.state !== 'same'));
+  const differs = steps.filter((s) => s.state !== 'same');
+  printPlan(differs);
+  if (!differs.length) console.log('    up to date: every piece is as the preset has it.');
   if (sub === 'diff') return;
   const can = steps.filter((s) => s.state === 'new' || s.state === 'update');
   if (!f.accept) { console.log(can.length ? `\n  Accept them with: intellagent preset update ${p.name} --accept all   (or --accept id,id)` : '\n  Nothing to update.'); return; }
@@ -798,7 +801,7 @@ const HELP = `intellagent — a kanban for you and your agents
                    --port N (default: the first free port from 7420)  --prefix XX (ticket ids)  --open-agents (agents need no token)
                    also adds the MCP tools (.mcp.json) and CLAUDE.md instructions; opt out: --no-mcp --no-claude --no-start --no-token
   templates        list board templates (software, research, ops, ...)
-  preset           packages of board: preset list | add NAME|FOLDER [--yes] | diff NAME | update NAME [--accept all|id,id]
+  preset           packages of board: preset list | add NAME|FOLDER [--yes] | diff NAME|FOLDER | update NAME|FOLDER [--accept all|id,id]
                    init --preset NAME|FOLDER sets a board up from one; it lists the powers it brings and asks first (--yes agrees)
                    an update never overwrites what you edited: edited pieces are kept, the rest you accept one by one
   skill install    add the intellagent skills to Claude Code (working a ticket; setting up)   [--project]
