@@ -351,6 +351,10 @@ function normalizeBoard(b) {
     if (!col && b.columns[0]) { col = b.columns[0]; item.columnId = col.id; }
     if (col && !placed.has(item.id)) col.itemIds.push(item.id);
   }
+  // Focus boards: saved views over this board (ticket ids only, never copies), at most one of them active.
+  b.focusBoards = (Array.isArray(b.focusBoards) ? b.focusBoards : []).filter((f) => isObj(f) && f.id);
+  for (const f of b.focusBoards) { f.itemIds = arr(f.itemIds).filter((id) => b.items[id]); f.startCols = isObj(f.startCols) ? f.startCols : {}; f.archived = arr(f.archived); }
+  b.activeFocus = b.focusBoards.some((f) => f.id === b.activeFocus) ? b.activeFocus : null;
   return b;
 }
 
@@ -499,6 +503,8 @@ function createBoard(d, actor) {
     schema: { builtins: normBuiltins(d.schema?.builtins ?? tpl.schema?.builtins), fields: [] },
     digest: [],
     requests: [],
+    focusBoards: [],
+    activeFocus: null,
     coordinator: d.coordinator || null,
     columns: [],
     items: {},
@@ -709,6 +715,7 @@ function grantFor(ctx, actor, power, item, what) {
   const mine = grantsOf(actor.name).filter((g) => g.power === power);
   if (!mine.length) fail(403, `Only the human can ${what}`, { code: 'HUMAN_ONLY', hint: `The human can delegate this by adding "grants": ["${power}"] to your entry in agents.json` });
   if (APPROVAL_POWERS.has(power) && approvalsOff(ctx)) fail(403, 'Approvals for the human are switched off on this board', { code: 'APPROVALS_OFF', hint: 'Leave it for the human: they switch approvals back on from the Agents page' });
+  if (power === 'review.decide' && item && !inActiveFocus(ctx, item)) fail(409, `${item.id} is outside the focus board "${activeFocus(ctx).name}": approvals wait until the human retires it`, { code: 'OUT_OF_FOCUS', hint: 'Leave it; work on the focus board tickets (your …/work lists them)' });
   if (item && ownWork(item, actor.name)) fail(403, `${actor.name} worked on ${item.id} or asked for its review — an agent never approves its own work`, { code: 'OWN_WORK', hint: 'Leave it for the human or another agent' });
   const g = mine.find((x) => inScope(ctx, item, x.where));
   if (!g) fail(403, `${item?.id || 'This'} is outside your ${power} grant (${JSON.stringify(mine.map((x) => x.where || 'any'))})`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
@@ -1153,6 +1160,9 @@ function createItem(ctx, d, actor) {
     if (!col.flags.allowCreate) fail(403, `Column "${col.name}" does not allow item creation. Allowed: ${b.columns.filter((c) => c.flags.allowCreate).map((c) => c.name).join(', ') || '(none)'}`);
     checkWip(col);
     if (!String(d.title || '').trim()) fail(400, '"title" is required');
+    // Created on a focus board: made on this board and added to that focus board.
+    const focus = d.focus ? getFocus(ctx, d.focus) : null;
+    if (focus) guardFocus(ctx, actor, {});
     const id = `${b.idPrefix}-${b.nextNumber++}`;
     const t = now();
     const item = {
@@ -1199,6 +1209,7 @@ function createItem(ctx, d, actor) {
     col.itemIds.splice(resolveIndex(col.itemIds, positionOf(d)), 0, id);
     for (const a of arr(d.attachments)) item.attachments.push(saveAttachment(ctx, item, a, actor));
     events.push(itemEvent(ctx, 'item.created', item, actor, item.agentDraft ? { mentions: [item.agentDraft.writer], draft: true } : {}));
+    if (focus) events.push(focusEvent(ctx, 'focus.updated', focus, actor, { added: addToFocus(ctx, focus, [id]), removed: [], changes: {} }));
     if (item.assignee) events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: item.assignee, from: null, mentions: asleep(ctx, item) ? [] : [item.assignee] }));
     const q0 = parseNeedsHuman(d.needsHuman, actor);
     if (q0) openQuestion(ctx, item, q0, actor, events);
@@ -1946,12 +1957,15 @@ function delegationGaps(ctx, it, q, grants) {
   return !gaps.length && early ? null : gaps;
 }
 
+// What still reaches an agent outside the active focus board (see workFor).
+const FOCUS_THROUGH = new Set(['explain', 'write', 'renew', 'continue', 'land', 'answer_lease_request']);
 function workFor(ctx, name) {
   const b = ctx.board;
   const items = b.columns.flatMap((c) => c.itemIds.map((id) => b.items[id]).filter(Boolean));
   const done = doneColumnId(ctx);
   const colName = (it) => b.columns.find((c) => c.id === it.columnId)?.name;
-  const brief = (it, extra = {}) => ({ id: it.id, title: it.title, column: colName(it), priority: it.priority, type: it.type, ...extra });
+  const brief = (it, extra = {}) => { const focus = focusNames(ctx, it.id); return { id: it.id, title: it.title, column: colName(it), priority: it.priority, type: it.type, ...(focus.length ? { focus } : {}), ...extra }; };
+  const focus = activeFocus(ctx);
   const lastMine = (it) => Math.max(0, ...(it.comments || []).filter((c) => c.author?.name === name).map((c) => Date.parse(c.createdAt)),
     it.lease?.claimant === name ? Date.parse(it.lease.leasedAt) : 0);
   const master = activeMaster(ctx);
@@ -1985,13 +1999,21 @@ function workFor(ctx, name) {
     }
   }
   const pick = new Set(pickupColumns(ctx).map((c) => c.id));
-  const ready = items.filter((it) => pick.has(it.columnId) && !activeLease(it) && !it.needsHuman && (!it.assignee || it.assignee === name) && !openBlockersOf(ctx, it).length)
+  const ready = items.filter((it) => pick.has(it.columnId) && inActiveFocus(ctx, it) && !activeLease(it) && !it.needsHuman && (!it.assignee || it.assignee === name) && !openBlockersOf(ctx, it).length)
     .sort((a, c) => PRIO_RANK[a.priority] - PRIO_RANK[c.priority]).slice(0, 5).map((it) => brief(it));
   const call = (id, what) => `POST /api/boards/${ctx.id}/items/${id}/${what}`;
   const next = [];
   const seen = new Set();
   // One suggestion per ticket (renewing is separate: it is just housekeeping).
-  const add = (action, it, why, how) => { const k = action === 'renew' ? `renew:${it.id}` : it.id; if (seen.has(k)) return; seen.add(k); next.push({ action, id: it.id, title: it.title, why, call: how }); };
+  // While a focus board is active, work outside it waits: only a direct ask from the human (explain, a ticket to
+  // write), the lease housekeeping on what you already hold, and landing approved work get through.
+  const held = [];
+  const add = (action, it, why, how) => {
+    const k = action === 'renew' ? `renew:${it.id}` : it.id;
+    if (seen.has(k)) return;
+    if (focus && !FOCUS_THROUGH.has(action) && !focus.itemIds.includes(it.id)) { if (!held.includes(it.id)) held.push(it.id); return; }
+    seen.add(k); next.push({ action, id: it.id, title: it.title, why, call: how });
+  };
   for (const q of requests) next.push({ action: 'handle_request', requestId: q.requestId, why: `Request from ${q.from}: ${String(q.request).slice(0, 160)}`, call: `POST /api/boards/${ctx.id}/requests/${q.requestId}/reply { "body": "what you did", "done": true }` });
   for (const it of items) {
     const l = activeLease(it);
@@ -2079,6 +2101,7 @@ function workFor(ctx, name) {
     ...(master ? { master: { holder: master.holder, you: master.holder === name, status: master.status || null } } : {}),
     ...(blockedByMaster ? { note: `${master.holder} holds the whole board — you can read, comment and ask, but not change tickets.` } : {}),
     next: blockedByMaster ? [] : next,
+    ...(focus ? { focus: { id: focus.id, name: focus.name, items: [...focus.itemIds], note: `The human is focused on "${focus.name}" (${focus.itemIds.length} tickets): start and review only those. Work elsewhere waits until the focus board is retired${held.length ? ` (held back: ${held.join(', ')})` : ''}; an @mention, a request or an explain from the human still gets an answer.` } } : {}),
     requests, explain, leases, feedback, answered, waitingOnHuman: waiting, assigned, ready, ...(triage.length ? { triage } : {}), ...(supervise.length ? { supervise } : {}),
   };
 }
@@ -2145,7 +2168,7 @@ function pendingWork(name, pickup = false) {
     try { router = standing.get(name).role === 'coordinator'; } catch { /* not standing */ }
     const cols = new Set((pickup === 'all' ? b.columns : pickupColumns(ctx)).map((c) => c.id));
     for (const it of untriaged(ctx)) {
-      if (!cols.has(it.columnId)) continue;
+      if (!cols.has(it.columnId) || !inActiveFocus(ctx, it)) continue;
       out.push({ key: `${ctx.id}:triage:${it.id}`, board: ctx.id, action: pickup === 'all' || router ? 'triage' : 'pickup', id: it.id, title: it.title,
         why: pickup === 'all' || router ? `Unassigned in ${b.columns.find((c) => c.id === it.columnId)?.name}: triage it — assign, ask, or leave it` : `Ready and unassigned (${it.priority})` });
     }
@@ -2211,6 +2234,7 @@ function briefing(ctx, name, base, via = 'cli') {
     ...intro,
     '## What to do next',
     ...(w.note ? [`> ${w.note}`] : []),
+    ...(w.focus ? [`> 🎯 **Focus board "${w.focus.name}" is active.** ${w.focus.note} Its tickets: ${w.focus.items.join(', ') || '(none yet)'}.`, ''] : []),
     ...(w.next.length
       ? w.next.map((n, i) => n.requestId ? `${i + 1}. **handle request ${n.requestId}** — ${n.why}` : `${i + 1}. **${n.action.replace(/_/g, ' ')} ${n.id}** "${n.title}" — ${n.why}`)
       : ['Nothing is waiting for you. Ask the human what to work on, or create tickets for work you were given.']),
@@ -2361,6 +2385,7 @@ function archiveItems(ctx, ids, actor, reason = null) {
       delete ctx.board.items[id];
       const rec = { ...item, lease: null, archivedAt: now(), archivedBy: actor, archivedFrom: item.columnId, archiveReason: reason };
       ctx.archive.items[id] = rec;
+      dropFromFocus(ctx, id, true);
       events.push(itemEvent(ctx, 'item.archived', rec, actor, { reason }));
       emitUnblocked(ctx, id, actor, events);
       done.push(id);
@@ -2384,6 +2409,7 @@ function deleteItems(ctx, ids, actor) {
         const col = ctx.board.columns.find((c) => c.id === live.columnId);
         if (col) col.itemIds = col.itemIds.filter((x) => x !== id);
         delete ctx.board.items[id];
+        dropFromFocus(ctx, id, false);
       } else delete ctx.archive.items[id];
       for (const a of [...(item.attachments || []), ...(item.comments || []).flatMap((c) => c.attachments || [])]) {
         if (a.kind !== 'file') continue;
@@ -2423,10 +2449,144 @@ function restoreItem(ctx, id, d, actor) {
   });
 }
 
+/* ───── focus boards: a saved view over the board (a list of its ticket ids), never a copy ─────
+   The human picks a handful of tickets to work on today. Every change on a focus board is a change to the
+   real ticket, because there is only one. One board is "active" — the full board, or one focus board — and
+   while a focus board is active the agents take up only its tickets: a direct ask from the human (an
+   @mention, a request, an explain) still gets through, and landing approved work goes on. Retiring a focus
+   board removes the view and nothing else. */
+const activeFocus = (ctx) => ctx.board.focusBoards.find((f) => f.id === ctx.board.activeFocus) || null;
+// Whether agents may take this ticket up of their own accord: always, unless another focus board is active.
+const inActiveFocus = (ctx, it) => { const f = activeFocus(ctx); return !f || f.itemIds.includes(it.id); };
+const focusNames = (ctx, id) => ctx.board.focusBoards.filter((f) => f.itemIds.includes(id)).map((f) => f.name);
+function getFocus(ctx, id) {
+  const f = ctx.board.focusBoards.find((x) => x.id === String(id));
+  if (!f) fail(404, `Focus board "${id}" not found. Focus boards: ${ctx.board.focusBoards.map((x) => `${x.name} (${x.id})`).join(', ') || '(none)'}`);
+  return f;
+}
+function focusView(ctx, f) {
+  const { startCols, ...rest } = f;
+  return { ...rest, active: ctx.board.activeFocus === f.id, count: f.itemIds.length };
+}
+const focusEvent = (ctx, type, f, actor, extra = {}) => ({ board: ctx.id, type, actor, focus: { id: f.id, name: f.name, count: f.itemIds.length }, recipients: [], ...extra });
+// Tickets to add: live ones on this board, each once; the column it stood in is kept for the retire summary.
+function addToFocus(ctx, f, ids) {
+  const added = [];
+  for (const raw of arr(ids)) {
+    const it = getItem(ctx, raw);
+    if (f.itemIds.includes(it.id)) continue;
+    f.itemIds.push(it.id);
+    f.startCols[it.id] = it.columnId;
+    added.push(it.id);
+  }
+  return added;
+}
+// Who may change a focus board: the human; the coordinator may only add tickets to one (on the human's ask).
+function guardFocus(ctx, actor, d) {
+  if (actor.kind === 'user') return;
+  const touchesMore = d.name !== undefined || d.remove !== undefined || d.itemIds !== undefined;
+  if (!isCoordinator(ctx, actor.name) || touchesMore) humanConfig(actor, isCoordinator(ctx, actor.name) ? 'rename a focus board or take tickets out of it' : 'change focus boards');
+}
+
+function createFocus(ctx, d, actor) {
+  humanConfig(actor, 'create a focus board');
+  const name = str(d.name, 80).trim();
+  if (!name) fail(400, '"name" is required', { code: 'BAD_REQUEST', hint: 'POST …/focus { "name": "Bonus exclusions, 16 Oct", "itemIds": ["INT-12"] }' });
+  return tx(ctx, (events) => {
+    const f = { id: rid('fb'), name, itemIds: [], startCols: {}, archived: [], createdAt: now(), createdBy: actor };
+    addToFocus(ctx, f, d.itemIds);
+    ctx.board.focusBoards.push(f);
+    events.push(focusEvent(ctx, 'focus.created', f, actor, { itemIds: [...f.itemIds] }));
+    if (d.activate !== false) setActiveFocus(ctx, f, actor, events);
+    return f;
+  });
+}
+
+function updateFocus(ctx, id, d, actor) {
+  guardFocus(ctx, actor, d);
+  return tx(ctx, (events) => {
+    const f = getFocus(ctx, id);
+    const changes = {};
+    if (d.name !== undefined) {
+      const name = str(d.name, 80).trim();
+      if (!name) fail(400, '"name" cannot be empty');
+      if (name !== f.name) { changes.name = { from: f.name, to: name }; f.name = name; }
+    }
+    const added = addToFocus(ctx, f, d.add);
+    const removed = arr(d.remove).map((x) => String(x).toUpperCase()).filter((x) => f.itemIds.includes(x));
+    f.itemIds = f.itemIds.filter((x) => !removed.includes(x));
+    for (const x of removed) delete f.startCols[x];
+    if (added.length || removed.length || Object.keys(changes).length) events.push(focusEvent(ctx, 'focus.updated', f, actor, { added, removed, changes }));
+    return f;
+  });
+}
+
+// Make a focus board the active one (or null: the full board). Work the agents hold outside it goes back to
+// the pickup column with a note (assignee kept): they finish nothing outside the focus, and start nothing either.
+function setActiveFocus(ctx, f, actor, events) {
+  const was = activeFocus(ctx);
+  if ((was?.id || null) === (f?.id || null)) return;
+  ctx.board.activeFocus = f ? f.id : null;
+  const parked = [];
+  if (f) {
+    const work = workingColumn(ctx);
+    const ready = pickupColumns(ctx)[0];
+    for (const item of Object.values(ctx.board.items)) {
+      const l = activeLease(item);
+      if (!l || !isAgentName(l.claimant) || f.itemIds.includes(item.id)) continue;
+      if (work && item.columnId === work.id) {
+        backToReady(ctx, item, actor, events, { agent: l.claimant, reason: 'focus', body: `🎯 ${actor.name} is focusing the agents on "${f.name}". @${l.claimant}, this ticket waits in ${ready?.name || 'the pickup column'} (still yours) until the focus board is retired.` });
+      } else {
+        item.lease = null;
+        item.version++;
+        events.push(itemEvent(ctx, 'lease.revoked', item, actor, { claimant: l.claimant, reason: 'focus', mentions: [l.claimant] }));
+      }
+      parked.push(item.id);
+    }
+  }
+  let agents = [];
+  try { agents = standing.list().agents.map((a) => a.name); } catch { /* no standing agents */ }
+  // Every agent hears it (inbox and …/work) but none is woken just for it: their work already says what to do.
+  events.push({ board: ctx.id, type: 'focus.activated', actor, focus: f ? { id: f.id, name: f.name, count: f.itemIds.length } : null, from: was ? { id: was.id, name: was.name } : null, parked, recipients: agents });
+}
+
+function activateFocus(ctx, id, actor) {
+  humanConfig(actor, 'choose the active board');
+  return tx(ctx, (events) => { setActiveFocus(ctx, id ? getFocus(ctx, id) : null, actor, events); return activeFocus(ctx); });
+}
+
+// Retire: the view goes, every ticket stays where it is. The summary says what moved while it was open.
+function retireFocus(ctx, id, actor) {
+  humanConfig(actor, 'retire a focus board');
+  return tx(ctx, (events) => {
+    const f = getFocus(ctx, id);
+    const colName = (cid) => ctx.board.columns.find((c) => c.id === cid)?.name || cid;
+    const moved = f.itemIds.map((x) => ctx.board.items[x]).filter((it) => it && f.startCols[it.id] && f.startCols[it.id] !== it.columnId)
+      .map((it) => ({ id: it.id, title: it.title, from: colName(f.startCols[it.id]), to: colName(it.columnId) }));
+    const wasActive = ctx.board.activeFocus === f.id;
+    if (wasActive) setActiveFocus(ctx, null, actor, events);
+    ctx.board.focusBoards = ctx.board.focusBoards.filter((x) => x !== f);
+    const summary = { id: f.id, name: f.name, createdAt: f.createdAt, tickets: f.itemIds.length, moved, archived: f.archived, wasActive };
+    events.push(focusEvent(ctx, 'focus.retired', f, actor, { summary }));
+    return summary;
+  });
+}
+
+// A ticket that leaves the board (archived, deleted) leaves every focus board with it.
+function dropFromFocus(ctx, id, archived) {
+  for (const f of ctx.board.focusBoards) {
+    if (!f.itemIds.includes(id)) continue;
+    f.itemIds = f.itemIds.filter((x) => x !== id);
+    delete f.startCols[id];
+    if (archived) f.archived.push(id);
+  }
+}
+
 function itemView(ctx, item, archived = false) {
   const col = ctx.board.columns.find((c) => c.id === (archived ? item.archivedFrom : item.columnId));
   const blocks = Object.values(ctx.board.items).filter((x) => x.blockedBy?.includes(item.id)).map((x) => x.id);
-  return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived };
+  const focus = archived ? [] : focusNames(ctx, item.id);
+  return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived, ...(focus.length ? { focus } : {}) };
 }
 
 function boardView(ctx) {
@@ -2976,7 +3136,8 @@ const SCHEMA = {
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.managed', 'agent.poke', 'agents.changed', 'agents.stopped',
-      'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending'],
+      'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
+      'focus.created', 'focus.updated', 'focus.activated', 'focus.retired'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
     changes: '{ [field | "properties.<key>"]: { from, to } }?', item: 'snapshot { id,title,type,priority,columnId,column,parent,claimant,needsHuman }?',
     recipients: 'string[] — agents/users this event concerns (leaseholder and past leaseholders, asker, agent author, assignee, commenters, master-lease holder, @mentions)',
@@ -3239,6 +3400,30 @@ route('PUT', '/api/boards/:board/approvals', 'Human only: switch approvals for t
   });
   return approvalsView(ctx);
 });
+route('GET', '/api/boards/:board/focus', 'Focus boards: saved views over this board (a handful of its tickets), and which board is active — the agents work only on the active one', ({ p }) => {
+  const ctx = getCtx(p.board);
+  return { active: ctx.board.activeFocus, focusBoards: ctx.board.focusBoards.map((f) => focusView(ctx, f)) };
+});
+route('POST', '/api/boards/:board/focus', 'Human: make a focus board { name, itemIds: [], activate? (default true: the agents switch to it) }', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  return created(focusView(ctx, createFocus(ctx, body, actor)));
+});
+route('PUT', '/api/boards/:board/focus/active', 'Human: choose the board the agents work on { id } (a focus board) or { id: null } (the full board). Agent work outside a focus board goes back to the pickup column', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  if (!('id' in body)) fail(400, '"id" is required (null for the full board)', { code: 'BAD_REQUEST', hint: 'PUT …/focus/active { "id": "fb_…" } or { "id": null }' });
+  activateFocus(ctx, body.id, actor);
+  return { active: ctx.board.activeFocus };
+});
+route('GET', '/api/boards/:board/focus/:id', 'One focus board with its tickets (one-line each)', ({ p }) => {
+  const ctx = getCtx(p.board);
+  const f = getFocus(ctx, p.id);
+  return { ...focusView(ctx, f), items: f.itemIds.map((id) => snapshot(ctx, ctx.board.items[id])) };
+});
+route('PATCH', '/api/boards/:board/focus/:id', 'Change a focus board { name?, add?: [ids], remove?: [ids] } — the human; the coordinator may only add', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  return focusView(ctx, updateFocus(ctx, p.id, body, actor));
+});
+route('DELETE', '/api/boards/:board/focus/:id', 'Human: retire a focus board — the view goes, no ticket moves. Returns what moved while it was open', ({ p, actor }) => retireFocus(getCtx(p.board), p.id, actor));
 route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directives } (human only)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {
