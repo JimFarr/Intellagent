@@ -1137,18 +1137,22 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .m-ask.is-review { background: linear-gradient(135deg, color-mix(in oklab, var(--accent) 14%, var(--surface)), color-mix(in oklab, var(--ok) 10%, var(--surface))); border-color: color-mix(in oklab, var(--accent) 40%, transparent); }
 .review-chip { margin-left: auto; background: color-mix(in oklab, var(--accent) 18%, transparent); color: var(--accent); font-weight: 600; }
 
-/* theme carousel + preview, pinned at the top of Appearance */
+/* themes at the top of Appearance (INT-222): pick a kind, then one of its themes, all in view */
+.theme-pick { display: grid; gap: 10px; padding-top: 4px; margin-bottom: 4px; }
+.theme-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
+.theme-kind { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px 0 12px; border-radius: 99px; border: var(--bw) solid var(--border); background: none; cursor: pointer; font: 500 12.5px var(--font); color: var(--muted); white-space: nowrap; transition: border-color .2s var(--ease), color .2s var(--ease), background .2s var(--ease); }
+.theme-kind small { font: 500 11px var(--mono); color: var(--muted); }
+.theme-kind:hover { color: var(--text); background: var(--hover); }
+.theme-kind.on { border-color: var(--accent); color: var(--text); background: color-mix(in oklab, var(--accent) 10%, transparent); }
+.theme-kind:focus-visible, .theme-tiles .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme-tiles { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.theme-tiles .tile .pv { height: 52px; }
+.reduced .theme-tiles .tile:hover { transform: none; }
+@media (prefers-reduced-motion: reduce) { .theme-tiles .tile:hover { transform: none; } }
+/* a phone: the kinds wrap (nothing hides off to the side), two themes a row */
+@media (max-width: 640px) { .theme-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* the preview, pinned at the top of Appearance while you scroll the style choices */
 .look-sticky { position: sticky; top: -4px; z-index: 6; margin: 0 -20px 4px; padding: 8px 20px 2px; background: var(--surface); box-shadow: 0 14px 18px -18px var(--shadow); }
-.carousel { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
-.car-track { flex: 1; min-width: 0; display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; padding: 4px 2px 6px;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
-.car-track::-webkit-scrollbar { display: none; }
-.car-track .tile { flex: 0 0 128px; scroll-snap-align: center; }
-.car-track .tile .pv { height: 56px; }
-.car-nav { flex: none; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--muted); display: grid; place-items: center; cursor: pointer; transition: color .2s, border-color .2s, transform .2s var(--spring); }
-.car-nav:hover { color: var(--text); border-color: var(--accent); transform: scale(1.08); }
-.car-nav .car-l { rotate: 90deg; }
-.car-nav .car-r { rotate: -90deg; }
 .look-sticky .pv-stage { margin: 0 0 8px; padding: 16px 14px; }
 /* on a phone the pinned strip and preview would take two thirds of the panel; let them scroll away */
 @media (max-width: 640px) { .look-sticky { position: static; box-shadow: none; } }
@@ -1176,10 +1180,6 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 /* keep the folded corner (and sticky curl) clear of badges, lease rings and the select checkbox */
 :root[data-cards="sticky"] .card .c-meta { padding-right: 10px; }
-
-.car-track { cursor: grab; user-select: none; -webkit-user-select: none; }
-.car-track.panning { cursor: grabbing; scroll-snap-type: none; }
-.car-track .tile { -webkit-user-drag: none; }
 
 /* header shares the board's frame (set from JS when the columns fit) */
 .topbar { padding-left: var(--frame-l, 22px); padding-right: var(--frame-r, 22px); transition: padding .45s var(--ease); }

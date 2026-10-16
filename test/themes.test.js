@@ -9,7 +9,7 @@ const path = require('node:path');
 // The theme table lives inside the browser app; evaluate just that slice of public/app.js.
 const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const from = src.indexOf('  // Palette colours are'), to = src.indexOf('  // Strength of each generated pattern');
-const { THEMES, themeGroups, contrast, oklab } = new Function(`${src.slice(from, to)}; return { THEMES, themeGroups, contrast, oklab };`)();
+const { THEMES, THEME_KINDS, themeGroups, contrast, oklab } = new Function(`${src.slice(from, to)}; return { THEMES, THEME_KINDS, themeGroups, contrast, oklab };`)();
 
 // color-mix(in oklab, x p, y): back from oklab to #rrggbb.
 const fromOklab = ([L, a, b]) => {
@@ -41,6 +41,12 @@ describe('theme palettes', () => {
       assert.ok(c >= 4.5, `${v['on-accent']} on ${v['accent-fill']} is ${c.toFixed(2)}:1`);
     });
   }
+
+  it('every theme is listed under exactly one kind in Appearance (INT-222)', () => {
+    const listed = THEME_KINDS.flatMap(([, , keys]) => keys);
+    assert.deepEqual([...listed].sort(), Object.keys(THEMES).sort());
+    assert.equal(new Set(listed).size, listed.length, 'no theme in two kinds');
+  });
 
   it('the group text rules match public/app.css', () => {
     for (const [where, , , , rule] of GROUP_TEXT) assert.match(css, rule, where);

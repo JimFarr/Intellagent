@@ -328,10 +328,10 @@
       { ...BAUHAUS_STUDIO }, bauhausCss(14, 4, STUDIO_CSS)),
     soft: T('Soft', 'light', ['#e6e9ef', '#e6e9ef', '#e6e9ef', '#2d3346', '#7b8196', '#d5d9e2', '#6c63ff', '#00b8a9', '#ef5d7a', '#5b8def', '#f0a93b', '#2bb673', '#f08c3b', '#e5484d', '#e6e9ef', '#e6e9ef', '#e6e9ef'],
       { card: 16, col: 26, modal: 28, ctl: 14, bw: 0, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'solid', bg: 'none', texture: false, avatar: 'round', colAlpha: 100 },
-      '.column { box-shadow: 10px 10px 24px #c5c9d3, -10px -10px 24px #ffffff; } .card { box-shadow: 6px 6px 14px #c8ccd6, -6px -6px 14px #ffffff; } .card:hover { box-shadow: 2px 2px 6px #c8ccd6, -2px -2px 6px #ffffff; } .card::before { display: none; } .search input, .inp, .dd, .tbox, .seg { background: var(--bg); box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; border-color: transparent; } .pill-btn, .btn:not(.primary), .car-nav { background: var(--bg); border-color: transparent; box-shadow: 4px 4px 10px #c8ccd6, -4px -4px 10px #ffffff; } .pill-btn:active, .btn:active { box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; } .modal, .drawer { box-shadow: 20px 20px 50px #c5c9d3, -20px -20px 50px #ffffff; } .seg button.on { box-shadow: 3px 3px 6px #c8ccd6, -3px -3px 6px #ffffff; }'),
+      '.column { box-shadow: 10px 10px 24px #c5c9d3, -10px -10px 24px #ffffff; } .card { box-shadow: 6px 6px 14px #c8ccd6, -6px -6px 14px #ffffff; } .card:hover { box-shadow: 2px 2px 6px #c8ccd6, -2px -2px 6px #ffffff; } .card::before { display: none; } .search input, .inp, .dd, .tbox, .seg { background: var(--bg); box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; border-color: transparent; } .pill-btn, .btn:not(.primary) { background: var(--bg); border-color: transparent; box-shadow: 4px 4px 10px #c8ccd6, -4px -4px 10px #ffffff; } .pill-btn:active, .btn:active { box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; } .modal, .drawer { box-shadow: 20px 20px 50px #c5c9d3, -20px -20px 50px #ffffff; } .seg button.on { box-shadow: 3px 3px 6px #c8ccd6, -3px -3px 6px #ffffff; }'),
     dusk: T('Dusk', 'dark', ['#292d36', '#292d36', '#292d36', '#e4e7f0', '#8d93a7', '#343944', '#968fff', '#3fd4c2', '#ff7d95', '#6fa8ff', '#f4b860', '#46cf91', '#f39b5c', '#ff6670', '#292d36', '#292d36', '#292d36'],
       { card: 16, col: 26, modal: 28, ctl: 14, bw: 0, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'solid', bg: 'none', texture: false, avatar: 'round', colAlpha: 100 },
-      '.column { box-shadow: 10px 10px 24px #1c1f26, -8px -8px 22px #343a46; } .card { box-shadow: 6px 6px 14px #1c1f26, -5px -5px 12px #343a46; } .card:hover { box-shadow: 2px 2px 6px #1c1f26, -2px -2px 6px #343a46; } .card::before { display: none; } .search input, .inp, .dd, .tbox, .seg { background: var(--bg); box-shadow: inset 3px 3px 7px #1c1f26, inset -3px -3px 7px #343a46; border-color: transparent; } .pill-btn, .btn:not(.primary), .car-nav { background: var(--bg); border-color: transparent; box-shadow: 4px 4px 10px #1c1f26, -4px -4px 10px #343a46; } .pill-btn:active, .btn:active { box-shadow: inset 3px 3px 7px #1c1f26, inset -3px -3px 7px #343a46; } .modal, .drawer { box-shadow: 20px 20px 50px #15171c, -14px -14px 40px #343a46; } .seg button.on { background: var(--bg); box-shadow: 3px 3px 6px #1c1f26, -3px -3px 6px #343a46; } .opt-grid button { background: var(--bg); border-color: transparent; box-shadow: 3px 3px 7px #1c1f26, -3px -3px 7px #343a46; } .opt-grid button.on { box-shadow: inset 3px 3px 7px #1c1f26, inset -3px -3px 7px #343a46; color: var(--accent); } .btn.primary { background: linear-gradient(145deg, #9a93ff, #7a72f0); box-shadow: 4px 4px 10px #1a1c23, -3px -3px 8px #353a47; } .col-name { color: #d9dcf0; }'),
+      '.column { box-shadow: 10px 10px 24px #1c1f26, -8px -8px 22px #343a46; } .card { box-shadow: 6px 6px 14px #1c1f26, -5px -5px 12px #343a46; } .card:hover { box-shadow: 2px 2px 6px #1c1f26, -2px -2px 6px #343a46; } .card::before { display: none; } .search input, .inp, .dd, .tbox, .seg { background: var(--bg); box-shadow: inset 3px 3px 7px #1c1f26, inset -3px -3px 7px #343a46; border-color: transparent; } .pill-btn, .btn:not(.primary) { background: var(--bg); border-color: transparent; box-shadow: 4px 4px 10px #1c1f26, -4px -4px 10px #343a46; } .pill-btn:active, .btn:active { box-shadow: inset 3px 3px 7px #1c1f26, inset -3px -3px 7px #343a46; } .modal, .drawer { box-shadow: 20px 20px 50px #15171c, -14px -14px 40px #343a46; } .seg button.on { background: var(--bg); box-shadow: 3px 3px 6px #1c1f26, -3px -3px 6px #343a46; } .opt-grid button { background: var(--bg); border-color: transparent; box-shadow: 3px 3px 7px #1c1f26, -3px -3px 7px #343a46; } .opt-grid button.on { box-shadow: inset 3px 3px 7px #1c1f26, inset -3px -3px 7px #343a46; color: var(--accent); } .btn.primary { background: linear-gradient(145deg, #9a93ff, #7a72f0); box-shadow: 4px 4px 10px #1a1c23, -3px -3px 8px #353a47; } .col-name { color: #d9dcf0; }'),
     moss: T('Moss', 'dark', ['#121812', '#182019', '#1e281f', '#e6ecd9', '#8f9c84', '#2b382c', '#a3d16c', '#e2c36b', '#e88a6a', '#7fb6a4', '#e2c36b', '#8fcf6e', '#e0a35a', '#e86a5a', '#2f4a26', '#4a5a1f', '#1f3a33'],
       { card: 18, col: 30, modal: 30, ctl: 14, bw: 1, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'solid', chips: 'pill', bg: 'blobs', texture: true, grain: '.11', avatar: 'round', md: 'paper', titleW: 600, display: "'Fraunces'", colAlpha: 88 },
       '.card { border-radius: 28px 14px 30px 12px / 16px 30px 14px 28px; border-color: rgb(163 209 108 / .14); background: radial-gradient(140% 120% at 0% 0%, rgb(163 209 108 / .10), transparent 55%), linear-gradient(165deg, #233024, #1a231b); box-shadow: 0 12px 26px -14px rgb(0 0 0 / .85), inset 0 1px 0 rgb(226 195 107 / .10); } .card:nth-child(3n+2) { border-radius: 14px 30px 16px 26px / 28px 14px 30px 16px; } .card:nth-child(3n) { border-radius: 30px 18px 24px 14px / 14px 26px 18px 30px; } .card:hover { box-shadow: 0 18px 36px -14px rgb(0 0 0 / .9), 0 0 0 1px rgb(163 209 108 / .35), 0 0 30px -10px rgb(163 209 108 / .35); } .column { border-radius: 46px 34px 52px 30px / 34px 52px 30px 46px; border-color: rgb(163 209 108 / .10); background: linear-gradient(180deg, rgb(32 44 30 / .88), rgb(22 30 22 / .82)); } .col-head { border-bottom: 1px dashed rgb(226 195 107 / .18); } .col-name { font-family: var(--display); font-weight: 600; letter-spacing: .01em; color: #e9e2c4; } .app-name { color: #e2c36b; } .btn.primary { background: linear-gradient(140deg, #b5dc7c, #6fae58); color: #10160f; border-radius: 22px 12px 22px 12px; }'),
@@ -394,6 +394,16 @@
     dracula: 'rail', tokyo: 'rail', synthwave: 'rail', gruvbox: 'rail', pop: 'rail', iridescent: 'rail',
   };
   for (const [k, v] of Object.entries(GROUP_LOOK)) if (THEMES[k]) THEMES[k].style.groups ??= v;
+  // …and the kind it is listed under in Appearance (INT-222): pick a kind, then a theme. Every theme is in one.
+  const THEME_KINDS = [
+    ['bauhaus', 'Bauhaus', ['bauhaus-studio', 'bauhaus-studio-dark', 'bauhaus', 'bauhaus-night', 'bauhaus-mono', 'bauhaus-noir']],
+    ['product', 'Product', ['intellagent', 'daylight', 'slate', 'graphite', 'midnight']],
+    ['editor', 'Editor classics', ['github', 'solarized', 'latte', 'nord', 'dracula', 'mocha', 'tokyo', 'gruvbox', 'rosepine']],
+    ['soft', 'Soft & organic', ['cloud', 'soft', 'clay', 'tide', 'dusk', 'moss', 'bloom']],
+    ['print', 'Print & retro', ['paper', 'swiss', 'brutalist', 'riso', 'pop', 'cork', 'aqua', 'blueprint', 'phosphor']],
+    ['glass', 'Glass & neon', ['vision', 'liquid', 'iridescent', 'synthwave']],
+  ];
+  const themeKind = (k) => THEME_KINDS.find(([, , keys]) => keys.includes(k))?.[0] || THEME_KINDS[0][0];
   // Organic themes lean on their colour fields: let the background blobs come through more.
   for (const [k, o] of [['moss', '.62'], ['clay', '.7'], ['tide', '.75'], ['bloom', '.6'], ['cloud', '.8'], ['liquid', '.95']]) if (THEMES[k]) THEMES[k].vars['fx-o'] = o;
   // Blueprint's contours are drawn in one ink, like the sheet itself (index lines in its text white, not gold).
@@ -5140,6 +5150,7 @@
 
   function openSettings(tab = 'look') {
     closeModal(true);
+    lookKind = null;
     const root = el(`<div class="scrim"><div class="modal settings entering" role="dialog" aria-modal="true">
       <header class="m-head"><span class="m-type" style="color:var(--accent)">${icon('sliders')}</span><span style="font:700 16px var(--display);color:var(--text)">Settings</span><span class="saved">${icon('check', 'sm')}</span><span class="grow"></span><button class="pill-btn icon-btn sm" data-close>${icon('x')}</button></header>
       <div class="m-frame"><nav class="set-nav">
@@ -5163,12 +5174,10 @@
     const show = (t, quiet = false) => {
       m.tab = t;
       const scroll = pane.scrollTop;
-      const carScroll = $('.car-track', pane)?.scrollLeft;
       $$('.set-nav button', root).forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
       pane.innerHTML = settingsPane(t);
       if (quiet) pane.scrollTop = scroll;
       else pane.animate([{ opacity: 0, translate: '0 6px' }, { opacity: 1, translate: '0 0' }], { duration: 260, easing: SPRING });
-      centerCarousel(pane, carScroll);
       for (const r of $$('input[type="range"]', pane)) paintRange(r);
       wirePane(t, pane, show);
     };
@@ -5242,47 +5251,14 @@
     return `<div class="pv-stage">${col('Ready', '#5aa9e6', inner, 3)}</div>`;
   }
 
-  // Keep the active theme centred: restore the old scroll position first, then glide to the new tile.
-  function centerCarousel(pane, from) {
-    const track = $('.car-track', pane);
-    const on = track && $('.tile.on', track);
-    if (!on) return;
-    wireCarousel(track);
-    track.style.scrollBehavior = 'auto';
-    if (from != null) track.scrollLeft = from;
-    requestAnimationFrame(() => {
-      track.style.scrollBehavior = from != null && !reduced() ? 'smooth' : 'auto';
-      track.scrollLeft = on.offsetLeft - (track.clientWidth - on.offsetWidth) / 2;
-    });
-  }
-
-  // Wheel scrolls sideways; click-drag pans. A drag never counts as a click on a theme tile.
-  function wireCarousel(track) {
-    track.addEventListener('wheel', (e) => {
-      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-      e.preventDefault();
-      track.style.scrollBehavior = 'auto';
-      track.scrollLeft += e.deltaY;
-    }, { passive: false });
-    let pan = null;
-    track.addEventListener('pointerdown', (e) => { if (e.button === 0) pan = { x: e.clientX, left: track.scrollLeft, moved: false, id: e.pointerId }; });
-    track.addEventListener('pointermove', (e) => {
-      if (!pan) return;
-      const dx = e.clientX - pan.x;
-      if (!pan.moved && Math.abs(dx) < 5) return;
-      if (!pan.moved) { pan.moved = true; track.setPointerCapture(pan.id); track.classList.add('panning'); }
-      track.style.scrollBehavior = 'auto';
-      track.scrollLeft = pan.left - dx;
-    });
-    const end = () => { if (pan?.moved) track._noClick = true; pan = null; track.classList.remove('panning'); };
-    track.addEventListener('pointerup', end);
-    track.addEventListener('pointercancel', end);
-    track.addEventListener('click', (e) => { if (track._noClick) { track._noClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
-  }
+  // The kind of theme open in Appearance; null shows the kind of the current theme (reset each time Settings opens).
+  let lookKind = null;
 
   function settingsPane(t) {
     if (t === 'look') {
-      const tiles = Object.entries(THEMES).map(([k, th]) => {
+      const kind = lookKind || themeKind(settings.theme);
+      const kinds = THEME_KINDS.map(([id, label, keys]) => `<button class="theme-kind ${id === kind ? 'on' : ''}" data-theme-kind="${id}" aria-pressed="${id === kind}">${label}<small>${keys.length}</small></button>`).join('');
+      const tiles = THEME_KINDS.find(([id]) => id === kind)[2].map((k) => [k, THEMES[k]]).map(([k, th]) => {
         const v = th.vars;
         return `<button class="tile ${settings.theme === k ? 'on' : ''}" data-pick-theme="${k}"><span class="pv" style="background:${v.bg}">
           <i style="background:${v.panel}"><b style="background:${v.issue};opacity:.85"></b><b style="background:${v.surface}"></b></i>
@@ -5302,9 +5278,8 @@
           sub: own ? `<button class="sr-reset" data-reset="${key}" title="Theme default|Use what ${esc(THEMES[settings.theme]?.label || 'the theme')} chooses">${icon('restore', 'sm')}Theme default</button>` : '<span class="sr-auto">from theme</span>',
         });
       };
-      return `<div class="look-sticky">
-          <div class="carousel"><button class="car-nav" data-car="-1" title="Scroll left">${icon('chev', 'car-l')}</button><div class="car-track">${tiles}</div><button class="car-nav" data-car="1" title="Scroll right">${icon('chev', 'car-r')}</button></div>
-          ${previewStage('style')}</div>
+      return `<div class="theme-pick"><div class="theme-kinds" role="group" aria-label="Kind of theme">${kinds}</div><div class="tiles theme-tiles">${tiles}</div></div>
+        <div class="look-sticky">${previewStage('style')}</div>
         <h3>Style</h3>
         <div class="choices">
         ${opt('cards', 'Cards', [['sticky', 'Sticky', 'Tinted sticky notes, slightly tilted'], ['clean', 'Clean', 'Flat cards with a type marker'], ['elevated', 'Raised', 'Borderless, lifted on layered soft shadows'], ['outline', 'Line', 'Transparent with a fine outline'], ['glass', 'Glass', 'Frosted, see-through cards'], ['index', 'Index', 'Ruled index cards with a type-coloured header rule']])}
@@ -5612,13 +5587,8 @@
     pane.onclick = async (e) => {
       const uc = e.target.closest('[data-ucolor]');
       if (uc) { try { await api('PATCH', '/api/profiles/me', { color: uc.dataset.ucolor || null }); pulseSaved(); } catch (err) { toast(err.message, { kind: 'error' }); } return; }
-      const nav = e.target.closest('[data-car]');
-      if (nav) {
-        const track = $('.car-track', pane);
-        track.style.scrollBehavior = 'auto';
-        track.scrollBy({ left: Number(nav.dataset.car) * track.clientWidth * 0.8, behavior: reduced() ? 'auto' : 'smooth' });
-        return;
-      }
+      const kd = e.target.closest('[data-theme-kind]');
+      if (kd) { lookKind = kd.dataset.themeKind; show('look', true); $(`[data-theme-kind="${lookKind}"]`, pane)?.focus(); return; }
       const th = e.target.closest("[data-pick-theme]");
       if (th) { switchTheme(th.dataset.pickTheme, e.clientX, e.clientY, () => show('look', true)); return; }
       const bg = e.target.closest('[data-bgfx]');
