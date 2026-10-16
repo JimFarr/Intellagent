@@ -1301,6 +1301,16 @@
     if (push && location.hash !== boardHash()) history.pushState(null, '', boardHash());
     renderHeader();
     render();
+    startAtTop();
+  }
+  // Switching boards starts every column at its top (INT-225). A focus board opens at its first column with a ticket,
+  // so on a phone it does not start on an empty column; the full board starts at its first column
+  function startAtTop() {
+    for (const c of colEls.values()) $('.list', c).scrollTop = 0;
+    const board = $('#board');
+    const first = viewFocus() && state.board.columns.find((col) => col.itemIds.some(inView));
+    const at = first ? colEls.get(first.id) : null;
+    board.scrollLeft = at ? board.scrollLeft + at.getBoundingClientRect().left - board.getBoundingClientRect().left : 0;
   }
   async function createFocus(name, ids) {
     try {
