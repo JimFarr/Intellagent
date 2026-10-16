@@ -4035,6 +4035,8 @@ route('POST', '/api/boards/:board/items/:id/land', 'Human, or an agent with work
   // { landed: [shas] }: it was landed by hand. The shas must be on main (none: main is searched for the ticket id).
   if (Array.isArray(body.landed)) {
     if (item.review?.verdict !== 'approve') fail(409, `${item.id} isn't approved: only approved work lands`, { code: 'NOT_APPROVED', hint: 'Landing follows an approval' });
+    // Only a landing the board saw fail can be marked: otherwise any sha would hide work that never landed.
+    if (item.landing?.state !== 'failed') fail(409, `${item.id}'s landing isn't marked failed (it is ${item.landing?.state || 'not tried'})`, { code: 'CONFLICT', hint: 'Only a failed landing is marked landed by hand; use the land route without "landed" otherwise' });
     const shas = body.landed.length ? await worktrees.onMain(body.landed) : await worktrees.mentionedOnMain(item.id, item.review.at);
     if (!shas.length) fail(400, `No such commits on ${worktrees.mainBranch()}`, { code: 'BAD_REQUEST', hint: 'Pass the shas as they are on main' });
     await landingOf(ctx, item.id);

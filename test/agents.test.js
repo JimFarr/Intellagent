@@ -1114,6 +1114,10 @@ describe('a lander (work.land) gets approved work onto main', () => {
       // main has nothing for the next one yet: the lander can mark it with the shas, which must be on main
       const b = await failedTicket('by hand, marked on the route', 'cy');
       assert.equal((await s.api('POST', `${B}/items/${b.id}/land`, { landed: ['deadbeef'] }, USER)).status, 400, 'a sha not on main is refused');
+      // an approved ticket whose landing never failed can't be marked landed with some sha
+      const u = await s.ok('POST', `${B}/items`, { title: 'never tried', column: 'Ready' }, USER);
+      assert.equal((await s.api('POST', `${B}/items/${u.id}/land`, { landed: [git('rev-parse', 'HEAD')] }, { agent: 'yondu' })).status, 409, 'an unapproved ticket is refused');
+      assert.equal((await s.api('POST', `${B}/items/${a.id}/land`, { landed: [git('rev-parse', 'HEAD')] }, { agent: 'yondu' })).status, 409, 'a landing that is not failed is refused');
       fs.writeFileSync(path.join(dir, 'by-hand-b.txt'), 'resolved\n');
       git('add', '.');
       git('commit', '-q', '-m', 'no ticket id here');
