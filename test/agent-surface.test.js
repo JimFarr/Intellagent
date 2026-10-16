@@ -485,6 +485,93 @@ describe('sandbox boards', () => {
       assert.match(cli(['sandbox', 'shape', '--fresh'], { cwd: s.dir }).out, /from the board/);
     } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
   });
+
+  describe('sandbox exec', () => {
+    // async, so a stub board in this process can answer while the CLI runs
+    const cliAsync = (args, { cwd, env = {} } = {}) => new Promise((resolve) => {
+      const p = require('child_process').spawn(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv(env) });
+      let out = ''; let err = '';
+      p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
+      p.stdin.end();
+      p.on('close', (code) => resolve({ code, out, err }));
+    });
+    const stubBoard = (me) => new Promise((resolve) => {
+      const srv = require('http').createServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(req.url === '/api/permissions/me' ? me : {})); });
+      srv.listen(0, '127.0.0.1', () => resolve({ srv, url: `http://127.0.0.1:${srv.address().port}` }));
+    });
+
+    it('runs the sandbox code on the sandbox board only, refuses what could leave it, and passes the exit code on', async () => {
+      const s = await startServer({ agents: { agents: {} } });
+      try {
+        const r = cli(['sandbox', 'tester', '--seed', 'empty', '--from', ROOT, '--json'], { cwd: s.dir });
+        assert.equal(r.code, 0, r.err);
+        // the caller's own board and token are in its environment; exec must not pass them on
+        const real = { INTELLAGENT_URL: s.base, INTELLAGENT_TOKEN: 'real-board-token' };
+        const app = cli(['sandbox', 'exec', 'tester', '--', 'api', 'GET', '/api/app'], { cwd: s.dir, env: real });
+        assert.equal(app.code, 0, app.err);
+        assert.equal(app.json.name, "Tester's Board");
+        // an item written through exec lands in the sandbox, not on the real board
+        const made = cli(['sandbox', 'exec', 'tester', '--', 'api', 'POST', '/api/boards/main/items', 'title=via exec', 'column=Backlog'], { cwd: s.dir, env: real });
+        assert.equal(made.code, 0, made.err);
+        assert.ok(!JSON.stringify(await s.ok('GET', '/api/boards/main/summary')).includes('via exec'));
+        assert.ok(JSON.stringify(await get(`${r.json.url}/api/boards/main/summary`)).includes('via exec'));
+        // its own commands run, as the sandbox's human
+        assert.equal(cli(['sandbox', 'exec', 'tester', '--', 'status'], { cwd: s.dir, env: { INTELLAGENT_AGENT: '' } }).code, 0);
+        // another board, or something outside the sandbox: refused with a code and a hint
+        for (const bad of [['brief', '--url', s.base], ['brief', `--url=${s.base}`], ['brief', '--as', 'claude'], ['start'], ['stop'], ['merge', 'INT-1'], ['token'], ['sandbox', 'stop', 'tester'], ['leases', 'ceiling', '--cpu', '1'], ['init', path.join(ROOT, 'not-in-the-temp-folder')]]) {
+          const x = cli(['sandbox', 'exec', 'tester', '--', ...bad], { cwd: s.dir, env: real });
+          assert.equal(x.code, 1, bad.join(' '));
+          assert.match(x.err, /error 403 FORBIDDEN: .* — hint: /, bad.join(' '));
+        }
+        // the exit code of the command comes back unchanged
+        const nope = cli(['sandbox', 'exec', 'tester', '--', 'api', 'GET', '/api/nothing-here'], { cwd: s.dir });
+        assert.notEqual(nope.code, 0);
+        // no command, no sandbox, a sandbox that is not running
+        assert.match(cli(['sandbox', 'exec', 'tester'], { cwd: s.dir }).err, /error 400 BAD_REQUEST: .*after --.* — hint: /);
+        assert.match(cli(['sandbox', 'exec', 'ghost', '--', 'brief'], { cwd: s.dir }).err, /error 404 NOT_FOUND: There is no sandbox called ghost — hint: /);
+        cli(['sandbox', 'stop', 'tester'], { cwd: s.dir });
+        assert.match(cli(['sandbox', 'exec', 'tester', '--', 'brief'], { cwd: s.dir }).err, /error 404 NOT_FOUND: tester's sandbox is not running — hint: intellagent sandbox tester/);
+      } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+    });
+
+    it('an agent needs "run an author\'s code": the board says no, or does not say, and exec is refused with the board\'s own reason', async () => {
+      const s = await startServer({ agents: { agents: {} } });
+      const no = await stubBoard({ runAuthorsCode: false, runAuthorsCodeWhy: 'builder does not hold "Run an author\'s code"', runAuthorsCodeHint: 'ask James on the card' });
+      const yes = await stubBoard({ runAuthorsCode: true });
+      try {
+        assert.equal(cli(['sandbox', 'tester', '--seed', 'empty', '--from', ROOT, '--json'], { cwd: s.dir }).code, 0);
+        const run = (url) => cliAsync(['sandbox', 'exec', 'tester', '--', 'api', 'GET', '/api/app'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'builder', INTELLAGENT_URL: url } });
+        const denied = await run(no.url);
+        assert.equal(denied.code, 1);
+        assert.match(denied.err, /error 403 NO_PERMISSION: builder does not hold "Run an author's code" — hint: ask James on the card/);
+        assert.ok(!denied.out.includes("Tester's Board"), 'nothing ran');
+        // a board that does not report the field (older code) counts as no
+        const silent = await stubBoard({});
+        const unknown = await run(silent.url);
+        silent.srv.close();
+        assert.equal(unknown.code, 1);
+        assert.match(unknown.err, /error 403 NO_PERMISSION: .* — hint: /);
+        const allowed = await run(yes.url);
+        assert.equal(allowed.code, 0, allowed.err);
+        assert.match(allowed.out, /Tester's Board/);
+      } finally { no.srv.close(); yes.srv.close(); cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+    });
+
+    it('end to end: the real board decides from the agent\'s role, a reviewer runs the command and a builder is refused', async () => {
+      const s = await startServer({ manifest: { auth: { requireAgentTokens: false } }, agents: { agents: { rv: { enabled: false, role: 'reviewer' }, bd: { enabled: false, role: 'builder' } } } });
+      try {
+        assert.equal(cli(['sandbox', 'tester', '--seed', 'empty', '--from', ROOT, '--json'], { cwd: s.dir }).code, 0);
+        const as = (agent) => cliAsync(['sandbox', 'exec', 'tester', '--', 'api', 'GET', '/api/app'], { cwd: s.dir, env: { INTELLAGENT_AGENT: agent } });
+        const rv = await as('rv');
+        assert.equal(rv.code, 0, rv.err);
+        assert.equal(JSON.parse(rv.out).name, "Tester's Board");
+        const bd = await as('bd');
+        assert.equal(bd.code, 1);
+        assert.match(bd.err, /error 403 NO_PERMISSION: .*run-authors-code.* — hint: /);
+        assert.equal(bd.out, '', 'nothing ran');
+      } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+    });
+  });
 });
 
 describe('agents alert each other with @mentions', () => {

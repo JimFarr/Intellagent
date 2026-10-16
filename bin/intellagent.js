@@ -34,7 +34,8 @@ const ROOT = path.join(__dirname, '..');
 // (a standing agent reaching its sandbox).
 for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_AGENT']]) {
   const a = process.argv;
-  const i = a.findIndex((x, n) => n > 1 && (x === flag || x.startsWith(`${flag}=`)));
+  const stop = a.indexOf('--'); // after -- (sandbox exec) the words belong to the command it runs
+  const i = a.findIndex((x, n) => n > 1 && (stop < 0 || n < stop) && (x === flag || x.startsWith(`${flag}=`)));
   if (i < 0) continue;
   const inline = a[i].startsWith(`${flag}=`);
   const v = inline ? a[i].slice(flag.length + 1) : a[i + 1];
@@ -763,11 +764,37 @@ async function doOp() {
   process.exitCode = report(await send(method, p, body), { compact });
 }
 
+// intellagent sandbox exec <name> -- <command…>: the CLI of the code that sandbox runs, on its own board, as its
+// human. An agent needs the "run an author's code" permission (the board says: permissions/me runAuthorsCode).
+async function sandboxExec(sb, mp) {
+  const fail = (e) => { console.error(`error ${e.status || (e.code === 'NO_PERMISSION' || e.code === 'FORBIDDEN' ? 403 : e.code === 'NOT_FOUND' ? 404 : 400)} ${e.code || 'BAD_REQUEST'}: ${e.message}${e.hint ? ` — hint: ${e.hint}` : ''}`); process.exit(1); };
+  const dash = rest.indexOf('--');
+  const before = dash < 0 ? rest.slice(1) : rest.slice(1, dash);
+  const args = dash < 0 ? [] : rest.slice(dash + 1);
+  const agent = asAgent();
+  if (agent) {
+    const m = readManifest(mp);
+    const url = baseUrl(m);
+    const token = require('../lib/locate').tokenFor(agent, m);
+    let me;
+    try { me = await (await fetch(`${url}/api/permissions/me`, { headers: { 'x-agent': agent, ...(token ? { authorization: `Bearer ${token}` } : {}) } })).json(); }
+    catch { console.error(`The board isn't running (${url}). Start it with: intellagent start`); process.exit(1); }
+    if (me.runAuthorsCode !== true) {
+      fail({ code: 'NO_PERMISSION', message: me.runAuthorsCodeWhy || `${agent} does not hold "Run an author's code" on this board`, hint: me.runAuthorsCodeHint || 'ask the human on the card to grant it (the Permissions page)' });
+    }
+  }
+  let plan;
+  try { plan = await sb.execPlan(mp, before[0], args); } catch (e) { fail(e); }
+  const child = spawn(plan.command, plan.args, { env: plan.env, stdio: 'inherit' });
+  child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
+}
+
 // intellagent sandbox [name] [--from main|<agent>|<dir>] [--seed board|demo|empty|snapshot] [--fresh] [--open] [--json]
 // intellagent sandbox list | stop <name> | stop --all
 async function sandboxCmd() {
   const sb = require('../lib/sandbox');
   const mp = requireManifest();
+  if (rest[0] === 'exec') return sandboxExec(sb, mp);
   const f = flags(rest);
   const [sub, arg] = f._;
   if (sub === 'list') {
@@ -837,7 +864,7 @@ const HELP = `intellagent — a kanban for you and your agents
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 
-  sandbox [NAME]   a throwaway board of your own, running any checkout (--from main|<agent>|<dir>, --seed board|demo|empty|snapshot, --fresh); sandbox list | stop NAME|--all
+  sandbox [NAME]   a throwaway board of your own, running any checkout (--from main|<agent>|<dir>, --seed board|demo|empty|snapshot, --fresh); sandbox list | stop NAME|--all | exec NAME -- COMMAND… (that checkout's CLI on its board)
   leases           the machine's leases for heavy work — browsers, solves, timings (one per PC; every board shares it)
     status | machine | ask --holder N --cpu T --gpu MB --minutes M [--exclusive] | renew ID | done ID | ceiling | start | stop
 `;
