@@ -672,14 +672,9 @@ const permsFor = (name) => {
      "grants": ["review.decide", { "power": "column.gate", "where": { "column": ["Done"], "fields.risk": "low" } }]
    review.decide  approve / request changes on reviews     column.gate  move into / out of human-only columns
    agents.control pause / resume / run other standing agents
-   An agent never uses a grant on its own work: a ticket it worked on, or a review it requested. */
-const POWERS = {
-  'review.decide': 'Decide reviews (approve / request changes)',
-  'column.gate': 'Move tickets into / out of human-only columns',
-  'agents.control': 'Pause, resume and run other standing agents',
-  'agents.manage': "Change other standing agents' label, role, personality and model (allowlist), and narrow their permissions",
-  'work.land': 'Land work that was already approved on main (resolving conflicts on its own branch first)',
-};
+   An agent never uses a grant on its own work: a ticket it worked on, or a review it requested.
+   The powers are listed in the permission library (lib/permissions.js) beside the tool permissions. */
+const { POWERS, createLibrary: createPermLibrary } = require('./lib/permissions');
 // Standing agents the human lets land approved work (work.land): a landing that fails goes to them, not the human.
 const landers = () => { try { return standing.list().agents.filter((a) => a.enabled && grantsOf(a.name).some((g) => g.power === 'work.land')).map((a) => a.name); } catch { return []; } };
 function grantsOf(name) {
@@ -3164,7 +3159,7 @@ const SCHEMA = {
       'attention.raised', 'attention.resolved', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
-      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.managed', 'agent.poke', 'agents.changed', 'agents.stopped',
+      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.managed', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
       'focus.created', 'focus.updated', 'focus.activated', 'focus.retired'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
@@ -4076,8 +4071,42 @@ const controls = (actor, target) => {
 };
 route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run, now (what a live run is doing), history (last 10 runs). ?recent=N adds the N newest runs across all agents', ({ q }) => standing.list({ recent: Math.min(50, Math.max(0, Number(q.recent) || 0)) }));
 route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents', () => {
-  const { ROLES, PERMS } = require('./lib/agents');
-  return { roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: Object.fromEntries(Object.entries(PERMS).map(([k, v]) => [k, v.label])) };
+  const { ROLES } = require('./lib/agents');
+  return { roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: permLibrary().labels() };
+});
+/* The permission library (INT-228): every permission an agent can hold — built-in tools, board powers and
+   the human's own (command, tool, folders, bundle, verbal), stored in agents.json under "perms". Everyone
+   reads it; only the human changes it, and only its custom entries. */
+const permLibrary = () => standing?.permissionLibrary?.() || createPermLibrary();
+const permBody = (body) => Object.fromEntries(['kind', 'name', 'description', 'brief', 'commands', 'command', 'tools', 'tool', 'folders', 'includes', 'needs'].filter((k) => k in (body || {})).map((k) => [k, body[k]]));
+function permChanged(actor, key, before, after) {
+  emit({ type: 'permissions.changed', actor, key, before: before ?? null, after: after ?? null });
+}
+route('GET', '/api/permissions', 'The permission library: every permission an agent can hold (built-in tools, board powers, and the human\'s custom ones: command, tool, folders, bundle, verbal). Verbal ones carry enforced: false and a warning', () => {
+  const lib = permLibrary();
+  return { permissions: lib.list(), kinds: ['builtin', 'power', ...require('./lib/permissions').KINDS], errors: lib.errors, file: standing?.file ? path.basename(standing.file) : null };
+});
+route('POST', '/api/permissions', 'Human: add a custom permission { key, kind: command|tool|folders|bundle|verbal, name, description?, brief?, commands?|tools?|folders?|includes?, needs? } — stored in agents.json', ({ body, actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Only the human can change the permission library', { code: 'HUMAN_ONLY', hint: 'Ask on a card' });
+  if (!standing) fail(404, 'No standing agents on this board');
+  if (permLibrary().get(String(body.key || ''))) fail(409, `"${body.key}" already exists`, { code: 'CONFLICT', hint: `Change it with PATCH /api/permissions/${body.key}` });
+  const r = standing.definePerm(body.key, permBody(body));
+  permChanged(actor, r.permission.key, null, r.permission);
+  return created(r.permission);
+});
+route('PATCH', '/api/permissions/:key', 'Human: change a custom permission (merged; null removes a key). Built-ins can\'t change', ({ p, body, actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Only the human can change the permission library', { code: 'HUMAN_ONLY', hint: 'Ask on a card' });
+  if (!standing) fail(404, 'No standing agents on this board');
+  const r = standing.definePerm(p.key, permBody(body), { merge: true });
+  permChanged(actor, p.key, r.before, r.permission);
+  return r.permission;
+});
+route('DELETE', '/api/permissions/:key', 'Human: remove a custom permission no agent or other permission uses (409 CONFLICT names them)', ({ p, actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Only the human can change the permission library', { code: 'HUMAN_ONLY', hint: 'Ask on a card' });
+  if (!standing) fail(404, 'No standing agents on this board');
+  const r = standing.removePerm(p.key);
+  permChanged(actor, p.key, r.before, null);
+  return { removed: r.removed };
 });
 // Grants as the UI sends them: [{ power, where? }]; where is { key: value | [values] } (strings only).
 function cleanGrants(list) {
@@ -4186,18 +4215,22 @@ function manageAgent(target, d, actor) {
   if ('perms' in d) {
     // null: back to the role's tools (or the default run when it has no role)
     const next = d.perms == null ? null : [...new Set([].concat(d.perms).map(String))];
-    const { PERMS, ROLES } = require('./lib/agents');
-    const unknown = (next || []).filter((k) => !PERMS[k]);
-    if (unknown.length) fail(400, `Unknown permission(s): ${unknown.join(', ')}`);
+    const { ROLES } = require('./lib/agents');
+    const lib = permLibrary();
+    const unknown = (next || []).filter((k) => !lib.holdable(k));
+    if (unknown.length) fail(400, `Unknown permission(s): ${unknown.join(', ')}${unknown.some(lib.isPower) ? ' (powers are grants, which only the human sets)' : ''}`);
     const now = a.perms || [];
     const tools = next || ROLES[('role' in cfg ? cfg.role : a.role) || '']?.perms || null;
-    if (agent && (tools ? tools.some((k) => !now.includes(k)) : a.perms != null)) fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}`, { code: 'WIDEN' });
+    // compared after bundles and needs are expanded: a bundle of what it has could still bring something new
+    const have = lib.resolve(now).keys;
+    if (agent && (tools ? lib.resolve(tools).keys.some((k) => !have.includes(k)) : a.perms != null)) fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}`, { code: 'WIDEN' });
     cfg.perms = next;
   } else if (agent && 'role' in cfg && a.permsFrom !== 'own') {
     // its tools come from its role, so a new role is a new set of tools: it may only narrow them
     const tools = require('./lib/agents').ROLES[cfg.role || '']?.perms || null;
     const now = a.perms || [];
-    if (tools ? tools.some((k) => !now.includes(k)) : a.perms != null) {
+    const have = permLibrary().resolve(now).keys;
+    if (tools ? tools.some((k) => !have.includes(k)) : a.perms != null) {
       fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}, and that role brings ${(tools || []).join(', ') || 'the default run'}`, { code: 'WIDEN', hint: 'Send "perms" with the role to pin its tools to what it has now, or leave it to the human' });
     }
   }

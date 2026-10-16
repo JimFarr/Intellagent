@@ -197,6 +197,19 @@ Some agents may do human-only things because the human said so — in **agents.j
 - **The human's switch:** "Approves for you" on the Agents page (`GET/PUT …/approvals { on }`, human only) lists who may approve on their behalf and when, and switches it all off: while off, every `review.decide` and `column.gate` grant on that board answers `403 APPROVALS_OFF`, `decide`/`chase` actions go quiet and the brief says so. Landing already-approved work (`work.land`) goes on. The manifest's `approvalsOff: true` makes a board start off.
 - The human can override any delegated verdict or move. Grants in agents.json are re-read on change, so removing one takes effect at once. `GET /api/permissions/me` and your brief list yours; metrics count delegated decisions (`delegated`).
 
+### The permission library
+Every permission an agent can hold, as data: `GET /api/permissions` (everyone reads it). The **built-ins** come from the code and never change: the tool permissions `read edit test build git web`, held through an agent's `perms`, and the board powers above (`review.decide`, `work.land`…), held only through `grants`. The human adds their own, stored in agents.json under `"perms"` beside `"agents"`, and an agent holds one like a built-in (`"perms": ["edit", "deploy-staging"]`):
+```
+POST   /api/permissions          { "key": "deploy-staging", "kind": "command", "name": "Deploy to staging",
+                                   "commands": ["npm run deploy:staging"], "needs": ["test"], "brief": "Deploy after the tests pass." }
+PATCH  /api/permissions/<key>    { "commands": ["npm run deploy:stage2"] }   (merged; null removes a key)
+DELETE /api/permissions/<key>    (409 CONFLICT while an agent or another permission uses it, naming them)
+```
+- Kinds: `command` (exact, or ending in `:*`, same rule as `commands`), `tool` (a Claude or MCP tool by name; never `Bash`), `folders` (Edit and Write only under relative globs, e.g. `docs/**`), `bundle` (`includes` other permissions) and **`verbal`**: only words (`brief`). The agent reads a verbal permission in its brief and **nothing enforces it**: it adds no tool, shows `enforced: false` with a warning everywhere it appears, and could be dangerous on its own.
+- `needs` brings other permissions with it. Neither a bundle nor a need can reach a power: powers stay in `grants`.
+- Each permission's `brief` line goes into the brief of every agent holding it, under *Permissions the human gave you* (agents holding only built-ins see no change). Changing a permission rebuilds its holders' runs at once.
+- Only the human changes the library (`403 HUMAN_ONLY`, also for `agents.manage`); built-ins answer `409 CONFLICT`. An agent manager's narrowing check expands bundles and needs first. An entry in agents.json that doesn't check out is skipped and reported in `GET /api/agents` (`error`). Emits `permissions.changed`, which wakes nobody.
+
 ### Handoffs
 `PATCH … { "assignee": "other-agent" }` hands a ticket over; the assignee receives its events (`for=<name>` / `assignee=<name>`).
 When a ticket's last open blocker reaches the final column (or is archived), its watchers get `item.unblocked`.
@@ -443,6 +456,7 @@ Events       GET /api/events  /api/events/wait  /api/stream   POST /api/stream-t
              GET/POST /api/subscriptions         DELETE /api/subscriptions/:id     GET …/:id/next   POST …/:id/ack
 Agents       GET/POST /api/agents  /api/agents/roles  /api/agents/:name  …/:name/log     PATCH/DELETE /api/agents/:name
              POST /api/agents/stop-all  /api/agents/resume-all  /api/agents/:name/pause  …/resume  …/run
+Permissions  GET/POST /api/permissions         PATCH/DELETE /api/permissions/:key (human)
 Profiles     GET /api/profiles  /api/profiles/me  /api/names/suggest     PATCH /api/profiles/me     DELETE /api/presence/:name
 Files        GET /avatars/:file  /files/:board/:file
 ```

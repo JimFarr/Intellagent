@@ -506,12 +506,13 @@ async function agentsCmd() {
     const doc = readAgents(file);
     doc.agents ||= {};
     const listen = !f.listen || ['addressed', 'inbox', 'human', 'new-tickets'].includes(f.listen) ? (f.listen || 'addressed') : Object.fromEntries(new URLSearchParams(String(f.listen)));
-    const { ROLES, PERMS } = require('../lib/agents');
+    const { ROLES } = require('../lib/agents');
+    const lib = require('../lib/permissions').createLibrary(doc.perms); // built-ins plus this file's own
     if (f.model && !/^[\w.:-]{1,64}$/.test(String(f.model))) { console.error('--model: a plain name like haiku, sonnet or opus'); process.exit(1); }
     if (f.role && !ROLES[f.role]) { console.error(`Unknown role "${f.role}". Roles: ${Object.keys(ROLES).join(', ')}`); process.exit(1); }
     const perms = f.allow ? String(f.allow).split(',').map((x) => x.trim()).filter(Boolean) : null;
-    const badPerms = (perms || []).filter((k) => !PERMS[k]);
-    if (badPerms.length) { console.error(`Unknown permission(s): ${badPerms.join(', ')}. Use: ${Object.keys(PERMS).join(', ')}`); process.exit(1); }
+    const badPerms = (perms || []).filter((k) => !lib.holdable(k));
+    if (badPerms.length) { console.error(`Unknown permission(s): ${badPerms.join(', ')}. Use: ${Object.keys(lib.labels()).join(', ')}`); process.exit(1); }
     doc.agents[name] = {
       ...(doc.agents[name] || {}),
       ...(f.role ? { role: String(f.role) } : {}),
