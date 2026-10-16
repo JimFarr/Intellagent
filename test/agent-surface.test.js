@@ -740,6 +740,62 @@ describe('a verdict the board could not check never stands in for the human', ()
   });
 });
 
+describe('a verdict records the commits it saw, looked up without blocking the board (INT-137)', () => {
+  it('a later commit makes the verdict stale; the verdict and decision routes never call the sync git lookup', async () => {
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-wt-'));
+    const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 'test@example.com');
+    git(dir, 'config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\nstub.js\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'init');
+    // Preloaded into the server: the sync lookup says so in the log and fails, so a route that still used it
+    // would record no commits (and never match), and the log would show it
+    const stub = path.join(dir, 'stub.js');
+    fs.writeFileSync(stub, `const wt = require(${JSON.stringify(path.join(ROOT, 'lib', 'worktrees.js'))});
+const real = wt.createWorktrees;
+wt.createWorktrees = (o) => { const w = real(o); w.commitsFor = (name, id) => { console.error('SYNC commitsFor ' + name + ' ' + id); throw new Error('sync git'); }; return w; };
+console.error('commitsFor stub loaded');
+`);
+    const s = await startServer({ dir, env: { NODE_OPTIONS: `--require "${stub.replace(/\\/g, '/')}"` }, agents: { agents: {
+      gamora: { role: 'coordinator', enabled: false, grants: [{ power: 'review.decide', where: { 'reviewers.nebula': 'ok' } }] },
+      nebula: { role: 'reviewer', enabled: false },
+      dev: { enabled: false, worktree: true },
+    } }, manifest: { auth: { agentTokens: { nebula: 't-nebula' } } } });
+    const wtDev = path.join(dir, '.worktrees', 'dev');
+    const commit = (n) => { fs.writeFileSync(path.join(wtDev, `f${n}.txt`), `${n}\n`); git(wtDev, 'add', '.'); git(wtDev, 'commit', '-q', '-m', `dev work ${n} (T-1)`); return git(wtDev, 'rev-parse', 'HEAD'); };
+    const verdict = () => fetch(`${s.base}/api/boards/main/items/T-1/reviewers/nebula/verdict`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': 'nebula', authorization: 'Bearer t-nebula' }, body: JSON.stringify({ verdict: 'ok', comment: 'fine' }) });
+    const decide = () => s.api('POST', '/api/boards/main/items/T-1/review/decision', { verdict: 'approve', comment: 'x' }, { agent: 'gamora' });
+    try {
+      assert.match(s.log(), /commitsFor stub loaded/, 'the stub is in place');
+      git(dir, 'worktree', 'add', '-q', wtDev, '-b', 'agent/dev', 'main');
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'dev commits', column: 'Ready' }, USER);
+      assert.equal(it.id, 'T-1');
+      await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+      const first = commit(1);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${it.id}/reviewers`, { name: 'nebula' }, USER);
+      assert.ok((await verdict()).ok);
+      const rv = () => s.ok('GET', `/api/boards/main/items/${it.id}`).then((x) => x.reviewers.find((r) => r.name === 'nebula'));
+      assert.equal((await rv()).commits, first, 'the verdict records the commits it saw');
+      // dev commits again: Nebula's ok no longer covers what would land
+      const second = commit(2);
+      const stale = await decide();
+      assert.equal(stale.status, 403, `a stale ok is out of scope: ${JSON.stringify(stale.body)}`);
+      // a fresh ok covers both, and the decision goes through
+      assert.ok((await verdict()).ok);
+      assert.equal((await rv()).commits, `${first},${second}`);
+      assert.equal((await decide()).status, 200);
+      assert.doesNotMatch(s.log(), /SYNC commitsFor/, 'no route above ran git synchronously');
+    } finally {
+      await s.stop();
+      try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
+    }
+  });
+});
+
 describe("the human's switch for approvals", () => {
   it('lists who approves and when; off suspends every approval grant until the human switches it back on', async () => {
     const s = await startServer({ agents: { agents: {
