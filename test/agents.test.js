@@ -1788,6 +1788,62 @@ describe('agent reviewers', () => {
       assert.equal((await s.api('POST', `${B}/items/${it2.id}/reviewers/critic/verdict`, { verdict: 'ok' }, ag('critic'))).body.code, 'OWN_WORK');
     } finally { await s.stop(); }
   });
+
+  it('gates on an approval column warn before approving or dragging past them; one confirm goes on, noted on the card; a grant never skips one (INT-104)', async () => {
+    const s = await startServer({ agents: { agents: {
+      maker: { role: 'builder', enabled: false },
+      critic: { role: 'reviewer', enabled: false },
+      boss: { role: 'builder', enabled: false, grants: ['review.decide'] },
+    } } });
+    const ag = (agent) => ({ agent });
+    const reviewed = async (title) => {
+      const it = await s.ok('POST', `${B}/items`, { title, column: 'Ready', assignee: 'maker' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/start`, {}, ag('maker'));
+      await s.ok('POST', `${B}/items/${it.id}/review`, { changed: 'x', why: 'y', verify: 'z', evidence: 'npm test: 1 pass' }, ag('maker'));
+      return it.id;
+    };
+    try {
+      // the human sets gates; an agent can't (it could just delete them)
+      assert.equal((await s.api('PATCH', `${B}/columns/Done`, { flags: { gates: [] } }, ag('boss'))).status, 200, 'no change, nothing to refuse');
+      assert.equal((await s.api('PATCH', `${B}/columns/Done`, { flags: { gates: [{ kind: 'reviewer_ok', min: 1 }] } }, ag('boss'))).body.code, 'HUMAN_ONLY');
+      const col = await s.ok('PATCH', `${B}/columns/Done`, { flags: { gates: [{ kind: 'reviewer_ok', min: 9 }, { kind: 'bogus' }] } }, USER);
+      assert.deepEqual(col.flags.gates, [{ kind: 'reviewer_ok', min: 5 }], 'unknown kinds dropped, min kept to 1-5');
+      await s.ok('PATCH', `${B}/columns/Done`, { flags: { gates: [{ kind: 'reviewer_ok', min: 1 }] } }, USER);
+
+      // unmet: the card says so, approving answers GATE_UNMET (for the human and for a grant alike) and changes nothing
+      const a = await reviewed('gated');
+      const g = await s.ok('GET', `${B}/items/${a}/gates`);
+      assert.deepEqual(g, { column: 'Done', gates: [{ kind: 'reviewer_ok', label: '1 reviewer ok', met: false, have: 0, need: 1, who: [], concerns: [] }] });
+      const refused = await s.api('POST', `${B}/items/${a}/review/decision`, { verdict: 'approve' }, USER);
+      assert.equal(refused.status, 409);
+      assert.equal(refused.body.code, 'GATE_UNMET');
+      assert.equal(refused.body.gates[0].label, '1 reviewer ok');
+      assert.equal((await s.api('POST', `${B}/items/${a}/review/decision`, { verdict: 'approve' }, ag('boss'))).body.code, 'GATE_UNMET', 'a grant never skips a gate');
+      const still = await s.ok('GET', `${B}/items/${a}`);
+      assert.equal(still.column, 'Review');
+      assert.ok(still.questions.some((q) => q.kind === 'review'), 'the review is still open');
+      // one confirm goes on, and the card says it went past the gate
+      const done = await s.ok('POST', `${B}/items/${a}/review/decision`, { verdict: 'approve', confirm: true }, USER);
+      assert.equal(done.column, 'Done');
+      assert.ok(done.comments.some((x) => x.body === 'Approved past 1 unmet gate: 1 reviewer ok (0/1).'));
+
+      // met: a reviewer's ok, and dragging into Done adds nothing to the flow
+      const b = await reviewed('reviewed');
+      await s.ok('POST', `${B}/items/${b}/reviewers`, { name: 'critic' }, USER);
+      await s.ok('POST', `${B}/items/${b}/reviewers/critic/verdict`, { verdict: 'ok', comment: 'fine' }, ag('critic'));
+      assert.deepEqual((await s.ok('GET', `${B}/items/${b}/gates`)).gates[0].who, ['critic']);
+      const moved = await s.ok('POST', `${B}/items/${b}/move`, { column: 'Done' }, USER);
+      assert.equal(moved.column, 'Done');
+      assert.ok(!moved.comments.some((x) => /unmet gate/.test(x.body)), 'a met gate adds nothing');
+
+      // dragging past an unmet gate: refused, then confirmed
+      const c = await reviewed('dragged');
+      assert.equal((await s.api('POST', `${B}/items/${c}/move`, { column: 'Done' }, USER)).body.code, 'GATE_UNMET');
+      const dragged = await s.ok('POST', `${B}/items/${c}/move`, { column: 'Done', confirm: true }, USER);
+      assert.equal(dragged.column, 'Done');
+      assert.ok(dragged.comments.some((x) => x.body === 'Approved past 1 unmet gate: 1 reviewer ok (0/1).'));
+    } finally { await s.stop(); }
+  });
 });
 
 describe('agent permissions from the UI', () => {

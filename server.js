@@ -139,7 +139,14 @@ const DEFAULT_FLAGS = {
   // with one, agents file new tickets there; the coordinator decides where an agent's ticket goes, and only
   // the human wakes the human's own.
   sleeping: false,
+  // Soft approval gates (INT-104), checked when a ticket enters the column: an unmet one answers 409 GATE_UNMET
+  // until the same call is sent with "confirm": true, and the override is noted on the card. A gate warns; it
+  // never blocks. Kinds: { kind: "reviewer_ok", min } — at least min reviewers answered ok.
+  gates: [],
 };
+const GATE_KINDS = ['reviewer_ok'];
+const normGates = (v) => arr(v).filter((g) => isObj(g) && GATE_KINDS.includes(g.kind)).slice(0, 10)
+  .map((g) => ({ kind: g.kind, min: Math.min(5, Math.max(1, Math.round(Number(g.min) || 1))) }));
 const TEMPLATES = require('./lib/templates');
 // presets (shipped, and added to this board) are board templates too: GET /api/templates, manifest.template, POST /api/boards
 Object.assign(TEMPLATES, require('./lib/presets').templates(path.dirname(MANIFEST_PATH)));
@@ -183,7 +190,7 @@ function pickFlags(f, base = DEFAULT_FLAGS) {
   const out = { ...base };
   for (const [k, v] of Object.entries(f || {})) {
     if (!(k in DEFAULT_FLAGS)) { out[k] = v; continue; }
-    out[k] = typeof DEFAULT_FLAGS[k] === 'boolean' ? v === true || v === 'true' : Math.max(0, Number(v) || 0);
+    out[k] = k === 'gates' ? normGates(v) : typeof DEFAULT_FLAGS[k] === 'boolean' ? v === true || v === 'true' : Math.max(0, Number(v) || 0);
   }
   return out;
 }
@@ -1531,12 +1538,27 @@ function createItem(ctx, d, actor) {
   });
 }
 
-function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } = {}) {
+// A column's gates as this ticket stands: who answered ok (who) and who has concerns, against what each needs.
+// Verdicts count as they are on the ticket: a new review request clears them, so one never outlives the work it saw.
+function gatesFor(item, col) {
+  const rs = item.reviewers || [];
+  const who = rs.filter((r) => r.verdict === 'ok').map((r) => r.name);
+  const concerns = rs.filter((r) => r.verdict === 'concerns').map((r) => r.name);
+  return (col?.flags.gates || []).map((g) => ({
+    kind: g.kind, label: `${g.min} reviewer${g.min > 1 ? 's' : ''} ok`, met: who.length >= g.min, have: who.length, need: g.min, who, concerns,
+  }));
+}
+const gateText = (unmet) => unmet.map((g) => `${g.label} (${g.have}/${g.need})`).join(', ');
+
+// approving: this move carries an approval (a decision, or the human dropping a reviewed ticket in the gate).
+// confirm: the mover saw the unmet gates and goes on anyway.
+function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null, confirm = false, approving = false } = {}) {
   const b = ctx.board;
   const from = findColumn(b, item.columnId);
   const to = colRef != null && colRef !== '' ? findColumn(b, colRef) : from;
   const cross = from.id !== to.id;
   let gated = false;
+  let unmet = [];
   if (cross) {
     if (!from.flags.allowMoveOut) fail(403, `Items cannot leave "${from.name}"`);
     if (!to.flags.allowMoveIn) fail(403, `"${to.name}" does not accept moved items`);
@@ -1558,10 +1580,20 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } 
     }
     checkColumnPerm(ctx, actor, [to.id]);
     checkWip(to);
+    // Soft gates, on approval columns only: the same for the human and for an agent with a grant (a grant never
+    // skips one).
+    if (to.flags.humanOnlyIn) unmet = gatesFor(item, to).filter((g) => !g.met);
+    if (unmet.length && !confirm) {
+      fail(409, `${item.id} hasn't met ${to.name}'s gate${unmet.length > 1 ? 's' : ''}: ${gateText(unmet)}`, { code: 'GATE_UNMET', gates: unmet, hint: 'A gate warns, it never blocks: send the same call again with "confirm": true to go on, and it is noted on the card' });
+    }
     // A human moving a ticket with an open review into an approval gate (e.g. Done) approves it.
     // Other open questions stay; moving backwards implies nothing (changes need feedback text).
     if (actor.kind === 'user' && to.flags.humanOnlyIn && (item.questions || []).some((q) => q.kind === 'review')) {
       recordVerdict(ctx, item, actor, events, 'approve', `Approved ✓ (moved to ${to.name})`);
+      approving = true;
+    }
+    if (unmet.length) {
+      item.comments.push({ id: rid('c'), author: actor, body: `${approving ? 'Approved' : `Moved to ${to.name}`} past ${unmet.length} unmet gate${unmet.length > 1 ? 's' : ''}: ${gateText(unmet)}.`, createdAt: now() });
     }
   }
   const oldIdx = from.itemIds.indexOf(item.id);
@@ -1572,7 +1604,7 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } 
     enterColumn(item, to.id);
     // Out of a sleeping column (into Ready): the ticket is awake now, so its assignee is called to it.
     const woken = from.flags.sleeping && !to.flags.sleeping && item.assignee && item.assignee !== actor.name ? [item.assignee] : [];
-    events.push(itemEvent(ctx, 'item.moved', item, actor, { fromColumnId: from.id, columnId: to.id, position: idx, ...(woken.length ? { mentions: woken } : {}), ...(gated ? { delegated: { power: gateBy.power, onBehalfOf: 'human' } } : {}) }));
+    events.push(itemEvent(ctx, 'item.moved', item, actor, { fromColumnId: from.id, columnId: to.id, position: idx, ...(woken.length ? { mentions: woken } : {}), ...(gated ? { delegated: { power: gateBy.power, onBehalfOf: 'human' } } : {}), ...(unmet.length ? { pastGates: unmet.map((g) => g.label) } : {}) }));
     if (to.flags.releaseLeaseOnEnter && item.lease) {
       const c = item.lease.claimant;
       item.lease = null;
@@ -1590,7 +1622,7 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } 
 const assignedByOf = (actor) => ({ kind: actor.kind, name: actor.name, at: now() });
 
 const PATCHABLE = ['title', 'description', 'type', 'priority', 'parent', 'blockedBy', 'needsHuman', 'properties', 'replaceProperties', 'fields', 'cover', 'assignee', 'agentDraft',
-  'columnId', 'column', 'position', 'beforeId', 'afterId', 'version'];
+  'columnId', 'column', 'position', 'beforeId', 'afterId', 'version', 'confirm'];
 
 function trimChange(v) { return typeof v === 'string' && v.length > 400 ? `${v.slice(0, 400)}…` : v; }
 
@@ -1680,7 +1712,7 @@ function applyPatch(ctx, item, p, actor, events) {
   }
   const moveEvents = [];
   const moving = p.columnId != null || p.column != null || p.position != null || p.beforeId || p.afterId;
-  const moved = moving && moveInto(ctx, item, p.columnId ?? p.column, positionOf(p), actor, moveEvents);
+  const moved = moving && moveInto(ctx, item, p.columnId ?? p.column, positionOf(p), actor, moveEvents, { confirm: p.confirm === true });
   if (!Object.keys(changes).length && !moved) return false;
   item.version++;
   item.updatedAt = now();
@@ -2170,7 +2202,7 @@ function decideReview(ctx, id, d, actor) {
         : (workingColumn(ctx) && cols.indexOf(workingColumn(ctx)) < idx ? workingColumn(ctx) : cols[idx - 1]);
     recordVerdict(ctx, item, actor, events, verdict, comment, grant);
     // a delegated verdict carries its move through the gate with it
-    if (target && target.id !== item.columnId) moveInto(ctx, item, target.id, 'top', actor, events, grant ? { gateBy: grant } : {});
+    if (target && target.id !== item.columnId) moveInto(ctx, item, target.id, 'top', actor, events, { ...(grant ? { gateBy: grant } : {}), confirm: d.confirm === true, approving: verdict === 'approve' });
     item.version++;
     item.updatedAt = now();
     return item;
@@ -3415,6 +3447,7 @@ const SCHEMA = {
       releaseLeaseOnEnter: 'boolean — entering this column clears the lease',
       autoArchiveAfterDays: 'number, 0 = off',
       humanOnlyIn: 'boolean — only humans may move/create items here (approval gate)',
+      gates: '[{ kind: "reviewer_ok", min: 1-5 }] — soft gates on an approval column (humanOnlyIn): entering past an unmet one answers 409 GATE_UNMET with the gates until sent again with "confirm": true; human-only to change',
       humanOnlyOut: 'boolean — only humans may move items out',
       review: 'boolean — target of POST /items/:id/review (default: the column before the first human-only gate)',
       '*': 'any other key is stored verbatim (custom flags)',
@@ -4430,8 +4463,8 @@ route('PATCH', '/api/boards/:board/items/:id', 'Change any field incl. column/po
 
 route('POST', '/api/boards/:board/items/:id/move', 'Move/reorder: { column?, position? | beforeId? | afterId? }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  const { column, columnId, position, beforeId, afterId, version } = body;
-  return withGateCommits(ctx, [p.id], actor, () => afterLanding(ctx, updateItem(ctx, p.id, { column: column ?? columnId, position, beforeId, afterId, version }, actor)));
+  const { column, columnId, position, beforeId, afterId, version, confirm } = body;
+  return withGateCommits(ctx, [p.id], actor, () => afterLanding(ctx, updateItem(ctx, p.id, { column: column ?? columnId, position, beforeId, afterId, version, confirm }, actor)));
 });
 
 route('GET', '/api/boards/:board/items/:id/history', 'Recent events for this item', ({ p }) => {
@@ -4575,6 +4608,13 @@ route('POST', '/api/boards/:board/items/:id/questions/:qid/withdraw', 'Take back
   itemView(getCtx(p.board), withdrawQuestion(getCtx(p.board), p.id, p.qid, body, actor)));
 route('GET', '/api/boards/:board/work', 'What needs you now (agent): next actions, your leases, answered questions, review feedback, assigned and ready tickets. ?agent= to look at another agent', ({ p, q, actor }) =>
   workFor(getCtx(p.board), q.agent || actor.name));
+route('GET', '/api/boards/:board/items/:id/gates', "The gates of the next approval column (where approving moves it), met or not → { column, gates: [{ kind, label, met, have, need, who, concerns }] }", ({ p }) => {
+  const ctx = getCtx(p.board);
+  const item = getItem(ctx, p.id);
+  const cols = ctx.board.columns;
+  const next = cols.slice(cols.findIndex((c) => c.id === item.columnId) + 1).find((c) => c.flags.humanOnlyIn) || null;
+  return { column: next?.name ?? null, gates: gatesFor(item, next) };
+});
 route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move this ticket, and why not elsewhere', ({ p, actor }) => {
   const ctx = getCtx(p.board);
   return transitions(ctx, getItem(ctx, p.id), actor);
