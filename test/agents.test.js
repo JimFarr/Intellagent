@@ -1162,6 +1162,35 @@ describe('a run gets its own token (INT-248)', () => {
       assert.ok((await said()).includes(`adapter: token from env (${own.length} chars)`));
     } finally { await s.stop(); }
   });
+
+  it('a rotated token starts a fresh keep-alive session; an unchanged one keeps it', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { keeper: { run: run('stream'), keepAlive: true, throttleMinutes: 0 } } } });
+    const localFile = path.join(s.dir, 'local.json');
+    const setToken = (t) => {
+      const local = fs.existsSync(localFile) ? JSON.parse(fs.readFileSync(localFile, 'utf8')) : {};
+      fs.writeFileSync(localFile, JSON.stringify({ ...local, agentTokens: { ...(local.agentTokens || {}), keeper: t } }));
+    };
+    const pidOf = (c) => Number(/pid (\d+)/.exec(c)?.[1]);
+    const turns = async (id) => (await comments(s, id)).filter((c) => c.startsWith('keeper: turn'));
+    try {
+      setToken('a'.repeat(24));
+      const it = await s.ok('POST', `${B}/items`, { title: 'rotate', column: 'Backlog' }, USER);
+      const wake = async (n) => {
+        await s.ok('POST', `${B}/items/${it.id}/comments`, { body: `@keeper wake ${n}` }, USER);
+        await until(async () => (await turns(it.id)).length === n, 30000, `turn ${n}`);
+        await until(async () => (await agentState(s, 'keeper')).status === 'idle', 30000, 'keeper idle');
+      };
+      await wake(1);
+      await wake(2);
+      setToken('b'.repeat(24)); // what `intellagent token --agent keeper --rotate` does to local.json
+      await wake(3);
+      const [t1, t2, t3] = await turns(it.id);
+      assert.equal(pidOf(t1), pidOf(t2), 'same token: the second wake is a turn in the same session');
+      assert.match(t3, /turn 1 in/, 'rotated: a fresh session');
+      assert.notEqual(pidOf(t3), pidOf(t1));
+      assert.ok(t3.endsWith('(full)'), `the fresh session gets the full prompt: ${t3}`);
+    } finally { await s.stop(); }
+  });
 });
 
 describe('stopping a board stops what it started', () => {
