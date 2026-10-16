@@ -198,48 +198,62 @@ function normBuiltins(src, lenient = false) {
   return out;
 }
 
-function coerceField(def, v) {
-  if (v === null || v === undefined || v === '') return null;
-  const bad = (want) => fail(400, `Field "${def.key}" expects ${want}, got ${JSON.stringify(v)}`);
-  switch (def.type) {
+// One check for a typed value, shared by schema fields (lenient: "3", "true", any-case options) and the
+// answers to a question's form (strict: exactly the type). Form types are aliases of the field types.
+// `bad(problem, detail)` must throw; each caller words the problem its own way.
+const TYPE_ALIAS = { longtext: 'text', choice: 'enum', multi: 'tags', yesno: 'boolean' };
+const TEXT_LIMIT = { user: 64, longtext: 20_000 };
+function checkValue(def, v, strict, bad) {
+  const type = TYPE_ALIAS[def.type] || def.type;
+  const options = def.options?.map((o) => o.value) || [];
+  const find = (x) => def.options.find((o) => strict ? o.value === x : o.value.toLowerCase() === String(x).toLowerCase());
+  switch (type) {
     case 'text': case 'user':
-      return typeof v === 'string' || typeof v === 'number' ? str(v, def.type === 'user' ? 64 : 2000) : bad('a string');
+      if (typeof v !== 'string' && (strict || typeof v !== 'number')) bad('text');
+      return str(v, TEXT_LIMIT[def.type] || 2000);
     case 'markdown':
-      return typeof v === 'string' ? str(v, 100_000) : bad('a markdown string');
+      return typeof v === 'string' ? str(v, 100_000) : bad('markdown');
     case 'number': {
-      const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
-      if (!Number.isFinite(n)) bad('a number');
-      if (def.min != null && n < def.min) fail(400, `Field "${def.key}" must be >= ${def.min}`);
-      if (def.max != null && n > def.max) fail(400, `Field "${def.key}" must be <= ${def.max}`);
+      const n = strict || typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+      if (typeof n !== 'number' || !Number.isFinite(n)) bad('number');
+      if ((def.min != null && n < def.min) || (def.max != null && n > def.max)) bad('range', n);
       return n;
     }
     case 'boolean':
-      if (v === true || v === 'true') return true;
-      if (v === false || v === 'false') return false;
-      return bad('true or false');
+      if (typeof v === 'boolean') return v;
+      if (!strict && (v === 'true' || v === 'false')) return v === 'true';
+      return bad('boolean');
     case 'enum': {
-      const o = def.options.find((x) => x.value.toLowerCase() === String(v).toLowerCase());
-      if (!o) fail(400, `Field "${def.key}" expects one of: ${def.options.map((x) => x.value).join(', ')}`);
-      return o.value;
+      const o = find(v);
+      return o ? o.value : bad('option', options);
     }
     case 'tags': {
-      let list = arr(v).map((x) => str(x, 60).trim()).filter(Boolean);
-      if (def.options?.length) {
-        list = list.map((t) => {
-          const o = def.options.find((x) => x.value.toLowerCase() === t.toLowerCase());
-          if (!o) fail(400, `Field "${def.key}" tags must be from: ${def.options.map((x) => x.value).join(', ')}`);
-          return o.value;
-        });
-      }
-      return list.length ? [...new Set(list)] : null;
+      if (strict && !Array.isArray(v)) bad('list', options);
+      let list = arr(v);
+      if (!strict) list = list.map((x) => str(x, 60).trim()).filter(Boolean);
+      if (def.options?.length) list = list.map((t) => find(t)?.value ?? bad('list', options));
+      return list.length || strict ? [...new Set(list)] : null;
     }
-    case 'date':
-      return typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v.slice(0, 40) : bad('an ISO date like 2026-10-12');
+    case 'date': {
+      const ok = typeof v === 'string' && !Number.isNaN(Date.parse(v)) && (!strict || /^\d{4}-\d{2}-\d{2}$/.test(v));
+      return ok ? v.slice(0, 40) : bad('date');
+    }
     case 'url':
-      return typeof v === 'string' && /^https?:\/\//i.test(v) ? str(v, 2000) : bad('an http(s) URL');
+      return typeof v === 'string' && /^https?:\/\//i.test(v) ? str(v, 2000) : bad('url');
     default:
-      return bad('a known type');
+      return bad('type');
   }
+}
+
+function coerceField(def, v) {
+  if (v === null || v === undefined || v === '') return null;
+  const want = { text: 'a string', markdown: 'a markdown string', number: 'a number', boolean: 'true or false', date: 'an ISO date like 2026-10-12', url: 'an http(s) URL', type: 'a known type' };
+  return checkValue(def, v, false, (problem, d) => {
+    if (problem === 'range') fail(400, `Field "${def.key}" must be ${def.min != null && d < def.min ? `>= ${def.min}` : `<= ${def.max}`}`);
+    if (problem === 'option') fail(400, `Field "${def.key}" expects one of: ${d.join(', ')}`);
+    if (problem === 'list') fail(400, `Field "${def.key}" tags must be from: ${d.join(', ')}`);
+    return fail(400, `Field "${def.key}" expects ${want[problem]}, got ${JSON.stringify(v)}`);
+  });
 }
 
 function normField(f, base = null) {
@@ -941,28 +955,11 @@ function normForm(form) {
 
 // One answer, checked against its field. `bad` throws.
 function formValue(f, v, bad) {
-  switch (f.type) {
-    case 'text': case 'longtext':
-      if (typeof v !== 'string') bad('must be text');
-      return str(v, f.type === 'text' ? 2000 : 20_000);
-    case 'choice':
-      if (!f.options.some((o) => o.value === v)) bad(`must be one of: ${f.options.map((o) => o.value).join(', ')}`);
-      return v;
-    case 'multi':
-      if (!Array.isArray(v) || v.some((x) => !f.options.some((o) => o.value === x))) bad(`must be a list from: ${f.options.map((o) => o.value).join(', ')}`);
-      return [...new Set(v)];
-    case 'yesno':
-      if (typeof v !== 'boolean') bad('must be true or false');
-      return v;
-    case 'number':
-      if (typeof v !== 'number' || !Number.isFinite(v)) bad('must be a number');
-      if ((f.min != null && v < f.min) || (f.max != null && v > f.max)) bad(`must be between ${f.min ?? '−∞'} and ${f.max ?? '∞'}`);
-      return v;
-    case 'date':
-      if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v))) bad('must be a date, YYYY-MM-DD');
-      return v;
-  }
-  return bad('has no answer type');
+  const say = { text: 'must be text', boolean: 'must be true or false', number: 'must be a number', date: 'must be a date, YYYY-MM-DD', type: 'has no answer type' };
+  return checkValue(f, v, true, (problem, d) => bad(
+    problem === 'range' ? `must be between ${f.min ?? '−∞'} and ${f.max ?? '∞'}`
+      : problem === 'option' ? `must be one of: ${d.join(', ')}`
+        : problem === 'list' ? `must be a list from: ${d.join(', ')}` : say[problem]));
 }
 
 // The human's answers to a form: every key known, required ones present; unanswered optional ones are null.

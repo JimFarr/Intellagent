@@ -218,6 +218,25 @@ describe('board API', () => {
     assert.equal(human.status, 403);
   });
 
+  test('schema: field values keep their lenient forms and their messages (INT-133)', async () => {
+    await s.ok('POST', `${B}/schema/fields`, { key: 'sev', type: 'enum', options: ['low', 'high'] });
+    await s.ok('POST', `${B}/schema/fields`, { key: 'pts', type: 'number', min: 1, max: 5 });
+    await s.ok('POST', `${B}/schema/fields`, { key: 'ok', type: 'boolean' });
+    await s.ok('POST', `${B}/schema/fields`, { key: 'areas', type: 'tags', options: ['server', 'ui'] });
+    const it = await mk({});
+    const put = (fields) => s.api('PATCH', `${B}/items/${it.id}`, { fields });
+    const err = async (fields) => (await put(fields)).body.error;
+    assert.match(await err({ sev: 'meh' }), /Field "sev" expects one of: low, high/);
+    assert.match(await err({ pts: 0 }), /Field "pts" must be >= 1/);
+    assert.match(await err({ pts: 9 }), /Field "pts" must be <= 5/);
+    assert.match(await err({ pts: 'x' }), /Field "pts" expects a number, got "x"/);
+    assert.match(await err({ ok: 'maybe' }), /Field "ok" expects true or false/);
+    assert.match(await err({ areas: ['db'] }), /Field "areas" tags must be from: server, ui/);
+    const done = await put({ sev: 'HIGH', pts: '3', ok: 'true', areas: ['UI', 'ui'] });
+    assert.equal(done.status, 200);
+    assert.deepEqual(done.body.fields, { sev: 'high', pts: 3, ok: true, areas: ['ui'] });
+  });
+
   test('archive and restore instead of delete', async () => {
     const it = await mk({ title: 'archivable' });
     await s.ok('POST', `${B}/archive`, { ids: [it.id], reason: 'dup' });
