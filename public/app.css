@@ -1993,13 +1993,20 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .aa-lock .i { color: var(--warn); flex: none; margin-top: 1px; }
 
 /* ═════════ focus boards (INT-215): the strip under the top bar, and focused tickets on the full board ═════════ */
-.focusbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; flex-shrink: 0; margin: 0 var(--frame-r, 22px) 8px var(--frame-l, 22px); padding: 7px 8px 7px 10px; border-radius: var(--r-ctl, 12px); border: var(--bw, 1px) solid color-mix(in oklab, var(--accent) 28%, var(--border)); background: color-mix(in oklab, var(--accent) 7%, var(--surface)); color: var(--text); animation: drop-in .35s var(--spring); }
+/* --fb-muted: --muted on the strip's accent tint drops under 4.5:1 in some themes, so quiet text leans toward --text
+   (themes.test.js checks every theme against this rule) */
+.focusbar { --fb-muted: color-mix(in oklab, var(--muted) 60%, var(--text)); display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; flex-shrink: 0; margin: 0 var(--frame-r, 22px) 8px var(--frame-l, 22px); padding: 7px 8px 7px 10px; border-radius: var(--r-ctl, 12px); border: var(--bw, 1px) solid color-mix(in oklab, var(--accent) 28%, var(--border)); background: color-mix(in oklab, var(--accent) 7%, var(--surface)); color: var(--text); animation: drop-in .35s var(--ease); }
+.reduced .focusbar { animation: none; }
+@media (prefers-reduced-motion: reduce) { .focusbar { animation: none; } }
+.focusbar .btn.ghost, .focusbar .fb-active:not(.on) { color: var(--fb-muted); }
+.focusbar .btn.ghost:hover { color: var(--text); }
+.focusbar .fb-active:not(.on):hover { color: var(--accent); }
 .focusbar[hidden] { display: none; }
 .focusbar .fb-ic { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; color: var(--accent); background: color-mix(in oklab, var(--accent) 14%, transparent); }
 .focusbar .fb-text { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; min-width: 0; }
-.focusbar .fb-text small { flex-basis: 100%; font: 600 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.focusbar .fb-text small { flex-basis: 100%; font: 600 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--fb-muted); }
 .focusbar .fb-text b { font: 700 15px/1.25 var(--display, var(--font)); overflow-wrap: anywhere; }
-.focusbar .fb-n { font: 12px var(--mono); color: var(--muted); }
+.focusbar .fb-n { font: 12px var(--mono); color: var(--fb-muted); }
 .focusbar .fb-text { flex: 1 1 220px; }
 .focusbar .fb-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: auto; }
 .fb-active { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 99px; border: var(--bw, 1px) dashed color-mix(in oklab, var(--accent) 50%, var(--border)); background: none; color: var(--muted); font: 600 12px var(--font); cursor: pointer; white-space: nowrap; }

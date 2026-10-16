@@ -64,6 +64,18 @@ describe('theme palettes', () => {
     });
   }
 
+  // The focus strip (INT-223): its quiet text sits on an accent tint, so it leans from --muted toward --text.
+  it('every theme: quiet text on the focus strip is 4.5:1 or more', () => {
+    const bar = css.match(/\n\.focusbar \{[^}]*--fb-muted: color-mix\(in oklab, var\(--muted\) (\d+)%, var\(--text\)\);[^}]*background: color-mix\(in oklab, var\(--accent\) (\d+)%, var\(--surface\)\)/);
+    assert.ok(bar, '.focusbar sets --fb-muted and its tinted background in public/app.css');
+    const [share, tint] = [bar[1] / 100, bar[2] / 100], bad = [];
+    for (const [k, t] of Object.entries(THEMES)) {
+      const v = t.vars, r = contrast(mix(v.muted, share, v.text), mix(v.accent, tint, v.surface));
+      if (r < 4.5) bad.push(`${k} ${r.toFixed(2)}`);
+    }
+    assert.deepEqual(bad, []);
+  });
+
   it('leaves --accent alone; only the fill deepens', () => {
     for (const t of Object.values(THEMES)) assert.match(t.vars.accent, /^#[0-9a-f]{6}$/i);
     for (const [k, t] of Object.entries(THEMES)) if (t.vars['accent-fill'] !== t.vars.accent) assert.equal(t.vars['on-accent'], '#fff', k);
