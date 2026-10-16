@@ -140,6 +140,8 @@ const DEFAULT_FLAGS = {
   sleeping: false,
 };
 const TEMPLATES = require('./lib/templates');
+// presets (shipped, and added to this board) are board templates too: GET /api/templates, manifest.template, POST /api/boards
+Object.assign(TEMPLATES, require('./lib/presets').templates(path.dirname(MANIFEST_PATH)));
 const { allowedHosts, hostProblem, jsonProblem } = require('./lib/local-only');
 
 /* ── schema: typed custom fields + configurable built-ins ── */

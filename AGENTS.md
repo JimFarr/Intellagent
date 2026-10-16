@@ -409,6 +409,20 @@ The human edits columns in Settings › Columns (rename, colour, icon, flags, or
 
 **How the board is governed is the human's.** Agents get `403 HUMAN_ONLY` for adding, deleting or reordering columns, changing a column's known flags (`allowCreate`, `allowMoveIn/Out`, `wipLimit`, `releaseLeaseOnEnter`, `autoArchiveAfterDays`, `humanOnlyIn/Out`, `review`, `sleeping`, `pickup`, `working`), choosing the `coordinator`, changing the board rules (`directives`) and the built-in field settings (`PUT …/schema { builtins }`). A column's name, colour, icon and other custom flags, and declared fields, stay open to agents. To change the rest, ask on a card.
 
+### Presets: a package for a kind of team
+A preset is a folder with `preset.json` (`name`, `version`, `extends?`, `board`: columns, schema fields, ticket templates, directives). The built-in templates (`intellagent templates`) are presets at version 1; `stories` ships with the package as a second one that has nothing to do with code. Permissions and roles are not part of a preset yet. It is the **human's** to install, in the CLI (`403 HUMAN_ONLY` for an agent, except `preset list`):
+
+```
+intellagent preset list                        what exists (built-in, shipped, added) and what this board has installed
+intellagent init --preset software|stories|<folder> [--yes]     a new board from a preset
+intellagent preset add <name|folder> [--yes]   add one to a board that exists
+intellagent preset diff <name|folder>          what a newer version would change, piece by piece
+intellagent preset update <name|folder> --accept all|id,id
+```
+- Installing first lists what the preset gives power over (human-only columns, read-only fields, board rules, and commands or tools once presets carry them) and asks; `--yes` agrees up front, and with no terminal and no `--yes` it refuses with `400 BAD_REQUEST`. Nothing is fetched again later: a folder is copied to `<board folder>/presets/<name>/`.
+- `<board folder>/presets.json` records, per preset, its version and the value of each piece it installed. A piece is `column:<name>`, `field:<key>`, `ticket-template:<key>` or `directives`. An update compares the board, what was installed and the new version: `new` and `update` can be accepted; `edited` (you changed it, or it was there before) is **never overwritten**; `dropped` (you removed it) and `gone` (no longer in the preset) are left alone.
+- `add` only adds what is missing. Presets in `presets/` of the package, or added to the board, are also board templates (`GET /api/templates`, `"template"` in `POST /api/boards`).
+
 ## 8. MCP, CLI and the agent skill
 
 Agents reach the board three ways; pick the lightest that works:

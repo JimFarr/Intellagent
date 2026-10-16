@@ -1,0 +1,30 @@
+{
+  "name": "stories",
+  "version": "1.0",
+  "label": "Writing stories",
+  "description": "Ideas → Outlined → Drafting → Editing → Published. Fields for genre, point of view, characters and word count. Nothing in it is about code.",
+  "board": {
+    "columns": [
+      { "name": "Ideas", "icon": "inbox", "color": "#8b8fa3", "flags": { "allowCreate": true } },
+      { "name": "Outlined", "icon": "target", "color": "#5aa9e6", "flags": { "pickup": true, "allowCreate": true } },
+      { "name": "Drafting", "icon": "play", "color": "#f2a541", "flags": { "working": true, "wipLimit": 3 } },
+      { "name": "Editing", "icon": "eye", "color": "#b07cf2", "flags": { "review": true } },
+      { "name": "Published", "icon": "check", "color": "#4cc38a", "flags": { "releaseLeaseOnEnter": true, "humanOnlyIn": true } }
+    ],
+    "schema": {
+      "builtins": { "type": { "label": "Kind" } },
+      "fields": [
+        { "key": "genre", "label": "Genre", "type": "tags", "icon": "tag", "stub": "meta", "help": "Fantasy, crime, memoir…" },
+        { "key": "pov", "label": "Point of view", "type": "enum", "icon": "user", "options": ["first person", "third limited", "third omniscient"] },
+        { "key": "characters", "label": "Characters", "type": "tags", "icon": "user", "help": "Who is in the scene" },
+        { "key": "words", "label": "Word count", "type": "number", "icon": "clock", "stub": "meta", "min": 0, "help": "Target for a draft, actual for an edit" }
+      ]
+    },
+    "ticketTemplates": [
+      { "key": "chapter", "label": "Chapter", "icon": "layers", "type": "task", "column": "Ideas", "help": "A chapter to outline and write", "description": "**What happens**\n\n**Who is in it**\n\n**Done when**\n- [ ] Outlined\n- [ ] Drafted\n- [ ] Edited" },
+      { "key": "scene", "label": "Scene", "icon": "sparkle", "type": "task", "column": "Ideas", "help": "One scene", "description": "**Where and when**\n\n**What changes by the end**\n" },
+      { "key": "research", "label": "Research", "icon": "ask", "type": "spike", "column": "Ideas", "help": "A fact to check before writing", "description": "**What I need to know**\n\n**Where I looked**\n" }
+    ],
+    "directives": "- The manuscript and notes live in the project folder; these rules only cover how we use this board.\n- Pick work from **Outlined**; new ideas go to **Ideas**.\n- Write in the voice already on the page; if a choice changes it (tense, point of view, a name), ask on the card.\n- Finish a draft with **request review**: say what changed, what was cut, and what you are unsure about.\n- Never publish: **Published** is the human's."
+  }
+}

@@ -6,6 +6,7 @@
  *   intellagent init [dir] [--template software] [--name "My App"] [--prefix APP] [--port 7421] [--agent claude] [--no-mcp] [--no-claude] [--no-start]
  *   intellagent brief [--agent name]    everything an agent needs to start working
  *   intellagent templates               list board templates
+ *   intellagent preset list|add|diff|update   packages of board: init --preset, add one to a board, take updates piece by piece
  *   intellagent skill install [--project] install the intellagent skills for Claude Code
  *   intellagent start [--open]          run the board for the nearest .intellagent/ folder
  *   intellagent open | status | docs
@@ -24,6 +25,7 @@ const os = require('os');
 const { findManifest, readManifest, baseUrl, defaultAgent, userToken, projectOf, readLocal, NO_BOARD } = require('../lib/locate');
 const crypto = require('crypto');
 const TEMPLATES = require('../lib/templates');
+const presets = require('../lib/presets');
 const jsonfile = require('../lib/jsonfile');
 
 const ROOT = path.join(__dirname, '..');
@@ -73,8 +75,16 @@ async function init() {
   const manifestPath = path.join(folder, 'intellagent.manifest.json');
   if (fs.existsSync(manifestPath)) { console.log(`Already initialised: ${manifestPath}`); return; }
   const name = String(f.name || path.basename(dir));
-  const template = String(f.template || 'default');
-  if (!TEMPLATES[template]) { console.error(`Unknown template "${template}". Available: ${Object.keys(TEMPLATES).join(', ')}`); process.exit(1); }
+  // --preset <name|folder> sets the board up from a preset; --template is the older name for a built-in one
+  let preset = null;
+  if (f.preset) {
+    if (f.template) { console.error('error 400 BAD_REQUEST: --preset and --template both choose the board — hint: use only --preset'); process.exit(1); }
+    preset = loadPreset(String(f.preset), folder);
+    printPowers(preset);
+    if (!await confirm(`Set up this board from ${preset.name}@${preset.version}?`, f)) { console.log('Nothing written.'); return; }
+  }
+  const template = preset ? preset.name : String(f.template || 'default');
+  if (!preset && !TEMPLATES[template]) { console.error(`Unknown template "${template}". Available: ${Object.keys(TEMPLATES).join(', ')} (presets: intellagent preset list)`); process.exit(1); }
   const port = Number(f.port) || await freePort(7420);
   const agent = String(f.agent || 'claude');
   const userToken = f['no-token'] ? null : crypto.randomBytes(18).toString('base64url');
@@ -101,6 +111,10 @@ async function init() {
     ...(f.project ? { projectRoot: path.resolve(String(f.project)) } : {}),
   };
   fs.mkdirSync(folder, { recursive: true });
+  if (preset) {
+    if (preset.dir) presets.addFolder(preset, folder);
+    presets.record(folder, preset, Object.keys(presets.parts(preset)));
+  }
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   const agentTokens = f['open-agents'] ? undefined : { [agent]: crypto.randomBytes(18).toString('base64url') };
   if (userToken || agentTokens) fs.writeFileSync(path.join(folder, 'local.json'), `${JSON.stringify({ ...(userToken ? { userToken } : {}), ...(agentTokens ? { agentTokens } : {}) }, null, 2)}\n`);
@@ -108,7 +122,7 @@ async function init() {
   fs.writeFileSync(path.join(folder, 'README.md'), `# ${name} · Intellagent board\n\n- \`intellagent start\` runs it (from anywhere in this project); \`intellagent open\` opens it signed in; \`intellagent stop\` stops it.\n- \`intellagent brief\` shows an agent everything it needs.\n- \`local.json\` holds your user token (git-ignored). Only requests with it act as you; \`intellagent open\` signs the browser in.\n\n## Agent instructions\n\n${agentPrompt(url, agent)}\n`);
   fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\nlocal.json\nworktrees/\n');
   console.log(`\n  ✓ ${path.relative(process.cwd(), manifestPath) || manifestPath}`);
-  console.log(`    board "${name}" · ${TEMPLATES[template].label} template · tickets ${manifest.idPrefix}-1, ${manifest.idPrefix}-2… · port ${port}`);
+  console.log(`    board "${name}" · ${preset ? `${preset.label || preset.name} preset` : `${TEMPLATES[template].label} template`} · tickets ${manifest.idPrefix}-1, ${manifest.idPrefix}-2… · port ${port}`);
 
   if (!f['no-mcp']) {
     const mcpPath = path.join(dir, '.mcp.json');
@@ -315,6 +329,96 @@ function templates() {
     const fields = (t.schema?.fields || []).map((x) => x.key);
     if (fields.length) console.log(`  ${''.padEnd(9)} fields: ${fields.join(', ')}`);
   }
+}
+
+/* ── presets: packages of board (and later permissions and roles) ── */
+
+// Asks before writing; --yes agrees up front. With no terminal and no --yes it refuses, so a script never hangs.
+async function confirm(question, f) {
+  if (f.yes) return true;
+  if (!process.stdin.isTTY) { console.error('error 400 BAD_REQUEST: this asks before it writes, and there is no terminal — hint: add --yes to agree'); process.exit(1); }
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise((res) => rl.question(`${question} [y/N] `, res));
+  rl.close();
+  return /^y(es)?$/i.test(answer.trim());
+}
+
+function loadPreset(spec, boardDir) {
+  try { return presets.load(spec, boardDir); } catch (e) { console.error(`error ${e.code === 'NOT_FOUND' ? 404 : 400} ${e.code || 'BAD_REQUEST'}: ${e.message} — hint: intellagent preset list`); process.exit(1); }
+}
+
+function printPowers(p) {
+  const powers = presets.powers(p);
+  console.log(`\n  ${p.name}@${p.version} brings:`);
+  console.log(`    ${Object.keys(presets.parts(p)).length} pieces of board: ${Object.keys(presets.parts(p)).join(', ')}`);
+  console.log(powers.length ? `  and gives it these powers:\n${powers.map((x) => `    - ${x}`).join('\n')}` : '  and gives it no powers beyond a plain board.');
+  console.log('  It brings no commands or tools yet (permissions and roles are not part of a preset).\n');
+}
+
+const WORD = { new: 'add', same: 'already there', update: 'update', edited: 'yours, kept', dropped: 'you removed it, kept off', gone: 'no longer in the preset, kept' };
+function printPlan(steps) {
+  for (const s of steps) console.log(`    ${s.state.padEnd(8)} ${s.id}  (${WORD[s.state]})`);
+}
+
+// Add or update one piece of the board through the API, as the human.
+async function applyStep(board, s) {
+  const b = `/api/boards/${board}`;
+  const [kind, key] = s.id.includes(':') ? [s.id.slice(0, s.id.indexOf(':')), s.id.slice(s.id.indexOf(':') + 1)] : [s.id, ''];
+  const fresh = s.state === 'new';
+  if (kind === 'column') return fresh ? asHuman('POST', `${b}/columns`, s.value) : asHuman('PATCH', `${b}/columns/${encodeURIComponent(key)}`, s.value);
+  if (kind === 'field') return fresh ? asHuman('POST', `${b}/schema/fields`, s.value) : asHuman('PATCH', `${b}/schema/fields/${encodeURIComponent(key)}`, s.value);
+  if (kind === 'ticket-template') return fresh ? asHuman('POST', `${b}/ticket-templates`, s.value) : asHuman('PATCH', `${b}/ticket-templates/${encodeURIComponent(key)}`, s.value);
+  if (kind === 'directives') return asHuman('PUT', `${b}/directives`, { directives: s.value });
+}
+
+async function presetCmd() {
+  const [sub = 'list', spec] = rest;
+  const f = flags(rest.slice(1));
+  if (sub === 'list') {
+    const mp = findManifest();
+    const dir = mp ? path.dirname(mp) : null;
+    const lock = dir ? presets.readLock(dir).presets : {};
+    for (const [n, p] of Object.entries(presets.all(dir))) {
+      const on = lock[n] ? `  installed ${lock[n].version}${lock[n].version !== p.version ? ` (available ${p.version})` : ''}` : '';
+      console.log(`  ${n.padEnd(10)} ${p.broken ? `NOT USABLE: ${p.broken}` : `${p.version.padEnd(5)} ${p.label || ''}`}  [${p.source}]${on}`);
+    }
+    return;
+  }
+  if (!['add', 'diff', 'update'].includes(sub)) { console.error('Usage: intellagent preset list | add <name|folder> [--yes] | diff <name> | update <name|folder> [--accept all|id,id]'); process.exit(1); }
+  if (!spec) { console.error(`Usage: intellagent preset ${sub} <name${sub === 'diff' ? '' : '|folder'}>`); process.exit(1); }
+  humanOnly(`intellagent preset ${sub}`);
+  const mp = requireManifest();
+  const dir = path.dirname(mp);
+  const board = String(f.board || readManifest(mp)?.defaultBoard || 'main');
+  const p = loadPreset(spec, dir);
+  const lock = presets.readLock(dir).presets[p.name];
+  const live = (await asHuman('GET', `/api/boards/${board}`)).board;
+  const steps = presets.plan(p, lock?.parts, live);
+  if (sub === 'add') {
+    if (lock) { console.error(`error 409 CONFLICT: ${p.name}@${lock.version} is already on this board — hint: intellagent preset diff ${p.name}, then preset update ${p.name} --accept all`); process.exit(1); }
+    printPowers(p);
+    printPlan(steps);
+    const todo = steps.filter((s) => s.state === 'new');
+    if (!await confirm(`Add ${todo.length} piece${todo.length === 1 ? '' : 's'} to board "${board}"?`, f)) { console.log('Nothing written.'); return; }
+    if (p.dir) presets.addFolder(p, dir);
+    for (const s of todo) await applyStep(board, s);
+    presets.record(dir, p, steps.filter((s) => s.state === 'new' || s.state === 'same').map((s) => s.id));
+    console.log(`  ✓ ${p.name}@${p.version}: ${todo.length} added, ${steps.length - todo.length} left as they were.`);
+    return;
+  }
+  if (!lock) { console.error(`error 404 NOT_FOUND: ${p.name} is not installed on this board — hint: intellagent preset add ${p.name}`); process.exit(1); }
+  console.log(`\n  ${p.name}: installed ${lock.version}, available ${p.version}`);
+  printPlan(steps.filter((s) => s.state !== 'same'));
+  if (sub === 'diff') return;
+  const can = steps.filter((s) => s.state === 'new' || s.state === 'update');
+  if (!f.accept) { console.log(can.length ? `\n  Accept them with: intellagent preset update ${p.name} --accept all   (or --accept id,id)` : '\n  Nothing to update.'); return; }
+  const want = f.accept === true || f.accept === 'all' ? can.map((s) => s.id) : String(f.accept).split(',').map((x) => x.trim());
+  const bad = want.filter((id) => !can.some((s) => s.id === id));
+  if (bad.length) { console.error(`error 400 BAD_REQUEST: cannot take ${bad.join(', ')}: not a new or updatable piece — hint: intellagent preset diff ${p.name}; edited pieces are yours and are never overwritten`); process.exit(1); }
+  for (const s of can.filter((x) => want.includes(x.id))) await applyStep(board, s);
+  if (p.dir) presets.addFolder(p, dir); // updating from a newer folder: the board keeps this copy
+  presets.record(dir, p, [...steps.filter((s) => s.state === 'same').map((s) => s.id), ...want]);
+  console.log(`  ✓ ${p.name}@${p.version}: ${want.length} piece${want.length === 1 ? '' : 's'} updated.`);
 }
 
 // Copies the bundled Claude Code skill to ~/.claude/skills (or ./.claude/skills with --project).
@@ -694,6 +798,9 @@ const HELP = `intellagent — a kanban for you and your agents
                    --port N (default: the first free port from 7420)  --prefix XX (ticket ids)  --open-agents (agents need no token)
                    also adds the MCP tools (.mcp.json) and CLAUDE.md instructions; opt out: --no-mcp --no-claude --no-start --no-token
   templates        list board templates (software, research, ops, ...)
+  preset           packages of board: preset list | add NAME|FOLDER [--yes] | diff NAME | update NAME [--accept all|id,id]
+                   init --preset NAME|FOLDER sets a board up from one; it lists the powers it brings and asks first (--yes agrees)
+                   an update never overwrites what you edited: edited pieces are kept, the rest you accept one by one
   skill install    add the intellagent skills to Claude Code (working a ticket; setting up)   [--project]
   start            run this project's board      --open --background
   stop             stop a board started in the background
@@ -734,6 +841,7 @@ const HELP = `intellagent — a kanban for you and your agents
 
 const commands = {
   init, start, stop, status, docs, templates, skill, brief,
+  preset: presetCmd,
   open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
   token: tokenCmd,
   project: projectCmd,
