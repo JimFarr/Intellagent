@@ -1342,8 +1342,8 @@
         <span class="fb-actions">${vf.id === act?.id
     ? `<span class="fb-active on" data-tip="Active board|The agents work only on these tickets. Work elsewhere waits until you retire this board or make the full board active">${icon('bot', 'sm')}Agents work here</span>`
     : `<button class="fb-active" data-fb="activate" data-tip="Make active|Point the agents at these tickets only. Work they hold elsewhere goes back to ${esc(state.board.columns.find((c) => c.flags.pickup)?.name || 'the pickup column')}">${icon('bot', 'sm')}Make active</button>`}
-        <button class="btn ghost sm" data-fb="back">${icon('board', 'sm')}Full board</button>
-        <button class="btn sm fb-retire" data-fb="retire" data-tip="Retire|Removes this view only: no ticket moves, nothing is lost${vf.id === act?.id ? '. The full board becomes active again' : ''}">${icon('x', 'sm')}<span>Retire board and return to the original</span></button></span>`
+        <button class="btn sm" data-fb="back">${icon('board', 'sm')}Full board</button>
+        <button class="btn ghost sm fb-retire" data-fb="retire" data-tip="Retire board and return to the original|Removes this view only: no ticket moves, nothing is lost${vf.id === act?.id ? '. The full board becomes active again' : ''}">${icon('x', 'sm')}<span>Retire</span></button></span>`
       : `<span class="fb-ic">${icon('target')}</span>
         <span class="fb-text"><small>The agents are focused on</small><b>${esc(act.name)}</b><span class="fb-n">${n(act)}</span></span>
         <span class="fb-actions"><button class="btn ghost sm" data-fb="open">${icon('target', 'sm')}Open it</button>
@@ -1360,7 +1360,7 @@
         if (!b.classList.contains('armed')) {
           b.classList.add('armed');
           b.lastChild.textContent = 'Click again to retire';
-          setTimeout(() => { if (b.isConnected) { b.classList.remove('armed'); b.lastChild.textContent = 'Retire board and return to the original'; } }, 3500);
+          setTimeout(() => { if (b.isConnected) { b.classList.remove('armed'); b.lastChild.textContent = 'Retire'; } }, 3500);
           return;
         }
         retireFocus(vf);
