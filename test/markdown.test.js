@@ -10,7 +10,9 @@ const path = require('node:path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const escLine = /^ {2}const esc = .*$/m.exec(src)[0];
 const from = src.indexOf('  /* ═════════════════════════ markdown'), to = src.indexOf("  document.addEventListener('click'", from);
-const { md } = new Function(`${escLine}\n${src.slice(from, to)}; return { md };`)();
+// as if the board were open at this address, so the renderer can tell its own images from other hosts'
+const location = { href: 'http://127.0.0.1:7420/', origin: 'http://127.0.0.1:7420' };
+const { md } = new Function('location', `${escLine}\n${src.slice(from, to)}; return { md };`)(location);
 
 // Every attribute value in the output, and the output with them blanked.
 const attrs = (html) => [...html.matchAll(/\s[\w-]+="([^"]*)"/g)].map((m) => m[1]);
@@ -35,8 +37,19 @@ describe('markdown renderer', () => {
   });
 
   it('keeps mentions, refs and emphasis out of image alt and src', () => {
-    const html = md('![a @bob INT-4 _x_](https://h/@bob/INT-4_a_.png)');
-    assert.deepEqual(attrs(html), ['a @bob INT-4 _x_', 'https://h/@bob/INT-4_a_.png', 'lazy']);
+    const html = md('![a @bob INT-4 _x_](/files/@bob/INT-4_a_.png)');
+    assert.deepEqual(attrs(html), ['a @bob INT-4 _x_', '/files/@bob/INT-4_a_.png', 'lazy']);
+  });
+
+  it('loads only the board\'s own images; another host\'s is a link to click (INT-209)', () => {
+    for (const own of ['/files/main/a.png', 'http://127.0.0.1:7420/avatars/x.png', 'data:image/png;base64,AAAA']) {
+      assert.match(md(`![a](${own})`), /<img /, own);
+    }
+    for (const other of ['https://tracker.example/p.gif', '//tracker.example/p.gif', '/\\tracker.example/p.gif', 'http://127.0.0.1:9999/p.gif', 'http://localhost:7420/p.gif']) {
+      const html = md(`![pixel](${other})`);
+      assert.ok(!html.includes('<img'), other);
+      assert.match(html, /<a class="ext-img" href="[^"]+" target="_blank" rel="noopener noreferrer"[^>]*>pixel ↗<\/a>/, other);
+    }
   });
 
   it('keeps underscores and asterisks in a URL as they are', () => {
@@ -63,7 +76,7 @@ describe('markdown renderer', () => {
   });
 
   it('escapes quotes so text cannot leave an attribute', () => {
-    const html = md('[x](https://h/"onmouseover="alert(1)) ![a" onerror="x](https://h/i.png)');
+    const html = md('[x](https://h/"onmouseover="alert(1)) ![a" onerror="x](/files/i.png)');
     const names = [...html.matchAll(/<\w+((?:\s[\w-]+="[^"]*")*)\s*>/g)].flatMap((m) => [...m[1].replace(/"[^"]*"/g, '').matchAll(/\s([\w-]+)=/g)].map((n) => n[1]));
     assert.deepEqual(names, ['href', 'target', 'rel', 'alt', 'src', 'loading']);
     assert.equal(attrs(html)[3], 'a&quot; onerror=&quot;x');

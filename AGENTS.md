@@ -437,7 +437,7 @@ Schema       GET/PUT …/schema                    POST …/schema/fields       
 Focus        GET/POST …/focus                    GET/PATCH/DELETE …/focus/:id      PUT …/focus/active
 Rules        GET/PUT …/directives                PATCH /api/boards/:board          POST /api/boards      PATCH /api/app
 Search       GET/POST /api/search
-Events       GET /api/events  /api/events/wait  /api/stream
+Events       GET /api/events  /api/events/wait  /api/stream   POST /api/stream-ticket (the UI)
              GET/POST /api/subscriptions         DELETE /api/subscriptions/:id     GET …/:id/next   POST …/:id/ack
 Agents       GET/POST /api/agents  /api/agents/roles  /api/agents/:name  …/:name/log     PATCH/DELETE /api/agents/:name
              POST /api/agents/stop-all  /api/agents/resume-all  /api/agents/:name/pause  …/resume  …/run

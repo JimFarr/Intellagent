@@ -436,3 +436,50 @@ describe('board API', () => {
     assert.ok(extra.has('board.example:7420') && extra.has('proxy.example:443') && extra.has('[fe80::1]:7420'));
   });
 });
+
+describe('the UI stream never carries the token in its URL (INT-209)', () => {
+  let t;
+  before(async () => { t = await startServer({ manifest: { auth: { userToken: 'user-secret', requireAgentTokens: true, agentTokens: { bot: 'bot-secret' } } } }); });
+  after(async () => { await t.stop(); });
+
+  const call = (method, p, headers = {}) => fetch(t.base + p, { method, headers: { 'content-type': 'application/json', ...headers } });
+  const human = { 'x-user': 'James', authorization: 'Bearer user-secret' };
+  // opens the stream, reads its first chunk, closes it
+  async function stream(p) {
+    const ac = new AbortController();
+    const r = await fetch(t.base + p, { signal: ac.signal });
+    if (!r.ok) return { status: r.status, body: await r.json() };
+    const reader = r.body.getReader();
+    let first = '';
+    while (!first.includes('"hello"')) first += new TextDecoder().decode((await reader.read()).value);
+    ac.abort();
+    return { status: r.status, first };
+  }
+
+  test('a ticket opens one stream, once; a token in the URL counts for nothing', async () => {
+    const { ticket, expiresInSeconds } = await (await call('POST', '/api/stream-ticket', human)).json();
+    assert.ok(ticket && expiresInSeconds > 0);
+    const open = await stream(`/api/stream?ui=1&ticket=${ticket}`);
+    assert.equal(open.status, 200);
+    assert.match(open.first, /"type":"hello"/);
+    const again = await stream(`/api/stream?ui=1&ticket=${ticket}`);
+    assert.equal(again.status, 401, 'a used ticket is spent');
+    assert.equal(again.body.code, 'UNAUTHORIZED');
+    assert.ok(again.body.hint);
+    assert.equal((await stream('/api/stream?ui=1&ticket=made-up')).status, 401);
+    // tokens are read from headers only, on any route
+    assert.equal((await stream('/api/stream?ui=1&token=user-secret')).status, 401);
+    assert.equal((await call('GET', '/api/boards/main/summary?token=user-secret', { 'x-user': 'James' })).status, 401);
+    assert.equal((await call('GET', '/api/boards/main/summary?token=bot-secret', { 'x-agent': 'bot' })).status, 401);
+    assert.equal((await call('GET', '/api/boards/main/summary', { 'x-agent': 'bot', authorization: 'Bearer bot-secret' })).status, 200);
+  });
+
+  test('only the signed-in human gets a ticket', async () => {
+    assert.equal((await call('POST', '/api/stream-ticket', { 'x-user': 'James' })).status, 401, 'the human without the token');
+    assert.equal((await call('POST', '/api/stream-ticket', { 'x-user': 'James', authorization: 'Bearer wrong' })).status, 401);
+    const bot = await call('POST', '/api/stream-ticket', { 'x-agent': 'bot', authorization: 'Bearer bot-secret' });
+    assert.equal(bot.status, 403, 'an agent opens the stream with its own token');
+    assert.equal((await bot.json()).code, 'HUMAN_ONLY');
+    assert.equal((await stream('/api/stream?ui=1')).status, 401, 'no ticket, no token: no stream');
+  });
+});

@@ -2154,6 +2154,12 @@
   /* ═════════════════════════ markdown ═════════════════════════ */
 
   const safeUrl = (u) => /^(https?:|\/|#|mailto:|blob:)/i.test(u) || /^data:image\//i.test(u);
+  // Images load by themselves only from the board (its /files, avatars) or inline data: one on another host
+  // would tell that host when the signed-in human reads the card. Those become a link to click instead.
+  const ownImage = (u) => {
+    if (/^(blob:|data:image\/)/i.test(u)) return true;
+    try { return new URL(u.replace(/&amp;/g, '&'), location.href).origin === location.origin; } catch { return false; }
+  };
   const emphasis = (s) => s
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*(?!\s)(.+?)\*(?!\w)/g, '$1<em>$2</em>')
@@ -2169,7 +2175,9 @@
     const tags = [];
     const keep = (html) => `\u0002${tags.push(html) - 1}\u0002`;
     s = emphasis(esc(s)
-      .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, a, u) => (safeUrl(u) ? keep(`<img alt="${a}" src="${u}" loading="lazy">`) : a))
+      .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, a, u) => (!safeUrl(u) ? a
+        : ownImage(u) ? keep(`<img alt="${a}" src="${u}" loading="lazy">`)
+        : keep(`<a class="ext-img" href="${u}" target="_blank" rel="noopener noreferrer" title="Image from another site: opens in a new tab">${a || 'Image'} ↗</a>`)))
       .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => (safeUrl(u) ? keep(`<a href="${u}" target="_blank" rel="noopener">${emphasis(t)}</a>`) : t))
       .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, pre, u) => `${pre}${keep(`<a href="${u}" target="_blank" rel="noopener">${u}</a>`)}`))
       .replace(/(^|[^\w/-])([A-Z][A-Z0-9]{1,7}-\d+)\b/g, '$1<a class="ref" data-ref="$2">$2</a>')
@@ -3784,13 +3792,20 @@
 
   /* ═════════════════════════ live: SSE + fallback ═════════════════════════ */
 
+  // The stream URL carries a one-use ticket, never the token. The browser's own retry would reuse a spent
+  // ticket, so on any error the UI closes the stream and opens a new one with a fresh ticket.
   let liveES = null;
-  function reconnect() { liveES?.close(); connect(); }
-  function connect() {
-    const es = new EventSource(`/api/stream?ui=1${AUTH.token ? `&token=${encodeURIComponent(AUTH.token)}` : ''}`);
+  let retryTimer = null;
+  function reconnect() { clearTimeout(retryTimer); liveES?.close(); liveES = null; connect(); }
+  function retryLater() { clearTimeout(retryTimer); retryTimer = setTimeout(connect, 2000); }
+  async function connect() {
+    let ticket;
+    try { ({ ticket } = await api('POST', '/api/stream-ticket')); } catch { setLive(false); retryLater(); return; }
+    if (liveES) return; // reconnect() ran while this one waited for its ticket
+    const es = new EventSource(`/api/stream?ui=1&ticket=${encodeURIComponent(ticket)}`);
     liveES = es;
     es.onopen = () => setLive(true);
-    es.onerror = () => setLive(false);
+    es.onerror = () => { setLive(false); es.close(); if (liveES === es) { liveES = null; retryLater(); } };
     es.onmessage = (msg) => {
       let ev;
       try { ev = JSON.parse(msg.data); } catch { return; }

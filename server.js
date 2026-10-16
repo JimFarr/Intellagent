@@ -3226,10 +3226,32 @@ function readBody(req) {
   });
 }
 
-function tokenOf(req, q) {
+// Tokens come in headers only: a token in the URL ends up in logs and browser history.
+function tokenOf(req) {
   const h = req.headers.authorization;
   if (h && /^Bearer\s+/i.test(h)) return h.replace(/^Bearer\s+/i, '');
-  return req.headers['x-intellagent-token'] || q.token || null;
+  return req.headers['x-intellagent-token'] || null;
+}
+
+// The UI's EventSource can't send headers, so the signed-in UI trades its token for a stream ticket
+// (POST /api/stream-ticket) and opens /api/stream?ui=1&ticket=… with it. A ticket opens one stream, once,
+// within a minute; seen in a log afterwards it is worth nothing. Kept in memory: a restart just means
+// the UI asks for a new one when it reconnects.
+const STREAM_TICKET_MS = 60_000;
+const streamTickets = new Map(); // ticket → expiresAt
+function issueStreamTicket() {
+  const t = Date.now();
+  for (const [k, exp] of streamTickets) if (exp <= t) streamTickets.delete(k);
+  if (streamTickets.size >= 1000) fail(429, 'Too many unused stream tickets', { code: 'TOO_LARGE', hint: 'Open the stream with the ticket you already have, or wait a minute' });
+  const ticket = crypto.randomBytes(18).toString('base64url');
+  streamTickets.set(ticket, t + STREAM_TICKET_MS);
+  return { ticket, expiresInSeconds: STREAM_TICKET_MS / 1000 };
+}
+function useStreamTicket(ticket) {
+  const exp = typeof ticket === 'string' && streamTickets.get(ticket);
+  if (!exp) return false;
+  streamTickets.delete(ticket);
+  return exp > Date.now();
 }
 const tokenEq = (a, b) => typeof a === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
@@ -3252,8 +3274,13 @@ function issueAgentToken(name) {
 function checkAuth(req, q, actor, pathname) {
   // the route index, docs and app name stay public so agents can discover the board (and ask for a token)
   if (!pathname.startsWith('/api') || pathname === '/api' || pathname === '/api/docs' || pathname === '/api/app') return;
+  // the UI's live stream: a valid ticket stands in for the human's token, on this one request
+  if (q.ticket !== undefined && req.method === 'GET' && pathname === '/api/stream') {
+    if (useStreamTicket(q.ticket)) return;
+    fail(401, 'This stream ticket is used, expired or unknown', { auth: 'user', code: 'UNAUTHORIZED', hint: 'Get a new one with POST /api/stream-ticket (it opens one stream, once, within a minute)' });
+  }
   const A = M.auth;
-  const tok = tokenOf(req, q);
+  const tok = tokenOf(req);
   if (actor.kind === 'user') {
     if (A.userToken && !tokenEq(tok, A.userToken)) fail(401, 'This board needs the user token', { auth: 'user', code: 'UNAUTHORIZED', hint: 'Sign in with the link from intellagent open' });
     return;
@@ -3873,7 +3900,11 @@ route('GET', '/api/events/wait', 'Long-poll: blocks until a matching event or ti
   }));
 
 route('GET', '/api/stream', 'Server-Sent Events stream: ?<filter>&agent=<name>', ({ req, res, q, actor }) =>
-  openStream(req, res, parseFilter(q), q.ui ? null : actor.kind === 'agent' ? actor.name : null));
+  openStream(req, res, parseFilter(q), q.ui || q.ticket ? null : actor.kind === 'agent' ? actor.name : null));
+route('POST', '/api/stream-ticket', 'The UI: trade the human token for a one-use ticket to open /api/stream?ui=1&ticket=… (human only)', ({ actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Stream tickets are for the board UI', { code: 'HUMAN_ONLY', hint: 'Agents open /api/stream with their token in the Authorization header' });
+  return issueStreamTicket();
+});
 
 route('GET', '/api/subscriptions', 'List subscriptions: ?agent=', ({ q }) => Object.values(subs).filter((s) => !q.agent || s.agent === q.agent));
 route('POST', '/api/subscriptions', 'Create a durable subscription with a server-side cursor: { label?, filter: {...}, since? }', ({ body, actor }) => {
