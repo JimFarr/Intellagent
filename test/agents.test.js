@@ -753,6 +753,37 @@ describe('token usage', () => {
     assert.deepEqual(usageOf({ usage: { input_tokens: 0, output_tokens: 0 } }), { input: 0, output: 0, cacheRead: 0, cacheCreated: 0 }, 'a reported zero stays zero');
   });
 
+  it('reads the OpenAI-compatible usage other providers print, with cached tokens taken out of input (INT-247)', () => {
+    const openai = { type: 'result', usage: { prompt_tokens: 1000, completion_tokens: 50, total_tokens: 1050, prompt_tokens_details: { cached_tokens: 800 } }, num_turns: 2 };
+    assert.deepEqual(usageOf(openai), { input: 200, output: 50, cacheRead: 800, cacheCreated: 0, context: 500 });
+    const deepseek = { type: 'result', usage: { prompt_tokens: 300, completion_tokens: 20, prompt_cache_hit_tokens: 100, prompt_cache_miss_tokens: 200 } };
+    assert.deepEqual(parseUsage(`--- output ---\n${JSON.stringify(deepseek)}\n`), { input: 200, output: 20, cacheRead: 100, cacheCreated: 0 });
+    assert.deepEqual(usageOf({ usage: { prompt_tokens: 10, completion_tokens: 0 } }), { input: 10, output: 0, cacheRead: 0, cacheCreated: 0 });
+  });
+
+  it('an agent has a provider: anthropic for a claude run, its own otherwise; only Anthropic models get a tier; a run is told its model (INT-247)', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      senior: { role: 'builder', model: 'opus', enabled: false },
+      seeker: { run: run('env', 'INTELLAGENT_PROVIDER,INTELLAGENT_MODEL'), provider: 'DeepSeek', model: 'deepseek-chat' },
+      odd: { run: run('ok'), provider: 'bad name!' },
+    } } });
+    try {
+      const { agents, error } = await s.ok('GET', '/api/agents');
+      const a = (n) => agents.find((x) => x.name === n);
+      assert.deepEqual([a('senior').provider, a('senior').tier], ['anthropic', 'senior']);
+      assert.deepEqual([a('seeker').provider, a('seeker').model, a('seeker').tier], ['deepseek', 'deepseek-chat', null]);
+      assert.equal(a('odd').provider, null);
+      assert.match(error, /"odd": provider must be a plain name/);
+      const it = await s.ok('POST', `${B}/items`, { title: 'provider', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@seeker go' }, USER);
+      await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('seeker: handled')), 8000, 'seeker reply');
+      assert.ok((await comments(s, it.id)).includes('seeker: handled 1 event(s) env INTELLAGENT_PROVIDER=deepseek INTELLAGENT_MODEL=deepseek-chat'));
+      const set = await s.ok('POST', '/api/agents', { name: 'senior', provider: 'Anthropic' }, USER);
+      assert.equal(set.provider, 'anthropic');
+      assert.equal((await s.api('POST', '/api/agents', { name: 'senior', provider: 'no spaces' }, USER)).status, 400);
+    } finally { await s.stop(); }
+  });
+
   it('asks one-shot claude runs for JSON output and leaves everything else alone', () => {
     assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --output-format json');
     assert.equal(withJsonOutput('claude -p "x" --output-format stream-json'), 'claude -p "x" --output-format stream-json');
