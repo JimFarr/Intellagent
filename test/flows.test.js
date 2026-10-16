@@ -399,6 +399,23 @@ describe('agent flows', () => {
     await s.ok('POST', `${B}/finish`, {}, { agent: 'holder' });
   });
 
+  it('the board\'s coordinator gets every coordinator power, also without the coordinator role (INT-134)', async () => {
+    const prev = (await s.ok('GET', B)).coordinator ?? null;
+    await s.ok('PATCH', B, { coordinator: 'cora' }, USER);
+    try {
+      const it = await mk({ title: 'route me', column: 'Ready' });
+      const cora = { agent: 'cora' }, zed = { agent: 'zed' };
+      const offered = async (as) => (await work(as)).next.some((n) => n.action === 'start' && /^Ready to pick up/.test(n.why));
+      assert.equal(await offered(zed), true, 'an ordinary agent is offered Ready work');
+      assert.equal(await offered(cora), false, 'the coordinator routes Ready work instead of picking it up');
+      await s.ok('POST', `${B}/items/${it.id}/start`, {}, A);
+      await s.ok('POST', `${B}/items/${it.id}/review`, { changed: 'x', why: 'y', verify: 'z' }, A);
+      const assign = (as) => s.api('POST', `${B}/items/${it.id}/reviewers`, { name: 'nobody' }, as);
+      assert.equal((await assign(zed)).body.code, 'HUMAN_ONLY');
+      assert.notEqual((await assign(cora)).body.code, 'HUMAN_ONLY', 'the coordinator may assign reviewers');
+    } finally { await s.ok('PATCH', B, { coordinator: prev }, USER); }
+  });
+
   it('requests go to the chosen agent, else the coordinator, and top its work until done', async () => {
     assert.equal((await s.api('POST', `${B}/requests`, { body: 'make tickets for search' }, USER)).body.code, 'NO_AGENT');
     await s.ok('PATCH', B, { coordinator: 'coord' }, USER);

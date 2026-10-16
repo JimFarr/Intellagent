@@ -169,6 +169,7 @@ function findColumnById(b, id) { return b.columns.find((c) => c.id === id); }
 // Whether a ticket sits in a sleeping column (see DEFAULT_FLAGS).
 function asleep(ctx, item) { return !!findColumnById(ctx.board, item.columnId)?.flags.sleeping; }
 // The board's coordinator: the agent requests default to, or a standing agent with the coordinator role.
+// Both are the human's to set (PATCH board, POST /api/agents). Every coordinator power asks this, nothing else.
 function isCoordinator(ctx, name) {
   if (name && name === ctx.board.coordinator) return true;
   try { return standing?.get?.(name)?.role === 'coordinator'; } catch { return false; }
@@ -1034,12 +1035,9 @@ const isReviewer = (name) => { try { return !!standing?.get(name).reviewer; } ca
 // every agent marked as a reviewer, paused ones too (the receptionist can resume them)
 const reviewerPool = () => { try { return (standing?.list().agents || []).filter((a) => a.reviewer); } catch { return []; } };
 const authorsOf = (item) => new Set([item.review?.requestedBy, ...(item.questions || []).filter((q) => q.kind === 'review').map((q) => q.raisedBy), ...(item.workedBy || []), item.assignee].filter(Boolean));
-function mayAssignReviewers(actor) {
-  if (actor.kind === 'user') return true;
-  try { return standing.get(actor.name).role === 'coordinator'; } catch { return false; }
-}
+const mayAssignReviewers = (ctx, actor) => actor.kind === 'user' || isCoordinator(ctx, actor.name);
 function addReviewer(ctx, id, d, actor) {
-  if (!mayAssignReviewers(actor)) fail(403, 'Only the human or the receptionist assigns reviewers', { code: 'HUMAN_ONLY' });
+  if (!mayAssignReviewers(ctx, actor)) fail(403, 'Only the human or the receptionist assigns reviewers', { code: 'HUMAN_ONLY' });
   const who = str(d.name || d.reviewer || '', 64).trim();
   if (!who) fail(400, '"name" is required');
   if (!isReviewer(who)) fail(400, `${who} is not a reviewer — switch on "Can review" in its Speciality (or "reviewer": true in agents.json)`, { code: 'NOT_REVIEWER', hint: `Reviewers: ${reviewerPool().map((a) => a.name).join(', ') || 'none yet'}` });
@@ -1056,7 +1054,7 @@ function addReviewer(ctx, id, d, actor) {
   });
 }
 function removeReviewer(ctx, id, name, actor) {
-  if (!mayAssignReviewers(actor)) fail(403, 'Only the human or the receptionist removes reviewers', { code: 'HUMAN_ONLY' });
+  if (!mayAssignReviewers(ctx, actor)) fail(403, 'Only the human or the receptionist removes reviewers', { code: 'HUMAN_ONLY' });
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
     const before = (item.reviewers || []).length;
@@ -2052,9 +2050,8 @@ function workFor(ctx, name) {
       `POST /api/boards/${ctx.id}/items/${it.id}/reviewers/${name}/verdict { "verdict": "ok" | "concerns", "comment": "…" }`);
   }
   for (const x of assigned) add('start', x, 'Assigned to you', call(x.id, 'start'));
-  // A router (the coordinator role) assigns Ready work; it never picks it up itself.
-  let router = false;
-  try { router = !!standing && standing.get(name).role === 'coordinator'; } catch { /* not a standing agent */ }
+  // A router (the coordinator) assigns Ready work; it never picks it up itself.
+  const router = isCoordinator(ctx, name);
   if (!router && (!next.length || next.every((n) => n.action === 'renew'))) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
   // A router assigns reviewers to tickets waiting in review, when a reviewer other than the author exists.
   if (router) {
@@ -2180,8 +2177,7 @@ function pendingWork(name, pickup = false) {
       out.push({ key: `${ctx.id}:${n.action}:${n.requestId || n.id}${tag ? `:${tag}` : ''}`, board: ctx.id, action: n.action, id: n.id || null, requestId: n.requestId || null, title: n.title || null, why: n.why });
     }
     if (!pickup) continue;
-    let router = false;
-    try { router = standing.get(name).role === 'coordinator'; } catch { /* not standing */ }
+    const router = isCoordinator(ctx, name);
     const cols = new Set((pickup === 'all' ? b.columns : pickupColumns(ctx)).map((c) => c.id));
     for (const it of untriaged(ctx)) {
       if (!cols.has(it.columnId) || !inActiveFocus(ctx, it)) continue;
@@ -2262,8 +2258,7 @@ function briefing(ctx, name, base, via = 'cli') {
     })(),
     ...(() => {
       // The receptionist routes work: show it the team with role, model tier and what each does.
-      const isCoord = name === b.coordinator || standing?.list().agents.find((a) => a.name === name)?.role === 'coordinator';
-      const team = isCoord ? standing.list().agents.filter((a) => a.name !== name) : [];
+      const team = isCoordinator(ctx, name) && standing ? standing.list().agents.filter((a) => a.name !== name) : [];
       if (!team.length) return [];
       return ['', '## Agents you can route to (set "assignee")',
         ...team.map((a) => `- **${a.name}**${a.role ? ` · ${a.role}` : ''}${a.model ? ` · ${a.model}${a.tier ? ` (${a.tier})` : ''}` : ''}${a.enabled ? '' : ' · paused'}${a.description ? ` — ${a.description}` : ''}${a.areas?.length ? `\n  owns: ${a.areas.map((x) => `\`${x}\``).join(', ')}` : ''}${a.concerns?.length ? `\n  watches for: ${a.concerns.join('; ')}` : ''}`),
