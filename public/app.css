@@ -1980,9 +1980,18 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
   font: 700 8px/1 var(--font); font-style: normal; color: #fff; background: var(--muted); box-shadow: 0 0 0 1.5px var(--surface, #fff); }
 .rv-tick.ok .rv-face > i { background: var(--ok, #3fb97f); }
 .rv-tick.concerns .rv-face > i { background: var(--warn); }
-/* pending: three drawn dots, centred in every theme's font (the … glyph sits on the baseline and fell out of the disk) */
-.rv-tick.pending .rv-face > i { font-size: 0; }
-.rv-tick.pending .rv-face > i::before { content: ''; width: 2px; height: 2px; border-radius: 50%; background: currentColor; box-shadow: -3px 0 currentColor, 3px 0 currentColor; }
+/* the badge marks are drawn, not typed: a font's ✓, ! and … sit on its baseline, so they fell low in the disk, by a
+   different amount in every theme's font (INT-259). The text stays in the markup for the title and screen readers. */
+.rv-face > i, .run-ring > i, .ring.run-ring > i { font-size: 0; }
+.rv-face > i::before, .run-ring > i::before { content: ''; }
+/* pending: three dots */
+.rv-tick.pending .rv-face > i::before { width: 2px; height: 2px; border-radius: 50%; background: currentColor; box-shadow: -3px 0 currentColor, 3px 0 currentColor; }
+/* ok: a tick, an L turned 45°; its weight sits in the corner, so it is lifted to look centred */
+.rv-tick.ok .rv-face > i::before { width: 3px; height: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; translate: 0 -.75px; rotate: 45deg; }
+/* concerns and a failed run: a bar over a dot */
+.rv-tick.concerns .rv-face > i::before, .run-ring > i::before { width: 1.5px; height: 7px; border-radius: .75px;
+  background: linear-gradient(currentColor 0 4.5px, transparent 4.5px 5.5px, currentColor 5.5px); }
+.ring.run-ring > i::before { scale: .85; }
 /* the verdict badge holds that corner; a run dot there would sit under it */
 .rv-tick .avatar[data-run]::after { display: none; }
 .rv-tick button { margin-left: 6px; display: inline-grid; place-items: center; width: 16px; height: 16px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; }
