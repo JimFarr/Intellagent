@@ -1934,6 +1934,56 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .appr-who { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
 .appr-who span { color: var(--muted); min-width: 0; }
 .stop-row { display: flex; justify-content: flex-end; margin: 0 0 10px; }
+
+/* Permissions page (INT-244): the library grouped by kind. Enforced ones carry a lock on a solid card; verbal ones
+   are words only, so they are dashed, warm-tinted, carry a speech mark and say "not enforced" in full. */
+.perm-intro { margin: 0 2px 12px; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.perm-intro code, .perm-key, .inp.mono { font-family: var(--mono); }
+.perm-group { margin: 0 0 18px; }
+.perm-ghead { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 7px; padding: 0 2px 8px; color: var(--muted); }
+.perm-ghead .ag-sec { padding: 0; }
+.perm-count { font: 600 10.5px var(--mono); padding: 1px 7px; border-radius: 99px; background: var(--hover); }
+.perm-ghelp { flex-basis: 100%; font-size: 11.5px; }
+.perm { display: grid; gap: 7px; padding: 10px 12px; margin-bottom: 6px; border-radius: calc(var(--r-ctl) + 2px); border: 1px solid color-mix(in oklab, var(--border) 85%, transparent); background: color-mix(in oklab, var(--surface) 70%, transparent); }
+.perm-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.perm-mark { display: inline-grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 50%; color: var(--ok, #3fb97f); background: color-mix(in oklab, var(--ok, #3fb97f) 14%, transparent); }
+.perm-nm { font-size: 13.5px; min-width: 0; overflow-wrap: anywhere; }
+.perm-key { font-size: 11px; color: var(--muted); }
+.perm-tag { font: 600 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.perm-acts { display: inline-flex; gap: 2px; }
+.perm-acts .btn.armed { color: var(--danger); background: color-mix(in oklab, var(--danger) 14%, transparent); }
+.perm-desc { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.perm-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 5px 12px; margin: 0; }
+.perm-facts dt { padding-top: 3px; font: 600 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.perm-facts dd { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; margin: 0; }
+.perm-facts .mini-chip { color: var(--text); max-width: 100%; overflow-wrap: anywhere; }
+.perm-brief { font-size: 12.5px; line-height: 1.45; font-style: italic; }
+.perm-who { display: inline-flex; gap: 4px; }
+.perm-who .avatar { width: 20px; height: 20px; font-size: 10px; }
+.perm-warn { display: flex; align-items: flex-start; gap: 7px; margin: 0; padding: 7px 10px; border-radius: var(--r-ctl); font-size: 12.5px; line-height: 1.4; color: var(--text); background: color-mix(in oklab, var(--warn) 13%, transparent); }
+.perm-warn .i { flex: none; margin-top: 1px; color: var(--warn); }
+.perm-warn.risk { background: color-mix(in oklab, var(--danger) 11%, transparent); }
+.perm-warn.risk .i { color: var(--danger); }
+.perm-errors { margin-bottom: 12px; }
+.perm-err { margin: 0; font-size: 12.5px; color: color-mix(in oklab, var(--danger) 80%, var(--text)); }
+.perm-err[hidden], .perm-form [hidden] { display: none; }
+.perm.verbal { border-style: dashed; border-color: color-mix(in oklab, var(--warn) 60%, var(--border)); background: color-mix(in oklab, var(--warn) 6%, transparent); }
+.perm.verbal .perm-mark { color: var(--warn); background: color-mix(in oklab, var(--warn) 16%, transparent); }
+/* the form: the agent form's look, with smaller chips and the same dashed edge once it is verbal */
+.perm-form label { display: grid; gap: 4px; }
+.perm-form .aa-label { margin-top: 2px; }
+.perm-form .toggle-chip { height: 30px; padding: 0 10px; gap: 6px; font-size: 12px; }
+.perm-form .toggle-chip:focus-visible, .perm-acts .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toggle-chip.verbal { border-style: dashed; }
+.toggle-chip.verbal .i { color: var(--warn); opacity: 1; }
+.perm-form.verbal { border-style: dashed; border-color: color-mix(in oklab, var(--warn) 55%, transparent); }
+.perm-form .inp.mono { font-size: 12px; }
+.perm-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 8px; }
+.perm-live { display: grid; gap: 6px; }
+.perm-live:empty { display: none; }
+@media (max-width: 520px) { .perm-two { grid-template-columns: minmax(0, 1fr); } .perm { padding: 10px; } }
+.reduced .perm-form { animation: none; }
+@media (prefers-reduced-motion: reduce) { .perm-form { animation: none; } }
 .stop-row .btn.danger.armed { background: color-mix(in oklab, var(--danger) 16%, transparent); border-color: color-mix(in oklab, var(--danger) 55%, transparent); }
 
 /* Agent changes (INT-55): who changed what on an agent, each undoable */

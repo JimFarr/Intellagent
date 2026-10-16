@@ -3848,6 +3848,7 @@
     if (ev.type === 'item.created' && ev.itemId) freshUntil.set(ev.itemId, Date.now() + FRESH_MS);
     if (ev.type?.startsWith('request.')) { $('#requestsDrawer .drawer-body')?._reload?.(); if (ev.board === state.boardId) reloadAsk(); }
     if (/^(item\.moved|item\.archived|attention\.|review\.)/.test(ev.type || '')) loadMetrics();
+    if (ev.type === 'permissions.changed') { rolesCache = null; $('#permsDrawer .drawer-body')?._reload?.(); }
     if (ev.type?.startsWith('agent.') || ev.type === 'agents.changed') refreshPresence();
     if (ev.board && ev.itemId) {
       if (document.hidden) { if (newsworthy(ev)) { noteUnseen(ev); saveSeen(); } }
@@ -3923,6 +3924,7 @@
     ['catchDrawer', 'While you were away', 'sparkle', () => openCatchup()],
     ['digestDrawer', 'Digest', 'news', () => openDigest()],
     ['agentsDrawer', 'Agents', 'bot', () => openAgents()],
+    ['permsDrawer', 'Permissions', 'lock', () => openPermissions()],
     ['rulesDrawer', 'Standing rules', 'pin', () => openRules()],
     ['metricsDrawer', 'Flow', 'activity', () => openMetrics()],
     ['archiveDrawer', 'Archive', 'archive', () => openArchive()],
@@ -4597,6 +4599,191 @@
       } catch (e) { toast(e.message, { kind: 'error' }); }
     };
   }
+  /* The permission library (INT-244, on INT-228's /api/permissions): every permission an agent can hold, grouped
+     by kind. Built-ins and powers are read-only; the human adds, edits and removes their own. A verbal permission
+     is only words, so it looks different everywhere: dashed, a speech mark instead of a lock, and the warning. */
+  // in page order: the human's own first (what they can change), then the read-only built-ins
+  const PERM_KINDS = {
+    command: ['Commands', 'Exact commands, or one ending in :* for any arguments.', 'terminal'],
+    tool: ['Tools by name', 'A Claude or MCP tool, by name.', 'sliders'],
+    folders: ['Folders', 'Edit and Write, only under these paths.', 'archive'],
+    bundle: ['Bundles', 'Several permissions under one name.', 'layers'],
+    verbal: ['Verbal', 'Only words. The agent reads them in its brief; nothing enforces them.', 'msg'],
+    builtin: ['Built-in tools', 'From the code. What a run may do with files and commands.', 'terminal'],
+    power: ['Board powers', 'Human-only by default. An agent holds one only as a grant.', 'flag'],
+  };
+  const PERM_NEW = ['command', 'tool', 'folders', 'bundle', 'verbal'];
+  const permLines = (v) => String(v || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  // What a permission would let its holders do that the board can't fence in: said beside it and in the form.
+  function permRisks(p) {
+    const r = [];
+    const tools = p.allows?.tools || [];
+    if (p.kind === 'tool' && tools.some((t) => t === 'Edit' || t === 'Write')) r.push(`${tools.filter((t) => t === 'Edit' || t === 'Write').join(' and ')} here means writes anywhere in the agent's folder. Only the board's deny rules still hold.`);
+    if (p.kind === 'folders' && (p.allows?.folders || []).some((f) => f === '*' || f === '**' || f === '**/*')) r.push('A folder of * or ** is every file: this limits nothing.');
+    return r;
+  }
+  // Every key a list of keys brings, with bundles and needs expanded (the board's resolve, for display).
+  function permExpand(keys, byKey) {
+    const out = new Set();
+    const add = (k) => { if (out.has(k)) return; out.add(k); const p = byKey[k]; for (const n of [...(p?.allows?.includes || []), ...(p?.needs || [])]) add(n); };
+    [].concat(keys || []).forEach(add);
+    return out;
+  }
+  const permHolders = (key, byKey) => Object.values(state.standing || {}).filter((a) => (byKey[key]?.kind === 'power'
+    ? [].concat(a.grants || []).some((g) => (g?.power || g) === key)
+    : permExpand(a.perms || [], byKey).has(key))).map((a) => a.name);
+  // "npm run deploy:staging", "WebFetch", "Edit and Write in docs/**", "test, git": what holding it brings
+  const permGives = (p) => [...(p.allows?.commands || []), ...(p.allows?.tools || []), ...(p.allows?.folders || []).map((f) => `Edit and Write in ${f}`), ...(p.allows?.includes || []), ...(p.allows?.powers || [])];
+
+  function openPermissions() {
+    const body = openDrawer('permsDrawer', 'Permissions', 'lock');
+    body._reload = () => fillPermissions(body);
+    fillPermissions(body);
+  }
+  async function fillPermissions(body, { open = null } = {}) {
+    let lib;
+    try { lib = await api('GET', '/api/permissions'); } catch (e) { body.innerHTML = `<div class="empty-note">${esc(e.message)}</div>`; return; }
+    if (!body.isConnected) return;
+    const all = lib.permissions || [];
+    const byKey = Object.fromEntries(all.map((p) => [p.key, p]));
+    const chips = (xs, cls = '') => xs.map((x) => `<span class="mini-chip ${cls}">${esc(x)}</span>`).join('');
+    const facts = (p) => {
+      const rows = [];
+      const gives = [...(p.allows?.commands || []), ...(p.allows?.tools || []), ...(p.allows?.folders || []), ...(p.allows?.powers || [])];
+      if (gives.length) rows.push(['Allows', chips(gives)]);
+      if (p.allows?.includes?.length) rows.push(['Includes', chips(p.allows.includes.map((k) => byKey[k]?.name || k))]);
+      if (p.needs?.length) rows.push(['Needs', chips(p.needs.map((k) => byKey[k]?.name || k))]);
+      if (p.brief) rows.push(['Brief', `<q class="perm-brief">${esc(p.brief)}</q>`]);
+      const who = permHolders(p.key, byKey);
+      if (who.length) rows.push(['Held by', `<span class="perm-who">${who.map((n) => `<span title="${esc(nameOf(n))}">${avatar({ kind: 'agent', name: n })}</span>`).join('')}</span>`]);
+      return rows.length ? `<dl class="perm-facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : '';
+    };
+    const row = (p) => {
+      const risks = permRisks(p);
+      const mark = p.enforced ? `<span class="perm-mark" title="Enforced|The board builds the agent's tools from it">${icon('lock', 'sm')}</span>` : `<span class="perm-mark" title="Not enforced|Words only: nothing stops the agent">${icon('msg', 'sm')}</span>`;
+      const acts = p.builtin ? '<span class="perm-tag">built-in</span>'
+        : `<button class="btn sm ghost" data-perm-edit="${esc(p.key)}" title="Edit">${icon('pencil', 'sm')}<span>Edit</span></button><button class="btn sm ghost" data-perm-rm="${esc(p.key)}" title="Remove|Only when no agent or permission uses it">${icon('trash', 'sm')}<span>Remove</span></button>`;
+      return `<article class="perm ${p.enforced ? '' : 'verbal'}" data-perm="${esc(p.key)}">
+        <header class="perm-head">${mark}<b class="perm-nm">${esc(p.name)}</b><code class="perm-key">${esc(p.key)}</code><span class="grow"></span><span class="perm-acts">${acts}</span></header>
+        ${p.description && p.description !== p.name ? `<p class="perm-desc">${esc(p.description)}</p>` : ''}
+        ${p.enforced ? '' : `<p class="perm-warn">${icon('info', 'sm')}<span><b>Not enforced:</b> ${esc(String(p.warning || 'not enforced: the agent is trusted to follow it, and it could be dangerous on its own').replace(/^not enforced:\s*/i, ''))}</span></p>`}
+        ${risks.map((r) => `<p class="perm-warn risk">${icon('info', 'sm')}<span>${esc(r)}</span></p>`).join('')}
+        ${facts(p)}<p class="perm-err" hidden></p></article>`;
+    };
+    const groups = Object.entries(PERM_KINDS).map(([kind, [label, help, ic]]) => {
+      const ps = all.filter((p) => p.kind === kind);
+      if (!ps.length) return '';
+      return `<section class="perm-group" data-group="${kind}"><div class="perm-ghead">${icon(ic, 'sm')}<span class="ag-sec">${esc(label)}</span><span class="perm-count">${ps.length}</span><span class="perm-ghelp">${esc(help)}</span></div>${ps.map(row).join('')}</section>`;
+    }).join('');
+    body.innerHTML = `<p class="perm-intro">Everything an agent can hold. Built-ins come from the code. Yours are kept in <code>${esc(lib.file || 'agents.json')}</code>, and an agent holds them like a built-in.</p>
+      ${lib.errors?.length ? `<div class="perm-warn risk perm-errors">${icon('info', 'sm')}<span>Skipped in ${esc(lib.file || 'agents.json')}: ${lib.errors.map(esc).join(' · ')}</span></div>` : ''}
+      <button class="add-agent-btn" data-perm-add>＋ New permission</button><div data-perm-form></div>${groups}`;
+
+    body.onclick = async (e) => {
+      if (e.target.closest('.perm-form')) return;
+      if (e.target.closest('[data-perm-add]')) { e.stopPropagation(); permForm($('[data-perm-form]', body), null, all, body); return; }
+      const ed = e.target.closest('[data-perm-edit]');
+      if (ed) { e.stopPropagation(); const slot = el('<div class="perm-slot"></div>'); ed.closest('.perm').replaceWith(slot); permForm(slot, byKey[ed.dataset.permEdit], all, body); return; }
+      const rm = e.target.closest('[data-perm-rm]');
+      if (rm) {
+        e.stopPropagation();
+        if (rm.dataset.armed !== '1') { rm.dataset.armed = '1'; rm.classList.add('armed'); $('span', rm).textContent = 'Click to confirm'; setTimeout(() => { if (rm.isConnected) { rm.dataset.armed = ''; rm.classList.remove('armed'); $('span', rm).textContent = 'Remove'; } }, 3000); return; }
+        const err = $('.perm-err', rm.closest('.perm'));
+        try { await api('DELETE', `/api/permissions/${encodeURIComponent(rm.dataset.permRm)}`); toast(`Removed ${rm.dataset.permRm}`, { icon: 'lock', timeout: 2200 }); rolesCache = null; fillPermissions(body); }
+        catch (err2) { err.hidden = false; err.textContent = err2.data?.hint ? `${err2.message}. ${err2.data.hint}.` : err2.message; rm.dataset.armed = ''; rm.classList.remove('armed'); $('span', rm).textContent = 'Remove'; }
+      }
+    };
+    if (open) $(`[data-perm="${CSS.escape(open)}"]`, body)?.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Add (edit = null) or change a custom permission. host is the empty slot above the list, or the row being edited.
+  function permForm(host, edit, all, page) {
+    const byKey = Object.fromEntries(all.map((p) => [p.key, p]));
+    let kind = edit?.kind || 'command';
+    const pick = new Set(edit?.allows?.includes || []);
+    const needs = new Set(edit?.needs || []);
+    // what a bundle may include and a permission may need: anything an agent holds through perms, never a power
+    const others = all.filter((p) => p.kind !== 'power' && p.key !== edit?.key);
+    const chipsFor = (attr, set) => others.map((p) => `<button type="button" class="toggle-chip ${set.has(p.key) ? 'on' : ''} ${p.enforced ? '' : 'verbal'}" data-${attr}="${esc(p.key)}" title="${esc(p.name)}|${esc(p.key)}${p.enforced ? '' : ' · not enforced'}">${p.enforced ? '' : icon('msg', 'sm')}${esc(p.name)}</button>`).join('');
+    const value = (k) => (edit?.allows?.[k] || []).join('\n');
+    const f = el(`<form class="add-agent perm-form" novalidate>
+      <div class="aa-label">Kind</div>
+      <div class="aa-perms perm-kinds">${PERM_NEW.map((k) => `<button type="button" class="toggle-chip ${k === kind ? 'on' : ''} ${k === 'verbal' ? 'verbal' : ''}" data-kind="${k}" aria-pressed="${k === kind}">${icon(PERM_KINDS[k][2], 'sm')}${esc(PERM_KINDS[k][0])}</button>`).join('')}</div>
+      <p class="aa-note" data-kind-help></p>
+      <div class="perm-two"><label><span class="aa-label">Key</span><input class="inp mono" data-pf="key" placeholder="deploy-staging" spellcheck="false" maxlength="64"${edit ? ` value="${esc(edit.key)}" readonly` : ''}></label>
+        <label><span class="aa-label">Name</span><input class="inp" data-pf="name" placeholder="Deploy to staging" maxlength="120" value="${esc(edit?.name || '')}"></label></div>
+      <label><span class="aa-label">What it does</span><textarea class="inp aa-desc" data-pf="description" rows="2" placeholder="In plain words, for the person reading this list">${esc(edit?.description || '')}</textarea></label>
+      <label data-for="command"><span class="aa-label">Commands</span><textarea class="inp mono aa-desc" data-pf="commands" rows="2" spellcheck="false" placeholder="npm run deploy:staging&#10;npm run measure:*">${esc(value('commands'))}</textarea><span class="aa-note">One per line. Each is allowed exactly as written; a trailing :* allows any arguments.</span></label>
+      <label data-for="tool"><span class="aa-label">Tools</span><textarea class="inp mono aa-desc" data-pf="tools" rows="2" spellcheck="false" placeholder="WebFetch&#10;mcp__github">${esc(value('tools'))}</textarea><span class="aa-note">One per line: a Claude tool (WebFetch) or an MCP tool (mcp__server__tool). Commands go in a Commands permission.</span></label>
+      <label data-for="folders"><span class="aa-label">Folders</span><textarea class="inp mono aa-desc" data-pf="folders" rows="2" spellcheck="false" placeholder="docs/**&#10;src/ui/*.css">${esc(value('folders'))}</textarea><span class="aa-note">One per line, relative to the agent's folder.</span></label>
+      <div data-for="bundle"><div class="aa-label">Includes</div><div class="aa-perms" data-chips="inc">${chipsFor('inc', pick)}</div></div>
+      <div class="aa-label">Needs</div><div class="aa-perms" data-chips="need">${chipsFor('need', needs)}<span class="aa-note">holding it brings these too</span></div>
+      <label><span class="aa-label">Brief line</span><textarea class="inp aa-desc" data-pf="brief" rows="2" placeholder="The line every agent holding it reads in its brief">${esc(edit?.brief || '')}</textarea></label>
+      <div class="perm-live" aria-live="polite"></div>
+      <div class="aa-foot"><span class="grow"></span><button type="button" class="btn ghost sm" data-pf-cancel>Cancel</button><button type="submit" class="btn primary sm" data-pf-save>${icon('check', 'sm')}<span>${edit ? 'Save' : 'Add permission'}</span></button></div>
+    </form>`);
+    const live = $('.perm-live', f);
+    const save = $('[data-pf-save]', f);
+    const draft = () => {
+      const v = (k) => $(`[data-pf="${k}"]`, f).value.trim();
+      const d = { kind, name: v('name'), description: v('description') || null, brief: v('brief') || null, needs: needs.size ? [...needs] : null };
+      if (kind === 'command') d.commands = permLines(v('commands'));
+      if (kind === 'tool') d.tools = permLines(v('tools'));
+      if (kind === 'folders') d.folders = permLines(v('folders'));
+      if (kind === 'bundle') d.includes = [...pick];
+      return d;
+    };
+    // the warnings move with what is typed: verbal, a write-anywhere tool, a folder that is every file
+    const sync = () => {
+      for (const b of $$('.perm-kinds [data-kind]', f)) { b.classList.toggle('on', b.dataset.kind === kind); b.setAttribute('aria-pressed', String(b.dataset.kind === kind)); }
+      for (const s of $$('[data-for]', f)) s.hidden = s.dataset.for !== kind;
+      $('[data-kind-help]', f).textContent = PERM_KINDS[kind][1];
+      f.classList.toggle('verbal', kind === 'verbal');
+      const d = draft();
+      const warn = permRisks({ kind, allows: { tools: d.tools, folders: d.folders } });
+      if (kind === 'verbal') warn.unshift('Not enforced: the agent is trusted to follow it, and it could be dangerous on its own. Its brief line is the whole permission.');
+      live.innerHTML = warn.map((w) => `<p class="perm-warn ${kind === 'verbal' && w.startsWith('Not enforced') ? '' : 'risk'}">${icon('info', 'sm')}<span>${esc(w)}</span></p>`).join('');
+      save.dataset.armed = '';
+      $('span', save).textContent = edit ? 'Save' : 'Add permission';
+    };
+    f.oninput = sync;
+    f.onclick = (e) => {
+      const k = e.target.closest('.perm-kinds [data-kind]');
+      if (k) { kind = k.dataset.kind; sync(); return; }
+      const inc = e.target.closest('[data-inc]');
+      if (inc) { pick.has(inc.dataset.inc) ? pick.delete(inc.dataset.inc) : pick.add(inc.dataset.inc); inc.classList.toggle('on'); sync(); return; }
+      const nd = e.target.closest('[data-need]');
+      if (nd) { needs.has(nd.dataset.need) ? needs.delete(nd.dataset.need) : needs.add(nd.dataset.need); nd.classList.toggle('on'); sync(); return; }
+      if (e.target.closest('[data-pf-cancel]')) fillPermissions(page, { open: edit?.key });
+    };
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const d = draft();
+      // verbal → enforced turns words into real tools for every holder at once: say who gains what, then ask again
+      if (edit && !edit.enforced && kind !== 'verbal' && save.dataset.armed !== '1') {
+        const who = permHolders(edit.key, byKey);
+        const gives = permGives({ allows: { commands: d.commands, tools: d.tools, folders: d.folders, includes: (d.includes || []).map((k) => byKey[k]?.name || k) } });
+        live.insertAdjacentHTML('beforeend', `<p class="perm-warn risk perm-confirm">${icon('info', 'sm')}<span><b>This makes it enforced.</b> ${who.length ? `${esc(who.map(nameOf).join(', '))} gain${who.length === 1 ? 's' : ''}` : 'Every agent that holds it gains'} ${gives.length ? esc(gives.join(', ')) : 'real tools'} at once, no longer just words. Click again to save.</span></p>`);
+        save.dataset.armed = '1';
+        $('span', save).textContent = 'Click again to save';
+        return;
+      }
+      const key = $('[data-pf="key"]', f).value.trim();
+      try {
+        if (edit) await api('PATCH', `/api/permissions/${encodeURIComponent(edit.key)}`, d);
+        else await api('POST', '/api/permissions', { key, ...d, description: d.description || undefined, brief: d.brief || undefined, needs: d.needs || undefined });
+        toast(edit ? `Saved ${edit.key}` : `Added ${key}`, { icon: 'lock', kind: 'ok', timeout: 2200 });
+        rolesCache = null;
+        fillPermissions(page, { open: edit?.key || key });
+      } catch (err) {
+        live.insertAdjacentHTML('beforeend', `<p class="perm-err">${esc(err.data?.hint ? `${err.message}. ${err.data.hint}.` : err.message)}</p>`);
+      }
+    };
+    host.replaceChildren(f);
+    sync();
+    setTimeout(() => $(edit ? '[data-pf="name"]' : '[data-pf="key"]', f).focus(), 50);
+  }
+
   function fillAgents(body) {
     const seen = new Set(state.presence.map((p) => p.name));
     const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
