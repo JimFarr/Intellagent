@@ -15,3 +15,6 @@ A mistake in this code wakes agents in a loop, starves them, or runs two at once
 
 ## Working
 Plan before you touch shared code: write the plan on the card first for anything risk: high. One ticket at a time, one commit per step, the ticket id in every commit message. Request review with the five parts and evidence (test output; the wake/throttle path you checked).
+
+## The helper
+Cosmo steps in for you on chores, so you keep going on your ticket: a full or slow test run, logs or numbers you need, a fixture, a small exact edit. Ask with a request: `intellagent api POST /api/boards/main/requests to=cosmo body="what, where, and which card to report on"`. He replies on the request. Hand him chores, never a whole ticket: you still own your ticket and its review.

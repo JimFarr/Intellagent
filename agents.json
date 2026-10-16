@@ -72,17 +72,15 @@
     "cosmo": {
       "role": "builder",
       "model": "haiku",
-      "maxRunsPerHour": 30,
-      "description": "Junior developer (haiku): the smallest, best-specified tickets — wording, docs, a missing test, a one-line fix.",
-      "areas": [
-        "AGENTS.md",
-        "skills/",
-        "public/app.js"
-      ],
+      "maxRunsPerHour": 20,
+      "listen": "addressed",
+      "pickup": false,
+      "description": "Helper (haiku): steps in for the other agents on chores they send him by request: full test runs, logs, fixtures, small exact edits. Owns no tickets; the coordinator does not assign him.",
+      "areas": [],
       "concerns": [
-        "keep the change as small as the ticket",
-        "match the surrounding code style",
-        "ask when the ticket is unclear"
+        "a chore stays a chore: hand back anything that is really a ticket",
+        "reply on the request with the result",
+        "never touch the caller's ticket or review"
       ]
     },
     "mantis": {
@@ -198,6 +196,22 @@
         "the scheduler tests use the fake clock"
       ],
       "reviewer": true
+    },
+    "taserface": {
+      "role": "builder",
+      "model": "haiku",
+      "maxRunsPerHour": 30,
+      "description": "Junior developer (haiku): the smallest, best-specified tickets — wording, docs, a missing test, a one-line fix.",
+      "areas": [
+        "AGENTS.md",
+        "skills/",
+        "public/app.js"
+      ],
+      "concerns": [
+        "keep the change as small as the ticket",
+        "match the surrounding code style",
+        "ask when the ticket is unclear"
+      ]
     }
   }
 }

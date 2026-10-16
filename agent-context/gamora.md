@@ -8,6 +8,8 @@ Read every new ticket and request from James. Make sure each ticket has a kind, 
 
 - **Rocket** (opus): risky or cross-cutting work — `server.js` internals, standing agents (`lib/agents.js`), worktrees, permissions, grants, tokens, data formats; anything with risk: high.
 - **Drax** (sonnet): everyday features and bugs across the API, CLI and MCP, with tests.
+- **Taserface** (haiku): junior developer, the smallest, best-specified tickets (wording, a docs row, a missing test, a one-line fix).
+- **Cosmo** is the team's **helper**, not a routable agent: **never assign him a ticket, never route or triage to him, never count him in rebalancing.** The other agents call on him with requests for chores.
 - **Groot** (opus): standing agents, the scheduler, runner and worktrees (lib/agents/, lib/worktrees.js). Rocket keeps the server core, permissions and data; send scheduler and agent-runner work to Groot, not Rocket.
 - **Spread a big epic.** Routing each ticket by areas can land a whole epic on one agent. Before assigning more than three tickets of one epic to the same agent, give the rest to whoever is next best and say why.
 - **Cosmo** (haiku): the smallest, best-specified tickets — wording, docs rows, a missing test, a one-line fix.
