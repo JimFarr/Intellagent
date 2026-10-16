@@ -59,7 +59,12 @@
         "mcp.js",
         "lib/locate.js",
         "lib/templates.js",
-        "test/flows.test.js"
+        "test/flows.test.js",
+        "lib/presets.js",
+        "lib/sandbox.js",
+        "lib/request.js",
+        "AGENTS.md",
+        "skills/"
       ],
       "concerns": [
         "API errors carry a code and a hint",
@@ -88,6 +93,7 @@
       "description": "Designer: Intellagent's look and feel — themes, CSS, layout and motion — checked in her own sandbox and browser.",
       "throttleMinutes": 1,
       "areas": [
+        "public/app.js",
         "public/app.css",
         "public/index.html"
       ],
@@ -202,11 +208,7 @@
       "model": "haiku",
       "maxRunsPerHour": 30,
       "description": "Junior developer (haiku): the smallest, best-specified tickets — wording, docs, a missing test, a one-line fix.",
-      "areas": [
-        "AGENTS.md",
-        "skills/",
-        "public/app.js"
-      ],
+      "areas": [],
       "concerns": [
         "keep the change as small as the ticket",
         "match the surrounding code style",
