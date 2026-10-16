@@ -361,6 +361,23 @@ describe('agent flows', () => {
     assert.ok(!w.explain.some((x) => x.id === it.id), 'answered');
   });
 
+  it('an "explain" comment is for the same agent in its event and in …/work: trailing dots, quotes, code (INT-128)', async () => {
+    const it = await mk({ title: 'explain who?' });
+    await s.ok('POST', `${B}/items/${it.id}/start`, {}, A);
+    await s.ok('POST', `${B}/items/${it.id}/review`, { changed: 'x', why: 'y', verify: 'z' }, A);
+    const bob = { agent: 'bob' };
+    const ask = async (body) => {
+      const { seq } = await s.ok('GET', '/api/app');
+      const c = await s.ok('POST', `${B}/items/${it.id}/comments`, { body, intent: 'explain' }, USER);
+      const woke = async (who) => (await s.ok('GET', `/api/events?since=${seq}&for=${who}&types=comment.added`)).events.some((e) => e.comment.id === c.id && e.addressed?.includes(who));
+      const listed = async (as) => (await work(as)).explain.some((x) => x.commentId === c.id);
+      return { ada: [await woke('ada'), await listed(A)], bob: [await woke('bob'), await listed(bob)] };
+    };
+    assert.deepEqual(await ask('Why this, thanks @bob.'), { ada: [false, false], bob: [true, true] }, 'trailing dot');
+    assert.deepEqual(await ask('> @bob said so\n\nWhy?'), { ada: [true, true], bob: [false, false] }, 'a quoted @ is no mention');
+    assert.deepEqual(await ask('Why `@bob`?'), { ada: [true, true], bob: [false, false] }, 'an @ in code is no mention');
+  });
+
   it('reactions: on cards and comments, by name or emoji, never waking anyone, allowed while held', async () => {
     const it = await mk({ title: 'react to me' });
     const c = await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'nice work @ada' }, USER);

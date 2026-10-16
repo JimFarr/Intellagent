@@ -591,9 +591,18 @@ function recipientsFor(item, actor, extra = []) {
 const QUIET_TYPES = new Set(['lease.status', 'lease.renewed', 'item.reordered', 'reaction.added', 'reaction.removed']);
 // @names in markdown that count as mentions: not inside `code`, ``` blocks or > quotes (so talking
 // *about* an agent doesn't wake it).
+const plainText = (md) => String(md || '').replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').split('\n').filter((l) => !/^\s*>/.test(l)).join('\n');
 function mentionsIn(text) {
-  const plain = String(text || '').replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').split('\n').filter((l) => !/^\s*>/.test(l)).join('\n');
-  return [...new Set([...plain.matchAll(/(?:^|[\s(])@([\w.-]+)/g)].map((m) => m[1].replace(/[.-]+$/, '')))];
+  return [...new Set([...plainText(text).matchAll(/(?:^|[\s(])@([\w.-]+)/g)].map((m) => m[1].replace(/[.-]+$/, '')))];
+}
+// Who an "explain" comment is for: its @mentions, else the agent it replies to, else whoever asked for the
+// review, else whoever worked the ticket last, else the assignee. The event and …/work both use this.
+function explainTargets(item, c) {
+  const mentions = mentionsIn(c.body);
+  if (mentions.length) return mentions;
+  const target = (c.replyTo && item.comments.find((x) => x.id === c.replyTo)?.author) || null;
+  const who = target?.kind === 'agent' ? target.name : item.questions?.find((q) => q.kind === 'review')?.raisedBy || item.workedBy?.at(-1) || item.assignee;
+  return who ? [who] : [];
 }
 
 function itemEvent(ctx, type, item, actor, extra = {}) {
@@ -1365,12 +1374,7 @@ function addComment(ctx, id, d, actor) {
     item.comments.push(c);
     item.version++;
     item.updatedAt = c.createdAt;
-    const mentions = mentionsIn(c.body);
-    if (intent && !mentions.length) {
-      const target = (d.replyTo && item.comments.find((x) => x.id === d.replyTo)?.author) || null;
-      const who = target?.kind === 'agent' ? target.name : item.questions?.find((q) => q.kind === 'review')?.raisedBy || item.workedBy?.at(-1) || item.assignee;
-      if (who) mentions.push(who);
-    }
+    const mentions = intent ? explainTargets(item, c) : mentionsIn(c.body);
     events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(c.body), attachments: atts.length, ...(intent ? { intent } : {}) }, mentions, ...(intent ? { intent } : {}) }));
     // An agent that names another agent without @ has alerted nobody: say so in the reply (not stored), so it
     // can comment again with the @mention if it meant to.
@@ -1383,7 +1387,7 @@ function addComment(ctx, id, d, actor) {
 function bareAgentNames(text, mentions, self) {
   let names = [];
   try { names = standing?.list().agents.map((a) => a.name) || []; } catch { /* no agents */ }
-  const plain = String(text || '').replace(/```[\s\S]*?```/g, ' ').replace(/`[^`\n]*`/g, ' ').split('\n').filter((l) => !/^\s*>/.test(l)).join('\n');
+  const plain = plainText(text);
   const at = new Set(mentions.map((m) => m.toLowerCase()));
   return names.filter((n) => n.toLowerCase() !== String(self).toLowerCase() && !at.has(n.toLowerCase())
     && new RegExp(`(^|[^@\\w.-])${n.replace(/[.-]/g, '\\$&')}(?![\\w-])`, 'i').test(plain));
@@ -1975,8 +1979,7 @@ function workFor(ctx, name) {
   for (const it of items) {
     const asks = (it.comments || []).filter((c) => c.intent === 'explain');
     for (const c of asks) {
-      const addressed = [...c.body.matchAll(/(?:^|\s)@([\w.-]+)/g)].some((m) => m[1] === name)
-        || (!/(?:^|\s)@[\w.-]+/.test(c.body) && [it.questions?.find((q) => q.kind === 'review')?.raisedBy, it.workedBy?.at(-1), it.assignee].includes(name));
+      const addressed = explainTargets(it, c).includes(name);
       const answered = (it.comments || []).some((x) => x.author?.name === name && x.createdAt > c.createdAt);
       if (addressed && !answered) explain.push(brief(it, { question: c.body, commentId: c.id }));
     }
