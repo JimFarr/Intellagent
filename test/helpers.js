@@ -15,9 +15,29 @@ const ROOT = path.join(__dirname, '..');
 // session, INTELLAGENT_AGENT, its token and its run would otherwise leak into the servers and CLIs under test.
 const cleanEnv = (extra = {}) => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('INTELLAGENT_'))), ...extra });
 
-async function startServer({ manifest = {}, agents, dir } = {}) {
+// A port the OS has just handed out: it never gives the same one to two callers while both are alive,
+// which a random number in a range cannot promise (the suite starts dozens of servers in parallel).
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = require('net').createServer();
+    s.once('error', reject);
+    s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
+  });
+}
+
+// The port is free when asked for but the server binds it a moment later: on the rare clash
+// (EADDRINUSE in the log) start again on a new one. Any other failure keeps its log.
+async function startServer(opts = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await startOnce(opts); } catch (e) {
+      if (attempt >= 3 || !/EADDRINUSE/.test(e.message)) throw e;
+    }
+  }
+}
+
+async function startOnce({ manifest = {}, agents, dir } = {}) {
   dir ||= fs.mkdtempSync(path.join(os.tmpdir(), 'ia-test-'));
-  const port = 20000 + Math.floor(Math.random() * 20000);
+  const port = await freePort();
   const mp = path.join(dir, 'intellagent.manifest.json');
   fs.writeFileSync(mp, JSON.stringify({ port, dataDir: './data', seed: 'empty', template: 'default', idPrefix: 'T', ...manifest }));
   if (agents) fs.writeFileSync(path.join(dir, 'agents.json'), JSON.stringify(agents, null, 2));
@@ -77,4 +97,4 @@ async function until(fn, ms = 8000, what = 'condition') {
 }
 
 const USER = { user: 'James' };
-module.exports = { cleanEnv, startServer, until, USER };
+module.exports = { cleanEnv, startServer, freePort, until, USER };

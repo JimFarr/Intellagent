@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { startServer, until, USER, cleanEnv } = require('./helpers');
+const { startServer, freePort, until, USER, cleanEnv } = require('./helpers');
 const { measure } = require('../scripts/measure-mcp');
 const { makeTools } = require('../lib/tools');
 
@@ -144,7 +144,7 @@ describe('the CLI for agents', () => {
   });
   it('start --open as an agent refuses before anything boots', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-stopped-'));
-    const port = 20000 + Math.floor(Math.random() * 20000);
+    const port = await freePort();
     fs.writeFileSync(path.join(dir, 'intellagent.manifest.json'), JSON.stringify({ port, dataDir: './data', seed: 'empty' }));
     for (const args of [['start', '--open'], ['start', '--background', '--open']]) {
       const r = cli(args, { cwd: dir, env: { INTELLAGENT_AGENT: 'sneaky' } });

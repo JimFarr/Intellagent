@@ -184,7 +184,7 @@ test('reads nvidia-smi', () => {
 
 test('the program over HTTP: ask, refuse, done, ceiling, and state kept across a restart', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-leases-'));
-  const port = 20000 + Math.floor(Math.random() * 20000);
+  const port = await require('./helpers').freePort();
   const env = {
     ...process.env,
     INTELLAGENT_LEASES_PORT: String(port),
