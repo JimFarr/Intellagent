@@ -73,14 +73,14 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 :root[data-bg="blobs"] .fx-blobs, :root[data-bg="aurora"] .fx-aurora, :root[data-bg="stars"] .fx-stars,
 :root[data-bg="mesh"] .fx-mesh, :root[data-bg="mesh"] .fx-grid { display: block; }
 
-.blob { position: absolute; border-radius: 50%; will-change: transform; opacity: var(--fx-o); background: radial-gradient(closest-side, var(--c) 0%, color-mix(in oklab, var(--c) 45%, transparent) 40%, transparent 100%); animation: drift 38s ease-in-out infinite alternate; }
+.blob { position: absolute; border-radius: 50%; opacity: var(--fx-o); background: radial-gradient(closest-side, var(--c) 0%, color-mix(in oklab, var(--c) 45%, transparent) 40%, transparent 100%); animation: drift 38s ease-in-out infinite alternate; }
 .b1 { --c: var(--blob1); width: 70vmax; height: 70vmax; top: -34vmax; left: -24vmax; }
 .b2 { --c: var(--blob2); width: 74vmax; height: 74vmax; bottom: -40vmax; right: -26vmax; animation-duration: 52s; }
 .b3 { --c: var(--blob3); width: 44vmax; height: 44vmax; top: 30%; left: 38%; animation-duration: 67s; opacity: calc(var(--fx-o) * .6); }
 @keyframes drift { to { transform: translate(7vmax, 5vmax) scale(1.18); } }
 
 .fx-aurora { -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 40%, transparent 88%); mask-image: linear-gradient(to bottom, #000 0%, #000 40%, transparent 88%); }
-.rib { position: absolute; will-change: translate, scale; left: -35%; width: 170%; height: 62vh; top: -20vh; opacity: calc(var(--fx-o) * 2); background: radial-gradient(50% 50% at 50% 50%, var(--c) 0%, color-mix(in oklab, var(--c) 40%, transparent) 38%, transparent 72%); animation: aur 24s ease-in-out infinite alternate; }
+.rib { position: absolute; left: -35%; width: 170%; height: 62vh; top: -20vh; opacity: calc(var(--fx-o) * 2); background: radial-gradient(50% 50% at 50% 50%, var(--c) 0%, color-mix(in oklab, var(--c) 40%, transparent) 38%, transparent 72%); animation: aur 24s ease-in-out infinite alternate; }
 .r1 { --c: var(--accent); rotate: -7deg; }
 .r2 { --c: var(--accent-2); rotate: 5deg; top: -8vh; animation-duration: 31s; animation-delay: -9s; }
 .r3 { --c: var(--blob3); rotate: -2deg; top: 4vh; height: 40vh; animation-duration: 41s; animation-delay: -17s; opacity: calc(var(--fx-o) * .7); }
@@ -92,7 +92,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 
 /* mesh: three hard-edged colour pools travelling on transforms (no repaints) under a fixed engineering grid */
 .fx-mesh { opacity: calc(var(--fx-o) * 1.6); }
-.fx-mesh i { position: absolute; width: 92vmax; height: 92vmax; border-radius: 50%; will-change: transform; background: radial-gradient(closest-side, color-mix(in oklab, var(--c) 60%, transparent), color-mix(in oklab, var(--c) 22%, transparent) 62%, transparent); animation: mesh1 34s ease-in-out infinite alternate; }
+.fx-mesh i { position: absolute; width: 92vmax; height: 92vmax; border-radius: 50%; background: radial-gradient(closest-side, color-mix(in oklab, var(--c) 60%, transparent), color-mix(in oklab, var(--c) 22%, transparent) 62%, transparent); animation: mesh1 34s ease-in-out infinite alternate; }
 .fx-mesh i:nth-child(1) { --c: var(--blob1); left: -40vmax; top: -44vmax; }
 .fx-mesh i:nth-child(2) { --c: var(--blob2); right: -42vmax; top: -30vmax; animation-name: mesh2; animation-duration: 41s; }
 .fx-mesh i:nth-child(3) { --c: var(--blob3); left: 4vmax; bottom: -56vmax; animation-name: mesh3; animation-duration: 47s; }
@@ -1482,7 +1482,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
    Strength = --fx-o × --fx-k; --fx-k is set per pattern (and light/dark) from FXK in app.js, its only home. */
 :root[data-bg="topo"] .fx-art, :root[data-bg="halftone"] .fx-art, :root[data-bg="squiggles"] .fx-art,
 :root[data-bg="doodles"] .fx-art, :root[data-bg="confetti"] .fx-art { display: block; }
-.fx-art { inset: -60px; width: calc(100% + 120px); height: calc(100% + 120px); opacity: calc(var(--fx-o) * var(--fx-k, 1)); will-change: transform; animation: art-drift 90s ease-in-out infinite alternate; }
+.fx-art { inset: -60px; width: calc(100% + 120px); height: calc(100% + 120px); opacity: calc(var(--fx-o) * var(--fx-k, 1)); animation: art-drift 90s ease-in-out infinite alternate; }
 :root[data-bg="topo"] .fx-art { animation-duration: 120s; }
 /* Blueprint draws its own grid on the board; under contours the two fight, so the grid gives way. */
 :root[data-theme="blueprint"][data-bg="topo"] .board { background-image: none; }

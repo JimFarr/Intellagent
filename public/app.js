@@ -537,6 +537,46 @@
     }).catch(() => {});
   }
 
+  /* ─── at rest: the board is in the background (another window has focus, or the tab is hidden) or nobody has
+     touched it for a minute. Every animation that loops forever (the drifting backgrounds, pulsing dots, spinning
+     rings, the starfield) stands still, so the graphics card has nothing to redraw; one-off animations (a toast, a
+     card arriving) still play. The next touch, key or focus brings the movement back. ─── */
+  const rest = (() => {
+    const AFTER_MS = 60_000;
+    const held = new Set();
+    let on = false, idle = 0, again = 0, sweep = 0;
+    const loops = () => document.getAnimations().filter((a) => a.effect?.getTiming?.().iterations === Infinity);
+    const hold = () => { for (const a of loops()) if (a.playState === 'running') { a.pause(); held.add(a); } };
+    const set = (v) => {
+      if (v === on) return;
+      on = v;
+      document.documentElement.toggleAttribute('data-rest', on);
+      // hold the loops now, and every few seconds again for any whose start event a background tab never got
+      if (on) { hold(); sweep = setInterval(hold, 5000); return; }
+      clearInterval(sweep);
+      for (const a of held) { try { a.play(); } catch { /* gone with its element */ } }
+      held.clear();
+      document.dispatchEvent(new Event('intellagent:wake'));
+    };
+    const away = () => document.hidden || !document.hasFocus();
+    const touch = () => {
+      clearTimeout(idle);
+      if (away()) { set(true); return; }
+      set(false);
+      idle = setTimeout(() => set(true), AFTER_MS);
+    };
+    for (const t of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'focus']) addEventListener(t, touch, { passive: true });
+    addEventListener('blur', () => { clearTimeout(idle); set(true); });
+    document.addEventListener('visibilitychange', touch);
+    // a loop that starts while at rest (a new card that needs you, an agent starting a run, a background switched on) stands still too
+    document.addEventListener('animationstart', () => { if (on) { clearTimeout(again); again = setTimeout(hold, 120); } });
+    setTimeout(touch, 0);
+    return {
+      get on() { return on; },
+      settle() { if (on) { clearTimeout(again); again = setTimeout(hold, 120); } },
+    };
+  })();
+
   /* ─── starfield (canvas) ─── */
   const stars = (() => {
     let cv = null;
@@ -564,7 +604,7 @@
     const frame = (now = performance.now()) => {
       raf = 0;
       if (!cv) return;
-      const move = !reduced() && !document.hidden;
+      const move = !reduced() && !document.hidden && !document.documentElement.hasAttribute('data-rest');
       if (move && last && now - last < 1000 / 30 - 2) { raf = requestAnimationFrame(frame); return; }
       const k = move && last ? Math.min(4, (now - last) / (1000 / 60)) : 0;
       last = move ? now : 0;
@@ -586,7 +626,9 @@
     };
     addEventListener('resize', resize);
     addEventListener('pointermove', (e) => { mx = e.clientX / innerWidth - 0.5; my = e.clientY / innerHeight - 0.5; });
-    document.addEventListener('visibilitychange', () => { if (!document.hidden && document.documentElement.dataset.bg === 'stars' && !raf) frame(); });
+    const wake = () => { if (!document.hidden && document.documentElement.dataset.bg === 'stars' && !raf) frame(); };
+    document.addEventListener('visibilitychange', wake);
+    document.addEventListener('intellagent:wake', wake);
     return {
       sync() {
         const on = document.documentElement.dataset.bg === 'stars';
@@ -1437,6 +1479,7 @@
     flip(before);
     renderBulkBar();
     requestAnimationFrame(updateOverflow);
+    rest.settle();
   }
 
   const SPRING = 'cubic-bezier(.2,.9,.25,1.12)';
@@ -1850,7 +1893,8 @@
       const left = Date.parse(r.dataset.exp) - nowMs();
       const frac = clamp(left / (Number(r.dataset.min) * 60000), 0, 1);
       const prg = $('.prg', r);
-      if (prg) prg.style.strokeDashoffset = String(100 - frac * 100);
+      const off = String(Math.round((100 - frac * 100) * 2) / 2);
+      if (prg && prg.style.strokeDashoffset !== off) prg.style.strokeDashoffset = off;
       r.classList.toggle('warn', left < 5 * 60000 && left >= 60000);
       r.classList.toggle('crit', left < 60000);
       if (left <= 0) scheduleRefresh(800);
