@@ -600,6 +600,39 @@ describe('the receptionist supervises other agents', () => {
       assert.equal((await s.ok('GET', `${B}/work?agent=sleeper`)).supervise, undefined, 'only supervisors get the list');
     } finally { await s.stop(); }
   });
+
+  it("reads a busy agent's other tickets as queued, not stalled, and still catches one that is idle (INT-211)", async () => {
+    // superviseMinutes 0.02: a ticket counts as untouched after ~1.2 s; 'usage' runs end without a word on the card
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      desk: { role: 'coordinator', run: run('usage'), superviseMinutes: 0.02 },
+      worker: { role: 'builder', run: run('usage') },
+    } } });
+    try {
+      const sup = async () => ((await s.ok('GET', `${B}/work?agent=desk`)).supervise || []).map((x) => x.id);
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const a = await s.ok('POST', `${B}/items`, { title: 'working on this', column: 'Ready', assignee: 'worker' }, USER);
+      const b = await s.ok('POST', `${B}/items`, { title: 'next in its queue', column: 'Ready', assignee: 'worker' }, USER);
+      const c = await s.ok('POST', `${B}/items`, { title: 'blocked by a', column: 'Ready', assignee: 'worker', blockedBy: [a.id] }, USER);
+      // the assignments wake it; a run that ends releases what it holds, so lease only once it has settled
+      await until(async () => { const w = await agentState(s, 'worker'); return w.lastRun && w.status === 'idle' && !w.queued; }, 8000, 'worker settled');
+      await sleep(500);
+      // busy: it holds a lease on a, so b waits its turn however long it sits
+      await s.ok('POST', `${B}/items/${a.id}/lease`, { minutes: 10 }, { agent: 'worker' });
+      await sleep(1600);
+      assert.ok((await s.ok('GET', `${B}/items/${a.id}`)).lease, 'still held');
+      assert.deepEqual(await sup(), [], 'a busy agent has nothing stalled');
+      // idle, nothing held: b is stalled; c has an open blocker, so it is not
+      await s.ok('DELETE', `${B}/items/${a.id}/lease`, undefined, { agent: 'worker' });
+      const ids = await until(async () => { const x = await sup(); return x.includes(b.id) && x; }, 8000, 'b reported once the worker is idle');
+      assert.ok(!ids.includes(c.id), 'a ticket with an open blocker is waiting, not stalled');
+      // the assignee says b waits on a: quiet past its own-comment window (4 × 1.2 s), until a moves
+      await s.ok('POST', `${B}/items/${b.id}/comments`, { body: `Queued behind ${a.id}.` }, { agent: 'worker' });
+      await sleep(5500);
+      assert.ok(!(await sup()).includes(b.id), 'waits on a, which has not moved');
+      await s.ok('POST', `${B}/items/${a.id}/move`, { column: 'In Progress' }, USER);
+      await until(async () => (await sup()).includes(b.id), 8000, 'b reported again once a moved');
+    } finally { await s.stop(); }
+  });
 });
 
 describe('lean runs', () => {

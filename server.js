@@ -2121,11 +2121,28 @@ function workFor(ctx, name) {
 // Stalled: the assignee is paused or failed, or nobody holds the ticket, the assignee is neither running nor
 // queued and nothing has happened on it for `minutes`. Never: Done, test tickets, tickets waiting on the human.
 // After two receptionist comments in a row with no answer it stops proposing the ticket (no nagging loop).
+// Queued, not stalled (INT-211), unless the assignee is paused or failed: the assignee is busy (holds a lease
+// anywhere, or its last run ended within `minutes`); the ticket has an open blocker; or the assignee's own last
+// word on it names an open ticket that hasn't changed column since ("after INT-11"). The assignee's own
+// comment otherwise counts as activity for four times as long.
 function stalledFor(ctx, name, minutes) {
   if (!standing || !minutes) return [];
   const b = ctx.board;
   const done = doneColumnId(ctx);
   const out = [];
+  const busy = new Map();
+  const isBusy = (who, a) => {
+    if (!busy.has(who)) {
+      const leased = [...boards.values()].some((c) => Object.values(c.board.items).some((x) => activeLease(x)?.claimant === who));
+      busy.set(who, leased || Date.now() - Date.parse(a.lastRun?.endedAt || 0) < minutes * 60_000);
+    }
+    return busy.get(who);
+  };
+  // the ticket the assignee said this one waits on: open, and still in the column it was in when they said so
+  const waitsOn = (it, c) => (c.body.match(/\b[A-Z][A-Z0-9]*-\d+\b/g) || []).some((id) => {
+    const x = id !== it.id && b.items[id];
+    return x && x.columnId !== done && Date.parse(x.enteredColumnAt || 0) <= Date.parse(c.createdAt);
+  });
   for (const it of b.columns.filter((c) => c.id !== done).flatMap((c) => c.itemIds.map((id) => b.items[id]).filter(Boolean))) {
     const who = it.assignee;
     if (!who || who === name || asleep(ctx, it) || it.test || (it.questions || []).length || activeLease(it)) continue;
@@ -2136,9 +2153,12 @@ function stalledFor(ctx, name, minutes) {
     if (!off && (a.queued || ['queued', 'waiting', 'throttled', 'retrying'].includes(a.status))) continue;
     const cs = it.comments || [];
     if (cs.length >= 2 && cs.slice(-2).every((c) => c.author?.name === name)) continue;
+    const own = cs.findLast((c) => c.author?.name === who);
+    if (!off && (isBusy(who, a) || openBlockersOf(ctx, it).length || (own && waitsOn(it, own)))) continue;
     const lastMs = Math.max(Date.parse(it.updatedAt || 0), Date.parse(it.enteredColumnAt || 0), ...cs.map((c) => Date.parse(c.createdAt)));
     const idleMin = Math.round((Date.now() - lastMs) / 60_000);
-    if (!off && idleMin < minutes) continue;
+    if (!off && Date.now() - lastMs < minutes * 60_000) continue;
+    if (!off && own && Date.now() - Date.parse(own.createdAt) < 4 * minutes * 60_000) continue;
     out.push({ it, who, status: a.status, idleMin, lastMs });
   }
   return out;
