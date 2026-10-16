@@ -201,6 +201,15 @@ describe('presets: preset add, diff and update on a board that exists', () => {
       assert.match(again.err, /error 409 CONFLICT: mini@1 is already on this board.*hint: intellagent preset diff mini/);
     } finally { await s.stop(); }
   });
+  it('the setup skill offers presets and AGENTS.md says the human-only check of the CLI is a speed bump', () => {
+    const skill = fs.readFileSync(path.join(ROOT, 'skills', 'intellagent-setup', 'SKILL.md'), 'utf8');
+    assert.match(skill, /intellagent preset list/);
+    assert.match(skill, /init --preset <name\|folder>/);
+    assert.match(skill, /without `--yes` once/);
+    const guide = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8');
+    assert.match(guide, /init --preset <name\|folder>/);
+    assert.match(guide, /speed bump, not a wall: the CLI trusts `INTELLAGENT_AGENT`/);
+  });
   it('init --preset and init then preset add give the same built-in fields; diff of an installed preset says it is up to date', async () => {
     const s = await startServer();
     const t = await startServer({ manifest: { template: 'stories' } });

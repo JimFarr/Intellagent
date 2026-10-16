@@ -26,7 +26,7 @@ Read just enough to make good recommendations:
 ## 3. ✋ Ask once
 
 Ask the user in a single round (use the AskUserQuestion tool if available, max 4 questions, recommended option first):
-1. **Template** — run `intellagent templates`; recommend `software`, `research` or `ops` based on step 2.
+1. **Template or preset** — run `intellagent templates` and `intellagent preset list`; recommend `software`, `research` or `ops` based on step 2, or a preset when one fits the work better (`stories` is for writing, not code). A preset can bring column rules the human should see first: see step 4.
 2. **Name and ticket prefix** — default to the folder name and its initials.
 3. **Seed tickets from** — TODO comments / GitHub issues / a plan they paste / nothing for now.
 4. **Wiring** — by default `init` registers the MCP tools (`.mcp.json`, the small core profile), appends a short block to CLAUDE.md that points agents at `intellagent brief`, and names the default agent `claude`. Ask only if they want to opt out (`--no-mcp`, `--no-claude`) or use another agent name (`--agent`). Suggest `intellagent skill install` too: the `intellagent` skill teaches agents the day-to-day loop and the CLI.
@@ -37,9 +37,11 @@ Ask the user in a single round (use the AskUserQuestion tool if available, max 4
 
 ```
 intellagent init --template <t> --name "<name>" --prefix <PFX>
+intellagent init --preset <name|folder> --name "<name>" --prefix <PFX>   # instead, for a preset
 intellagent status           # it is already running in the background; note the URL
 intellagent brief            # exactly what agents will see: next steps, columns, templates, calls
 ```
+**A preset first lists the powers it gives (human-only columns, read-only fields, board rules) and asks.** You have no terminal, so run `init --preset …` without `--yes` once: it prints the list and stops. Show that list to the user in your own words, and only when they agree run it again with `--yes`.
 `init` starts the board in the background, opens it signed in for the user, and writes the user's token to `.intellagent/local.json` (git-ignored). Don't open or print that file.
 
 ## 5. Draft the tailoring (don't write yet)

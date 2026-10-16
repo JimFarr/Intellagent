@@ -410,7 +410,7 @@ The human edits columns in Settings › Columns (rename, colour, icon, flags, or
 **How the board is governed is the human's.** Agents get `403 HUMAN_ONLY` for adding, deleting or reordering columns, changing a column's known flags (`allowCreate`, `allowMoveIn/Out`, `wipLimit`, `releaseLeaseOnEnter`, `autoArchiveAfterDays`, `humanOnlyIn/Out`, `review`, `sleeping`, `pickup`, `working`), choosing the `coordinator`, changing the board rules (`directives`) and the built-in field settings (`PUT …/schema { builtins }`). A column's name, colour, icon and other custom flags, and declared fields, stay open to agents. To change the rest, ask on a card.
 
 ### Presets: a package for a kind of team
-A preset is a folder with `preset.json` (`name`, `version`, `extends?`, `board`: columns, schema fields, ticket templates, directives). The built-in templates (`intellagent templates`) are presets at version 1; `stories` ships with the package as a second one that has nothing to do with code. Permissions and roles are not part of a preset yet. It is the **human's** to install, in the CLI (`403 HUMAN_ONLY` for an agent, except `preset list`):
+A preset is a folder with `preset.json` (`name`, `version`, `extends?`, `board`: columns, schema fields, ticket templates, directives). The built-in templates (`intellagent templates`) are presets at version 1; `stories` ships with the package as a second one that has nothing to do with code. Permissions and roles are not part of a preset yet. It is the **human's** to install, in the CLI (`403 HUMAN_ONLY` for an agent, except `preset list`; that check is a speed bump, not a wall: the CLI trusts `INTELLAGENT_AGENT`, and an agent that can edit files and run commands can reach the human's token in `local.json` anyway, see "What the permissions do not stop"):
 
 ```
 intellagent preset list                        what exists (built-in, shipped, added) and what this board has installed
@@ -443,7 +443,7 @@ A board may require every agent to send a token (`auth.requireAgentTokens` in th
 
 ## 9. Setting up a board in a project
 
-Asked to "set up Intellagent here"? Use the **intellagent-setup** skill (`skills/intellagent-setup/SKILL.md`). It stops and asks the human at three points (template and prefix, the proposed fields and rules, the seed tickets) and only touches `.intellagent/`, `.mcp.json`, `CLAUDE.md` and `.git/hooks/`, and only the ones the human agreed to. The commands it uses: `intellagent init --template <t> --name "…" --prefix XX`, `intellagent templates`, `intellagent status`, `intellagent hook install`, `intellagent autostart on`.
+Asked to "set up Intellagent here"? Use the **intellagent-setup** skill (`skills/intellagent-setup/SKILL.md`). It stops and asks the human at three points (template and prefix, the proposed fields and rules, the seed tickets) and only touches `.intellagent/`, `.mcp.json`, `CLAUDE.md` and `.git/hooks/`, and only the ones the human agreed to. The commands it uses: `intellagent init --template <t> --name "…" --prefix XX` (or `--preset <name|folder>` instead, after showing the human the powers it lists), `intellagent preset list`, `intellagent templates`, `intellagent status`, `intellagent hook install`, `intellagent autostart on`.
 
 ## 10. Route index
 
