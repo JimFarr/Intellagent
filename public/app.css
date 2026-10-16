@@ -1655,7 +1655,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .gate-row .rv-label { margin: 0 4px 0 0; }
 .gate { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 99px; font: 500 11.5px var(--font); }
 .gate.met { background: color-mix(in oklab, var(--ok) 14%, transparent); color: color-mix(in oklab, var(--ok) 20%, var(--text)); }
-.gate.unmet { border: 1px dashed color-mix(in oklab, var(--warn) 60%, var(--line)); color: var(--text); }
+.gate.unmet { border: 1px dashed color-mix(in oklab, var(--warn) 60%, var(--border)); color: var(--text); }
 .gate-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 .gate-n { font: 500 11px var(--mono); color: var(--muted); }
 .gate-av { display: inline-flex; gap: 2px; }
@@ -1672,7 +1672,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 @media (prefers-reduced-motion: reduce) { .gate-confirm { animation: none; } }
 @media (max-width: 520px) { .gate-confirm { grid-template-columns: 1fr; } .gate-confirm .gc-btns > .btn { flex: 1; height: 36px; } }
 .gate-scrim { display: grid; place-items: center; }
-.gate-dlg { width: min(420px, calc(100vw - 32px)); padding: 6px; border-radius: var(--r-modal); background: var(--surface); box-shadow: var(--shadow, 0 12px 40px rgb(0 0 0 / .3)); }
+.gate-dlg { width: min(420px, calc(100vw - 32px)); padding: 6px; border-radius: var(--r-modal); background: var(--surface); border: var(--bw) solid var(--border); box-shadow: var(--modal-shadow); }
 .gate-dlg .gate-confirm { margin: 0; }
 .card.gate-wait { opacity: .6; outline: 1.5px dashed var(--warn); outline-offset: 2px; }
 .cgates { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }

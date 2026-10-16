@@ -1934,7 +1934,7 @@
     c.classList.toggle('review', it.needsHuman?.kind === 'review');
     c.classList.toggle('unseen', !!(state.boardId && seenFor(state.boardId).items[it.id]));
     markFresh(c, it.id);
-    const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), settings.stub.writing && writersOf(it).join(','), Math.floor(idleDays(it)), JSON.stringify(state.looks[it.id] || null), state.board.cardRules?.length && JSON.stringify(state.board.cardRules).length].join('|');
+    const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), settings.stub.writing && writersOf(it).join(','), Math.floor(idleDays(it)), JSON.stringify(state.looks[it.id] || null), state.board.cardRules?.length && JSON.stringify(state.board.cardRules).length, JSON.stringify(approvalCol(it)?.flags.gates || null)].join('|');
     if (c._sig === sig) return;
     const changed = c._v != null && c._v !== it.version;
     c._sig = sig;
