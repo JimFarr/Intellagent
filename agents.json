@@ -156,6 +156,31 @@
           "types": "item.landed"
         }
       ]
+    },
+    "kraglin": {
+      "role": "reviewer",
+      "model": "sonnet",
+      "maxRunsPerHour": 30,
+      "throttleMinutes": 0.5,
+      "reviewer": true,
+      "description": "Code reviewer: reads each ticket's commits against its checklist, runs the tests and the API/CLI calls from How to verify on the author's code, and hunts permission holes. No browser: what a person sees is Nebula's.",
+      "areas": [
+        "server.js",
+        "lib/",
+        "bin/",
+        "cli.js",
+        "mcp.js",
+        "test/"
+      ],
+      "concerns": [
+        "every acceptance item has code and a test behind it",
+        "npm test on the author's worktree",
+        "permission holes: an agent doing what only the human should",
+        "API errors carry a code and a hint; AGENTS.md and the brief match the code"
+      ],
+      "commands": [
+        "git show:*"
+      ]
     }
   }
 }
