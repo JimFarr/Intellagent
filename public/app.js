@@ -785,7 +785,7 @@
 
   const state = {
     app: { name: 'Intellagent' }, boards: [], boardId: null, board: null, hash: null, seq: 0, offset: 0, archivedCount: 0,
-    presence: [], standing: {}, profiles: {}, listeners: {}, listenersSig: '', inbox: [], bulk: false, selected: new Set(), query: '', expanded: new Set(), folded: new Set(),
+    presence: [], standing: {}, profiles: {}, listeners: {}, listenersSig: '', inbox: [], bulk: false, selected: new Set(), focusId: null, query: '', expanded: new Set(), folded: new Set(),
     modal: null, live: false, refreshing: false, refreshAgain: false,
   };
 
@@ -849,7 +849,8 @@
     state.offset = Date.parse(data.serverTime) - Date.now();
     state.archivedCount = data.archivedCount;
     Object.assign(state.app, data.app);
-    if (location.hash !== `#/${data.board.id}`) history.replaceState(null, '', `#/${data.board.id}`);
+    if (state.focusId && !viewFocus()) { state.focusId = null; toast('That focus board was retired — showing the full board', { icon: 'target' }); }
+    if (location.hash !== boardHash()) history.replaceState(null, '', boardHash());
     renderHeader();
     render();
     state.modal?.refresh();
@@ -1105,6 +1106,9 @@
     const lastDigest = state.board.digest?.[state.board.digest.length - 1]?.ts || '';
     $('#hubBtn .dot').hidden = !lastDigest || lastDigest <= (digestSeen[state.boardId] || '');
     $('#bulkBtn').classList.toggle('on', state.bulk);
+    $('#boardName').textContent = viewFocus() ? `${state.board.name} › ${viewFocus().name}` : state.board.name;
+    document.title = `${viewFocus() ? `${viewFocus().name} · ` : ''}${state.board.name} · ${state.app.name}`;
+    renderFocusBar();
     renderPresenceButton();
     renderAsk();
     $('#build').innerHTML = `<span class="live-dot ${state.live ? 'on' : ''}" title="${state.live ? 'Live' : 'Reconnecting'}"></span>
@@ -1205,13 +1209,120 @@
 
   function boardMenu(anchor) {
     const items = state.boards.map((b) => ({
-      label: b.name, icon: 'board', hint: b.needsHuman ? `${b.needsHuman}?` : String(b.items), cls: b.id === state.boardId ? 'on' : '',
-      run: () => { closeModal(true); loadBoard(b.id); },
+      label: b.name, icon: 'board', hint: b.needsHuman ? `${b.needsHuman}?` : String(b.items), cls: b.id === state.boardId && !state.focusId ? 'on' : '',
+      run: () => { closeModal(true); if (b.id === state.boardId) showFocus(null); else { state.focusId = null; loadBoard(b.id); } },
     }));
+    const act = activeFocusBoard();
+    if (focusBoards().length) {
+      items.push('-');
+      for (const f of focusBoards()) items.push({ label: f.name, icon: 'target', hint: `${f.itemIds.length}${f.id === act?.id ? ' · agents here' : ''}`, cls: f.id === state.focusId ? 'on' : '', run: () => showFocus(f.id) });
+    }
+    items.push({ label: 'New focus board…', icon: 'plus', hint: state.selected.size ? `${state.selected.size} selected` : '', run: () => {
+      if (state.selected.size) { focusMenu($('#bulkbar [data-a="focus"]') || anchor); return; }
+      setBulk(true);
+      toast('Select the tickets to focus on, then choose Focus in the bar below', { icon: 'target', timeout: 5000 });
+    } });
     items.push('-', { label: 'Archive', icon: 'archive', hint: String(state.archivedCount), run: openArchive });
     const tests = Object.values(state.board?.items || {}).filter((it) => it.test).length;
     if (tests) items.push({ label: 'Delete test tickets', icon: 'trash', hint: String(tests), run: () => deleteTests('all') });
     menu(anchor, items);
+  }
+
+  /* ─── focus boards (INT-215): a saved view over this board — only its tickets, the same columns and rules.
+     Every change on it is a change to the real ticket. One board is active: the agents work only on that one. ─── */
+  const focusBoards = () => state.board?.focusBoards || [];
+  const viewFocus = () => focusBoards().find((f) => f.id === state.focusId) || null;
+  const activeFocusBoard = () => focusBoards().find((f) => f.id === state.board?.activeFocus) || null;
+  const inView = (id) => { const f = viewFocus(); return !f || f.itemIds.includes(id); };
+  const withFocus = (body) => (state.focusId ? { ...body, focus: state.focusId } : body);
+  const boardHash = () => `#/${state.boardId}${state.focusId ? `/focus/${state.focusId}` : ''}`;
+  function parseHash() {
+    const m = /^#\/?([^/=]+)(?:\/focus\/([\w-]+))?/.exec(location.hash);
+    return { board: m ? decodeURIComponent(m[1]) : '', focus: m?.[2] || null };
+  }
+  function showFocus(id, { push = true } = {}) {
+    if ((id || null) === state.focusId) return;
+    closeModal(true);
+    state.focusId = id || null;
+    state.selected.clear();
+    if (push && location.hash !== boardHash()) history.pushState(null, '', boardHash());
+    renderHeader();
+    render();
+  }
+  async function createFocus(name, ids) {
+    try {
+      const f = await api('POST', B('/focus'), { name, itemIds: ids });
+      setBulk(false);
+      await loadBoard(state.boardId);
+      showFocus(f.id);
+      toast(`"${f.name}" is the active board — the agents work only on its ${f.itemIds.length} ticket${f.itemIds.length === 1 ? '' : 's'}`, { icon: 'target', kind: 'ok', timeout: 5000, wrap: true });
+    } catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+  async function patchFocus(f, body, done) {
+    try { await api('PATCH', B(`/focus/${encodeURIComponent(f.id)}`), body); if (done) toast(done, { icon: 'target' }); scheduleRefresh(0); } catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+  async function setActiveBoard(id) {
+    try { await api('PUT', B('/focus/active'), { id }); scheduleRefresh(0); } catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+  async function retireFocus(f) {
+    try {
+      const r = await api('DELETE', B(`/focus/${encodeURIComponent(f.id)}`));
+      if (state.focusId === f.id) state.focusId = null;
+      await loadBoard(state.boardId);
+      if (location.hash !== boardHash()) history.pushState(null, '', boardHash());
+      const moved = r.moved.length ? ` While it was open, ${r.moved.length} moved: ${r.moved.slice(0, 4).map((x) => `${x.id} ${x.from} → ${x.to}`).join(', ')}${r.moved.length > 4 ? '…' : ''}.` : ' Nothing moved while it was open.';
+      toast(`Retired "${r.name}": all ${r.tickets} tickets stay where they are.${moved}${r.archived.length ? ` ${r.archived.length} archived.` : ''}`, { icon: 'target', kind: 'ok', timeout: 9000, wrap: true });
+    } catch (e) { toast(e.message, { kind: 'error' }); }
+  }
+  // The selected tickets: a new focus board (type its name), or into / out of an existing one.
+  function focusMenu(anchor) {
+    const ids = [...state.selected];
+    const vf = viewFocus();
+    const items = focusBoards().map((f) => ({ label: `Add to ${f.name}`, icon: 'target', hint: String(f.itemIds.length), run: () => patchFocus(f, { add: ids }, `Added ${ids.length} to "${f.name}"`) }));
+    if (vf) items.unshift({ label: `Take out of ${vf.name}`, icon: 'x', run: () => { patchFocus(vf, { remove: ids }, `Took ${ids.length} out of "${vf.name}" — they stay on the board`); state.selected.clear(); } });
+    if (!items.length) items.push({ label: 'Type a name for the new focus board, then Enter', icon: 'info', disabled: true });
+    menu(anchor, items, { up: true, creatable: (name) => createFocus(name, ids), placeholder: 'Name a new focus board…', width: 300 });
+  }
+  // The strip under the top bar: which board this is, which one the agents work on, and the way back.
+  function renderFocusBar() {
+    const bar = $('#focusbar');
+    if (!bar || !state.board) return;
+    const vf = viewFocus();
+    const act = activeFocusBoard();
+    bar.hidden = !vf && !act;
+    bar.classList.toggle('viewing', !!vf);
+    if (bar.hidden) { bar.innerHTML = ''; return; }
+    const n = (f) => `${f.itemIds.length} ticket${f.itemIds.length === 1 ? '' : 's'}`;
+    bar.innerHTML = vf
+      ? `<span class="fb-ic">${icon('target')}</span>
+        <span class="fb-text"><small>Focus board of ${esc(state.board.name)}</small><b>${esc(vf.name)}</b><span class="fb-n">${n(vf)}</span></span>
+        <span class="fb-actions">${vf.id === act?.id
+    ? `<span class="fb-active on" data-tip="Active board|The agents work only on these tickets. Work elsewhere waits until you retire this board or make the full board active">${icon('bot', 'sm')}Agents work here</span>`
+    : `<button class="fb-active" data-fb="activate" data-tip="Make active|Point the agents at these tickets only. Work they hold elsewhere goes back to ${esc(state.board.columns.find((c) => c.flags.pickup)?.name || 'the pickup column')}">${icon('bot', 'sm')}Make active</button>`}
+        <button class="btn ghost sm" data-fb="back">${icon('board', 'sm')}Full board</button>
+        <button class="btn sm fb-retire" data-fb="retire" data-tip="Retire|Removes this view only: no ticket moves, nothing is lost${vf.id === act?.id ? '. The full board becomes active again' : ''}">${icon('x', 'sm')}<span>Retire board and return to the original</span></button></span>`
+      : `<span class="fb-ic">${icon('target')}</span>
+        <span class="fb-text"><small>The agents are focused on</small><b>${esc(act.name)}</b><span class="fb-n">${n(act)}</span></span>
+        <span class="fb-actions"><button class="btn ghost sm" data-fb="open">${icon('target', 'sm')}Open it</button>
+        <button class="btn ghost sm" data-fb="full" data-tip="Make the full board active|The agents go back to working on every ticket">${icon('bot', 'sm')}Make the full board active</button></span>`;
+    bar.onclick = (e) => {
+      const b = e.target.closest('[data-fb]');
+      if (!b) return;
+      const a = b.dataset.fb;
+      if (a === 'back') showFocus(null);
+      if (a === 'open') showFocus(act.id);
+      if (a === 'activate') setActiveBoard(vf.id);
+      if (a === 'full') setActiveBoard(null);
+      if (a === 'retire') {
+        if (!b.classList.contains('armed')) {
+          b.classList.add('armed');
+          b.lastChild.textContent = 'Click again to retire';
+          setTimeout(() => { if (b.isConnected) { b.classList.remove('armed'); b.lastChild.textContent = 'Retire board and return to the original'; } }, 3500);
+          return;
+        }
+        retireFocus(vf);
+      }
+    };
   }
 
   async function refreshProfiles() {
@@ -1258,7 +1369,7 @@
 
   function layoutColumn(col) {
     const items = state.board.items;
-    const ids = col.itemIds.filter((id) => items[id]);
+    const ids = col.itemIds.filter((id) => items[id] && inView(id));
     if (settings.grouping === 'off' || !shown('parent')) return ids.map((id) => ({ kind: 'card', id }));
     const byParent = new Map();
     for (const id of ids) {
@@ -1467,9 +1578,10 @@
     $('.col-name', c).textContent = col.name;
     $('.col-icon', c).innerHTML = ICONS[col.icon] ? icon(col.icon, 'sm') : col.icon && col.icon.length <= 2 ? esc(col.icon) : '';
     const n = col.itemIds.length;
+    const seen = viewFocus() ? col.itemIds.filter(inView).length : n;
     const wip = col.flags.wipLimit;
     const cnt = $('.col-count', c);
-    cnt.textContent = wip ? `${n}/${wip}` : n;
+    cnt.textContent = wip && !viewFocus() ? `${n}/${wip}` : seen;
     cnt.classList.toggle('full', !!wip && n >= wip);
     const bar = $('.col-wip', c);
     bar.hidden = !wip;
@@ -1479,7 +1591,8 @@
     const gate = $('.col-gate', c);
     gate.hidden = !(col.flags.humanOnlyIn || col.flags.humanOnlyOut);
     gate.dataset.tip = `Approval gate|${[col.flags.humanOnlyIn && 'only humans move tickets in', col.flags.humanOnlyOut && 'only humans move tickets out'].filter(Boolean).join(' · ')}`;
-    cnt.dataset.tip = wip ? `WIP limit|${n} of ${wip} slots used` : `${n} ticket${n === 1 ? '' : 's'}`;
+    cnt.dataset.tip = viewFocus() ? `${seen} on this focus board|${n} in the column on the full board${wip ? ` · WIP limit ${n} of ${wip} slots used` : ''}`
+      : wip ? `WIP limit|${n} of ${wip} slots used` : `${n} ticket${n === 1 ? '' : 's'}`;
   }
 
   // Ticket templates (per board) as one-tap chips above the composer; "/bug" in the text picks one too.
@@ -1535,7 +1648,7 @@
     ta.value = '';
     autosize(ta);
     ta.focus();
-    try { await api('POST', B('/items'), body); scheduleRefresh(0); setComposerTemplate(colId, null); } catch (e) { toast(e.message, { kind: 'error' }); ta.value = text; }
+    try { await api('POST', B('/items'), withFocus(body)); scheduleRefresh(0); setComposerTemplate(colId, null); } catch (e) { toast(e.message, { kind: 'error' }); ta.value = text; }
   }
 
   /* ─── groups ─── */
@@ -1605,6 +1718,8 @@
     for (const kv of decoVars(it.id).split(';')) { const [k, v] = kv.split(':'); c.style.setProperty(k, v); }
     c.dataset.slot = decoSlot(it.id);
     c.classList.toggle('needs', !!it.needsHuman);
+    c.classList.toggle('focused', !state.focusId && focusBoards().some((f) => f.itemIds.includes(it.id)));
+    c.classList.toggle('focus-active', !state.focusId && !!activeFocusBoard()?.itemIds.includes(it.id));
     const nq = it.questions?.length || (it.needsHuman ? 1 : 0);
     $('.c-ask', c).textContent = nq > 1 ? `?${nq}` : '?';
     c.classList.toggle('selected', state.selected.has(it.id));
@@ -1954,6 +2069,7 @@
       bar.innerHTML = `<span class="count"></span>
         <button class="btn ghost" data-a="move">${icon('move')}<span>Move</span></button>
         <button class="btn ghost" data-a="prio">${icon('flag')}<span>Priority</span></button>
+        <button class="btn ghost" data-a="focus" title="Focus board|Make a focus board of these tickets, or add them to one">${icon('target')}<span>Focus</span></button>
         <button class="btn danger" data-a="archive">${icon('archive')}<span>Archive</span></button>
         <button class="btn ghost" data-a="close" title="Done">${icon('x')}</button>`;
       bar.onclick = (e) => {
@@ -1962,6 +2078,7 @@
         if (a === 'close') setBulk(false);
         if (a === 'archive') bulkArchive();
         if (a === 'move') menu(btn, state.board.columns.map((c) => ({ label: c.name, color: c.color, disabled: !c.flags.allowMoveIn, run: () => bulkPatch({ column: c.id }) })), { up: true });
+        if (a === 'focus') focusMenu(btn);
         if (a === 'prio') menu(btn, PRIORITIES.map((p) => ({ label: p, color: PRIO_VAR[p], run: () => bulkPatch({ priority: p }) })), { up: true });
       };
     }
@@ -2384,7 +2501,7 @@
     m.creating = true;
     m.root.classList.add('busy');
     try {
-      const it = await api('POST', B('/items'), body);
+      const it = await api('POST', B('/items'), withFocus(body));
       if (m.pendingFiles?.length) await uploadStaged(m, it.id, body.description || '');
       m.draft = {};
       // Done: close, and let the board show the new card (it gets the new-ticket highlight).
@@ -3164,6 +3281,11 @@
       work.push(`<div class="field inline wrap">${lbl('blockedBy', 'lock')}<span class="row-val">${deps.length ? deps.map((x) => chip(x, !lock('blockedBy'))).join('') : add ? '<span class="empty">None</span>' : '<span class="empty">—</span>'}${add}</span></div>`);
       if (blocks.length) work.push(`<div class="field inline wrap"><div class="lbl">${icon('move', 'sm')}Blocks</div><span class="row-val">${blocks.map((x) => chip(x, false)).join('')}</span></div>`);
     }
+    if (!m.create && !m.archived && focusBoards().length) {
+      const mine = focusBoards().filter((f) => f.itemIds.includes(it.id));
+      const others = focusBoards().length > mine.length;
+      work.push(`<div class="field inline wrap"><div class="lbl">${icon('target', 'sm')}Focus</div><span class="row-val">${mine.map((f) => `<span class="dep focus-chip" data-showfocus="${esc(f.id)}" title="Open ${esc(f.name)}">${esc(f.name)}<button class="x" data-rmfocus="${esc(f.id)}" title="Take it out of this focus board">${icon('x', 'sm')}</button></span>`).join('') || '<span class="empty">None</span>'}${others ? `<button class="row-btn icon" data-act="focus-add" title="Add to a focus board">${icon('plus', 'sm')}</button>` : ''}</span></div>`);
+    }
     parts.push(`<div class="fgroup">${work.join('')}</div>`);
 
     // declared fields
@@ -3245,6 +3367,14 @@
       }
       const sw = e.target.closest('[data-fbool]');
       if (sw && !sw.disabled) { sw.classList.toggle('on'); setField(sw.dataset.fbool, sw.classList.contains('on')); return; }
+      const rmfocus = e.target.closest('[data-rmfocus]');
+      if (rmfocus) { e.stopPropagation(); const f = focusBoards().find((x) => x.id === rmfocus.dataset.rmfocus); if (f) patchFocus(f, { remove: [it.id] }, `Took ${it.id} out of "${f.name}"`); return; }
+      const showf = e.target.closest('[data-showfocus]');
+      if (showf) { showFocus(showf.dataset.showfocus); return; }
+      if (e.target.closest('[data-act="focus-add"]')) {
+        menu(e.target.closest('button'), focusBoards().filter((f) => !f.itemIds.includes(it.id)).map((f) => ({ label: f.name, icon: 'target', hint: String(f.itemIds.length), run: () => patchFocus(f, { add: [it.id] }, `Added ${it.id} to "${f.name}"`) })));
+        return;
+      }
       const rmdep = e.target.closest('[data-rmdep]');
       if (rmdep) { e.stopPropagation(); editItem(m, { blockedBy: it.blockedBy.filter((x) => x !== rmdep.dataset.rmdep) }); return; }
       const rmtag = e.target.closest('[data-rmtag]');
@@ -4459,9 +4589,9 @@
     };
   }
 
-  function toast(msg, { kind = '', icon: ic = null, actor = null, action = null, onAction = null, onClick = null, timeout = 3800 } = {}) {
+  function toast(msg, { kind = '', icon: ic = null, actor = null, action = null, onAction = null, onClick = null, timeout = 3800, wrap = false } = {}) {
     const lead = actor ? avatar(actor) : ic ? icon(ic) : kind === 'error' ? icon('x') : kind === 'needs' ? icon('ask') : icon('sparkle');
-    const t = el(`<div class="toast ${kind === 'needs' ? '' : kind} ${onClick ? 'click' : ''}" ${kind === 'needs' ? 'style="--tc:var(--accent-2)"' : ''}>${lead}<span class="msg"></span>${action ? `<button>${esc(action)}</button>` : ''}<i class="bar" style="animation-duration:${timeout}ms"></i></div>`);
+    const t = el(`<div class="toast ${kind === 'needs' ? '' : kind} ${onClick ? 'click' : ''} ${wrap ? 'wrap' : ''}" ${kind === 'needs' ? 'style="--tc:var(--accent-2)"' : ''}>${lead}<span class="msg"></span>${action ? `<button>${esc(action)}</button>` : ''}<i class="bar" style="animation-duration:${timeout}ms"></i></div>`);
     $('.msg', t).textContent = msg;
     const host = $('#toasts');
     host.append(t);
@@ -5547,8 +5677,9 @@
   });
 
   addEventListener('hashchange', () => {
-    const id = location.hash.replace(/^#\/?/, '');
-    if (id && id !== state.boardId) { closeModal(true); loadBoard(id).catch((e) => toast(e.message, { kind: 'error' })); }
+    const h = parseHash();
+    if (h.board && h.board !== state.boardId) { closeModal(true); state.focusId = h.focus; loadBoard(h.board).catch((e) => toast(e.message, { kind: 'error' })); }
+    else if (h.board && h.focus !== state.focusId) showFocus(h.focus, { push: false });
   });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { saveSeen(); return; }
@@ -5566,8 +5697,9 @@
       Object.assign(state.app, await api('GET', '/api/app'));
       try { state.profiles = await api('GET', '/api/profiles'); } catch { /* none yet */ }
       await refreshBoards();
-      const id = location.hash.replace(/^#\/?/, '') || state.app.defaultBoard || state.boards[0]?.id;
-      await loadBoard(id);
+      const h = parseHash();
+      state.focusId = h.focus;
+      await loadBoard(h.board || state.app.defaultBoard || state.boards[0]?.id);
     } catch (e) {
       toast(`Can't reach the server · ${e.message}`, { kind: 'error', timeout: 10000 });
     }
