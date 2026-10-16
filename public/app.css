@@ -1650,6 +1650,36 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 /* phone width: the review buttons wrap onto a second line instead of running off-screen; no keyboard, so no Ctrl+Enter hint */
 .m-ask .tbox-bar { flex-wrap: wrap; row-gap: 4px; }
 @media (max-width: 520px) { .m-ask .tbox .hint { display: none; } }
+/* soft approval gates (INT-104): seen quietly before Approve, so the confirm is never a surprise */
+.gate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -4px 0 10px; }
+.gate-row .rv-label { margin: 0 4px 0 0; }
+.gate { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 99px; font: 500 11.5px var(--font); }
+.gate.met { background: color-mix(in oklab, var(--ok) 14%, transparent); color: color-mix(in oklab, var(--ok) 20%, var(--text)); }
+.gate.unmet { border: 1px dashed color-mix(in oklab, var(--warn) 60%, var(--line)); color: var(--text); }
+.gate-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.gate-n { font: 500 11px var(--mono); color: var(--muted); }
+.gate-av { display: inline-flex; gap: 2px; }
+.gate-av .avatar { width: 18px; height: 18px; font-size: 9px; }
+.gate-av.warn .avatar { outline: 1.5px solid var(--warn); outline-offset: -1px; }
+.m.gates { gap: 4px; font-variant-numeric: tabular-nums; }
+.m.gates.met svg { color: var(--muted); }
+.m-ask.gating .tbox-bar { display: none; }
+.gate-confirm { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px 12px; width: 100%; margin-top: 6px; padding: 10px 12px; border-left: 3px solid var(--warn); border-radius: var(--r-ctl); background: color-mix(in oklab, var(--warn) 10%, var(--surface)); color: var(--text); font-size: 12.5px; animation: gate-open .2s ease-in-out; }
+.gate-confirm .gc-sub { color: var(--muted); font-style: italic; }
+.gate-confirm .gc-btns { display: flex; gap: 6px; }
+@keyframes gate-open { from { opacity: 0; transform: translateY(-3px); } }
+.reduced .gate-confirm { animation: none; }
+@media (prefers-reduced-motion: reduce) { .gate-confirm { animation: none; } }
+@media (max-width: 520px) { .gate-confirm { grid-template-columns: 1fr; } .gate-confirm .gc-btns > .btn { flex: 1; height: 36px; } }
+.gate-scrim { display: grid; place-items: center; }
+.gate-dlg { width: min(420px, calc(100vw - 32px)); padding: 6px; border-radius: var(--r-modal); background: var(--surface); box-shadow: var(--shadow, 0 12px 40px rgb(0 0 0 / .3)); }
+.gate-dlg .gate-confirm { margin: 0; }
+.card.gate-wait { opacity: .6; outline: 1.5px dashed var(--warn); outline-offset: 2px; }
+.cgates { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+.cgates .rv-label { margin: 0; }
+.cgate { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.cgate .inp.num { width: 52px; }
+.cg-help { font-size: 11.5px; color: var(--muted); }
 /* "Ask why" on agent comments, and explain questions in the thread */
 .cmt-why { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
 .cmt:hover .cmt-why, .cmt-why:focus-visible { opacity: 1; }

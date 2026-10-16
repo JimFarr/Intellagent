@@ -2050,6 +2050,12 @@
     if (s.properties && shown('properties') && nProps) meta.push(`<span class="m" title="Properties|Free-form data agents attached">${icon('braces', 'sm')}${nProps}</span>`);
     if (it.test) meta.unshift(`<span class="m test-tag" title="Test ticket|Disposable — anyone may delete it for good">${icon('flask', 'sm')}test</span>`);
     if (it.reviewers?.length) meta.push(`<span class="m revs">${it.reviewers.map((r) => reviewerTick(r)).join('')}</span>`);
+    // gates: only while a review is open and the column approving leads to has some (met ones add nothing to the flow otherwise)
+    const gs = it.questions?.some((q) => q.kind === 'review') ? gatesOf(it) : [];
+    if (gs.length) {
+      const met = gs.filter((g) => g.met).length;
+      meta.push(`<span class="m gates ${met === gs.length ? 'met' : 'unmet'}" title="Gates|${esc(gs.map((g) => `${g.met ? '✓' : '○'} ${g.label} (${g.have}/${g.need})`).join(' · '))}">⛉ ${met}/${gs.length}${met === gs.length ? icon('check', 'sm') : '<i class="gate-dot"></i>'}</span>`);
+    }
     if (it.agentDraft) meta.push(`<span class="m drafting" title="Being written up|${esc(nameOf(it.agentDraft.writer))} is turning these notes into a full ticket${it.agentDraft.explicit.length ? ` — keeping ${esc(it.agentDraft.explicit.join(', '))}` : ''}">${icon('sparkle', 'sm')}drafting</span>`);
     if (stub('assignee') && it.assignee) meta.push(`<span class="m assn" title="${esc(bi('assignee').label)}|Handed to ${esc(nameOf(it.assignee))} — they get its events">${icon('move', 'sm')}${avatar({ name: it.assignee })}</span>`);
     const ck = checklist(it.description);
@@ -2296,7 +2302,17 @@
     setTimeout(render, 270);
     const body = { column: d.targetCol };
     if (d.beforeId) body.beforeId = d.beforeId; else body.position = 'bottom';
-    try { await api('POST', I(d.id, '/move'), body); } catch (e) { toast(e.message, { kind: 'error' }); }
+    try { await api('POST', I(d.id, '/move'), body); } catch (e) {
+      if (e.data?.code !== 'GATE_UNMET') toast(e.message, { kind: 'error' });
+      else {
+        // past an unmet gate: the card waits where it was dropped until the human confirms or cancels
+        const wait = () => $(`.card[data-id="${CSS.escape(d.id)}"]`);
+        wait()?.classList.add('gate-wait');
+        const go = await gateDialog(e.data.gates || []);
+        wait()?.classList.remove('gate-wait');
+        if (go) { try { await api('POST', I(d.id, '/move'), { ...body, confirm: true }); pulseSaved(); } catch (e2) { toast(e2.message, { kind: 'error' }); } }
+      }
+    }
     scheduleRefresh(0);
   }
 
@@ -3270,6 +3286,9 @@
 
     // needs-you banner
     const slot = $('.ask-slot', main);
+    // gates change with reviewers' verdicts, not with the questions: refreshed on every render, outside the
+    // keyed box below, so feedback being typed is never wiped
+    const refreshGates = () => { for (const g of $$('.gate-slot', slot)) { const h = gateRowHTML(it); if (g.innerHTML !== h) g.innerHTML = h; } };
     // Every open question gets its own box: reply to it (or resolve it) on its own. Reviews get approve / request changes.
     const qs = it.questions?.length ? it.questions : it.needsHuman ? [it.needsHuman] : [];
     if (qs.length && !m.archived) {
@@ -3281,7 +3300,7 @@
           return `<div class="m-ask ${isReview ? 'is-review' : ''}" data-q="${esc(q.id || '')}" data-kind="${isReview ? 'review' : 'question'}"><div class="ask-head">${icon(isReview ? 'eye' : 'ask')}${avatar({ kind: 'agent', name: q.raisedBy })}<b>${esc(q.raisedBy)}</b><span>${rel(q.raisedAt)}</span>${isReview ? '<span class="chip review-chip">Review</span>' : qs.length > 1 ? `<span class="q-count">${i + 1}/${qs.length}</span>` : ''}</div>
           ${isReview ? reviewNotesHTML(it, q) : `<div class="md">${md(q.reason)}</div>`}
           ${q.form?.length && !isReview ? qFormHTML(q) : ''}
-          ${isReview ? `<div class="rv-does">${esc(approveText(q))}</div>` : ''}
+          ${isReview ? `<div class="rv-does">${esc(approveText(q))}</div><div class="gate-slot"></div>` : ''}
           ${isReview
     ? tboxHTML({ ph: 'Feedback — Send back returns the ticket to the agent…', okIcon: 'send', okTitle: 'Send back (Ctrl+Enter)', hint: 'Ctrl+Enter = Send back', tools: `<button class="btn primary sm" data-r="approve" title="${esc(approveText(q))}">${icon('check', 'sm')}${q.landing ? 'Approve and land' : 'Approve'}</button><button class="btn ghost sm" data-r="why" title="Ask why|${esc(q.raisedBy)} explains on the card — nothing else changes and the review stays open">${icon('ask', 'sm')}Ask why</button>${state.app.preview ? `<button class="btn ghost sm" data-r="preview" title="Preview|See it working before you approve: runs ${esc(q.raisedBy)}'s branch on a temporary board with a copy of your tickets, and opens it in a new tab">${icon('eye', 'sm')}Preview</button>` : ''}` })
     : tboxHTML({ ph: q.form?.length ? 'Anything to add? (optional)' : 'Reply…', okIcon: 'send', okTitle: q.form?.length ? 'Send answers (Ctrl+Enter)' : 'Reply & resolve (Ctrl+Enter)', tools:`<button class="tb-btn" data-r="resolve" title="Resolve|Mark this question answered without replying">${icon('check')}</button>` })}</div>`;
@@ -3318,12 +3337,13 @@
             try { await api('DELETE', I(m.id, '/attention'), { reply, questionId: qid, ...(answers ? { answers } : {}) }); pulseSaved(); scheduleRefresh(0); } catch (e) { toast(e.message, { kind: 'error' }); }
           };
           // One step on the server: verdict recorded, comment posted, moved on (or back), agent told.
-          const review = async (approve) => {
+          // Past an unmet gate the server answers GATE_UNMET: the tools row turns into a confirm strip, in place.
+          const review = async (approve, confirm = false) => {
             const ta = $('textarea', box);
             const text = ta.value.trim();
             if (!approve && !text) { ta.focus(); return; }
             try {
-              await api('POST', I(m.id, '/review/decision'), { verdict: approve ? 'approve' : 'changes', comment: text });
+              await api('POST', I(m.id, '/review/decision'), { verdict: approve ? 'approve' : 'changes', comment: text, ...(confirm ? { confirm: true } : {}) });
               pulseSaved();
               toast(approve ? `Approved ${m.id}` : `Sent ${m.id} back`, { kind: approve ? 'ok' : '', icon: approve ? 'check' : 'restore' });
               // Approving is the last thing done with a ticket: back to the board (or on to the next
@@ -3334,7 +3354,19 @@
                 if (next.length) m.switchTo(next[0]); else closeModal(true);
               }
               scheduleRefresh(0);
-            } catch (e) { toast(e.message, { kind: 'error' }); }
+            } catch (e) {
+              if (approve && !confirm && e.data?.code === 'GATE_UNMET') {
+                const strip = el(gateConfirmHTML(e.data.gates || []));
+                card.classList.add('gating');
+                $('.tbox-bar', box).after(strip);
+                const go = await gateConfirmWait(strip);
+                strip.remove();
+                card.classList.remove('gating');
+                if (go) review(true, true); else $('[data-r="approve"]', card)?.focus();
+                return;
+              }
+              toast(e.message, { kind: 'error' });
+            }
           };
           if (card.dataset.kind === 'review') {
             wireTbox(box, () => review(false));
@@ -3361,6 +3393,7 @@
         if (first || m.rail) setTimeout(() => $('.m-ask textarea', slot)?.focus(), 300);
       }
     } else { slot.innerHTML = ''; slot.dataset.key = ''; }
+    refreshGates();
 
     const view = $('.desc-view', main);
     if (view && !m.editingDesc) {
@@ -5957,6 +5990,51 @@
   // A reviewer's tick: ✓ looks good, ! concerns, … still looking.
   const reviewerTick = (r, { rm = false } = {}) => `<span class="rv-tick ${r.verdict || 'pending'}" title="${esc(nameOf(r.name))}|${r.verdict === 'ok' ? 'Looks good' : r.verdict === 'concerns' ? 'Has concerns — see the comment' : 'Reviewing…'}"><span class="rv-face">${avatar({ kind: 'agent', name: r.name })}<i>${r.verdict === 'ok' ? '✓' : r.verdict === 'concerns' ? '!' : '…'}</i></span>${rm ? `<button type="button" data-act="rv-rm" data-rv="${esc(r.name)}" title="Remove reviewer">${icon('x', 'sm')}</button>` : ''}</span>`;
 
+  /* Soft approval gates (INT-104). The same rule as the server's gatesFor: the reviewers' ok verdicts against
+     each gate's min. The server has the last word (409 GATE_UNMET); this only shows it before anyone decides. */
+  const approvalCol = (it) => { const cols = state.board?.columns || []; return cols.slice(cols.findIndex((c) => c.id === it.columnId) + 1).find((c) => c.flags.humanOnlyIn) || null; };
+  function gatesOf(it, col = approvalCol(it)) {
+    const rs = it.reviewers || [];
+    const who = rs.filter((r) => r.verdict === 'ok').map((r) => r.name);
+    const concerns = rs.filter((r) => r.verdict === 'concerns').map((r) => r.name);
+    return (col?.flags.gates || []).map((g) => ({ label: `${g.min} reviewer${g.min > 1 ? 's' : ''} ok`, met: who.length >= g.min, have: who.length, need: g.min, who, concerns }));
+  }
+  const gatePill = (g) => (g.met
+    ? `<span class="gate met">${icon('check', 'sm')}${esc(g.label)}<span class="gate-av">${g.who.map((n) => avatar({ kind: 'agent', name: n })).join('')}</span></span>`
+    : `<span class="gate unmet"><i class="gate-dot"></i>${esc(g.label)}<span class="gate-n">${g.have}/${g.need}</span>${g.concerns.length ? `<span class="gate-av warn" title="Concerns|${esc(g.concerns.map(nameOf).join(', '))}">${g.concerns.map((n) => avatar({ kind: 'agent', name: n })).join('')}</span>` : ''}</span>`);
+  // The gates of the column approving moves the ticket into, inside its review box. Nothing when it has none.
+  function gateRowHTML(it) {
+    const col = approvalCol(it);
+    const gs = gatesOf(it, col);
+    if (!gs.length) return '';
+    return `<div class="gate-row" aria-label="Gates: ${gs.filter((g) => g.met).length} of ${gs.length} met"><span class="rv-label">Gates · ${esc(col.name)}</span>${gs.map(gatePill).join('')}</div>`;
+  }
+  // The confirm for going past unmet gates (the server's list): "Approve anyway" or Cancel; focus on Cancel,
+  // Esc cancels, and Ctrl+Enter does nothing here, so a reflex keystroke can't skip a gate.
+  function gateConfirmHTML(gates, verb = 'Approve anyway') {
+    return `<div class="gate-confirm" role="group" aria-labelledby="gc-text"><div id="gc-text" aria-live="polite">${gates.map((g) => `<div><b>Not met: ${esc(g.label)}</b> (${g.have} of ${g.need})</div>`).join('')}<div class="gc-sub">${esc(verb.replace(' anyway', ''))} anyway? It's noted on the card.</div></div>
+      <div class="gc-btns"><button class="btn ghost sm" data-gc="cancel">Cancel</button><button class="btn primary sm" data-gc="go">${esc(verb)}</button></div></div>`;
+  }
+  // Wire a confirm strip: resolves true for "go", false for Cancel or Esc.
+  function gateConfirmWait(node) {
+    return new Promise((resolve) => {
+      const done = (v) => { node.removeEventListener('keydown', key, true); resolve(v); };
+      const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); } };
+      node.addEventListener('keydown', key, true);
+      $('[data-gc="cancel"]', node).onclick = () => done(false);
+      $('[data-gc="go"]', node).onclick = () => done(true);
+      requestAnimationFrame(() => $('[data-gc="cancel"]', node).focus());
+    });
+  }
+  // For a drag: the same strip in a small dialog of its own.
+  async function gateDialog(gates) {
+    const root = el(`<div class="scrim gate-scrim"><div class="gate-dlg" role="alertdialog" aria-modal="true" aria-labelledby="gc-text">${gateConfirmHTML(gates)}</div></div>`);
+    document.body.append(root);
+    const ok = await gateConfirmWait(root);
+    root.remove();
+    return ok;
+  }
+
   function specialityEditor(name) {
     const a = state.standing[name] || {};
     const st = { areas: [...(a.areas || [])], concerns: [...(a.concerns || [])], context: '', loaded: false, dirty: false };
@@ -6814,6 +6892,8 @@
         <div class="cflags">${COL_FLAGS.map(([k, label, tip]) => `<button class="toggle-chip ${c.flags[k] ? 'on' : ''}" data-cflag="${k}" title="${esc(label)}|${esc(tip)}">${esc(label)}</button>`).join('')}
           <label class="cnum" title="WIP limit|Hard cap on tickets in this column (0 = none)">WIP <input class="inp num" type="number" min="0" data-cwip value="${c.flags.wipLimit || 0}"></label>
           <label class="cnum" title="Auto-archive|Archive tickets that sit here this many days (0 = never)">archive after <input class="inp num" type="number" min="0" data-carch value="${c.flags.autoArchiveAfterDays || 0}"> d</label></div>
+        ${c.flags.humanOnlyIn ? `<div class="cgates"><span class="rv-label">Approval gates</span>${(c.flags.gates || []).map((g, gi) => `<span class="cgate">Reviewer ok · at least <input class="inp num" type="number" min="1" max="5" data-cgate="${gi}" value="${g.min}" aria-label="Reviewers needed"><button class="icon-x" data-cgate-rm="${gi}" title="Remove gate">${icon('x', 'sm')}</button></span>`).join('')}
+          <button class="btn ghost sm" data-cgate-add>${icon('plus', 'sm')}Add gate</button><span class="cg-help">A gate warns before approving; it never blocks.</span></div>` : ''}
       </div>`).join('')}
       <div class="fadd"><input class="inp" data-newcol placeholder="New column, e.g. QA"><button class="btn primary sm" data-coladd>${icon('plus', 'sm')}Add</button></div>`;
   }
@@ -6834,6 +6914,10 @@
       const ci = e.target.closest('[data-cicon]');
       if (ci && c) { menu(ci, COL_ICONS.map((n) => ({ label: n, icon: n, cls: n === c.icon ? 'on' : '', run: () => columnCall('PATCH', c.id, { icon: n }) }))); return; }
       if (e.target.closest('[data-cdel]') && c && !c.itemIds.length) { columnCall('DELETE', c.id); return; }
+      const gates = c?.flags.gates || [];
+      if (e.target.closest('[data-cgate-add]') && c) { columnCall('PATCH', c.id, { flags: { gates: [...gates, { kind: 'reviewer_ok', min: 1 }] } }); return; }
+      const grm = e.target.closest('[data-cgate-rm]');
+      if (grm && c) { columnCall('PATCH', c.id, { flags: { gates: gates.filter((_, i) => i !== Number(grm.dataset.cgateRm)) } }); return; }
       if (e.target.closest('[data-coladd]')) addColumn();
     });
     pane.addEventListener('change', (e) => {
@@ -6842,6 +6926,10 @@
       if (e.target.matches('[data-cname]')) { const v = e.target.value.trim(); if (v) columnCall('PATCH', c.id, { name: v }); else e.target.value = c.name; }
       if (e.target.matches('[data-cwip]')) columnCall('PATCH', c.id, { flags: { wipLimit: Math.max(0, Number(e.target.value) || 0) } });
       if (e.target.matches('[data-carch]')) columnCall('PATCH', c.id, { flags: { autoArchiveAfterDays: Math.max(0, Number(e.target.value) || 0) } });
+      if (e.target.matches('[data-cgate]')) {
+        const i = Number(e.target.dataset.cgate);
+        columnCall('PATCH', c.id, { flags: { gates: (c.flags.gates || []).map((g, gi) => (gi === i ? { ...g, min: Math.min(5, Math.max(1, Number(e.target.value) || 1)) } : g)) } });
+      }
     });
     pane.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('[data-newcol]')) addColumn(); });
     const addColumn = async () => {

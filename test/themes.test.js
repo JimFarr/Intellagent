@@ -83,6 +83,21 @@ describe('theme palettes', () => {
     assert.deepEqual(bad, []);
   });
 
+  // A met gate's pill (INT-104): --ok 20% into the text, on --ok 14% over the surface. If app.css changes the rule,
+  // change the shares here. (--ok is one bright green for every theme: 55%, the first design, is 2.8:1 on the light
+  // themes, and 35% still 3.8:1 on latte.)
+  const ok = /--ok: (#[0-9a-f]{6})/i.exec(css)?.[1];
+  it('the met gate pill rule matches public/app.css', () => {
+    assert.ok(ok, '--ok in :root');
+    assert.match(css, /\.gate\.met \{ background: color-mix\(in oklab, var\(--ok\) 14%, transparent\); color: color-mix\(in oklab, var\(--ok\) 20%, var\(--text\)\); \}/);
+  });
+  for (const [k, t] of Object.entries(THEMES)) {
+    it(`${k}: a met gate's text is 4.5:1 or more`, () => {
+      const v = t.vars, r = contrast(mix(ok, 0.2, v.text), mix(ok, 0.14, v.surface));
+      assert.ok(r >= 4.5, `${r.toFixed(2)}:1`);
+    });
+  }
+
   it('leaves --accent alone; only the fill deepens', () => {
     for (const t of Object.values(THEMES)) assert.match(t.vars.accent, /^#[0-9a-f]{6}$/i);
     for (const [k, t] of Object.entries(THEMES)) if (t.vars['accent-fill'] !== t.vars.accent) assert.equal(t.vars['on-accent'], '#fff', k);
