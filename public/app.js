@@ -4967,7 +4967,7 @@
   /* What makes an agent a specialist: the code it owns (guidance), what it watches for, and its context page.
      Edited here, saved to agents.json and agent-context/<name>.md through PATCH /api/agents/<name>. */
   // A reviewer's tick: ✓ looks good, ! concerns, … still looking.
-  const reviewerTick = (r, { rm = false } = {}) => `<span class="rv-tick ${r.verdict || 'pending'}" title="${esc(nameOf(r.name))}|${r.verdict === 'ok' ? 'Looks good' : r.verdict === 'concerns' ? 'Has concerns — see the comment' : 'Reviewing…'}">${avatar({ kind: 'agent', name: r.name })}<i>${r.verdict === 'ok' ? '✓' : r.verdict === 'concerns' ? '!' : '…'}</i>${rm ? `<button type="button" data-act="rv-rm" data-rv="${esc(r.name)}" title="Remove reviewer">${icon('x', 'sm')}</button>` : ''}</span>`;
+  const reviewerTick = (r, { rm = false } = {}) => `<span class="rv-tick ${r.verdict || 'pending'}" title="${esc(nameOf(r.name))}|${r.verdict === 'ok' ? 'Looks good' : r.verdict === 'concerns' ? 'Has concerns — see the comment' : 'Reviewing…'}"><span class="rv-face">${avatar({ kind: 'agent', name: r.name })}<i>${r.verdict === 'ok' ? '✓' : r.verdict === 'concerns' ? '!' : '…'}</i></span>${rm ? `<button type="button" data-act="rv-rm" data-rv="${esc(r.name)}" title="Remove reviewer">${icon('x', 'sm')}</button>` : ''}</span>`;
 
   function specialityEditor(name) {
     const a = state.standing[name] || {};
