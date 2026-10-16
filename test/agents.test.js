@@ -1067,6 +1067,65 @@ describe('a lander (work.land) gets approved work onto main', () => {
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
     }
   });
+
+  it('a landing finished by hand stops being work: the sweep and the land route mark it landed, by hand (INT-261)', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-hand-'));
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(dir, 'README.md'), 'hi\n');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    const s = await startServer({ dir, manifest: { staleSweepSeconds: 0.4 }, agents: { defaults: fast, agents: {
+      bob: { run: run('commit'), worktree: true },
+      cy: { run: run('commit'), worktree: true },
+      yondu: { run: run('ok'), worktree: true, grants: ['work.land'] },
+    } } });
+    const failedTicket = async (title, who) => {
+      const t = await s.ok('POST', `${B}/items`, { title, column: 'Ready', assignee: who }, USER);
+      await until(async () => (await comments(s, t.id)).some((c) => c.startsWith(`${who}: committed`)), 10000, `${who} committed`);
+      await until(async () => (await agentState(s, who)).status === 'idle', 6000, `${who} idle`);
+      await s.ok('POST', `${B}/items/${t.id}/review`, { summary: 'done', evidence: 'e' }, { agent: who });
+      fs.writeFileSync(path.join(dir, 'README.md'), 'dirty\n'); // a dirty main checkout makes the landing fail
+      await s.ok('POST', `${B}/items/${t.id}/review/decision`, { verdict: 'approve' }, USER);
+      git('checkout', 'README.md');
+      assert.equal((await s.ok('GET', `${B}/items/${t.id}`)).landing.state, 'failed');
+      return t;
+    };
+    try {
+      // someone lands it by hand: a commit on main that names the ticket, with an id of its own
+      const a = await failedTicket('by hand, found by the sweep', 'bob');
+      fs.writeFileSync(path.join(dir, 'by-hand-a.txt'), 'resolved\n');
+      git('add', '.');
+      git('commit', '-q', '-m', `Land it myself (${a.id})`);
+      await until(async () => (await s.ok('GET', `${B}/items/${a.id}`)).landing.state === 'landed', 8000, 'the sweep noticed');
+      const card = await s.ok('GET', `${B}/items/${a.id}`);
+      assert.equal(card.landing.by, 'hand');
+      assert.equal(card.landing.commits.length, 1);
+      assert.ok((await comments(s, a.id)).some((c) => /Landed by hand on main/.test(c)));
+      const work = (await s.ok('GET', `${B}/work`, undefined, { agent: 'yondu' })).next;
+      assert.equal(work.find((n) => n.id === a.id), undefined, 'no land action any more');
+
+      // main has nothing for the next one yet: the lander can mark it with the shas, which must be on main
+      const b = await failedTicket('by hand, marked on the route', 'cy');
+      assert.equal((await s.api('POST', `${B}/items/${b.id}/land`, { landed: ['deadbeef'] }, USER)).status, 400, 'a sha not on main is refused');
+      fs.writeFileSync(path.join(dir, 'by-hand-b.txt'), 'resolved\n');
+      git('add', '.');
+      git('commit', '-q', '-m', 'no ticket id here');
+      const sha = git('rev-parse', 'HEAD');
+      const r = await s.ok('POST', `${B}/items/${b.id}/land`, { landed: [sha] }, { agent: 'yondu' });
+      assert.equal(r.via, 'hand');
+      assert.equal((await s.ok('GET', `${B}/items/${b.id}`)).landing.by, 'hand');
+    } finally {
+      await s.stop();
+      try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
+    }
+  });
 });
 
 describe('specialised agents', () => {

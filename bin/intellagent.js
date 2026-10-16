@@ -883,6 +883,11 @@ const commands = {
     if (!id) { console.error('Usage: intellagent merge <TICKET-ID> [--agent name] [--board id]'); process.exit(1); }
     const f = flags(rest.slice(1));
     const board = f.board || readManifest(requireManifest())?.defaultBoard || 'main';
+    if (f['mark-landed']) {
+      // landed by hand: the shas as on main follow the flag; without them the board looks for the ticket id
+      const shas = typeof f['mark-landed'] === 'string' ? f['mark-landed'].split(',') : [];
+      return asHuman('POST', `/api/boards/${board}/items/${id}/land`, { landed: shas }).then((r) => console.log(r.landed?.length ? `Marked landed by hand: ${r.landed.join(', ')}.` : `Not marked: ${r.error || JSON.stringify(r)}`));
+    }
     return asHuman('POST', `/api/boards/${board}/items/${id}/land`, f.agent ? { agent: String(f.agent) } : {}).then((r) => console.log(r.landed?.length ? `Landed ${r.landed.join(', ')} on main.` : `Not landed: ${r.reason || r.error || JSON.stringify(r)}`));
   },
   wait: waitCmd,

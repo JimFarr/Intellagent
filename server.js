@@ -1955,6 +1955,34 @@ function recordLanding(ctx, item, agent, actor, events, r) {
   return r;
 }
 
+// A landing someone finished by hand (a cherry-pick with a resolved conflict has other ids) still reads
+// "failed" and keeps producing land actions. Mark it landed, by hand, with the commits found on main.
+function markLandedByHand(ctx, id, shas, actor) {
+  return tx(ctx, (events) => {
+    const item = ctx.board.items[id];
+    if (!item || item.landing?.state === 'landed') return null;
+    item.landing = { state: 'landed', commits: shas, from: item.landing?.from || null, by: 'hand', at: now() };
+    item.comments.push({ id: rid('c'), author: SYSTEM, body: `⤵ Landed by hand on main: ${shas.map((x) => `\`${x}\``).join(', ')}.`, createdAt: now() });
+    item.version++;
+    item.updatedAt = now();
+    events.push(itemEvent(ctx, 'item.landed', item, actor, { agent: item.landing.from, landed: shas, via: 'hand' }));
+    return item.landing;
+  });
+}
+// Every sweep: an approved ticket whose landing failed, but whose id main mentions after the approval, was landed by hand.
+async function reconcileLandings() {
+  if (!worktrees) return;
+  for (const ctx of boards.values()) {
+    for (const item of Object.values(ctx.board.items)) {
+      if (item.landing?.state !== 'failed' || item.review?.verdict !== 'approve') continue;
+      try {
+        const shas = await worktrees.mentionedOnMain(item.id, item.review.at);
+        if (shas.length) markLandedByHand(ctx, item.id, shas, SYSTEM);
+      } catch (e) { console.warn(`landing check for ${item.id}: ${e.message}`); }
+    }
+  }
+}
+
 // End of a session: release every lease (and the board hold) you have, optionally posting the digest.
 function finishSession(ctx, d, actor) {
   return tx(ctx, (events) => {
@@ -3213,6 +3241,7 @@ function presenceView() {
 
 const warned = new Set();
 
+setInterval(() => { reconcileLandings().catch((e) => console.warn(`landing sweep: ${e.message}`)); }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => { try { sweepStale(); } catch (e) { console.warn(`stale sweep: ${e.message}`); } }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => {
   for (const ctx of boards.values()) {
@@ -4002,6 +4031,14 @@ route('POST', '/api/boards/:board/items/:id/land', 'Human, or an agent with work
   if (actor.kind !== 'user') {
     grantFor(ctx, actor, 'work.land', null, 'land work on main');
     if (item.review?.verdict !== 'approve') fail(409, `${item.id} isn't approved: only approved work lands`, { code: 'NOT_APPROVED', hint: 'Landing follows an approval; leave it until the human (or a delegated reviewer) approves it' });
+  }
+  // { landed: [shas] }: it was landed by hand. The shas must be on main (none: main is searched for the ticket id).
+  if (Array.isArray(body.landed)) {
+    if (item.review?.verdict !== 'approve') fail(409, `${item.id} isn't approved: only approved work lands`, { code: 'NOT_APPROVED', hint: 'Landing follows an approval' });
+    const shas = body.landed.length ? await worktrees.onMain(body.landed) : await worktrees.mentionedOnMain(item.id, item.review.at);
+    if (!shas.length) fail(400, `No such commits on ${worktrees.mainBranch()}`, { code: 'BAD_REQUEST', hint: 'Pass the shas as they are on main' });
+    await landingOf(ctx, item.id);
+    return { item: item.id, landed: shas, via: 'hand', landing: markLandedByHand(ctx, item.id, shas, actor) || ctx.board.items[item.id].landing };
   }
   const agent = body.agent || item.review?.requestedBy || item.workedBy?.at(-1);
   if (!agent || !agentBranch(agent)) fail(400, `No agent worktree for ${item.id}; pass "agent"`);
