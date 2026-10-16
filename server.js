@@ -2473,6 +2473,7 @@ function briefing(ctx, name, base, via = 'cli') {
     `- Need a ticket someone else holds? Ask: \`intellagent api POST ${P}/items/<ID>/lease/request reason="why"\` — the holder hands it over or declines. If someone asks you, answer it (it's in your work).`,
     '- Asked to *explain* (a comment marked explain, or an "explain" item in your work): answer in a comment and change nothing else — not the code, the ticket, its column or the review.',
     `- Where can this ticket go?: ${c('moves')}`,
+    `- Focus boards (the human's short list for today; while one is active you work only on its tickets): \`intellagent help focus\` · \`intellagent api GET ${P}/focus\``,
     `- End of session (releases everything, posts the digest): ${c('finish')}`,
     '',
     'Errors return `{ error, code, hint }` — branch on `code` (LEASED, BOARD_HELD, BLOCKED, WIP_LIMIT, HUMAN_ONLY, VERSION_CONFLICT…) and follow `hint`.',

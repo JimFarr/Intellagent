@@ -242,6 +242,25 @@ describe('agent tokens on new boards', () => {
       assert.match(none.err, /error 401 UNAUTHORIZED: Agent "nobody" has no token on this board/);
     } finally { await s.stop(); }
   });
+  it('intellagent help focus explains focus boards and the calls an agent may make, and the brief points at it', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const h = cli(['help', 'focus'], { cwd: s.dir });
+      assert.equal(h.code, 0, h.err);
+      assert.match(h.out, /focus boards/i);
+      assert.match(h.out, /api GET \/api\/boards\/main\/focus\b/, 'list');
+      assert.match(h.out, /api GET \/api\/boards\/main\/focus\/<id>/, 'read');
+      assert.match(h.out, /OUT_OF_FOCUS/);
+      assert.match(h.out, /HUMAN_ONLY/, 'creating one is the human\'s');
+      assert.doesNotMatch(h.out + h.err, /No command or operation matches/);
+      const brief = cli(['brief', '--agent', 'ada'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'ada' } });
+      assert.match(brief.out, /intellagent help focus/);
+      // what the help promises is what the board does: an agent cannot make one
+      const made = cli(['api', 'POST', '/api/boards/main/focus', 'name=x'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'ada' } });
+      assert.equal(made.code, 1);
+      assert.match(made.err, /HUMAN_ONLY/);
+    } finally { await s.stop(); }
+  });
   it('a standing agent added to agents.json while the board runs gets its token without a restart', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     try {

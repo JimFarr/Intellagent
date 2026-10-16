@@ -849,6 +849,14 @@ const HELP = `intellagent — a kanban for you and your agents
   do OP [k=v …]    run an operation by name (the MCP tools, all of them): intellagent do move_item id=INT-12 column=Review
   help CMD|OP      a command's usage (help init), or an operation's exact request and parameters (help lease, help search …)
                    api/do: JSON on stdout; errors: "error <status> <CODE>: … — hint: …" on stderr, exit 1 (2 unreachable/bad input, 3 no board)
+  focus            (a topic, not a command) focus boards: the short list of tickets the human is working on today
+                   one board is active (the full board, or one focus board); while a focus board is active you work only on its tickets
+                   list:    intellagent api GET /api/boards/main/focus         (active, and each focus board's ticket ids)
+                   read:    intellagent api GET /api/boards/main/focus/<id>    (one focus board with its tickets)
+                   your …/work and brief name the active one; start outside it answers 409 OUT_OF_FOCUS
+                   (the human asked for it directly? intellagent api POST /api/boards/main/items/<ID>/start outsideFocus=true)
+                   make, rename, activate, retire: the human only (403 HUMAN_ONLY); the coordinator may add: intellagent api PATCH /api/boards/main/focus/<id> add='["INT-12"]'
+                   the guide has the rest: intellagent docs
   wait             block until something arrives in your inbox, print it, exit   --agent --types --timeout --json
   watch -- CMD     run CMD each time your inbox gets events (unattended agents)   --agent --claude --once
                    both also take --human (everything the human does: for a coordinator)
