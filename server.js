@@ -1720,6 +1720,11 @@ function startWork(ctx, id, d, actor) {
     }
     const cur = activeLease(item);
     if (cur && cur.claimant !== actor.name) fail(423, `${item.id} is leased by ${cur.claimant} until ${cur.expiresAt}`, { code: 'LEASED', hint: 'Pick another ticket (GET …/work)', lease: cur });
+    // While a focus board is active, agents start only its tickets — unless the human asked for this one
+    // directly (an @mention or a request), which the agent says with "outsideFocus": true.
+    if (actor.kind === 'agent' && !inActiveFocus(ctx, item) && d.outsideFocus !== true) {
+      fail(409, `${item.id} is not on the focus board "${activeFocus(ctx).name}", which the agents work on now`, { code: 'OUT_OF_FOCUS', hint: 'Start a ticket from GET …/work instead. If the human asked you for this one directly (an @mention or a request), pass "outsideFocus": true' });
+    }
     const open = openBlockersOf(ctx, item);
     if (open.length && !d.force) fail(409, `${item.id} is blocked by ${open.join(', ')}`, { code: 'BLOCKED', hint: 'Work on a blocker first, or pass "force": true', blockedBy: open });
     const cols = ctx.board.columns;
@@ -2101,7 +2106,7 @@ function workFor(ctx, name) {
     ...(master ? { master: { holder: master.holder, you: master.holder === name, status: master.status || null } } : {}),
     ...(blockedByMaster ? { note: `${master.holder} holds the whole board — you can read, comment and ask, but not change tickets.` } : {}),
     next: blockedByMaster ? [] : next,
-    ...(focus ? { focus: { id: focus.id, name: focus.name, items: [...focus.itemIds], note: `The human is focused on "${focus.name}" (${focus.itemIds.length} tickets): start and review only those. Work elsewhere waits until the focus board is retired${held.length ? ` (held back: ${held.join(', ')})` : ''}; an @mention, a request or an explain from the human still gets an answer.` } } : {}),
+    ...(focus ? { focus: { id: focus.id, name: focus.name, items: [...focus.itemIds], note: `The human is focused on "${focus.name}" (${focus.itemIds.length} tickets): start and review only those. Work elsewhere waits until the focus board is retired${held.length ? ` (held back: ${held.join(', ')})` : ''}; an @mention, a request or an explain from the human still gets an answer (to start a ticket the human asked you for directly, pass "outsideFocus": true to …/start).` } } : {}),
     requests, explain, leases, feedback, answered, waitingOnHuman: waiting, assigned, ready, ...(triage.length ? { triage } : {}), ...(supervise.length ? { supervise } : {}),
   };
 }

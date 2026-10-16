@@ -128,6 +128,17 @@ describe('focus boards', () => {
     assert.ok((await work('drax')).next.some((n) => n.action === 'explain' && n.id === outside.id));
 
     await s.ok('POST', `${B}/items/${outside.id}/comments`, { body: 'Because of the lease rules.' }, { agent: 'drax' });
+
+    // starting outside the focus is refused, unless the agent says the human asked for it directly
+    const asked = await mk({ title: 'Asked for directly' });
+    const refused = await s.api('POST', `${B}/items/${asked.id}/start`, {}, { agent: 'drax' });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.code, 'OUT_OF_FOCUS');
+    assert.match(refused.body.hint, /outsideFocus/);
+    await s.ok('POST', `${B}/items/${asked.id}/start`, { outsideFocus: true }, { agent: 'drax' });
+    await s.ok('POST', `${B}/items/${inside.id}/start`, {}, { agent: 'drax' });
+    await s.ok('POST', `${B}/items/${asked.id}/move`, { column: 'Ready' }, USER);
+    await s.ok('POST', `${B}/items/${inside.id}/move`, { column: 'Ready' }, USER);
     // the full board again: the held work comes back
     await s.ok('PUT', `${B}/focus/active`, { id: null }, USER);
     const back = await work('drax');
