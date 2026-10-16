@@ -32,12 +32,11 @@
       "role": "builder",
       "model": "opus",
       "maxRunsPerHour": 30,
-      "description": "Senior developer (opus): risky or cross-cutting work — server core, standing agents, worktrees, permissions, data; anything with risk: high.",
+      "description": "Senior developer (opus): risky or cross-cutting work in the server core, permissions and grants, and data; anything with risk: high there. Standing agents and the scheduler are Groot's.",
       "areas": [
         "server.js",
-        "lib/agents.js",
-        "lib/worktrees.js",
-        "test/agents.test.js"
+        "test/api.test.js",
+        "test/flows.test.js"
       ],
       "concerns": [
         "no privilege escalation: human-only gates, grants and permissions stay intact",
@@ -181,6 +180,24 @@
       "commands": [
         "git show:*"
       ]
+    },
+    "groot": {
+      "role": "builder",
+      "model": "opus",
+      "maxRunsPerHour": 30,
+      "description": "Senior developer (opus): standing agents, the scheduler, runner and worktrees (lib/agents/, lib/worktrees.js). Partners with Rocket on anything that crosses into server.js.",
+      "areas": [
+        "lib/agents/",
+        "lib/agents.js",
+        "lib/worktrees.js",
+        "test/agents.test.js"
+      ],
+      "concerns": [
+        "no wake loops, no starving, one run per agent",
+        "run cost: a wake costs little more than its new events",
+        "the scheduler tests use the fake clock"
+      ],
+      "reviewer": true
     }
   }
 }
