@@ -109,6 +109,43 @@ describe('permission library', () => {
   });
 });
 
+describe("run-authors-code: who may run another agent's code (INT-258)", () => {
+  it('reviewers hold it by default; a run without it may not run another folder\'s tests or sandbox exec', () => {
+    const lib = createLibrary();
+    assert.deepEqual(lib.resolve(['run-authors-code']).keys.sort(), ['read', 'run-authors-code', 'test'], 'it brings read and test');
+    assert.ok(ROLES.reviewer.perms.includes('run-authors-code'));
+    for (const r of ['builder', 'designer', 'writer', 'researcher', 'coordinator']) assert.ok(!ROLES[r].perms.includes('run-authors-code'), r);
+    const deny = (run) => (run.split('--disallowedTools')[1] || '');
+    const builder = runFor(ROLES.builder.perms);
+    assert.ok(builder.includes('"Bash(npm test:*)"'), 'its own tests still run');
+    for (const t of ['Bash(npm test --prefix:*)', 'Bash(npm --prefix:*)', 'Bash(intellagent sandbox exec:*)']) assert.ok(deny(builder).includes(`"${t}"`), `${t} denied`);
+    const reviewer = runFor(ROLES.reviewer.perms);
+    assert.ok(!deny(reviewer).includes('--prefix') && !deny(reviewer).includes('sandbox exec'), 'a reviewer is not denied them');
+  });
+});
+
+describe('run-authors-code over the API (INT-258)', () => {
+  const ask = (srv, as) => srv.ok('GET', '/api/permissions/me', undefined, as);
+  it('permissions/me says who may run an author\'s code', async () => {
+    const s = await startServer({ manifest: { auth: { requireAgentTokens: false } }, agents: { agents: { rv: { enabled: false, role: 'reviewer' }, bd: { enabled: false, role: 'builder' } } } });
+    try {
+      const rv = await ask(s, { agent: 'rv' });
+      assert.equal(rv.runAuthorsCode, true);
+      assert.ok(rv.perms.includes('run-authors-code') && rv.perms.includes('read'), 'expanded');
+      const bd = await ask(s, { agent: 'bd' });
+      assert.equal(bd.runAuthorsCode, false);
+      assert.match(bd.runAuthorsCodeWhy, /run-authors-code/);
+      assert.ok(bd.runAuthorsCodeHint);
+      assert.equal((await ask(s, USER)).runAuthorsCode, true, 'the human');
+      const stranger = await ask(s, { agent: 'stranger' });
+      assert.equal(stranger.perms, null);
+      assert.equal(stranger.runAuthorsCode, false, 'without agent tokens a name proves nothing');
+      // only the human hands it out: another agent can't add it to a builder's perms
+      assert.equal((await s.api('PATCH', '/api/agents/bd', { perms: ['edit', 'test', 'run-authors-code'] }, { agent: 'rv' })).status, 403);
+    } finally { await s.stop(); }
+  });
+});
+
 describe('permission library over the API', () => {
   let s;
   const agentsFile = () => path.join(s.dir, 'agents.json');

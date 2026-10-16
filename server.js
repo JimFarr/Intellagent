@@ -4371,12 +4371,32 @@ route('DELETE', '/api/presence/:name', 'Human: forget an offline agent (not stan
   emit({ type: 'presence.changed', actor, forgot: name, online: [...presence.values()].filter(isOnline).map((x) => x.name) });
   return { forgot: name };
 });
-route('GET', '/api/permissions/me', 'What you are allowed to do (from the manifest)', ({ actor }) => ({
+// The tool permissions a standing agent holds, bundles and needs expanded; null for anyone else.
+function heldPerms(name) {
+  let a;
+  try { a = standing?.get(name); } catch { return null; }
+  return a?.perms ? permLibrary().resolve(a.perms).keys : null;
+}
+// May this caller run another agent's code (intellagent sandbox exec, INT-258)? The human, a standing agent
+// holding run-authors-code, or an agent outside agents.json whose name a token proves: on a board without
+// agent tokens, any run could call itself that.
+function mayRunAuthorsCode(actor, perms) {
+  if (actor.kind === 'user') return { ok: true };
+  if (perms) return perms.includes('run-authors-code') ? { ok: true } : { ok: false, why: 'You don\'t hold "Run an author\'s code" (run-authors-code)', hint: 'Ask the human on the card; the Reviewer role holds it by default' };
+  if (M.auth.requireAgentTokens || M.auth.agentTokens?.[actor.name]) return { ok: true };
+  return { ok: false, why: 'This board doesn\'t check agent names, so it can\'t tell who you are', hint: 'The human defines you in agents.json with run-authors-code, or turns on agent tokens' };
+}
+route('GET', '/api/permissions/me', 'What you are allowed to do (from the manifest)', ({ actor }) => {
+  const perms = actor.kind === 'agent' ? heldPerms(actor.name) : null;
+  const run = mayRunAuthorsCode(actor, perms);
+  return {
   name: actor.name, kind: actor.kind, permissions: actor.kind === 'agent' ? permsFor(actor.name) : null,
+  perms, runAuthorsCode: run.ok, ...(run.ok ? {} : { runAuthorsCodeWhy: run.why, runAuthorsCodeHint: run.hint }),
   grants: actor.kind === 'agent' ? grantsOf(actor.name).map((g) => ({ ...g, means: POWERS[g.power] })) : null,
   tokenRequired: actor.kind === 'user' ? !!M.auth.userToken : !!M.auth.agentTokens?.[actor.name] || !!M.auth.requireAgentTokens,
   boardHasUserToken: !!M.auth.userToken,
-}));
+  };
+});
 route('GET', '/api/profiles', 'Display profiles (colour, glyph, image) for agents and users', () => profiles);
 route('GET', '/api/profiles/me', 'Your display profile', ({ actor }) => ({ name: actor.name, ...(profiles[actor.name] || {}) }));
 route('PUT', '/api/profiles/me/status', 'Agents: a live status line while you hold no lease (triage, reviewing, answering a request): { status ("" clears), items? }. Emits agent.activity, which wakes nobody; cleared when your run ends',
