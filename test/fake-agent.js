@@ -130,6 +130,16 @@ process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
     cli('POST', `/api/boards/main/items/${ev.itemId}/comments`, `body=retry saw earlier work: ${/already did/.test(prompt) && /picked this up/.test(prompt)}`);
     return;
   }
+  // like an adapter that can't read local.json (INT-248): only the token in its environment
+  if (mode === 'token') {
+    const ev = JSON.parse(require('fs').readFileSync(process.env.INTELLAGENT_EVENTS, 'utf8')).find((e) => e.itemId);
+    await fetch(`${process.env.INTELLAGENT_URL}/api/boards/main/items/${ev.itemId}/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT, authorization: `Bearer ${process.env.INTELLAGENT_TOKEN}` },
+      body: JSON.stringify({ body: `token from env (${process.env.INTELLAGENT_TOKEN.length} chars)` }),
+    });
+    return;
+  }
   if (mode === 'slow') await new Promise((r) => setTimeout(r, Number(arg) || 1000));
   const events = JSON.parse(require('fs').readFileSync(process.env.INTELLAGENT_EVENTS, 'utf8'));
   //   node fake-agent.js env A,B   comment "env A=<value or -> B=…" (what the run's environment holds)

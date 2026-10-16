@@ -1148,6 +1148,22 @@ describe('extra commands the human allows', () => {
   });
 });
 
+describe('a run gets its own token (INT-248)', () => {
+  it('in INTELLAGENT_TOKEN, never one inherited from the board', async () => {
+    // the board itself was started with someone else's token in its environment
+    const s = await startServer({ env: { INTELLAGENT_TOKEN: 'inherited-token' }, manifest: { auth: { requireAgentTokens: true } }, agents: { defaults: fast, agents: { adapter: { run: run('token') } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'for the adapter', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@adapter take a look' }, USER);
+      const said = async () => (await s.ok('GET', `${B}/items/${it.id}`, undefined, USER)).comments.map((c) => `${c.author.name}: ${c.body}`);
+      // the comment only lands if the token in its env is adapter's own (the board requires one)
+      await until(async () => (await said()).some((c) => c.startsWith('adapter: token from env')), 8000, 'the adapter posted with its env token');
+      const own = JSON.parse(fs.readFileSync(path.join(s.dir, 'local.json'), 'utf8')).agentTokens.adapter;
+      assert.ok((await said()).includes(`adapter: token from env (${own.length} chars)`));
+    } finally { await s.stop(); }
+  });
+});
+
 describe('stopping a board stops what it started', () => {
   it('killTree stops a process and the processes it started (agent runs must not outlive their board)', { skip: process.platform !== 'win32' && 'the orphan bug is Windows-only' }, async () => {
     const { spawn, execSync } = require('child_process');

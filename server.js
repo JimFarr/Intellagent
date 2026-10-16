@@ -4604,6 +4604,8 @@ standing = require('./lib/agents').createAgents({
     }
   },
   onAgentsChanged: (names) => { for (const n of names) issueAgentToken(n); },
+  // the run's own token (INTELLAGENT_TOKEN), read fresh so a rotated one reaches the next run; never the user token
+  tokenOf: (name) => readLocalAgentTokens()[name] || M.auth.agentTokens?.[name] || null,
   onRunEnd: (name) => {
     for (const ctx of boards.values()) {
       if (Object.values(ctx.board.items).some((it) => activeLease(it)?.claimant === name)) finishSession(ctx, {}, { kind: 'agent', name });
