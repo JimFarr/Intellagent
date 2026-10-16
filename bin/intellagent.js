@@ -587,7 +587,7 @@ async function asHuman(method, p, body) {
   try { r = await fetch(url + p, { method, headers, body: body ? JSON.stringify(body) : undefined }); }
   catch { console.error(`The board isn't running (${url}). Start it with: intellagent start`); process.exit(1); }
   const j = await r.json();
-  if (!r.ok) { console.error(j.error || r.status); process.exit(1); }
+  if (!r.ok) { console.error(`${j.error || r.status}${j.hint ? ` — hint: ${j.hint}` : ''}`); process.exit(1); }
   return j;
 }
 
@@ -880,13 +880,15 @@ const commands = {
   // land an approved ticket's commits from its agent's worktree branch on main (when approval couldn't)
   merge: () => {
     const id = rest[0];
-    if (!id) { console.error('Usage: intellagent merge <TICKET-ID> [--agent name] [--board id]'); process.exit(1); }
+    if (!id) { console.error('Usage: intellagent merge <TICKET-ID> [--agent name] [--board id] [--mark-landed [sha,sha]]'); process.exit(1); }
     const f = flags(rest.slice(1));
     const board = f.board || readManifest(requireManifest())?.defaultBoard || 'main';
     if (f['mark-landed']) {
-      // landed by hand: the shas as on main follow the flag; without them the board looks for the ticket id
+      // landed by hand: the shas as on main follow the flag, comma-separated (a second word would be dropped);
+      // without them the board looks for the ticket id. Errors come back through asHuman, with their hint.
       const shas = typeof f['mark-landed'] === 'string' ? f['mark-landed'].split(',') : [];
-      return asHuman('POST', `/api/boards/${board}/items/${id}/land`, { landed: shas }).then((r) => console.log(r.landed?.length ? `Marked landed by hand: ${r.landed.join(', ')}.` : `Not marked: ${r.error || JSON.stringify(r)}`));
+      if (f._.length) { console.error(`Unexpected ${f._.join(' ')}: give several shas as --mark-landed sha,sha`); process.exit(1); }
+      return asHuman('POST', `/api/boards/${board}/items/${id}/land`, { landed: shas }).then((r) => console.log(`Marked landed by hand: ${r.landed.join(', ')}.`));
     }
     return asHuman('POST', `/api/boards/${board}/items/${id}/land`, f.agent ? { agent: String(f.agent) } : {}).then((r) => console.log(r.landed?.length ? `Landed ${r.landed.join(', ')} on main.` : `Not landed: ${r.reason || r.error || JSON.stringify(r)}`));
   },

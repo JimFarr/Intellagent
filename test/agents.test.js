@@ -1084,6 +1084,8 @@ describe('a lander (work.land) gets approved work onto main', () => {
     const s = await startServer({ dir, manifest: { staleSweepSeconds: 0.4 }, agents: { defaults: fast, agents: {
       bob: { run: run('commit'), worktree: true },
       cy: { run: run('commit'), worktree: true },
+      dee: { run: run('commit'), worktree: true },
+      eli: { run: run('commit'), worktree: true },
       yondu: { run: run('ok'), worktree: true, grants: ['work.land'] },
     } } });
     const failedTicket = async (title, who) => {
@@ -1125,6 +1127,31 @@ describe('a lander (work.land) gets approved work onto main', () => {
       const r = await s.ok('POST', `${B}/items/${b.id}/land`, { landed: [sha] }, { agent: 'yondu' });
       assert.equal(r.via, 'hand');
       assert.equal((await s.ok('GET', `${B}/items/${b.id}`)).landing.by, 'hand');
+
+      // intellagent merge <ID> --mark-landed, as the human: with a sha, with none, on an unapproved ticket
+      const { spawnSync } = require('child_process');
+      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('INTELLAGENT_')));
+      const merge = (...args) => spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'intellagent.js'), 'merge', ...args], { cwd: dir, env, encoding: 'utf8', input: '', timeout: 60000 });
+      const c = await failedTicket('marked by the CLI with a sha', 'dee');
+      fs.writeFileSync(path.join(dir, 'by-hand-c.txt'), 'resolved\n');
+      git('add', '.');
+      git('commit', '-q', '-m', 'no ticket id here either');
+      const withSha = merge(c.id, '--mark-landed', git('rev-parse', 'HEAD'));
+      assert.equal(withSha.status, 0, withSha.stderr);
+      assert.match(withSha.stdout, /Marked landed by hand: [0-9a-f]{7}/);
+      assert.equal((await s.ok('GET', `${B}/items/${c.id}`)).landing.by, 'hand');
+      const d = await failedTicket('marked by the CLI with none', 'eli');
+      fs.writeFileSync(path.join(dir, 'by-hand-d.txt'), 'resolved\n');
+      git('add', '.');
+      git('commit', '-q', '-m', `Landed by hand (${d.id})`);
+      const none = merge(d.id, '--mark-landed');
+      assert.equal(none.status, 0, none.stderr);
+      assert.match(none.stdout, /Marked landed by hand/);
+      assert.equal((await s.ok('GET', `${B}/items/${d.id}`)).landing.by, 'hand');
+      const refused = merge(u.id, '--mark-landed');
+      assert.equal(refused.status, 1);
+      assert.match(refused.stderr, /isn't approved.*hint: Landing follows an approval/, 'the error carries its hint');
+      assert.equal(merge(c.id, '--mark-landed', 'a', 'b').status, 1, 'a second sha without a comma is refused, not dropped');
     } finally {
       await s.stop();
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
