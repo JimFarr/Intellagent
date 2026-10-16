@@ -207,7 +207,7 @@ describe('presets: preset add, diff and update on a board that exists', () => {
     assert.match(skill, /init --preset <name\|folder>/);
     assert.match(skill, /without `--yes` once/);
     const guide = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8');
-    assert.match(guide, /init --preset <name\|folder>/);
+    assert.match(guide, /`--preset <name\|folder>` instead/);
     assert.match(guide, /speed bump, not a wall: the CLI trusts `INTELLAGENT_AGENT`/);
   });
   it('init --preset and init then preset add give the same built-in fields; diff of an installed preset says it is up to date', async () => {
