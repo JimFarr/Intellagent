@@ -707,6 +707,8 @@ const HELP = `intellagent — a kanban for you and your agents
   status           where it is and whether it's running
   docs             print the agent guide
   api M PATH [b]   call the API as an agent      (INTELLAGENT_AGENT=name; body: key=value… | json | @file | -)
+                   key=@path reads that one value from a file (a long comment: body=@C:/tmp/c.md); key=@@text sends the text "@text"
+                   files only from the project, its worktrees and the temp folder; never local.json or the board's data
   do OP [k=v …]    run an operation by name (the MCP tools, all of them): intellagent do move_item id=INT-12 column=Review
   help CMD|OP      a command's usage (help init), or an operation's exact request and parameters (help lease, help search …)
                    api/do: JSON on stdout; errors: "error <status> <CODE>: … — hint: …" on stderr, exit 1 (2 unreachable/bad input, 3 no board)

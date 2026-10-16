@@ -1378,6 +1378,15 @@ function updateItem(ctx, id, p, actor) {
   return tx(ctx, (events) => { const item = getItem(ctx, id); applyPatch(ctx, item, p, actor, events); return item; });
 }
 
+// A body that is only a file path (C:/x/c.md, /tmp/c.md, ./c.md, @c.md): someone meant the file's text. The board
+// never reads files named in a comment, so the path is what got saved; say so in the reply (not stored).
+const PATH_ONLY = /^@?(?:[A-Za-z]:[\\/]|\/|\.{1,2}[\\/]|~[\\/])[^\s"'<>|*?]*\.[A-Za-z0-9]{1,8}$/;
+function pathOnlyWarning(text) {
+  const t = String(text || '').trim();
+  if (!PATH_ONLY.test(t)) return null;
+  return `The whole text you sent is a file path (${t.slice(0, 120)}). The board does not read files named in a comment, so the path itself was saved. To send the file's text, post again with body=@${t.replace(/^@/, '')} through the CLI (intellagent api … body=@path), or attach the file with "attachments".`;
+}
+
 function addComment(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
@@ -1395,7 +1404,11 @@ function addComment(ctx, id, d, actor) {
     // An agent that names another agent without @ has alerted nobody: say so in the reply (not stored), so it
     // can comment again with the @mention if it meant to.
     const bare = actor.kind === 'agent' ? bareAgentNames(c.body, mentions, actor.name) : [];
-    return bare.length ? { ...c, warning: `You named ${bare.join(', ')} without @, so ${bare.length > 1 ? 'they were' : 'it was'} not alerted. If ${bare.length > 1 ? 'they' : 'it'} should act or read this now, comment again with ${bare.map((n) => `@${n}`).join(' ')}.` } : c;
+    const warnings = [
+      ...(bare.length ? [`You named ${bare.join(', ')} without @, so ${bare.length > 1 ? 'they were' : 'it was'} not alerted. If ${bare.length > 1 ? 'they' : 'it'} should act or read this now, comment again with ${bare.map((n) => `@${n}`).join(' ')}.`] : []),
+      ...[pathOnlyWarning(c.body)].filter(Boolean),
+    ];
+    return warnings.length ? { ...c, warning: warnings.join(' ') } : c;
   });
 }
 
@@ -3705,7 +3718,7 @@ route('GET', '/api/boards/:board/items/:id/history', 'Recent events for this ite
   return recent.filter((e) => e.board === p.board && e.itemId === key).slice(-200);
 });
 
-route('POST', '/api/boards/:board/items/:id/comments', 'Add comment: { body } (markdown, @mentions notify)', ({ p, body, actor }) =>
+route('POST', '/api/boards/:board/items/:id/comments', 'Add comment: { body } (markdown, @mentions notify); the reply has a "warning" when an agent was named without @ or the whole body is a file path (the board does not read it)', ({ p, body, actor }) =>
   created(addComment(getCtx(p.board), p.id, body, actor)));
 
 route('POST', '/api/boards/:board/items/:id/attachments', 'Attach: { name?, mime?, dataBase64 | path (absolute) | url }', ({ p, body, actor }) => {
@@ -3866,8 +3879,11 @@ route('POST', '/api/boards/:board/items/:id/reviewers', 'Assign a reviewer (the 
   itemView(getCtx(p.board), addReviewer(getCtx(p.board), p.id, body, actor)));
 route('DELETE', '/api/boards/:board/items/:id/reviewers/:name', 'Remove a reviewer (the human or the receptionist)', ({ p, actor }) =>
   itemView(getCtx(p.board), removeReviewer(getCtx(p.board), p.id, p.name, actor)));
-route('POST', '/api/boards/:board/items/:id/reviewers/:name/verdict', 'A reviewer\'s verdict: { verdict: "ok" | "concerns", comment } — posts it on the card (concerns @mention the author); the human still approves', ({ p, body, actor }) =>
-  itemView(getCtx(p.board), reviewerVerdict(getCtx(p.board), p.id, p.name, body, actor)));
+route('POST', '/api/boards/:board/items/:id/reviewers/:name/verdict', 'A reviewer\'s verdict: { verdict: "ok" | "concerns", comment } — posts it on the card (concerns @mention the author; a comment that is only a file path comes back with a "warning"); the human still approves', ({ p, body, actor }) => {
+  const view = itemView(getCtx(p.board), reviewerVerdict(getCtx(p.board), p.id, p.name, body, actor));
+  const warning = pathOnlyWarning(body.comment);
+  return warning ? { ...view, warning } : view;
+});
 route('POST', '/api/boards/:board/items/:id/reactions', 'React with an emoji: { emoji ("👀" or "eyes", "+1", "tada"…), commentId? (else the card), toggle? }', ({ p, body, actor }) =>
   ({ reactions: react(getCtx(p.board), p.id, body, actor, body.toggle ? 'toggle' : true) }));
 route('DELETE', '/api/boards/:board/items/:id/reactions', 'Remove your reaction: { emoji, commentId? }', ({ p, body, q, actor }) =>
