@@ -30,6 +30,9 @@ const BURST = Number(opt('burst', 40));
 // runs and their queues only grow: the scheduler's worst case. --human-burst <n> human edits are timed with
 // a reader polling GET …/summary alongside, for what the UI's requests wait meanwhile.
 const AGENTS = Number(opt('agents', 0));
+// INT-143: --events-from <events.jsonl> seeds the board's event log with the newest 5,000 events of a real
+// one (only read), so the server's recent-events buffer is full, then times long-poll waiters on a write.
+const EVENTS_FROM = opt('events-from', null);
 const HUMAN_BURST = Number(opt('human-burst', 100));
 const TEAM = ['gamora', 'rocket', 'nebula', 'quill', 'cosmo', 'mantis', 'drax', 'yondu', 'groot', 'kraglin'];
 const LISTEN = [['addressed', 'new-tickets'], 'inbox', 'inbox', 'human', 'addressed', 'inbox', 'human'];
@@ -176,6 +179,11 @@ async function main() {
   fs.writeFileSync(path.join(bdir, 'archive.json'), JSON.stringify({ items: {} }));
   out.disk = { boardJsonKB: kb(Buffer.byteLength(text)), comments: Object.values(board.items).reduce((n, i) => n + (i.comments || []).length, 0) };
   out.tx = txParts(board, dir);
+  if (EVENTS_FROM) {
+    const lines = fs.readFileSync(EVENTS_FROM, 'utf8').split('\n').filter(Boolean).slice(-5000);
+    fs.writeFileSync(path.join(dir, 'data', 'events.jsonl'), `${lines.join('\n')}\n`);
+    out.events = { seeded: lines.length };
+  }
 
   let t0 = process.hrtime.bigint();
   const s = await startServer({ dir, manifest: { idPrefix: board.idPrefix }, agents: agentsJson(AGENTS) });
@@ -214,6 +222,34 @@ async function main() {
       for (let pass = 0; pass < 2; pass++) for (const name of Object.keys(agentsJson(AGENTS).agents)) perAgentMs[name] =+Math.max(0, (await perCall(`${B}/work?agent=${name}`)) - f).toFixed(2);
       const all = Object.values(perAgentMs);
       out.work = { floorMs: +f.toFixed(2), perAgentMs, medianMs: +median(all).toFixed(2), maxMs: Math.max(...all), sweepAllMs: +all.reduce((a, b) => a + b, 0).toFixed(1) };
+    }
+
+    // INT-143: long-poll waiters. A catch-up read (since=0) filters the whole buffer; a parked waiter that an
+    // event matches filters it again before it replies. Timed as one write's latency with W waiters parked
+    // on a filter the write matches, against none.
+    if (EVENTS_FROM) {
+      const K = 50;
+      const perCall = async (p) => { const t = process.hrtime.bigint(); await Promise.all(Array.from({ length: K }, () => get(p))); return ms(t) / K; };
+      await perCall('/api/boards');
+      const f = median([await perCall('/api/boards'), await perCall('/api/boards'), await perCall('/api/boards')]);
+      // the scan alone: a filter nothing matches, so nothing is sent back; then a real inbox, up to 1,000 sent
+      const scan = (await perCall(`/api/events?since=0&for=nobody-at-all`)) - f;
+      const inbox = (await perCall(`/api/events?since=0&for=rocket&limit=1000`)) - f;
+      const withWaiters = {};
+      for (const W of [0, 10, 50, 200]) {
+        const t = [];
+        for (let i = 0; i < 9; i++) {
+          const { seq: now } = await s.ok('GET', '/api/app');
+          const polls = Array.from({ length: W }, () => fetch(`${s.base}/api/events/wait?since=${now}&board=${board.id}&types=item.updated&timeout=30`, { headers: { 'x-agent': 'measure' } }).then((r) => r.arrayBuffer()));
+          await sleep(W ? 300 : 0); // let them park
+          const t0 = process.hrtime.bigint();
+          await s.ok('PATCH', `${B}/items/${pick(4000 + W + i)}`, { properties: { wait: i } }, { agent: 'measure' });
+          t.push(ms(t0));
+          await Promise.all(polls);
+        }
+        withWaiters[W] = +median(t).toFixed(1);
+      }
+      out.events = { ...out.events, scanMs: +Math.max(0, scan).toFixed(2), inboxCatchUpMs: +Math.max(0, inbox).toFixed(2), writeMsWithWaiters: withWaiters };
     }
 
     // human edits wake standing agents (INT-154): the writes' own latency, and a reader's alongside them
