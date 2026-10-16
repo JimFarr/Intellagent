@@ -75,6 +75,22 @@ describe('permission library', () => {
     assert.ok(lib.has('fine'));
     assert.ok(!lib.holdable('review.decide'), 'powers are held through grants only');
   });
+
+  it('treats inherited names (constructor, toString) as unknown, never as a permission', () => {
+    const lib = createLibrary({
+      viaInclude: { kind: 'bundle', name: 'x', includes: ['constructor'] },
+      viaNeed: { kind: 'verbal', name: 'x', brief: 'x', needs: ['toString'] },
+      fine: { kind: 'command', name: 'Fine', commands: ['npm run fine'] },
+    });
+    assert.ok(!lib.has('viaInclude') && !lib.has('viaNeed'), 'reported and skipped');
+    assert.ok(lib.errors.some((e) => /constructor/.test(e)) && lib.errors.some((e) => /toString/.test(e)));
+    for (const k of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+      assert.ok(!lib.has(k) && !lib.holdable(k) && !lib.isPower(k), k);
+      assert.equal(lib.get(k), null, k);
+    }
+    assert.deepEqual(lib.resolve(['constructor', 'fine']).unknown, ['constructor']);
+    assert.doesNotThrow(() => runFor(['edit', 'constructor'], { library: lib }), 'the run is still built');
+  });
 });
 
 describe('permission library over the API', () => {
@@ -135,5 +151,14 @@ describe('permission library over the API', () => {
     await s.ok('DELETE', '/api/permissions/deploy', undefined, USER);
     assert.ok(!(await s.ok('GET', '/api/permissions')).permissions.some((p) => p.key === 'deploy'));
     assert.equal((await s.api('DELETE', '/api/permissions/edit', undefined, USER)).body.code, 'CONFLICT');
+  });
+
+  it('inherited names are refused as perms, includes and needs', async () => {
+    assert.equal((await s.api('PATCH', '/api/agents/w', { perms: ['edit', 'constructor'] }, USER)).status, 400);
+    assert.equal((await s.api('POST', '/api/permissions', { key: 'b2', kind: 'bundle', name: 'b', includes: ['constructor'] }, USER)).status, 400);
+    assert.equal((await s.api('POST', '/api/permissions', { key: 'n2', kind: 'verbal', name: 'n', brief: 'x', needs: ['toString'] }, USER)).status, 400);
+    assert.equal((await s.api('PATCH', '/api/permissions/toString', { name: 'x' }, USER)).body.code, 'NOT_FOUND');
+    assert.equal((await s.api('DELETE', '/api/permissions/constructor', undefined, USER)).body.code, 'NOT_FOUND');
+    assert.ok((await s.ok('GET', '/api/agents/w')).run, 'agents still build');
   });
 });
