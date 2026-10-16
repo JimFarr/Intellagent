@@ -514,3 +514,94 @@ describe('the UI stream never carries the token in its URL (INT-209)', () => {
     assert.equal((await stream('/api/stream?ui=1')).status, 401, 'no ticket, no token: no stream');
   });
 });
+
+describe('the board page patches what a write changed instead of downloading the board (INT-218)', () => {
+  let t;
+  before(async () => { t = await startServer(); });
+  after(async () => { await t.stop(); });
+
+  // A copy of the page's sync logic (public/app.js applySync): patch when the write starts from the board we
+  // have, otherwise fetch the whole board. `fetches` counts the full downloads.
+  async function mirror() {
+    const m = { fetches: 0, events: [], async load() { m.fetches++; const d = await t.ok('GET', B); m.board = d.board; m.hash = d.hash; } };
+    await m.load();
+    const ac = new AbortController();
+    const r = await fetch(`${t.base}/api/stream?ui=1`, { signal: ac.signal });
+    const reader = r.body.getReader();
+    let buf = '';
+    const pump = (async () => {
+      for (;;) {
+        let chunk;
+        try { chunk = await reader.read(); } catch { return; }
+        if (chunk.done) return;
+        buf += new TextDecoder().decode(chunk.value);
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const block = buf.slice(0, i); buf = buf.slice(i + 2);
+          const line = block.split('\n').find((l) => l.startsWith('data: '));
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(6));
+          m.events.push(ev);
+          if (ev.board !== 'main' || !ev.hash || ev.hash === m.hash) continue;
+          const s = ev.sync;
+          if (s && !s.full && s.items && s.from === m.hash) {
+            for (const [id, it] of Object.entries(s.items)) { if (it) m.board.items[id] = it; else delete m.board.items[id]; }
+            for (const c of m.board.columns) if (s.columns?.[c.id]) c.itemIds = s.columns[c.id];
+            if (s.nextNumber != null) m.board.nextNumber = s.nextNumber;
+            m.hash = ev.hash;
+          } else await m.load();
+        }
+      }
+    })();
+    m.close = () => { ac.abort(); return pump; };
+    // until the copy has caught up with the server, then check it is the server's board
+    m.settled = async () => {
+      const { hash } = await t.ok('GET', `${B}/hash`);
+      for (let i = 0; m.hash !== hash; i++) { if (i > 100) throw new Error('page never caught up'); await new Promise((res) => setTimeout(res, 20)); }
+      const d = await t.ok('GET', B);
+      assert.deepEqual({ ...m.board, updatedAt: null }, { ...d.board, updatedAt: null }, 'the patched board is the server board');
+    };
+    await new Promise((res) => setTimeout(res, 50));
+    return m;
+  }
+
+  test('ticket writes patch; board-level writes, archives and a missed write fetch the board', async () => {
+    const m = await mirror();
+    const n0 = m.fetches;
+    const a = await t.ok('POST', `${B}/items`, { title: 'a', column: 'Backlog' });
+    const b = await t.ok('POST', `${B}/items`, { title: 'b', column: 'Backlog' });
+    await t.ok('PATCH', `${B}/items/${a.id}`, { priority: 'High' });
+    await t.ok('POST', `${B}/items/${a.id}/comments`, { body: 'hi' });
+    await t.ok('POST', `${B}/items/${b.id}/move`, { column: 'Ready' });
+    await t.ok('POST', `${B}/items/${a.id}/start`, { status: 'on it' }); // one write, several events
+    await t.ok('POST', `${B}/items/bulk`, { ids: [a.id, b.id], patch: { priority: 'Low' } });
+    await m.settled();
+    assert.equal(m.fetches, n0, 'no full download for ticket writes');
+
+    await t.ok('PATCH', `${B}/columns/Ready`, { color: '#123456' }, USER);
+    await m.settled();
+    assert.equal(m.fetches, n0 + 1, 'a column change fetches the board');
+    await t.ok('POST', `${B}/archive`, { ids: [b.id] });
+    await m.settled();
+    assert.equal(m.fetches, n0 + 2, 'an archive fetches the board');
+
+    // a write the page never heard about: the next event no longer starts from its board
+    m.hash = 'stale';
+    await t.ok('PATCH', `${B}/items/${a.id}`, { title: 'a2' });
+    await m.settled();
+    assert.equal(m.fetches, n0 + 3, 'a missed write fetches the board');
+    await m.close();
+  });
+
+  test('the ticket bodies go to the page only: not into the log, nor to an agent', async () => {
+    const m = await mirror();
+    const since = (await t.ok('GET', '/api/app')).seq;
+    const it = await t.ok('POST', `${B}/items`, { title: 'quiet', column: 'Backlog' });
+    await m.settled();
+    const logged = (await t.ok('GET', `/api/events?since=${since}&board=main`)).events;
+    assert.ok(logged.length && logged.every((e) => !('sync' in e)), 'events.jsonl and agents never see sync');
+    const live = m.events.find((e) => e.itemId === it.id && e.sync);
+    assert.equal(live.sync.items[it.id].title, 'quiet', 'the page gets the ticket itself');
+    await m.close();
+  });
+});

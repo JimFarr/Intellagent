@@ -913,6 +913,33 @@
     if (!catchupDone.has(state.boardId)) { catchupDone.add(state.boardId); catchUp(state.boardId); }
   }
 
+  // A write's first event on the live stream says what it changed (sync). When it starts from the board this page
+  // has, patch those tickets in and take the new hash; anything else (a missed event, a board-level change, a
+  // refresh in flight) is a full fetch. A quiet /hash check after a burst catches a write that emitted nothing.
+  function applySync(ev) {
+    const s = ev.sync;
+    if (!s || s.full || !s.items || s.from !== state.hash || state.refreshing || !state.board) return false;
+    const b = state.board;
+    for (const id of Object.keys(s.columns || {})) if (!b.columns.some((c) => c.id === id)) return false;
+    for (const [id, it] of Object.entries(s.items)) { if (it) b.items[id] = it; else delete b.items[id]; }
+    for (const c of b.columns) if (s.columns?.[c.id]) c.itemIds = s.columns[c.id];
+    if (s.nextNumber != null) b.nextNumber = s.nextNumber;
+    state.hash = ev.hash;
+    state.seq = ev.seq;
+    renderHeader();
+    render();
+    state.modal?.refresh();
+    renderCatch();
+    clearTimeout(syncCheckTimer);
+    syncCheckTimer = setTimeout(checkHash, 3000);
+    return true;
+  }
+  let syncCheckTimer = null;
+  async function checkHash() {
+    if (!state.boardId) return;
+    try { const h = await api('GET', B('/hash')); if (h.hash !== state.hash) scheduleRefresh(0); } catch { /* server down */ }
+  }
+
   let refreshTimer = null;
   function scheduleRefresh(delay = 50) {
     clearTimeout(refreshTimer);
@@ -3858,7 +3885,7 @@
     if (ev.type === 'app.renamed') { state.app.name = ev.to; renderHeader(); }
     if (ev.type === 'profile.updated') refreshProfiles();
     if (ev.type === 'board.created' || ev.type === 'board.updated' || ev.type?.startsWith('item.')) refreshBoards();
-    if (ev.board === state.boardId && ev.hash && ev.hash !== state.hash) scheduleRefresh();
+    if (ev.board === state.boardId && ev.hash && ev.hash !== state.hash && !applySync(ev)) scheduleRefresh();
     const m = state.modal;
     if (m?.kind === 'item' && ev.itemId === m.id && m.tab === 'activity') setTimeout(() => state.modal === m && loadActivity(m), 120);
     announce(ev);
@@ -3910,7 +3937,7 @@
 
   async function fallbackPoll() {
     if (state.live || !state.boardId) return;
-    try { const h = await api('GET', B('/hash')); if (h.hash !== state.hash) scheduleRefresh(0); } catch { /* server down */ }
+    await checkHash();
   }
 
   /* ═════════════════════════ drawers + toasts ═════════════════════════ */

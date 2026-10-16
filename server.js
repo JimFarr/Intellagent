@@ -454,7 +454,64 @@ function maybeBackup(ctx) {
 
 // The board as compact JSON without its top-level updatedAt, so tx() can tell a real change from none
 // and persist() can reuse the same string instead of serialising the board again.
-const boardBody = (board) => JSON.stringify({ ...board, updatedAt: undefined });
+const boardBody = (board) => boardParts(board).body;
+// The same JSON, byte for byte, built one top-level key and one ticket at a time, so tx() also learns which
+// tickets and keys a write changed (syncOf) for the same cost.
+function boardParts(board) {
+  const keys = new Map();
+  const items = new Map();
+  const out = [];
+  for (const k of Object.keys(board)) {
+    if (k === 'updatedAt') continue;
+    const v = board[k];
+    let s;
+    if (k === 'items' && isObj(v)) {
+      const xs = [];
+      for (const id of Object.keys(v)) {
+        const j = JSON.stringify(v[id]);
+        if (j === undefined) continue;
+        items.set(id, j);
+        xs.push(`${JSON.stringify(id)}:${j}`);
+      }
+      s = `{${xs.join(',')}}`;
+    } else s = JSON.stringify(v);
+    if (s === undefined) continue;
+    keys.set(k, s);
+    out.push(`${JSON.stringify(k)}:${s}`);
+  }
+  return { body: `{${out.join(',')}}`, keys, items };
+}
+
+// What a write changed, for the board page to patch instead of downloading the whole board (INT-218):
+// { from: hash before, items: [changed or removed ids], columns: { id: itemIds } for reordered columns } (the page
+// gets items as { id: ticket }, see withSync).
+// Anything else (a column's name or flags, the schema, templates, directives, focus, master, requests, digest)
+// or a write touching more than SYNC_MAX tickets gives { from, full: true }: the page fetches the whole board.
+const SYNC_MAX = 50;
+const SYNC_KEYS = new Set(['items', 'columns', 'nextNumber']);
+function syncOf(from, b, a, board) {
+  const full = { from, full: true };
+  for (const [k, s] of a.keys) if (b.keys.get(k) !== s && !SYNC_KEYS.has(k)) return full;
+  for (const k of b.keys.keys()) if (!a.keys.has(k)) return full;
+  const items = [];
+  for (const [id, s] of a.items) if (b.items.get(id) !== s) items.push(id);
+  for (const id of b.items.keys()) if (!a.items.has(id)) items.push(id);
+  if (items.length > SYNC_MAX) return full;
+  const sync = { from, items };
+  if (b.keys.get('columns') !== a.keys.get('columns')) {
+    const was = JSON.parse(b.keys.get('columns') || '[]');
+    if (!Array.isArray(was) || was.length !== board.columns.length) return full;
+    const columns = {};
+    for (const [i, c] of board.columns.entries()) {
+      const w = was[i];
+      if (w?.id !== c.id || JSON.stringify({ ...w, itemIds: undefined }) !== JSON.stringify({ ...c, itemIds: undefined })) return full;
+      if (JSON.stringify(w.itemIds) !== JSON.stringify(c.itemIds)) columns[c.id] = [...c.itemIds];
+    }
+    sync.columns = columns;
+  }
+  if (b.keys.get('nextNumber') !== a.keys.get('nextNumber')) sync.nextNumber = board.nextNumber;
+  return sync;
+}
 
 // Compact JSON on disk: a big board is serialised once per write, not pretty-printed on top.
 function persist(ctx, body = boardBody(ctx.board)) {
@@ -559,7 +616,8 @@ function createBoard(d, actor) {
 // The board is serialised twice per write (snapshot, then compare-and-save). The archive only grows, so only
 // transactions that say they touch it ({ archive: true }) snapshot and save it.
 function tx(ctx, fn, { archive = false } = {}) {
-  const before = boardBody(ctx.board);
+  const parts = boardParts(ctx.board);
+  const before = parts.body;
   const updatedAt = ctx.board.updatedAt;
   const beforeArchive = archive ? JSON.stringify(ctx.archive) : null;
   const events = [];
@@ -574,10 +632,16 @@ function tx(ctx, fn, { archive = false } = {}) {
     if (archive) ctx.archive = JSON.parse(beforeArchive);
     throw e;
   } finally { ctx.afterCommit = outer; }
-  const after = boardBody(ctx.board);
+  const afterParts = boardParts(ctx.board);
+  const after = afterParts.body;
+  const from = ctx.hash;
   if (after !== before) persist(ctx, after);
-  if (archive && JSON.stringify(ctx.archive) !== beforeArchive) persistArchive(ctx);
-  events.forEach(emit);
+  const archived = archive && JSON.stringify(ctx.archive) !== beforeArchive;
+  if (archived) persistArchive(ctx);
+  // The first event of a write tells the board page what it changed; the others carry the same hash, so the
+  // page skips them.
+  const sync = after !== before && events[0]?.board === ctx.id ? (archived ? { from, full: true } : syncOf(from, parts, afterParts, ctx.board)) : null;
+  events.forEach((e, i) => emit(e, i === 0 ? sync : null));
   for (const h of hooks) h();
   return result;
 }
@@ -2901,19 +2965,32 @@ let worktrees = null; // per-agent git worktrees (lib/worktrees.js)
 const agentBranch = (name) => { try { return (name && standing?.get(name).worktree) || null; } catch { return null; } };
 const waiters = new Set();
 
-function emit(ev) {
+// sync (from tx()) goes to the board page's live stream only: never into the log or an agent's events.
+function emit(ev, sync = null) {
   const e = { seq: ++seq, ts: now(), ...ev };
   if (e.board && boards.has(e.board)) e.hash = boards.get(e.board).hash;
   fs.appendFileSync(EVENTS_FILE, `${JSON.stringify(e)}\n`);
   recent.push(e);
   if (recent.length > RECENT_MAX) recent.splice(0, recent.length - RECENT_MAX);
-  for (const c of sseClients) if (matchesFilter(e, c.filter)) sseSend(c.res, e);
+  let forUi = null;
+  for (const c of sseClients) {
+    if (!matchesFilter(e, c.filter)) continue;
+    sseSend(c.res, c.ui && sync ? (forUi ||= withSync(e, sync)) : e);
+  }
   for (const w of [...waiters]) if (matchesFilter(e, w.filter)) w.check();
   standing?.onEvent(e);
   return e;
 }
 
 function sseSend(res, e) { res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`); }
+// The board page's copy of a write's first event, with the changed tickets as they are now: exactly the write's
+// result, since tx() emits right after saving (null = the ticket left the board). An event replayed later has
+// no sync, so the page fetches the board instead.
+function withSync(e, sync) {
+  if (sync.full) return { ...e, sync };
+  const items = boards.get(e.board)?.board.items || {};
+  return { ...e, sync: { ...sync, items: Object.fromEntries(sync.items.map((id) => [id, items[id] ?? null])) } };
+}
 
 // A cursor from before a data reset can be ahead of the log; treat it as "now" instead of waiting forever.
 const clampSince = (n) => (Number.isFinite(n) && n <= seq ? n : seq);
@@ -2944,13 +3021,13 @@ function longPoll(res, { filter, since, timeout, limit = 100, agent, onDeliver, 
   return HANDLED;
 }
 
-function openStream(req, res, filter, agent) {
+function openStream(req, res, filter, agent, ui = false) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
   res.write('retry: 2000\n\n');
   const lastId = Number(req.headers['last-event-id']) || 0;
   if (lastId) for (const e of recent) if (e.seq > lastId && matchesFilter(e, filter)) sseSend(res, e);
   res.write(`data: ${JSON.stringify({ type: 'hello', seq, app: app.name, version: VERSION, build: BUILD })}\n\n`);
-  const c = { res, filter, agent };
+  const c = { res, filter, agent, ui };
   sseClients.add(c);
   if (agent) presenceDelta(agent, 'sse', +1);
   req.on('close', () => { sseClients.delete(c); if (agent) presenceDelta(agent, 'sse', -1); });
@@ -4003,7 +4080,7 @@ route('GET', '/api/events/wait', 'Long-poll: blocks until a matching event or ti
   }));
 
 route('GET', '/api/stream', 'Server-Sent Events stream: ?<filter>&agent=<name>', ({ req, res, q, actor }) =>
-  openStream(req, res, parseFilter(q), q.ui || q.ticket ? null : actor.kind === 'agent' ? actor.name : null));
+  openStream(req, res, parseFilter(q), q.ui || q.ticket ? null : actor.kind === 'agent' ? actor.name : null, !!(q.ui || q.ticket)));
 route('POST', '/api/stream-ticket', 'The UI: trade the human token for a one-use ticket to open /api/stream?ui=1&ticket=… (human only)', ({ actor }) => {
   if (actor.kind !== 'user') fail(403, 'Stream tickets are for the board UI', { code: 'HUMAN_ONLY', hint: 'Agents open /api/stream with their token in the Authorization header' });
   return issueStreamTicket();
