@@ -224,6 +224,24 @@ describe('agent tokens on new boards', () => {
       assert.ok(body.hint, 'a wrong token comes with a hint');
     } finally { await s.stop(); }
   });
+  it('an empty INTELLAGENT_TOKEN (a standing run with no token) is no token: the CLI and MCP fall back to local.json', async () => {
+    const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    const empty = { INTELLAGENT_TOKEN: '' };
+    try {
+      assert.equal(cli(['token', '--agent', 'vera'], { cwd: s.dir }).code, 0);
+      const ok = cli(['api', 'GET', '/api/profiles/me'], { cwd: s.dir, env: { ...empty, INTELLAGENT_AGENT: 'vera' } });
+      assert.equal(ok.code, 0, `CLI: ${ok.err}`);
+      const c = mcp({ ...empty, INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'vera' });
+      try {
+        const r = await c.call('tools/call', { name: 'get_my_work', arguments: {} });
+        assert.ok(!r.result?.isError, `MCP: ${r.result?.content?.[0]?.text || r.error?.message}`);
+      } finally { c.close(); }
+      // with nothing to fall back to, nothing is sent: "has no token", not a wrong (empty) one
+      const none = cli(['api', 'GET', '/api/profiles/me'], { cwd: s.dir, env: { ...empty, INTELLAGENT_AGENT: 'nobody' } });
+      assert.equal(none.code, 1);
+      assert.match(none.err, /error 401 UNAUTHORIZED: Agent "nobody" has no token on this board/);
+    } finally { await s.stop(); }
+  });
   it('a standing agent added to agents.json while the board runs gets its token without a restart', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     try {
