@@ -28,7 +28,7 @@ Errors are `{ "error": "…", "code": "LEASED", "hint": "…" }`. Branch on `cod
 
 | Group | Codes |
 |---|---|
-| Held or blocked | `LEASED` `NOT_LEASED` `BOARD_HELD` `LEASES_ACTIVE` `BLOCKED` `WIP_LIMIT` `LOCKED_COLUMN` |
+| Held or blocked | `LEASED` `NOT_LEASED` `BOARD_HELD` `LEASES_ACTIVE` `BLOCKED` `WIP_LIMIT` `LOCKED_COLUMN` `OUT_OF_FOCUS` |
 | Not yours to do | `HUMAN_ONLY` `OWN_WORK` `OUT_OF_SCOPE` `NOT_DELEGABLE` `FORBIDDEN` `UNAUTHORIZED` |
 | Wrong input | `BAD_REQUEST` `UNKNOWN_FIELD` `IMMUTABLE` `EXPLICIT` `BAD_EMOJI` `MODEL_NOT_ALLOWED` `WIDEN` `NO_AGENT` |
 | Wrong state | `VERSION_CONFLICT` `REVIEW_OPEN` `NOT_TEST` `NOT_FOUND` `ARCHIVED` `LOCKED` `CONFLICT` `TOO_LARGE` |
@@ -206,6 +206,24 @@ When a ticket's last open blocker reaches the final column (or is archived), its
 
 ### Working alone: the master lease
 `POST /api/boards/main/master {}` holds the whole board until you release it (pass `minutes` for a time limit, `status` for a live line in the header). While you hold it you need no per-ticket leases and other agents are read-only — they can still comment, ask the human and post to the digest. It fails while other agents hold ticket leases. **Release it (`DELETE …/master`) before spawning helper agents**; they then use normal ticket leases. The human can revoke it at any time.
+
+### Focus boards: the human is working on a handful of tickets
+A focus board is a saved view over a board: a name and a list of its tickets, never a copy. The human makes one from a bulk selection; it shows only those tickets, in the same columns under the same rules, and every change on it is a change to the real ticket. **One board is active** — the full board, or one focus board — and while a focus board is active, **you work only on its tickets**:
+- `…/work` and your brief say so (`focus: { name, items, note }`, and `focus: ["<name>"]` on each ticket that is on one) and suggest only its tickets; pickup skips the rest. Work you held outside it when it became active went back to the pickup column, still assigned to you, with a 🎯 comment.
+- What still reaches you outside it: an @mention, a request or an explain from the human, the lease housekeeping on what you hold, and landing approved work (`work.land`). Reviews and delegated approvals outside it wait (`409 OUT_OF_FOCUS`).
+- Tickets you file go where they always do (e.g. Backlog), not onto the focus board. The **coordinator** may add tickets to a focus board when the human asks (`PATCH …/focus/<id> { add: [ids] }`); only the human makes, renames, takes tickets out of, activates or retires one.
+- Retiring removes the view only: no ticket moves, and the full board is active again (your held work comes back in `…/work`).
+
+```
+GET    /api/boards/main/focus                  → { active, focusBoards: [{ id, name, itemIds, active, count, createdAt, createdBy }] }
+GET    /api/boards/main/focus/<id>             → one focus board with its tickets
+POST   /api/boards/main/focus                  { name, itemIds, activate? }      (human)
+PATCH  /api/boards/main/focus/<id>             { name?, add?, remove? }          (human; the coordinator may only add)
+PUT    /api/boards/main/focus/active           { id } | { id: null }             (human)
+DELETE /api/boards/main/focus/<id>             → what moved while it was open    (human)
+POST   /api/boards/main/items                  { …, focus: "<id>" }              (created on the board, added to that focus board)
+```
+Events: `focus.created`, `focus.updated`, `focus.activated` (to every standing agent's inbox; wakes nobody), `focus.retired`. A ticket archived or deleted leaves every focus board.
 
 ## 4. Talk to the human
 
@@ -416,6 +434,7 @@ Archive      GET …/archive                       POST …/archive  …/archive
 Columns      GET/POST …/columns                  PATCH/DELETE …/columns/:column    GET …/columns/:column/items
 Schema       GET/PUT …/schema                    POST …/schema/fields              PATCH/DELETE …/schema/fields/:key
              GET/POST …/ticket-templates         PATCH/DELETE …/ticket-templates/:key
+Focus        GET/POST …/focus                    GET/PATCH/DELETE …/focus/:id      PUT …/focus/active
 Rules        GET/PUT …/directives                PATCH /api/boards/:board          POST /api/boards      PATCH /api/app
 Search       GET/POST /api/search
 Events       GET /api/events  /api/events/wait  /api/stream
