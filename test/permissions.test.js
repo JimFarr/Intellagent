@@ -76,6 +76,22 @@ describe('permission library', () => {
     assert.ok(!lib.holdable('review.decide'), 'powers are held through grants only');
   });
 
+  it('refuses a folders permission that brings Edit or Write everywhere', () => {
+    const lib = createLibrary({
+      docs: { kind: 'folders', name: 'Docs only', folders: ['docs/**'], needs: ['edit'] },
+      writer: { kind: 'tool', name: 'Writer', tools: ['Write'] },
+      viaTool: { kind: 'folders', name: 'x', folders: ['src/**'], needs: ['writer'] },
+      wrap: { kind: 'bundle', name: 'x', includes: ['edit'] },
+      viaBundle: { kind: 'folders', name: 'x', folders: ['src/**'], needs: ['wrap'] },
+      readDocs: { kind: 'folders', name: 'Docs', folders: ['docs/**'], needs: ['read'] },
+      pack: { kind: 'bundle', name: 'Pack', includes: ['docs'] },
+    });
+    for (const k of ['docs', 'viaTool', 'viaBundle', 'pack']) assert.ok(!lib.has(k), `${k} is dropped`);
+    assert.ok(lib.errors.some((e) => /"docs": it needs edit, which allows Edit and Write everywhere/.test(e)));
+    const r = lib.resolve(['readDocs']);
+    assert.ok(r.tools.includes('Edit(docs/**)') && !r.tools.includes('Edit') && !r.tools.includes('Write'), 'needing read keeps the limit');
+  });
+
   it('treats inherited names (constructor, toString) as unknown, never as a permission', () => {
     const lib = createLibrary({
       viaInclude: { kind: 'bundle', name: 'x', includes: ['constructor'] },
@@ -160,5 +176,13 @@ describe('permission library over the API', () => {
     assert.equal((await s.api('PATCH', '/api/permissions/toString', { name: 'x' }, USER)).body.code, 'NOT_FOUND');
     assert.equal((await s.api('DELETE', '/api/permissions/constructor', undefined, USER)).body.code, 'NOT_FOUND');
     assert.ok((await s.ok('GET', '/api/agents/w')).run, 'agents still build');
+  });
+
+  it('a folders permission that needs edit is refused, naming why', async () => {
+    const r = await s.api('POST', '/api/permissions', { key: 'docs', kind: 'folders', name: 'Docs only', folders: ['docs/**'], needs: ['edit'] }, USER);
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /folder limit would mean nothing/);
+    await s.ok('POST', '/api/permissions', { key: 'docs', kind: 'folders', name: 'Docs only', folders: ['docs/**'], needs: ['read'] }, USER);
+    assert.equal((await s.api('PATCH', '/api/permissions/docs', { needs: ['edit'] }, USER)).status, 400, 'nor by a later edit');
   });
 });
