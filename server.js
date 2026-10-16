@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const zlib = require('zlib');
 
 const VERSION = '1.0.0';
 const BUILD = '2026.10.11-1';
@@ -431,16 +432,21 @@ function maybeBackup(ctx) {
   for (const f of files.slice(0, Math.max(0, files.length - M.backups))) fs.unlinkSync(path.join(ctx.backupDir, f));
 }
 
-function persist(ctx) {
+// The board as compact JSON without its top-level updatedAt, so tx() can tell a real change from none
+// and persist() can reuse the same string instead of serialising the board again.
+const boardBody = (board) => JSON.stringify({ ...board, updatedAt: undefined });
+
+// Compact JSON on disk: a big board is serialised once per write, not pretty-printed on top.
+function persist(ctx, body = boardBody(ctx.board)) {
   ctx.board.updatedAt = now();
-  const text = JSON.stringify(ctx.board, null, 2);
+  const text = `{"updatedAt":${JSON.stringify(ctx.board.updatedAt)}${body === '{}' ? '' : `,${body.slice(1, -1)}`}}`;
   maybeBackup(ctx);
   writeFileAtomic(ctx.file, text);
   ctx.hash = sha256(text);
   writeHash(ctx);
 }
 
-function persistArchive(ctx) { writeFileAtomic(ctx.archiveFile, JSON.stringify(ctx.archive, null, 2)); }
+function persistArchive(ctx) { writeFileAtomic(ctx.archiveFile, JSON.stringify(ctx.archive)); }
 
 // Someone edited board.json by hand: adopt it, re-hash, tell everyone.
 function watchBoard(ctx) {
@@ -529,20 +535,25 @@ function createBoard(d, actor) {
 /* ───────────────────────── transactions ───────────────────────── */
 
 // Every mutation runs inside tx(): it either fully applies (saved + hashed + events emitted) or fully rolls back.
-function tx(ctx, fn) {
-  const before = JSON.stringify(ctx.board);
-  const beforeArchive = JSON.stringify(ctx.archive);
+// The board is serialised twice per write (snapshot, then compare-and-save). The archive only grows, so only
+// transactions that say they touch it ({ archive: true }) snapshot and save it.
+function tx(ctx, fn, { archive = false } = {}) {
+  const before = boardBody(ctx.board);
+  const updatedAt = ctx.board.updatedAt;
+  const beforeArchive = archive ? JSON.stringify(ctx.archive) : null;
   const events = [];
   let result;
   try {
     result = fn(events);
   } catch (e) {
     ctx.board = JSON.parse(before);
-    ctx.archive = JSON.parse(beforeArchive);
+    ctx.board.updatedAt = updatedAt;
+    if (archive) ctx.archive = JSON.parse(beforeArchive);
     throw e;
   }
-  if (JSON.stringify(ctx.board) !== before) persist(ctx);
-  if (JSON.stringify(ctx.archive) !== beforeArchive) persistArchive(ctx);
+  const after = boardBody(ctx.board);
+  if (after !== before) persist(ctx, after);
+  if (archive && JSON.stringify(ctx.archive) !== beforeArchive) persistArchive(ctx);
   events.forEach(emit);
   return result;
 }
@@ -2396,7 +2407,7 @@ function archiveItems(ctx, ids, actor, reason = null) {
       done.push(id);
     }
     return done;
-  });
+  }, { archive: true });
 }
 
 // Test tickets are the one exception to "never deleted": anyone may remove them for good (leases still apply).
@@ -2431,7 +2442,7 @@ function deleteItems(ctx, ids, actor) {
       gone.push(id);
     }
     return gone;
-  });
+  }, { archive: true });
 }
 
 function restoreItem(ctx, id, d, actor) {
@@ -2451,7 +2462,7 @@ function restoreItem(ctx, id, d, actor) {
     delete ctx.archive.items[key];
     events.push(itemEvent(ctx, 'item.restored', item, actor, { archivedAt }));
     return item;
-  });
+  }, { archive: true });
 }
 
 /* ───── focus boards: a saved view over the board (a list of its ticket ids), never a copy ─────
@@ -3167,15 +3178,29 @@ const SCHEMA = {
 
 /* ───────────────────────── HTTP plumbing ───────────────────────── */
 
+// Replies of GZIP_MIN characters or more go out gzipped to clients that accept it (a big board's JSON
+// shrinks about tenfold). zlib runs off the main thread, so a 14 MB board doesn't stall other requests.
+const GZIP_MIN = 16 * 1024;
 function reply(res, status, body, headers = {}) {
   const isText = typeof body === 'string';
-  res.writeHead(status, {
+  const text = isText ? body : JSON.stringify(body);
+  const head = {
     'Content-Type': isText ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Intellagent-Version': `${VERSION}+${BUILD}`,
     ...headers,
+  };
+  if (text.length < GZIP_MIN || !/\bgzip\b/i.test(res.req?.headers['accept-encoding'] || '')) {
+    res.writeHead(status, head);
+    res.end(text);
+    return;
+  }
+  zlib.gzip(text, { level: 4 }, (err, buf) => {
+    if (res.headersSent || res.destroyed) return;
+    if (err) { res.writeHead(status, head); res.end(text); return; }
+    res.writeHead(status, { ...head, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
+    res.end(buf);
   });
-  res.end(isText ? body : JSON.stringify(body));
 }
 
 function readBody(req) {

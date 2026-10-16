@@ -228,6 +228,50 @@ describe('board API', () => {
     assert.ok(JSON.stringify(await s.ok('GET', `${B}/summary`)).includes('archivable'));
   });
 
+  test('a big board GET is gzipped for clients that ask; small replies and other clients get plain JSON (INT-11)', async () => {
+    await mk({ title: 'bulky', description: 'x'.repeat(20_000) });
+    const get = (p, enc) => new Promise((resolve, reject) => {
+      http.get(s.base + p, { headers: { 'x-agent': 'tester', ...(enc ? { 'accept-encoding': enc } : {}) } }, (r) => {
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => resolve({ enc: r.headers['content-encoding'], buf: Buffer.concat(chunks) }));
+      }).on('error', reject);
+    });
+    const gz = await get(B, 'gzip, deflate');
+    assert.equal(gz.enc, 'gzip');
+    const plain = await get(B);
+    assert.equal(plain.enc, undefined);
+    assert.equal(JSON.parse(require('zlib').gunzipSync(gz.buf)).id, JSON.parse(plain.buf).id);
+    assert.ok(gz.buf.length * 5 < plain.buf.length, `${gz.buf.length} gzipped vs ${plain.buf.length}`);
+    assert.equal((await get(`${B}/hash`, 'gzip')).enc, undefined);
+  });
+
+  test('board.json is compact, survives a restart, and a failed write changes nothing (INT-11)', async () => {
+    const t = await startServer();
+    try {
+      const file = path.join(t.dir, 'data', 'boards', 'main', 'board.json');
+      const it = await t.ok('POST', `${B}/items`, { title: 'keep me', column: 'Backlog' });
+      const gone = await t.ok('POST', `${B}/items`, { title: 'archive me', column: 'Backlog' });
+      await t.ok('POST', `${B}/archive`, { ids: [gone.id] });
+      const text = fs.readFileSync(file, 'utf8');
+      assert.ok(!text.includes('\n'), 'one line on disk');
+      assert.match(JSON.parse(text).updatedAt, /^\d{4}-/);
+      assert.equal(JSON.parse(text).items[it.id].title, 'keep me');
+      const h = (await t.ok('GET', `${B}/hash`)).hash;
+      const bad = await t.api('PATCH', `${B}/items/${it.id}`, { title: 'lost', version: 999 });
+      assert.equal(bad.status, 409);
+      assert.equal((await t.ok('GET', `${B}/hash`)).hash, h);
+      assert.equal(fs.readFileSync(file, 'utf8'), text);
+      await t.stop({ keep: true });
+      const t2 = await startServer({ dir: t.dir });
+      try {
+        assert.equal((await t2.ok('GET', `${B}/items/${it.id}`)).title, 'keep me');
+        assert.equal((await t2.ok('GET', `${B}/archive`)).map((x) => x.id).join(), gone.id);
+        await t2.ok('POST', `${B}/archive/${gone.id}/restore`);
+      } finally { await t2.stop(); }
+    } catch (e) { await t.stop().catch(() => {}); throw e; }
+  });
+
   test('search and board hash', async () => {
     const h1 = (await s.ok('GET', `${B}/hash`)).hash;
     await mk({ title: 'needle in haystack', properties: { risk: 'high' } });
