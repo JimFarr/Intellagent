@@ -546,7 +546,7 @@ async function nextEvents({ agent, types, timeoutSec, quiet, listen = { scope: '
   }
 }
 
-const { eventLine } = require('../lib/agents');
+const { eventLine, readAgentsFile, writeAgentsFile } = require('../lib/agents');
 const { promptFor } = require('../lib/agents/prompt');
 
 async function waitCmd() {
@@ -604,8 +604,12 @@ async function watchCmd() {
 /* ── standing agents: .intellagent/agents.json, run by the board server ── */
 
 const agentsFile = (mp) => path.join(path.dirname(mp), readManifest(mp)?.agentsFile || 'agents.json');
+// A missing file is a new one; a broken one stops the command (never written over: it is the human's to fix).
 function readAgents(file) {
-  return jsonfile.readOr(file, { defaults: {}, agents: {} });
+  try { return readAgentsFile(file, { defaults: {}, agents: {} }); } catch (e) {
+    console.error(`error ${e.status || 500} ${e.code || 'BAD_FILE'}: ${e.message}${e.extra?.hint ? ` — hint: ${e.extra.hint}` : ''}`);
+    process.exit(1);
+  }
 }
 
 // Who is running this, if it is an agent ('' for the human). The board sets INTELLAGENT_AGENT (and the run) for
@@ -682,7 +686,7 @@ async function agentsCmd() {
       ...(f.concerns ? { concerns: String(f.concerns).split(',').map((x) => x.trim()).filter(Boolean) } : {}),
       ...(f.description ? { description: String(f.description) } : {}),
     };
-    fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+    writeAgentsFile(file, doc);
     console.log(`Saved "${name}" to ${file}. The running board picks it up within a few seconds.`);
     // A missing command would only show up as failed runs: check it now.
     const exe = String(doc.agents[name].run || doc.defaults?.run || 'claude').trim().match(/^"([^"]+)"|^(\S+)/).slice(1).find(Boolean);
@@ -695,7 +699,7 @@ async function agentsCmd() {
     const doc = readAgents(file);
     if (!doc.agents?.[name]) { console.error(`No agent "${name}" in ${file}`); process.exit(1); }
     delete doc.agents[name];
-    fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+    writeAgentsFile(file, doc);
     console.log(`Removed "${name}".`);
     return;
   }

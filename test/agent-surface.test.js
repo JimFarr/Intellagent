@@ -286,6 +286,35 @@ describe('agent tokens on new boards', () => {
       assert.match(made.err, /HUMAN_ONLY/);
     } finally { await s.stop(); }
   });
+  it('intellagent agents add and remove write agents.json through one atomic writer: complete, no temp file left', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const add = cli(['agents', 'add', 'zed', '--role', 'builder'], { cwd: s.dir });
+      assert.equal(add.code, 0, add.err);
+      const file = path.join(s.dir, 'agents.json');
+      assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).agents.zed.role, 'builder');
+      assert.ok(fs.readFileSync(file, 'utf8').endsWith('\n'));
+      assert.deepEqual(fs.readdirSync(s.dir).filter((f) => f.endsWith('.tmp')), [], 'no temp file beside agents.json');
+      const rm = cli(['agents', 'remove', 'zed'], { cwd: s.dir });
+      assert.equal(rm.code, 0, rm.err);
+      assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).agents.zed, undefined);
+      assert.deepEqual(fs.readdirSync(s.dir).filter((f) => f.endsWith('.tmp')), []);
+    } finally { await s.stop(); }
+  });
+  it('intellagent agents add and remove stop on an agents.json that does not parse, with a hint, and leave it as it was', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const file = path.join(s.dir, 'agents.json');
+      fs.writeFileSync(file, '{"agents": {');
+      for (const args of [['agents', 'add', 'zed', '--role', 'builder'], ['agents', 'remove', 'zed']]) {
+        const r = cli(args, { cwd: s.dir });
+        assert.equal(r.code, 1, `${args[1]}: ${r.out}`);
+        assert.match(r.err, /error 409 CONFLICT: agents\.json does not parse/);
+        assert.match(r.err, /hint: .*the human fixes the file/);
+        assert.equal(fs.readFileSync(file, 'utf8'), '{"agents": {', `${args[1]} did not write over the broken file`);
+      }
+    } finally { await s.stop(); }
+  });
   it('a standing agent added to agents.json while the board runs gets its token without a restart', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     try {
