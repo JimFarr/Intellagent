@@ -563,6 +563,8 @@ function tx(ctx, fn, { archive = false } = {}) {
   const updatedAt = ctx.board.updatedAt;
   const beforeArchive = archive ? JSON.stringify(ctx.archive) : null;
   const events = [];
+  const outer = ctx.afterCommit;
+  const hooks = ctx.afterCommit = [];
   let result;
   try {
     result = fn(events);
@@ -571,13 +573,17 @@ function tx(ctx, fn, { archive = false } = {}) {
     ctx.board.updatedAt = updatedAt;
     if (archive) ctx.archive = JSON.parse(beforeArchive);
     throw e;
-  }
+  } finally { ctx.afterCommit = outer; }
   const after = boardBody(ctx.board);
   if (after !== before) persist(ctx, after);
   if (archive && JSON.stringify(ctx.archive) !== beforeArchive) persistArchive(ctx);
   events.forEach(emit);
+  for (const h of hooks) h();
   return result;
 }
+// Work that must wait until the transaction it was asked for in is saved (and never happen if it rolls back),
+// e.g. landing an approval's commits.
+const afterCommit = (ctx, fn) => (ctx.afterCommit ? ctx.afterCommit.push(fn) : fn());
 
 /* ───────────────────────── items ───────────────────────── */
 
@@ -1090,7 +1096,9 @@ function reviewerVerdict(ctx, id, name, d, actor) {
   });
 }
 
-function requestReview(ctx, id, d, actor) {
+// commits: the ticket's commits on the agent's branch, looked up by the caller before the transaction (git
+// never runs inside one); null = look them up here.
+function requestReview(ctx, id, d, actor, commits = null) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
     if (item.columnId === doneColumnId(ctx)) fail(409, `${item.id} is already done (approved) — it can't go back to review`, { code: 'ALREADY_DONE', hint: 'If something is left to do, file a new ticket or comment on this one' });
@@ -1109,7 +1117,7 @@ function requestReview(ctx, id, d, actor) {
     const wt = actor.kind === 'agent' && worktrees ? agentBranch(actor.name) : null;
     let landing = 0; // commits approval will land on main: the review card and Approve's label read it
     if (wt) {
-      const commits = worktrees.commitsFor(actor.name, item.id);
+      commits ??= worktrees.commitsFor(actor.name, item.id);
       landing = commits.length;
       summary = [summary, commits.length
         ? `**Commits** on \`${wt.branch}\` (they land on approval)\n${commits.map((c) => `- \`${c.sha.slice(0, 7)}\` ${c.subject}`).join('\n')}`
@@ -1827,13 +1835,36 @@ function recordVerdict(ctx, item, actor, events, verdict, comment = '', grant = 
   item.review = { verdict, comment: comment || null, by: actor.name, at: now(), requestedBy, ...(delegated ? { delegated } : {}) };
   const who = [requestedBy, ...(item.workedBy || [])].filter(Boolean);
   events.push(itemEvent(ctx, verdict === 'approve' ? 'review.approved' : 'review.changes_requested', item, actor, { verdict, feedback: comment || null, mentions: who, ...(delegated ? { delegated } : {}) }));
-  if (verdict === 'approve' && requestedBy && worktrees && agentBranch(requestedBy)) landWork(ctx, item, requestedBy, actor, events);
+  if (verdict === 'approve' && requestedBy && worktrees && agentBranch(requestedBy)) afterCommit(ctx, () => startLanding(ctx, item.id, requestedBy, actor));
 }
 
-// Put a ticket's commits from the agent's worktree branch on main, and say on the card what happened.
-function landWork(ctx, item, agent, actor, events) {
-  let r;
-  try { r = worktrees.land(agent, item.id); } catch (e) { r = { landed: [], reason: e.message, command: `intellagent merge ${item.id}` }; }
+// Put a ticket's commits from the agent's worktree branch on main, then say on the card what happened. Git runs
+// outside any transaction and never blocks the board; the outcome is recorded in a transaction of its own.
+// Routes that approve await landingOf() before they answer, so their reply still comes after the landing.
+const landings = new Map(); // "<board>:<id>" → promise of the landing's result
+function startLanding(ctx, id, agent, actor) {
+  const key = `${ctx.id}:${id}`;
+  const p = worktrees.land(agent, id)
+    .catch((e) => ({ landed: [], reason: e.message, command: `intellagent merge ${id}` }))
+    .then((r) => {
+      try {
+        tx(ctx, (events) => {
+          const item = ctx.board.items[id];
+          if (!item) return; // archived meanwhile: git is the record
+          recordLanding(ctx, item, agent, actor, events, r);
+          item.version++;
+          item.updatedAt = now();
+        });
+      } catch (e) { console.error(`[${ctx.id}] recording the landing of ${id}: ${e.message}`); }
+      return r;
+    })
+    .finally(() => { if (landings.get(key) === p) landings.delete(key); });
+  landings.set(key, p);
+  return p;
+}
+const landingOf = (ctx, id) => landings.get(`${ctx.id}:${String(id).toUpperCase()}`) || Promise.resolve(null);
+
+function recordLanding(ctx, item, agent, actor, events, r) {
   // A failed landing with commits waiting goes to the agents allowed to land (work.land), not the human.
   const waiting = !r.landed.length && !!r.commits?.length;
   const lands = waiting ? landers().filter((n) => n !== actor.name) : [];
@@ -3704,10 +3735,11 @@ route('POST', '/api/boards/:board/items', 'Create item: { title, template?, desc
 
 route('POST', '/api/boards/:board/items/bulk', 'Patch many items: { ids: [], patch: {...} } → per-item results', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  return arr(body.ids).map((id) => {
-    try { return { id, ok: true, item: itemView(ctx, updateItem(ctx, id, body.patch || {}, actor)) }; }
+  const out = arr(body.ids).map((id) => {
+    try { return { id, ok: true, item: updateItem(ctx, id, body.patch || {}, actor) }; }
     catch (e) { return { id, ok: false, status: e.status || 500, error: e.message }; }
   });
+  return Promise.all(out.map(async (x) => (x.ok ? { ...x, item: await afterLanding(ctx, x.item) } : x)));
 });
 
 route('GET', '/api/boards/:board/items/:id', 'Full item (also finds archived items)', ({ p }) => {
@@ -3719,12 +3751,12 @@ route('GET', '/api/boards/:board/items/:id', 'Full item (also finds archived ite
 });
 
 route('PATCH', '/api/boards/:board/items/:id', 'Change any field incl. column/position. properties merge (null deletes). Send version for safe writes.',
-  ({ p, body, actor }) => { const ctx = getCtx(p.board); return itemView(ctx, updateItem(ctx, p.id, body, actor)); });
+  ({ p, body, actor }) => { const ctx = getCtx(p.board); return afterLanding(ctx, updateItem(ctx, p.id, body, actor)); });
 
 route('POST', '/api/boards/:board/items/:id/move', 'Move/reorder: { column?, position? | beforeId? | afterId? }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const { column, columnId, position, beforeId, afterId, version } = body;
-  return itemView(ctx, updateItem(ctx, p.id, { column: column ?? columnId, position, beforeId, afterId, version }, actor));
+  return afterLanding(ctx, updateItem(ctx, p.id, { column: column ?? columnId, position, beforeId, afterId, version }, actor));
 });
 
 route('GET', '/api/boards/:board/items/:id/history', 'Recent events for this item', ({ p }) => {
@@ -3777,12 +3809,16 @@ route('DELETE', '/api/boards/:board/items/:id/lease', 'Release a lease', ({ p, a
   return itemView(ctx, releaseLease(ctx, p.id, actor));
 });
 
-route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call: moves to the review column, comments your summary, releases your lease, raises needs-you. { summary?, reason?, column? } → the item, plus "warnings" if the work skipped the board', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call: moves to the review column, comments your summary, releases your lease, raises needs-you. { summary?, reason?, column? } → the item, plus "warnings" if the work skipped the board', async ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const before = getItem(ctx, p.id);
-  const warnings = workWarnings(ctx, before);
+  // git first, outside the transaction (it never blocks the board); the ticket is read again inside it
+  const [warnings, commits] = await Promise.all([
+    workWarnings(ctx, before),
+    actor.kind === 'agent' && worktrees && agentBranch(actor.name) ? worktrees.commitsForAsync(actor.name, before.id).catch(() => []) : null,
+  ]);
   if (actor.kind === 'agent' && !String(body.evidence || '').trim()) warnings.push(`No evidence: the human approves what they can see working. Add "evidence" — screenshots (attach them to the ticket and name them), the command you ran and its output, the test results — and for anything visible, what to look at in the Preview (${previewable() ? "the review card's Preview button runs your branch" : 'a link to where it runs'}). Request review again with evidence.`);
-  const item = itemView(ctx, requestReview(ctx, p.id, body, actor));
+  const item = itemView(ctx, requestReview(ctx, p.id, body, actor, commits));
   return warnings.length ? { ...item, warnings } : item;
 });
 
@@ -3803,7 +3839,12 @@ route('POST', '/api/boards/:board/items/:id/preview', "Human: run this ticket's 
   return { url: r.signIn, from, author, port: r.port };
 });
 
-function workWarnings(ctx, item) {
+// git without blocking the board: resolves to its output, or null (not a repo, git missing, too slow).
+const gitOut = (args, timeout) => new Promise((resolve) => {
+  require('child_process').execFile('git', args, { cwd: PROJECT_ROOT, encoding: 'utf8', timeout, maxBuffer: 32 * 1024 * 1024, windowsHide: true }, (e, out) => resolve(e ? null : out));
+});
+
+async function workWarnings(ctx, item) {
   const out = [];
   const work = workingColumn(ctx);
   const entered = work && (item.flow || []).filter((x) => x.col === work.id).at(-1);
@@ -3811,11 +3852,9 @@ function workWarnings(ctx, item) {
   const startedMs = Date.parse(entered.at);
   const secs = Math.round((Date.now() - startedMs) / 1000);
   if (secs < 60) out.push(`${item.id} spent ${secs}s in ${work.name}. Start tickets (POST …/start) before you work on them, so the board shows real work.`);
-  try {
-    const log = require('child_process').execFileSync('git', ['log', '--all', `--grep=${item.id}([^0-9]|$)`, '-E', '--format=%ct %h'], { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
-    const early = log.split('\n').filter(Boolean).map((l) => l.split(' ')).filter(([t]) => Number(t) * 1000 < startedMs - 5000).map(([, h]) => h);
-    if (early.length) out.push(`Commit${early.length > 1 ? 's' : ''} ${early.join(', ')} mention ${item.id} but came before it was started.`);
-  } catch { /* not a git repo, or git missing */ }
+  const log = await gitOut(['log', '--all', `--grep=${item.id}([^0-9]|$)`, '-E', '--format=%ct %h'], 3000);
+  const early = (log || '').split('\n').filter(Boolean).map((l) => l.split(' ')).filter(([t]) => Number(t) * 1000 < startedMs - 5000).map(([, h]) => h);
+  if (early.length) out.push(`Commit${early.length > 1 ? 's' : ''} ${early.join(', ')} mention ${item.id} but came before it was started.`);
   return out;
 }
 
@@ -3865,26 +3904,27 @@ route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move thi
 });
 route('POST', '/api/boards/:board/items/:id/start', 'Start or resume work in one step: lease + move to the working column + status + assign. { status?, minutes?, column?, force? }', ({ p, body, actor }) =>
   startWork(getCtx(p.board), p.id, body, actor));
-route('POST', '/api/boards/:board/items/:id/land', 'Human, or an agent with work.land: put this approved ticket\'s commits from a worktree branch on main (when landing was blocked) { agent? } — agent: whose branch (a lander passes its own after resolving conflicts there)', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/items/:id/land', 'Human, or an agent with work.land: put this approved ticket\'s commits from a worktree branch on main (when landing was blocked) { agent? } — agent: whose branch (a lander passes its own after resolving conflicts there)', async ({ p, body, actor }) => {
   if (!worktrees) fail(400, 'No worktrees on this board');
   const ctx = getCtx(p.board);
-  return tx(ctx, (events) => {
-    const item = getItem(ctx, p.id);
-    // An agent may land only work that was approved: landing never decides anything, the approval did.
-    if (actor.kind !== 'user') {
-      grantFor(ctx, actor, 'work.land', null, 'land work on main');
-      if (item.review?.verdict !== 'approve') fail(409, `${item.id} isn't approved: only approved work lands`, { code: 'NOT_APPROVED', hint: 'Landing follows an approval; leave it until the human (or a delegated reviewer) approves it' });
-    }
-    const agent = body.agent || item.review?.requestedBy || item.workedBy?.at(-1);
-    if (!agent || !agentBranch(agent)) fail(400, `No agent worktree for ${item.id}; pass "agent"`);
-    const r = landWork(ctx, item, agent, actor, events);
-    item.version++;
-    return { item: item.id, agent, ...r };
-  });
+  const item = getItem(ctx, p.id);
+  // An agent may land only work that was approved: landing never decides anything, the approval did.
+  if (actor.kind !== 'user') {
+    grantFor(ctx, actor, 'work.land', null, 'land work on main');
+    if (item.review?.verdict !== 'approve') fail(409, `${item.id} isn't approved: only approved work lands`, { code: 'NOT_APPROVED', hint: 'Landing follows an approval; leave it until the human (or a delegated reviewer) approves it' });
+  }
+  const agent = body.agent || item.review?.requestedBy || item.workedBy?.at(-1);
+  if (!agent || !agentBranch(agent)) fail(400, `No agent worktree for ${item.id}; pass "agent"`);
+  await landingOf(ctx, item.id); // one already under way (the approval's) goes first
+  const r = await startLanding(ctx, item.id, agent, actor);
+  return { item: item.id, agent, ...r };
 });
+// A change that may approve a ticket (a decision, or the human moving it into an approval gate) answers once
+// its landing is done, so the reply and the card show the outcome, as before landing went async.
+const afterLanding = async (ctx, item) => { await landingOf(ctx, item.id); return itemView(ctx, ctx.board.items[item.id] || item); };
 route('POST', '/api/boards/:board/items/:id/review/decision', 'Human: decide a review { verdict: "approve"|"changes", comment?, column? }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  return itemView(ctx, decideReview(ctx, p.id, body, actor));
+  return afterLanding(ctx, decideReview(ctx, p.id, body, actor));
 });
 route('POST', '/api/boards/:board/finish', 'End your session: release all your leases (and the board hold), optionally post the digest { summary?, items? }', ({ p, body, actor }) =>
   finishSession(getCtx(p.board), body, actor));
@@ -4326,10 +4366,9 @@ function manageAgent(target, d, actor) {
 }
 // Project files and folders matching ?q= (git-tracked), for picking an agent's areas.
 let fileCache = { at: 0, list: [] };
-route('GET', '/api/files', 'Project files and folders matching ?q= (git-tracked; up to 40) — for agent areas', ({ q }) => {
+route('GET', '/api/files', 'Project files and folders matching ?q= (git-tracked; up to 40) — for agent areas', async ({ q }) => {
   if (Date.now() - fileCache.at > 30_000) {
-    let files = [];
-    try { files = require('child_process').execFileSync('git', ['ls-files'], { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 5000, maxBuffer: 32 * 1024 * 1024, windowsHide: true }).split('\n').filter(Boolean); } catch { /* not a repo */ }
+    const files = ((await gitOut(['ls-files'], 5000)) || '').split('\n').filter(Boolean); // empty: not a repo
     const dirs = new Set();
     for (const x of files) { const parts = x.split('/'); for (let i = 1; i < parts.length; i++) dirs.add(`${parts.slice(0, i).join('/')}/`); }
     fileCache = { at: Date.now(), list: [...dirs, ...files].sort() };

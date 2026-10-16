@@ -896,7 +896,7 @@ describe('per-agent git worktrees', () => {
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
     }
   });
-  it('a conflict the agent resolved by merging main lands by merge; never with another ticket\'s commits', () => {
+  it('a conflict the agent resolved by merging main lands by merge; never with another ticket\'s commits', async () => {
     const fs = require('fs');
     const os = require('os');
     const { execFileSync } = require('child_process');
@@ -932,14 +932,14 @@ describe('per-agent git worktrees', () => {
       git(ann, 'add', 'g.txt');
       git(ann, 'commit', '-q', '-m', 'other work (T-2)');
       const head = git(dir, 'rev-parse', 'HEAD');
-      const refused = wt.land('ann', 'T-1');
+      const refused = await wt.land('ann', 'T-1');
       assert.equal(refused.landed.length, 0);
       assert.match(refused.reason, /doesn't apply cleanly to main, and agent\/ann has 1 commit\(s\) for other tickets/);
       assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'main is where it was');
       assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=no'), '', 'and clean');
       // without the other ticket's commit, the merge lands with ann's resolution
       git(ann, 'reset', '-q', '--hard', 'HEAD~1');
-      const r = wt.land('ann', 'T-1');
+      const r = await wt.land('ann', 'T-1');
       assert.equal(r.via, 'merge');
       assert.equal(r.landed.length, 1);
       assert.equal(git(dir, 'show', 'main:f.txt'), 'ann+main', 'the resolution is on main');
@@ -951,7 +951,23 @@ describe('per-agent git worktrees', () => {
       write(bob, 'h.txt', 'bob\n');
       git(bob, 'add', 'h.txt');
       git(bob, 'commit', '-q', '-m', 'bob adds h (T-3)');
-      assert.equal(wt.land('bob', 'T-3').via, 'cherry-pick');
+      assert.equal((await wt.land('bob', 'T-3')).via, 'cherry-pick');
+      // INT-137: git never blocks the board (the event loop turns while it lands), and two landings asked for
+      // at once go one after the other, so neither cherry-picks into the other's half-done state
+      for (const [name, id] of [['cy', 'T-4'], ['di', 'T-5']]) {
+        const p = wt.ensure(name).path;
+        write(p, `${name}.txt`, `${name}\n`);
+        git(p, 'add', `${name}.txt`);
+        git(p, 'commit', '-q', '-m', `${name} adds a file (${id})`);
+      }
+      let turned = false;
+      setImmediate(() => { turned = true; });
+      const both = await Promise.all([wt.land('cy', 'T-4'), wt.land('di', 'T-5')]);
+      assert.ok(turned, 'the event loop ran while git worked');
+      assert.deepEqual(both.map((x) => [x.via, x.landed.length]), [['cherry-pick', 1], ['cherry-pick', 1]]);
+      assert.equal(git(dir, 'show', 'main:cy.txt'), 'cy');
+      assert.equal(git(dir, 'show', 'main:di.txt'), 'di');
+      assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=no'), '');
     } finally {
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
     }
