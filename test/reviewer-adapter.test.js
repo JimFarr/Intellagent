@@ -194,6 +194,29 @@ describe('the reviewer adapter', () => {
     } finally { await x.done(); }
   });
 
+  it('a verdict mentions nobody, and a second verdict on the same ticket is refused', async () => {
+    const x = await setup([
+      tools(
+        call('board_call', { action: 'verdict', ticket: 'T-1', verdict: 'concerns', comment: 'tell @rocket @groot' }),
+        call('board_call', { action: 'verdict', ticket: 'T-1', verdict: 'ok', comment: 'again @drax' }),
+      ),
+      say('done'),
+    ]);
+    try {
+      const r = await runAdapter(x.env());
+      const results = toolMessages(x.model, 1);
+      assert.match(results[0], /^done/);
+      assert.match(results[1], /^REFUSED: you already gave your verdict on T-1/);
+      const item = await x.s.ok('GET', `/api/boards/main/items/${x.it1.id}`, undefined, USER);
+      const mine = item.comments.filter((c) => /tell /.test(c.body));
+      assert.equal(mine.length, 1);
+      assert.ok(!mine[0].body.includes('@rocket'), 'the @ is broken by a joiner');
+      for (const name of ['rocket', 'groot']) assert.ok(!(mine[0].mentions || []).includes(name), `${name} is not woken`);
+      assert.deepEqual(r.result.verdicts, [{ ticket: 'T-1', verdict: 'concerns' }]);
+      assert.equal(r.code, 0);
+    } finally { await x.done(); }
+  });
+
   it('the tests and git run without the API key, the board token or any INTELLAGENT_ variable', async () => {
     const x = await setup([tools(call('run_tests', {})), say('done')]);
     try {

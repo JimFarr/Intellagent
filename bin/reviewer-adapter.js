@@ -110,7 +110,9 @@ async function boardCall(a) {
   } else if (a.action === 'verdict') {
     if (!['ok', 'concerns'].includes(a.verdict)) return refuse('verdict must be "ok" or "concerns"');
     const comment = String(a.comment || '').trim();
-    r = await send('POST', `${base}/reviewers/${encodeURIComponent(env.INTELLAGENT_AGENT || '')}/verdict`, { verdict: a.verdict, comment: comment.slice(0, 20_000) });
+    if (verdicts.some((v) => v.ticket.toUpperCase() === String(a.ticket).toUpperCase())) return refuse(`you already gave your verdict on ${a.ticket}`);
+    // same @ break as comments: the board mentions the author itself when the verdict is concerns
+    r = await send('POST', `${base}/reviewers/${encodeURIComponent(env.INTELLAGENT_AGENT || '')}/verdict`, { verdict: a.verdict, comment: comment.slice(0, 20_000).replace(/@/g, '@‍') });
     if (r.ok) verdicts.push({ ticket: a.ticket, verdict: a.verdict });
   } else return refuse('action must be "comment" or "verdict"');
   return r.ok ? `done (${r.status})` : `the board said ${r.status} ${r.json?.code || ''}: ${r.json?.error || r.raw.slice(0, 200)}${r.json?.hint ? ` — hint: ${r.json.hint}` : ''}`;
