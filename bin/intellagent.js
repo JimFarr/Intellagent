@@ -19,7 +19,6 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const net = require('net');
 const { spawn } = require('child_process');
 const os = require('os');
 const { findManifest, readManifest, baseUrl, defaultAgent, userToken, projectOf, readLocal, NO_BOARD } = require('../lib/locate');
@@ -41,23 +40,8 @@ for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_A
 }
 const [cmd = 'help', ...rest] = process.argv.slice(2);
 
-function flags(args) {
-  const out = { _: [] };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith('--')) {
-      const eq = a.indexOf('=');
-      const [k, v] = eq < 0 ? [a.slice(2)] : [a.slice(2, eq), a.slice(eq + 1)]; // values may contain '=' (--filter)
-      out[k] = v ?? (args[i + 1] && !args[i + 1].startsWith('--') ? args[++i] : true);
-    } else out._.push(a);
-  }
-  return out;
-}
+const { flags, portFree, alive } = require('../lib/cliutil');
 
-const portFree = (port) => new Promise((resolve) => {
-  const s = net.createServer().once('error', () => resolve(false)).once('listening', () => s.close(() => resolve(true)));
-  s.listen(port, '127.0.0.1');
-});
 async function freePort(from = 7420) {
   for (let p = from; p < from + 200; p++) if (await portFree(p)) return p;
   throw new Error('No free port found');
@@ -253,10 +237,6 @@ function requireManifest() {
 function openUrl(url) {
   const [bin, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
   spawn(bin, args, { detached: true, stdio: 'ignore' }).unref();
-}
-
-async function alive(url) {
-  try { const r = await fetch(`${url}/api/app`); return r.ok ? r.json() : null; } catch { return null; }
 }
 
 async function start() {
