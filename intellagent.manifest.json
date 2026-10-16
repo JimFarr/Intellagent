@@ -16,5 +16,14 @@
   "auth": {
     "requireAgentTokens": true
   },
-  "approvalsOff": true
+  "approvalsOff": true,
+  "permissions": {
+    "claude": {
+      "grants": [
+        {
+          "power": "review.decide"
+        }
+      ]
+    }
+  }
 }
