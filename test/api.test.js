@@ -228,22 +228,27 @@ describe('board API', () => {
     assert.ok(JSON.stringify(await s.ok('GET', `${B}/summary`)).includes('archivable'));
   });
 
-  test('a big board GET is gzipped for clients that ask; small replies and other clients get plain JSON (INT-11)', async () => {
-    await mk({ title: 'bulky', description: 'x'.repeat(20_000) });
-    const get = (p, enc) => new Promise((resolve, reject) => {
-      http.get(s.base + p, { headers: { 'x-agent': 'tester', ...(enc ? { 'accept-encoding': enc } : {}) } }, (r) => {
+  test('big replies are gzipped for clients that ask, but not over loopback unless the manifest says "always" (INT-11)', async () => {
+    const get = (srv, p, enc) => new Promise((resolve, reject) => {
+      http.get(srv.base + p, { headers: { 'x-agent': 'tester', ...(enc ? { 'accept-encoding': enc } : {}) } }, (r) => {
         const chunks = [];
         r.on('data', (c) => chunks.push(c));
         r.on('end', () => resolve({ enc: r.headers['content-encoding'], buf: Buffer.concat(chunks) }));
       }).on('error', reject);
     });
-    const gz = await get(B, 'gzip, deflate');
-    assert.equal(gz.enc, 'gzip');
-    const plain = await get(B);
-    assert.equal(plain.enc, undefined);
-    assert.equal(JSON.parse(require('zlib').gunzipSync(gz.buf)).id, JSON.parse(plain.buf).id);
-    assert.ok(gz.buf.length * 5 < plain.buf.length, `${gz.buf.length} gzipped vs ${plain.buf.length}`);
-    assert.equal((await get(`${B}/hash`, 'gzip')).enc, undefined);
+    await mk({ title: 'bulky', description: 'x'.repeat(20_000) });
+    assert.equal((await get(s, B, 'gzip')).enc, undefined, 'loopback stays plain by default');
+    const t = await startServer({ manifest: { compress: 'always' } });
+    try {
+      await t.ok('POST', `${B}/items`, { title: 'bulky', column: 'Backlog', description: 'x'.repeat(20_000) });
+      const gz = await get(t, B, 'gzip, deflate');
+      assert.equal(gz.enc, 'gzip');
+      const plain = await get(t, B);
+      assert.equal(plain.enc, undefined);
+      assert.equal(JSON.parse(require('zlib').gunzipSync(gz.buf)).id, JSON.parse(plain.buf).id);
+      assert.ok(gz.buf.length * 5 < plain.buf.length, `${gz.buf.length} gzipped vs ${plain.buf.length}`);
+      assert.equal((await get(t, `${B}/hash`, 'gzip')).enc, undefined, 'small replies stay plain');
+    } finally { await t.stop(); }
   });
 
   test('board.json is compact, survives a restart, and a failed write changes nothing (INT-11)', async () => {

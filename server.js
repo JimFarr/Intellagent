@@ -3178,9 +3178,17 @@ const SCHEMA = {
 
 /* ───────────────────────── HTTP plumbing ───────────────────────── */
 
-// Replies of GZIP_MIN characters or more go out gzipped to clients that accept it (a big board's JSON
-// shrinks about tenfold). zlib runs off the main thread, so a 14 MB board doesn't stall other requests.
+// Replies of GZIP_MIN characters or more go out gzipped to clients that accept it. zlib runs off the main
+// thread, so a big board doesn't stall other requests, but it does make that reply slower: a 20 MB board
+// shrinks to 5 MB and takes ~180 ms longer. Over a network that pays; over loopback bytes cost nothing.
+// Manifest "compress": "remote" (default: not for clients on this PC) | "always" | "never".
 const GZIP_MIN = 16 * 1024;
+const LOOPBACK = /^(127\.|::1$|::ffff:127\.)/;
+function wantsGzip(req) {
+  const mode = M.compress || 'remote';
+  if (mode === 'never' || !req || !/\bgzip\b/i.test(req.headers['accept-encoding'] || '')) return false;
+  return mode === 'always' || !LOOPBACK.test(req.socket?.remoteAddress || '');
+}
 function reply(res, status, body, headers = {}) {
   const isText = typeof body === 'string';
   const text = isText ? body : JSON.stringify(body);
@@ -3190,12 +3198,12 @@ function reply(res, status, body, headers = {}) {
     'X-Intellagent-Version': `${VERSION}+${BUILD}`,
     ...headers,
   };
-  if (text.length < GZIP_MIN || !/\bgzip\b/i.test(res.req?.headers['accept-encoding'] || '')) {
+  if (text.length < GZIP_MIN || !wantsGzip(res.req)) {
     res.writeHead(status, head);
     res.end(text);
     return;
   }
-  zlib.gzip(text, { level: 4 }, (err, buf) => {
+  zlib.gzip(text, { level: 1 }, (err, buf) => {
     if (res.headersSent || res.destroyed) return;
     if (err) { res.writeHead(status, head); res.end(text); return; }
     res.writeHead(status, { ...head, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' });
