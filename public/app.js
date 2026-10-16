@@ -107,7 +107,7 @@
     target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
     play: '<path d="M7 4.5v15l12-7.5z"/>',
     pause: '<path d="M8 5v14M16 5v14"/>',
-    smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.3 2.2 2 3.5 2s2.5-.7 3.5-2M9 9.5h.01M15 9.5h.01"/>',
+    smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5c1 1.3 2.2 2 3.5 2s2.5-.7 3.5-2"/><circle cx="9" cy="9.5" r=".6"/><circle cx="15" cy="9.5" r=".6"/>',
     terminal: '<path d="M4 17l6-5-6-5M12 19h8"/>',
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
@@ -3528,7 +3528,7 @@
       const agents = who.filter(isAgentName), people = who.filter((n) => !isAgentName(n));
       return [agents.length && mark(e, agents), people.length && pill(e, people)].filter(Boolean);
     });
-    return `<div class="reacts ${compact ? 'compact' : ''}">${chips.join('')}${add ? `<button class="react add" data-react-add data-cid="${esc(cid)}" title="React|Add an emoji — agents see it, it never wakes them">${icon('smile', 'sm')}</button>` : ''}</div>`;
+    return `<div class="reacts ${compact ? 'compact' : ''}">${chips.join('')}${add ? `<button class="react add" data-react-add data-cid="${esc(cid)}" title="React|Add an emoji — agents see it, it never wakes them">${icon('smile')}</button>` : ''}</div>`;
   }
   function reactPicker(anchor, onPick) {
     $$('.react-pick').forEach((x) => x.remove());

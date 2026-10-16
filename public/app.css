@@ -1578,7 +1578,6 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 @media (prefers-reduced-motion: reduce) { .react.status { animation: none; } }
 .react.add { width: 24px; padding: 0; justify-content: center; color: var(--muted); opacity: 0; }
 .cmt:hover .react.add, .m-reacts .react.add, .react.add:focus-visible { opacity: 1; }
-.reacts:has(.react:not(.add)) .react.add { opacity: .6; }
 /* touch screens have no hover: the add button always shows, and every chip gets a 32px tap area
    around its 24px look (INT-188). Insets count from inside the 1px border; sideways a chip reaches 2px
    into the 5px gap (it is wide already) and the 24px-wide add button 4px. */
