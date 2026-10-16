@@ -173,7 +173,7 @@
         "every acceptance item has code and a test behind it",
         "npm test on the author's worktree",
         "permission holes: an agent doing what only the human should",
-        "API errors carry a code and a hint; AGENTS.md and the brief match the code"
+        "API errors carry a code and a hint; AGENTS.md and the brief match the code; a feature a person sets up or chooses also updates the setup skill (skills/intellagent-setup)"
       ],
       "commands": [
         "git show:*"
