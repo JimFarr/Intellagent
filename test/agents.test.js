@@ -1164,7 +1164,7 @@ describe('a run gets its own token (INT-248)', () => {
   });
 
   it('a rotated token starts a fresh keep-alive session; an unchanged one keeps it', async () => {
-    const s = await startServer({ agents: { defaults: fast, agents: { keeper: { run: run('stream'), keepAlive: true, throttleMinutes: 0 } } } });
+    const s = await startServer({ agents: { defaults: fast, agents: { keeper: { run: run('stream'), keepAlive: 'stream-json', throttleMinutes: 0 } } } });
     const localFile = path.join(s.dir, 'local.json');
     const setToken = (t) => {
       const local = fs.existsSync(localFile) ? JSON.parse(fs.readFileSync(localFile, 'utf8')) : {};
