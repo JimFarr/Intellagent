@@ -314,7 +314,8 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .card.landed { animation: land .38s var(--spring); }
 @keyframes land { 0% { scale: 1.04; } 45% { scale: .97; } 100% { scale: 1; } }
 
-.c-top { display: flex; align-items: center; gap: 6px; font: 500 11px/1 var(--mono); color: var(--muted); margin-bottom: 6px; min-height: 18px; }
+/* a badge that doesn't fit beside the id drops to a second line on the right, whole, instead of being cut (INT-226) */
+.c-top { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 6px; font: 500 11px/1 var(--mono); color: var(--muted); margin-bottom: 6px; min-height: 18px; }
 .c-type { color: var(--type-c); display: inline-flex; }
 .c-id { letter-spacing: .02em; white-space: nowrap; flex: none; }
 .c-top .fbadge, .c-top .prio { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -357,7 +358,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .ring.crit .prg { stroke: var(--danger); }
 @keyframes throb { 50% { scale: 1.15; } }
 
-.c-check { position: absolute; top: 9px; right: 9px; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid color-mix(in oklab, var(--text) 30%, transparent); background: var(--surface); display: none; place-items: center; color: transparent; transition: background .2s, border-color .2s, scale .25s var(--spring); }
+.c-check { position: absolute; top: 9px; right: 9px; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid color-mix(in oklab, var(--text) 30%, transparent); background: var(--surface); display: none; place-items: center; color: transparent; transition: background .2s, border-color .2s, scale .25s var(--ease); z-index: 2; }
 .c-check .i { width: 12px; height: 12px; stroke-width: 3; }
 .bulk .card .c-check { display: grid; }
 .bulk .card { cursor: pointer; }
@@ -825,6 +826,9 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .menu button.mi.create { color: var(--accent); }
 .menu button.mi:disabled { opacity: .4; pointer-events: none; }
 .menu button.mi small { color: var(--muted); font: 11px var(--mono); flex: none; }
+/* needs-you on a board picker row: its own labelled chip, so the plain number beside it is always a ticket count (INT-226) */
+.menu button.mi .mi-need { display: inline-flex; align-items: center; gap: 3px; flex: none; height: 18px; padding: 0 6px 0 4px; border-radius: 99px; font: 600 11px var(--mono); color: color-mix(in oklab, var(--accent-2) 70%, var(--text)); background: color-mix(in oklab, var(--accent-2) 14%, transparent); }
+.menu button.mi .mi-need .i { width: 12px; height: 12px; }
 .menu hr { border: 0; height: 1px; background: var(--border); margin: 5px 4px; }
 .menu .m-empty { padding: 10px; color: var(--muted); font-size: 12px; text-align: center; }
 
@@ -975,7 +979,6 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .inp.num { width: 90px; height: 28px; }
 .fadd { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
 .fadd .inp { height: 32px; flex: 1; }
-.bulk .card .c-top { padding-right: 26px; }
 
 
 /* ───────── live status, checklist, assignee, gates ───────── */
@@ -1202,8 +1205,10 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 :root[data-attn="glow"] .card.needs .c-top { padding-right: calc(var(--corner, 0px) + 20px); }
 :root[data-attn="ribbon"] .card.needs .c-top { padding-right: calc(var(--corner, 0px) + 30px); }
 :root[data-attn="bar"] .card.needs .c-top { padding-right: var(--corner, 0px); }
-:root body.bulk .card .c-top { padding-right: calc(var(--corner, 0px) + 26px); }
-.bulk .card .c-check { right: calc(9px + var(--corner, 0px)); }
+/* Select mode: the tick hangs on the corner, like the needs-you marker (hidden while selecting), so the top row
+   keeps its full width (INT-226). 4px up: the list's top padding, so the first card's tick isn't clipped */
+:root body.bulk .card .c-top { padding-right: var(--corner, 0px); }
+.bulk .card .c-check { top: -4px; right: calc(-6px + var(--corner, 0px)); }
 .c-ask { right: calc(-6px + var(--corner, 0px)); }
 :root[data-attn="ribbon"] .c-ask { right: calc(12px + var(--corner, 0px)); }
 :root[data-attn="glow"] .c-ask { right: calc(10px + var(--corner, 0px)); }

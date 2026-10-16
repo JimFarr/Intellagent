@@ -937,7 +937,8 @@
       for (const it of vis) {
         if (it === '-') { list.append(el('<hr>')); continue; }
         const lead = it.avatar ? avatar(it.avatar) : it.color ? `<span class="sw" style="--c:${esc(it.color)}"></span>` : it.icon ? icon(it.icon) : '';
-        const b = el(`<button class="mi ${it.cls || ''}" ${it.disabled ? 'disabled' : ''}>${lead}<span>${esc(it.label)}</span>${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</button>`);
+        const need = it.need ? `<b class="mi-need" title="Needs you|${it.need} ticket${it.need === 1 ? '' : 's'} waiting for your answer">${icon('ask', 'sm')}${it.need}</b>` : '';
+        const b = el(`<button class="mi ${it.cls || ''}" ${it.disabled ? 'disabled' : ''}>${lead}<span>${esc(it.label)}</span>${need}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</button>`);
         b.onclick = (e) => { if (!keepOpen) closeMenus(); it.run?.(e); if (keepOpen) draw(); };
         list.append(b);
       }
@@ -1251,7 +1252,7 @@
 
   function boardMenu(anchor) {
     const items = state.boards.map((b) => ({
-      label: b.name, icon: 'board', hint: b.needsHuman ? `${b.needsHuman}?` : String(b.items), cls: b.id === state.boardId && !state.focusId ? 'on' : '',
+      label: b.name, icon: 'board', hint: String(b.items), need: b.needsHuman || 0, cls: b.id === state.boardId && !state.focusId ? 'on' : '',
       run: () => { closeModal(true); if (b.id === state.boardId) showFocus(null); else { state.focusId = null; loadBoard(b.id); } },
     }));
     const act = activeFocusBoard();
@@ -1322,7 +1323,7 @@
     const vf = viewFocus();
     const items = focusBoards().map((f) => ({ label: `Add to ${f.name}`, icon: 'target', hint: String(f.itemIds.length), run: () => patchFocus(f, { add: ids }, `Added ${ids.length} to "${f.name}"`) }));
     if (vf) items.unshift({ label: `Take out of ${vf.name}`, icon: 'x', run: () => { patchFocus(vf, { remove: ids }, `Took ${ids.length} out of "${vf.name}" — they stay on the board`); state.selected.clear(); } });
-    if (!items.length) items.push({ label: 'Type a name for the new focus board, then Enter', icon: 'info', disabled: true });
+    if (!items.length) items.push({ label: 'Name it, then press Enter', icon: 'info', disabled: true });
     menu(anchor, items, { up: true, creatable: (name) => createFocus(name, ids), placeholder: 'Name a new focus board…', width: 300 });
   }
   // The strip under the top bar: which board this is, which one the agents work on, and the way back.
