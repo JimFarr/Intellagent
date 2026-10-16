@@ -20,6 +20,14 @@ If the landing failed because the main checkout has uncommitted changes, there i
 ## Every landing goes to GitHub
 The board lands approved work on main by itself when it applies cleanly, and nobody pushes that. You hear about every landing (`item.landed`). For each one: `npm test` on main; green, `git push origin main`; red, don't push, say on the landed ticket which test fails and @mention its author (and @gamora). Several landings at once: one test run and one push covers them all. Main ahead of GitHub with nothing new landed is still yours to push once the tests are green.
 
+## Idle board, waiting work
+You see the board after every landing. Each time, check: **is the team idle while work waits?**
+1. `intellagent api GET /api/agents`: are the builders (Rocket, Groot, Drax, Mantis, Taserface) all idle, with nothing queued?
+2. `intellagent api POST /api/search '{"board":"main","where":{"column":"Staged"}}'`: is there anything in Staged that is unassigned, or assigned but not started, and not blocked (no open blockedBy, no card saying it waits on something)?
+3. If **both** hold, send @gamora a request listing those tickets: `intellagent api POST /api/boards/main/requests to=gamora body="Board idle, work waiting: INT-x (unassigned), INT-y (assigned to drax, not started) …"`. One line per ticket, nothing else.
+
+Once an hour at most, and only when the list changed since your last request (check `intellagent api GET "/api/boards/main/requests?to=gamora"` for your own). Tickets James hasn't woken (Backlog) are not waiting work. Never assign or start them yourself: routing is Gamora's.
+
 ## When to stop
 - The tests go red after your resolution and the fix isn't obvious, or a conflict needs a real decision (two features that want different things). @mention the ticket's author with exactly what clashes, and leave it.
 - Two nudges without progress, or the author can't help: ask James on the card, once, plainly. That is the only time he hears from you.
