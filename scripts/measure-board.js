@@ -200,6 +200,22 @@ async function main() {
     }
     out.write = { medianMs: +median(wr).toFixed(1), maxMs: +Math.max(...wr).toFixed(1), writesPerSecond: +(1000 / median(wr)).toFixed(1) };
 
+    // INT-140: what one agent's wake check costs. GET …/work runs workFor, the core of pendingWork (once per
+    // board per check). One request at a time can't show it: on Windows each waits out a ~15 ms timer tick.
+    // So send K at once: the server is single-threaded, and the total over K is the server time per call.
+    // GET /api/boards (a few hundred bytes) is the floor to take off. A sweep checks every idle agent in turn.
+    if (AGENTS) {
+      const K = 100;
+      const perCall = async (p) => { const t = process.hrtime.bigint(); await Promise.all(Array.from({ length: K }, () => get(p))); return ms(t) / K; };
+      await perCall('/api/boards'); // warm up
+      const f = median([await perCall('/api/boards'), await perCall('/api/boards'), await perCall('/api/boards')]);
+      const perAgentMs = {};
+      // twice, keeping the second pass: the first agents in the first pass also pay for warming workFor up
+      for (let pass = 0; pass < 2; pass++) for (const name of Object.keys(agentsJson(AGENTS).agents)) perAgentMs[name] =+Math.max(0, (await perCall(`${B}/work?agent=${name}`)) - f).toFixed(2);
+      const all = Object.values(perAgentMs);
+      out.work = { floorMs: +f.toFixed(2), perAgentMs, medianMs: +median(all).toFixed(2), maxMs: Math.max(...all), sweepAllMs: +all.reduce((a, b) => a + b, 0).toFixed(1) };
+    }
+
     // human edits wake standing agents (INT-154): the writes' own latency, and a reader's alongside them
     if (HUMAN_BURST) {
       const stateFile = path.join(dir, 'data', 'agents.state.json');
