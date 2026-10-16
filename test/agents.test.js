@@ -406,8 +406,8 @@ describe('keep-alive standing agents', () => {
   it('one process serves several wakes as turns, is recycled after recycleAfterRuns, restarts after a crash and stops on pause', async () => {
     const marker = path.join(require('os').tmpdir(), `ia-crash-${Date.now()}`);
     const s = await startServer({ agents: { defaults: fast, agents: {
-      keeper: { role: 'builder', run: run('stream'), keepAlive: true, recycleAfterRuns: 2, throttleMinutes: 0 },
-      crashy: { run: run('stream', `"${marker}"`), keepAlive: true },
+      keeper: { role: 'builder', run: run('stream'), keepAlive: 'stream-json', recycleAfterRuns: 2, throttleMinutes: 0 },
+      crashy: { run: run('stream', `"${marker}"`), keepAlive: 'stream-json' },
     } } });
     const pidOf = (c) => Number(/pid (\d+)/.exec(c)?.[1]);
     const mine = async (id, who) => (await comments(s, id)).filter((c) => c.startsWith(`${who}: turn`));
@@ -450,7 +450,7 @@ describe('one agent, one process', () => {
 
   it('keep-alive: a retry after a failed turn waits for the ended session to exit (INT-199)', async () => {
     const f = path.join(os.tmpdir(), `ia-linger-${Date.now()}`);
-    const s = await startServer({ agents: { defaults: fast, agents: { twice: { run: run('stream-linger', `"${f}"`, 2000), keepAlive: true } } } });
+    const s = await startServer({ agents: { defaults: fast, agents: { twice: { run: run('stream-linger', `"${f}"`, 2000), keepAlive: 'stream-json' } } } });
     try {
       const it = await s.ok('POST', `${B}/items`, { title: 'linger', column: 'Backlog' }, USER);
       await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@twice go' }, USER);
@@ -492,7 +492,7 @@ describe('keep-alive recycling by context size', () => {
   it('replaces a session once its context per call passes recycleAboveTokens, and reports the size', async () => {
     // the fake agent's context grows 50k per turn: 50k, 100k, 150k
     const s = await startServer({ agents: { defaults: fast, agents: {
-      fat: { role: 'builder', run: run('stream'), keepAlive: true, recycleAboveTokens: 120000, throttleMinutes: 0 },
+      fat: { role: 'builder', run: run('stream'), keepAlive: 'stream-json', recycleAboveTokens: 120000, throttleMinutes: 0 },
     } } });
     const mine = async (id) => (await comments(s, id)).filter((c) => c.startsWith('fat: turn'));
     const idle = () => until(async () => (await agentState(s, 'fat')).status === 'idle', 6000, 'fat idle');
@@ -509,6 +509,54 @@ describe('keep-alive recycling by context size', () => {
       assert.match(t3, /turn 3 in/, 'turn 3 ran in the same session');
       assert.equal((await agentState(s, 'fat')).session, null, 'turn 3 read 150k per call: the session was ended');
       assert.ok(t1 && t2 && t3);
+    } finally { await s.stop(); }
+  });
+});
+
+describe('what a run inherits (INT-246)', () => {
+  const { childEnv } = require('../lib/agents/runner');
+
+  it('null in env removes a variable, inheritEnv keeps only what it lists, and the run\'s own variables always win', () => {
+    process.env.IA_T_SECRET = 's';
+    process.env.IA_T_KEEP = 'k';
+    try {
+      const all = childEnv({ env: { IA_T_SECRET: null, IA_T_ADD: 1 } }, { INTELLAGENT_URL: 'u' }, { INTELLAGENT_AGENT: 'me' });
+      assert.equal(all.IA_T_SECRET, undefined, 'dropped');
+      assert.equal(all.IA_T_KEEP, 'k', 'everything else is still inherited');
+      assert.equal(all.IA_T_ADD, '1');
+      const only = childEnv({ inheritEnv: ['IA_T_KEEP'], env: { INTELLAGENT_AGENT: 'spoof' } }, { INTELLAGENT_URL: 'u' }, { INTELLAGENT_AGENT: 'me' });
+      assert.deepEqual(Object.keys(only).filter((k) => k.startsWith('IA_T_')), ['IA_T_KEEP']);
+      assert.ok(Object.keys(only).some((k) => k.toUpperCase() === 'PATH'), 'a shell can still start');
+      assert.equal(only.INTELLAGENT_URL, 'u', 'the board\'s own variables are not inherited, so inheritEnv never drops them');
+      assert.equal(only.INTELLAGENT_AGENT, 'me', 'an agent cannot pose as another');
+      if (process.platform === 'win32') assert.equal(childEnv({ env: { ia_t_secret: null } }, {}, {}).IA_T_SECRET, undefined, 'Windows names ignore case');
+    } finally { delete process.env.IA_T_SECRET; delete process.env.IA_T_KEEP; }
+  });
+
+  it('a run gets the env the agent asked for; keepAlive with a non-claude run runs one-shot; a bad env leaves the agent off', async () => {
+    process.env.IA_T_BOARD_SECRET = 'leak';
+    let s;
+    try {
+      s = await startServer({ agents: { defaults: fast, agents: {
+        narrow: { run: run('env', 'IA_T_BOARD_SECRET,IA_T_MINE'), env: { IA_T_BOARD_SECRET: null, IA_T_MINE: 'x' } },
+        plain: { run: run('env', 'IA_T_MINE'), keepAlive: true },
+        broken: { run: run('ok'), inheritEnv: 'PATH' },
+      } } });
+    } finally { delete process.env.IA_T_BOARD_SECRET; }
+    try {
+      const { error, agents } = await s.ok('GET', '/api/agents');
+      assert.match(error, /"plain": keepAlive needs a claude run/);
+      assert.match(error, /"broken": "inheritEnv" must be a list/, 'every problem is reported, not just the last');
+      assert.equal(agents.find((a) => a.name === 'plain').keepAlive, false);
+      assert.equal(agents.find((a) => a.name === 'broken').status, 'paused');
+      const it = await s.ok('POST', `${B}/items`, { title: 'env', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@narrow @plain @broken go' }, USER);
+      await until(async () => (await comments(s, it.id)).filter((c) => / env /.test(c)).length === 2, 15000, 'both replied');
+      const said = await comments(s, it.id);
+      assert.ok(said.includes('narrow: handled 1 event(s) env IA_T_BOARD_SECRET=- IA_T_MINE=x'), said.join('\n'));
+      assert.ok(said.includes('plain: handled 1 event(s) env IA_T_MINE=-'), 'plain ran one-shot instead of hanging on a turn');
+      assert.equal((await agentState(s, 'plain')).session, null);
+      assert.ok(!said.some((c) => c.startsWith('broken:')), 'broken never ran');
     } finally { await s.stop(); }
   });
 });

@@ -132,7 +132,9 @@ process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
   }
   if (mode === 'slow') await new Promise((r) => setTimeout(r, Number(arg) || 1000));
   const events = JSON.parse(require('fs').readFileSync(process.env.INTELLAGENT_EVENTS, 'utf8'));
-  const tag = /did not finish/.test(prompt) ? ' (resumed after interruption)' : '';
+  //   node fake-agent.js env A,B   comment "env A=<value or -> B=…" (what the run's environment holds)
+  const tag = mode === 'env' ? ` env ${arg.split(',').map((k) => `${k}=${process.env[k] ?? '-'}`).join(' ')}`
+    : /did not finish/.test(prompt) ? ' (resumed after interruption)' : '';
   for (const id of new Set(events.map((e) => e.itemId).filter(Boolean))) {
     await fetch(`${process.env.INTELLAGENT_URL}/api/boards/main/items/${id}/comments`, {
       method: 'POST',
