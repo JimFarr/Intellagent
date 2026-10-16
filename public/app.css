@@ -800,9 +800,10 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .md ul, .md ol { margin: 0 0 .7em; padding-left: 1.3em; }
 .md li { margin: .2em 0; }
 .md li.nested { margin-left: 1.2em; }
-.md li.task { list-style: none; margin-left: -1.3em; display: flex; gap: 9px; align-items: baseline; }
-.md li.task .ck { translate: 0 3px; }
-.md li.task.empty .ck-ph { width: 16px; height: 16px; border-radius: 5px; border: 1.5px dashed color-mix(in oklab, var(--muted) 45%, transparent); translate: 0 3px; flex: none; }
+/* the box centres on the first line of its text, whatever the font size or line height (INT-221) */
+.md li.task { list-style: none; margin-left: -1.3em; display: flex; gap: 9px; align-items: flex-start; }
+.md li.task .ck { margin-top: calc((1lh - 16px) / 2); }
+.md li.task.empty .ck-ph { width: 16px; height: 16px; border-radius: 5px; border: 1.5px dashed color-mix(in oklab, var(--muted) 45%, transparent); margin-top: calc((1lh - 16px) / 2); flex: none; }
 .md li.task:has(input:checked) { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in oklab, var(--muted) 60%, transparent); }
 .md img { max-width: 100%; border-radius: 10px; cursor: zoom-in; }
 .md hr { border: 0; height: 1px; background: var(--border); margin: 1em 0; }
