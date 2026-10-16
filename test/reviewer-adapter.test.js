@@ -105,7 +105,7 @@ describe('the reviewer adapter', () => {
       assert.equal(r.result.type, 'result');
       assert.equal(r.result.is_error, false);
       assert.equal(r.result.num_turns, 3);
-      assert.deepEqual(r.result.usage, { input_tokens: 300, output_tokens: 30 });
+      assert.deepEqual(r.result.usage, { prompt_tokens: 300, completion_tokens: 30 }, 'the OpenAI shape as it is: the board takes cached tokens out of the input');
       assert.deepEqual(r.result.verdicts, [{ ticket: 'T-1', verdict: 'concerns' }]);
     } finally { await x.done(); }
   });
@@ -129,7 +129,7 @@ describe('the reviewer adapter', () => {
     try {
       fs.writeFileSync(path.join(path.dirname(x.root), 'outside.txt'), 'outside');
       const r = await runAdapter(x.env());
-      assert.equal(r.code, 0, r.err);
+      assert.equal(r.code, 1, 'no verdict was posted, so the run is an error');
       const results = toolMessages(x.model, 1);
       assert.equal(results.length, 10);
       results.forEach((m, i) => assert.match(m, /^REFUSED: /, `call ${i} was refused: ${m.slice(0, 80)}`));
@@ -138,7 +138,59 @@ describe('the reviewer adapter', () => {
       const item = await x.s.ok('GET', `/api/boards/main/items/${x.it1.id}`, undefined, USER);
       assert.equal(item.comments.length, 0, 'nothing was posted to the board');
       assert.equal(item.reviewers.find((y) => y.name === 'rev').verdict, null);
-      assert.equal(r.result.is_error, false);
+      assert.equal(r.result.is_error, true);
+    } finally { await x.done(); }
+  });
+
+  it('read_file refuses every Windows spelling of a secret before it touches the disk, and git diff never runs a text converter', async () => {
+    const x = await setup([
+      tools(
+        call('read_file', { path: 'local.json.' }),
+        call('read_file', { path: 'local.json ' }),
+        call('read_file', { path: 'local.json::$DATA' }),
+        call('read_file', { path: 'LOCAL~1.JSO' }),
+        call('read_file', { path: 'C:local.json' }),
+        call('read_file', { path: 'LOCAL.JSON' }),
+        call('read_file', { path: 'a.txt' }),
+      ),
+      say('done'),
+    ]);
+    try {
+      const r = await runAdapter(x.env());
+      const results = toolMessages(x.model, 1);
+      results.slice(0, 6).forEach((m, i) => assert.match(m, /^REFUSED: /, `call ${i}: ${m.slice(0, 80)}`));
+      assert.equal(results[6], 'hello\nsecond line\n', 'a plain file is still read');
+      assert.ok(results.every((m) => !m.includes('SECRET-IN-LOCAL')));
+      assert.match(fs.readFileSync(ADAPTER, 'utf8'), /'--no-textconv'/);
+      assert.equal(r.result.is_error, true);
+    } finally { await x.done(); }
+  });
+
+  it('board_call writes only to the tickets the prompt names, comments at most three times, and a comment mentions nobody', async () => {
+    const x = await setup([
+      tools(
+        call('board_call', { action: 'comment', ticket: 'OTHER-9', body: '@rocket @groot wake up' }),
+        call('board_call', { action: 'comment', ticket: 'T-1', body: 'one @rocket' }),
+        call('board_call', { action: 'comment', ticket: 'T-1', body: 'two' }),
+        call('board_call', { action: 'comment', ticket: 'T-1', body: 'three' }),
+        call('board_call', { action: 'comment', ticket: 'T-1', body: 'four' }),
+        call('board_call', { action: 'verdict', ticket: 'OTHER-9', verdict: 'ok', comment: 'x' }),
+      ),
+      say('done'),
+    ]);
+    try {
+      const r = await runAdapter(x.env());
+      const results = toolMessages(x.model, 1);
+      assert.match(results[0], /^REFUSED: OTHER-9 is not one of the tickets/);
+      assert.match(results[1], /^done/);
+      assert.match(results[4], /^REFUSED: at most 3 comments/);
+      assert.match(results[5], /^REFUSED: OTHER-9/);
+      const item = await x.s.ok('GET', `/api/boards/main/items/${x.it1.id}`, undefined, USER);
+      const mine = item.comments.filter((c) => /^(one|two|three|four)/.test(c.body));
+      assert.deepEqual(mine.map((c) => c.body.slice(0, 3)), ['one', 'two', 'thr']);
+      assert.ok(!mine[0].body.includes('@rocket'), 'the @ is broken by a joiner');
+      assert.ok(!(mine[0].mentions || []).includes('rocket'));
+      assert.equal(r.result.is_error, true);
     } finally { await x.done(); }
   });
 
@@ -147,7 +199,7 @@ describe('the reviewer adapter', () => {
     try {
       const test = 'node -e "console.log(\'LEAK[\' + Object.keys(process.env).filter(k => /KEY|TOKEN|SECRET|^INTELLAGENT_/i.test(k)).join() + \']\')"';
       const r = await runAdapter(x.env({ INTELLAGENT_ADAPTER_TEST: test, INTELLAGENT_TOKEN: 'agent-token', MY_SECRET: 's' }));
-      assert.equal(r.code, 0, r.err);
+      assert.equal(r.code, 1, 'no verdict: an error, but the tests ran');
       assert.match(toolMessages(x.model, 1)[0], /LEAK\[\]/);
     } finally { await x.done(); }
   });

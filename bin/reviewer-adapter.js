@@ -66,9 +66,12 @@ function readFile(p) {
   const given = path.resolve(ROOT, p);
   // judged before the file is looked at, so "no such file" never tells the model what exists outside the folder
   if (outside(path.relative(ROOT, given))) return refuse(`${p} is outside the folder under review`);
+  // Windows has several names for one file (local.json. / local.json::$DATA / LOCAL~1.JSO): none of them is looked up
+  if (/^[A-Za-z]:/.test(p) ? /:/.test(p.slice(2)) : /:/.test(p)) return refuse(`${p} has a ":" in it`);
+  if (p.split(/[\\/]/).some((part) => /[. ]$/.test(part) && part !== '.' && part !== '..' || part.includes('~'))) return refuse(`${p} has a part that ends in a dot or space, or has "~"`);
   let real;
-  try { real = fs.realpathSync(given); } catch { return `no such file: ${p}`; }
-  const rel = path.relative(ROOT, real); // and again through symlinks
+  try { real = fs.realpathSync.native(given); } catch { return `no such file: ${p}`; } // .native gives the name Windows opened
+  const rel = path.relative(fs.realpathSync.native(ROOT), real); // and again through symlinks
   if (outside(rel)) return refuse(`${p} is outside the folder under review`);
   if (rel.split(path.sep).some((part) => DENIED.test(part))) return refuse(`${p} is not readable by a reviewer`);
   if (!fs.statSync(real).isFile()) return refuse(`${p} is not a file`);
@@ -87,14 +90,23 @@ function runTests() {
   });
 }
 
+// The tickets the adapter put in the prompt are the only ones a reviewer may write to, and it may comment at most
+// MAX_COMMENTS times: a planted line in a ticket cannot make it wake the team (each @mention starts a paid run).
+const MAX_COMMENTS = 3;
+const allowed = new Set();
+let comments = 0;
 async function boardCall(a) {
   if (!TICKET.test(String(a.ticket || ''))) return refuse('ticket must be an id like INT-12');
+  if (!allowed.has(String(a.ticket).toUpperCase())) return refuse(`${a.ticket} is not one of the tickets you were asked about (${[...allowed].join(', ') || 'none'})`);
   const base = `/api/boards/${encodeURIComponent(BOARD)}/items/${a.ticket}`;
   let r;
   if (a.action === 'comment') {
     const body = String(a.body || '').trim();
     if (!body) return refuse('a comment needs "body"');
-    r = await send('POST', `${base}/comments`, { body: body.slice(0, 20_000) });
+    if (comments >= MAX_COMMENTS) return refuse(`at most ${MAX_COMMENTS} comments per run: put the rest in your verdict`);
+    comments++;
+    // a zero-width joiner after "@" so a comment mentions nobody; the verdict route mentions the author on concerns
+    r = await send('POST', `${base}/comments`, { body: body.slice(0, 20_000).replace(/@/g, '@‍') });
   } else if (a.action === 'verdict') {
     if (!['ok', 'concerns'].includes(a.verdict)) return refuse('verdict must be "ok" or "concerns"');
     const comment = String(a.comment || '').trim();
@@ -116,7 +128,7 @@ async function callTool(name, args) {
     case 'git_diff': {
       const refs = [args.from, args.to].filter((x) => x != null).map(String);
       if (!refs.length || refs.some((r) => !REF.test(r) || r.startsWith('-'))) return refuse('from and to must be branches or commit ids');
-      return git(['diff', '--no-color', '--no-ext-diff', ...refs, '--']);
+      return git(['diff', '--no-color', '--no-ext-diff', '--no-textconv', ...refs, '--']);
     }
     case 'run_tests': return runTests();
     case 'board_call': return boardCall(args);
@@ -131,6 +143,7 @@ async function ticketsIn(prompt) {
   for (const id of ids) {
     const r = await send('GET', `/api/boards/${encodeURIComponent(BOARD)}/items/${id}`).catch(() => null);
     if (!r?.ok) continue;
+    allowed.add(id.toUpperCase());
     const t = r.json;
     const review = [...(t.comments || [])].reverse().find((c) => c.review || /request(ed)? review|What changed/i.test(c.body));
     out.push(`## ${t.id} ${t.title}\n${String(t.description || '').slice(0, 6000)}${review ? `\n\n### The review request\n${String(review.body).slice(0, 8000)}` : ''}`);
@@ -159,15 +172,18 @@ async function main() {
   for await (const chunk of process.stdin) prompt += chunk;
   const tickets = await ticketsIn(prompt);
   const messages = [{ role: 'system', content: SYSTEM }, { role: 'user', content: `${prompt}${tickets ? `\n\n---\nThe tickets named above, as the board has them:\n\n${tickets}` : ''}` }];
-  const usage = { input_tokens: 0, output_tokens: 0 };
+  // the OpenAI shape as it is (the board takes cached tokens out of the input itself, INT-247)
+  const usage = { prompt_tokens: 0, completion_tokens: 0 };
+  let cached = 0;
   let turns = 0;
   let final = '';
   while (turns < TURNS) {
     turns++;
     let reply;
     try { reply = await chat(messages); } catch (e) { stop(1, `error 502 BAD_GATEWAY: ${e.message} — hint: check INTELLAGENT_ADAPTER_URL, the key and the model name`); }
-    usage.input_tokens += reply.usage?.prompt_tokens || 0;
-    usage.output_tokens += reply.usage?.completion_tokens || 0;
+    usage.prompt_tokens += reply.usage?.prompt_tokens || 0;
+    usage.completion_tokens += reply.usage?.completion_tokens || 0;
+    cached += reply.usage?.prompt_tokens_details?.cached_tokens ?? reply.usage?.prompt_cache_hit_tokens ?? 0;
     const m = reply.choices?.[0]?.message;
     if (!m) stop(1, 'error 502 BAD_GATEWAY: the model API sent no message — hint: check the model name');
     messages.push(m);
@@ -179,7 +195,8 @@ async function main() {
       messages.push({ role: 'tool', tool_call_id: call.id, content: String(content) });
     }
   }
-  const finished = !!final || verdicts.length > 0;
+  if (cached) usage.prompt_tokens_details = { cached_tokens: cached };
+  const finished = verdicts.length > 0; // a run that posted no verdict is an error, so the supervisor notices
   // one line shaped like Claude's result, so the board's usage and cost code can read it (INT-238, INT-247)
   process.stdout.write(`${JSON.stringify({ type: 'result', subtype: finished ? 'success' : 'error_max_turns', is_error: !finished, num_turns: turns, result: final, verdicts, model: env.INTELLAGENT_ADAPTER_MODEL, provider: 'openai-compatible', usage })}\n`);
   if (!finished) process.exitCode = 1;
