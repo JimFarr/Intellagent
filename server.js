@@ -310,6 +310,8 @@ function applyFields(ctx, item, src, actor, changes, creating = false) {
 
 const APP_FILE = path.join(DATA, 'app.json');
 const app = readJson(APP_FILE, null) || { name: M.appName, createdAt: now() };
+// A sandbox is named for whoever runs it, even when its data was copied from the real board.
+if (M.sandbox && M.appName) app.name = M.appName;
 const saveApp = () => writeFileAtomic(APP_FILE, JSON.stringify(app, null, 2));
 if (!fs.existsSync(APP_FILE)) saveApp();
 
@@ -482,6 +484,7 @@ function loadBoard(id) {
   const p = boardPaths(id);
   const text = fs.readFileSync(p.file, 'utf8');
   const ctx = { id, ...p, board: normalizeBoard(JSON.parse(text)), archive: readJson(p.archiveFile, { items: {} }), hash: sha256(text), lastBackup: 0 };
+  if (M.sandbox && M.boardName && id === (M.defaultBoard || 'main')) ctx.board.name = M.boardName;
   boards.set(id, ctx);
   writeHash(ctx);
   watchBoard(ctx);

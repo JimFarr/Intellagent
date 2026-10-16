@@ -451,6 +451,9 @@ describe('sandbox boards', () => {
       assert.notEqual(r.json.url, s.base);
       const got = await get(`${r.json.url}/api/boards/main/items/${it.id}`);
       assert.equal(got.title, 'copied over');
+      // named for whoever runs it, even though its board was copied from the real one
+      assert.equal((await get(`${r.json.url}/api/boards/main`)).board.name, "Tester's Board");
+      assert.equal((await get(`${r.json.url}/api/app`)).name, "Tester's Board");
       // writes land in the sandbox, never on the real board
       await fetch(`${r.json.url}/api/boards/main/items`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': 'tester' }, body: JSON.stringify({ title: 'sandbox only', column: 'Ready' }) });
       assert.ok(!JSON.stringify(await s.ok('GET', '/api/boards/main/summary')).includes('sandbox only'));
