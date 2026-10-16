@@ -708,14 +708,27 @@ const badGrantsWarned = new Set();
 // Does a grant's scope cover this ticket? where: { column: name|id|[…], "<dotted path>": value|[values] }
 // The commits a ticket would land (its author's, not yet on main), as one string: a verdict records it, so a
 // later commit makes the verdict stale. Empty when the board has no worktrees or the ticket no commits.
-function ticketCommits(item) {
-  const author = (item.questions || []).find((q) => q.kind === 'review')?.raisedBy || item.review?.requestedBy || item.workedBy?.at(-1);
+// Routes that record or check a verdict look the commits up async first (withCommits), so git never runs inside
+// their transaction; anywhere else (…/work for a reviewers.<name> grant, INT-212) still looks them up here.
+const knownCommits = new Map(); // "<board>:<id>" → the commits string, for the request that looked it up
+const commitsAuthor = (item) => (item.questions || []).find((q) => q.kind === 'review')?.raisedBy || item.review?.requestedBy || item.workedBy?.at(-1);
+function ticketCommits(item, ctx = null) {
+  if (ctx && knownCommits.has(`${ctx.id}:${item.id}`)) return knownCommits.get(`${ctx.id}:${item.id}`);
+  const author = commitsAuthor(item);
   if (!author || !worktrees || !agentBranch(author)) return '';
   try { return worktrees.commitsFor(author, item.id).map((c) => c.sha).join(','); } catch { return ''; }
 }
+async function withCommits(ctx, id, fn) {
+  const item = getItem(ctx, id);
+  const author = commitsAuthor(item);
+  const key = `${ctx.id}:${item.id}`;
+  const commits = !author || !worktrees || !agentBranch(author) ? '' : (await worktrees.commitsForAsync(author, item.id).catch(() => [])).map((c) => c.sha).join(',');
+  knownCommits.set(key, commits);
+  try { return await fn(); } finally { if (knownCommits.get(key) === commits) knownCommits.delete(key); }
+}
 // A reviewer's verdict can stand in for the human only when the board checked who gave it (the reviewer has
 // a token here) and nothing was committed on the ticket since.
-const verdictStands = (item, r) => !!r.verified && (r.commits ?? '') === ticketCommits(item);
+const verdictStands = (item, r, ctx = null) => !!r.verified && (r.commits ?? '') === ticketCommits(item, ctx);
 function inScope(ctx, item, where) {
   if (!where || !item) return true;
   return Object.entries(where).every(([k, want]) => {
@@ -729,7 +742,7 @@ function inScope(ctx, item, where) {
     const rv = /^reviewers\.([\w.-]+)$/.exec(k);
     if (rv) {
       const r = (item.reviewers || []).find((x) => x.name.toLowerCase() === rv[1].toLowerCase());
-      return !!r?.verdict && verdictStands(item, r) && wants.includes(String(r.verdict).toLowerCase());
+      return !!r?.verdict && verdictStands(item, r, ctx) && wants.includes(String(r.verdict).toLowerCase());
     }
     const have = [].concat(getPath(item, k) ?? []).map((v) => String(v).toLowerCase());
     return have.some((v) => wants.includes(v));
@@ -1087,7 +1100,7 @@ function reviewerVerdict(ctx, id, name, d, actor) {
     item.comments.push(c);
     // verified: the board checked the reviewer's token (a name with a token must send it); commits: what was
     // reviewed, so a later commit makes the verdict stale for anyone relying on it.
-    Object.assign(r, { verdict, at: c.createdAt, commentId: c.id, verified: !!M.auth.agentTokens?.[name], commits: ticketCommits(item) });
+    Object.assign(r, { verdict, at: c.createdAt, commentId: c.id, verified: !!M.auth.agentTokens?.[name], commits: ticketCommits(item, ctx) });
     item.version++;
     item.updatedAt = c.createdAt;
     events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(body) }, mentions: mentionsIn(body) }));
@@ -1097,7 +1110,7 @@ function reviewerVerdict(ctx, id, name, d, actor) {
 }
 
 // commits: the ticket's commits on the agent's branch, looked up by the caller before the transaction (git
-// never runs inside one); null = look them up here.
+// never runs inside one).
 function requestReview(ctx, id, d, actor, commits = null) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
@@ -1117,7 +1130,7 @@ function requestReview(ctx, id, d, actor, commits = null) {
     const wt = actor.kind === 'agent' && worktrees ? agentBranch(actor.name) : null;
     let landing = 0; // commits approval will land on main: the review card and Approve's label read it
     if (wt) {
-      commits ??= worktrees.commitsFor(actor.name, item.id);
+      commits ||= []; // the route looked them up before the transaction
       landing = commits.length;
       summary = [summary, commits.length
         ? `**Commits** on \`${wt.branch}\` (they land on approval)\n${commits.map((c) => `- \`${c.sha.slice(0, 7)}\` ${c.subject}`).join('\n')}`
@@ -3924,7 +3937,7 @@ route('POST', '/api/boards/:board/items/:id/land', 'Human, or an agent with work
 const afterLanding = async (ctx, item) => { await landingOf(ctx, item.id); return itemView(ctx, ctx.board.items[item.id] || item); };
 route('POST', '/api/boards/:board/items/:id/review/decision', 'Human: decide a review { verdict: "approve"|"changes", comment?, column? }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  return afterLanding(ctx, decideReview(ctx, p.id, body, actor));
+  return withCommits(ctx, p.id, () => afterLanding(ctx, decideReview(ctx, p.id, body, actor)));
 });
 route('POST', '/api/boards/:board/finish', 'End your session: release all your leases (and the board hold), optionally post the digest { summary?, items? }', ({ p, body, actor }) =>
   finishSession(getCtx(p.board), body, actor));
@@ -3933,11 +3946,12 @@ route('POST', '/api/boards/:board/items/:id/reviewers', 'Assign a reviewer (the 
   itemView(getCtx(p.board), addReviewer(getCtx(p.board), p.id, body, actor)));
 route('DELETE', '/api/boards/:board/items/:id/reviewers/:name', 'Remove a reviewer (the human or the receptionist)', ({ p, actor }) =>
   itemView(getCtx(p.board), removeReviewer(getCtx(p.board), p.id, p.name, actor)));
-route('POST', '/api/boards/:board/items/:id/reviewers/:name/verdict', 'A reviewer\'s verdict: { verdict: "ok" | "concerns", comment } — posts it on the card (concerns @mention the author; a comment that is only a file path comes back with a "warning"); the human still approves', ({ p, body, actor }) => {
-  const view = itemView(getCtx(p.board), reviewerVerdict(getCtx(p.board), p.id, p.name, body, actor));
-  const warning = pathOnlyWarning(body.comment);
-  return warning ? { ...view, warning } : view;
-});
+route('POST', '/api/boards/:board/items/:id/reviewers/:name/verdict', 'A reviewer\'s verdict: { verdict: "ok" | "concerns", comment } — posts it on the card (concerns @mention the author; a comment that is only a file path comes back with a "warning"); the human still approves', ({ p, body, actor }) =>
+  withCommits(getCtx(p.board), p.id, () => {
+    const view = itemView(getCtx(p.board), reviewerVerdict(getCtx(p.board), p.id, p.name, body, actor));
+    const warning = pathOnlyWarning(body.comment);
+    return warning ? { ...view, warning } : view;
+  }));
 route('POST', '/api/boards/:board/items/:id/reactions', 'React with an emoji: { emoji ("👀" or "eyes", "+1", "tada"…), commentId? (else the card), toggle? }', ({ p, body, actor }) =>
   ({ reactions: react(getCtx(p.board), p.id, body, actor, body.toggle ? 'toggle' : true) }));
 route('DELETE', '/api/boards/:board/items/:id/reactions', 'Remove your reaction: { emoji, commentId? }', ({ p, body, q, actor }) =>
