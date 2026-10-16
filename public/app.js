@@ -1974,7 +1974,6 @@
   function onCardPointerDown(e) {
     if (e.button !== 0 || e.target.closest('button, a, input, textarea, .avatar')) return;
     const card = e.currentTarget;
-    if (card.closest('.group.stack:not(.open)')) return;
     const id = card.dataset.id;
     const start = { x: e.clientX, y: e.clientY };
     const move = (ev) => {
@@ -1990,7 +1989,8 @@
       removeEventListener('pointerup', up);
       removeEventListener('pointercancel', up);
       if (drag) endDrag(ev.type === 'pointercancel');
-      else if (ev.type === 'pointerup') { if (state.bulk) toggleSelect(id); else openItem(id, card); }
+      // A click on a closed stack is left to the stack: it fans out (see ensureGroup).
+      else if (ev.type === 'pointerup' && !card.closest('.group.stack:not(.open)')) { if (state.bulk) toggleSelect(id); else openItem(id, card); }
     };
     addEventListener('pointermove', move, { passive: false });
     addEventListener('pointerup', up);

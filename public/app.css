@@ -449,6 +449,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 /* Stack. Collapsed: the first card in front, two sheets peeking below it. Sheets take the front card's box
    (absolute), so the pile has one height and even edges whatever the tickets contain. */
 .group.stack:not(.open) .group-cards { display: block; padding-bottom: 14px; cursor: pointer; }
+.group.stack:not(.open) .group-cards > .card:first-child { pointer-events: auto; }
 .group.stack:not(.open) .group-cards > .card { pointer-events: none; transform: translateY(calc(min(var(--si), 2) * 7px)) scale(calc(1 - min(var(--si), 2) * .04));
   transition: box-shadow .25s, background-color .45s, border-color .45s, opacity .3s, filter .3s, transform .34s var(--ease); }
 /* Back cards sit under the front one, also while they travel (so they slide out from beneath it). */
