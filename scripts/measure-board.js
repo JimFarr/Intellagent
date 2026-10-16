@@ -8,7 +8,7 @@
 // reviews have real shapes, and starts its own server on it. The real board is only read.
 //
 //   intellagent api GET /api/boards/main > board.json
-//   node scripts/measure-board.js --from board.json [--items 2000] [--writes 20] [--burst 40] [--no-ui] [--json]
+//   node scripts/measure-board.js --from board.json [--items 2000] [--writes 20] [--burst 40] [--agents 7] [--human-burst 100] [--no-ui] [--json]
 //
 // The UI part drives a headless Edge or Chrome over the DevTools protocol (no dependencies); --browser <exe>
 // picks one. Main-thread time comes from Performance.getMetrics (TaskDuration and its parts).
@@ -25,6 +25,19 @@ const flag = (k) => args.includes(`--${k}`);
 const N = Number(opt('items', 2000));
 const WRITES = Number(opt('writes', 20));
 const BURST = Number(opt('burst', 40));
+// INT-154: --agents <n> defines n standing agents (named after this board's team, so the cloned tickets'
+// comments put them in their inboxes; the usual mix of listen settings). They are disabled, so nothing ever
+// runs and their queues only grow: the scheduler's worst case. --human-burst <n> human edits are timed with
+// a reader polling GET …/summary alongside, for what the UI's requests wait meanwhile.
+const AGENTS = Number(opt('agents', 0));
+const HUMAN_BURST = Number(opt('human-burst', 100));
+const TEAM = ['gamora', 'rocket', 'nebula', 'quill', 'cosmo', 'mantis', 'drax', 'yondu', 'groot', 'kraglin'];
+const LISTEN = [['addressed', 'new-tickets'], 'inbox', 'inbox', 'human', 'addressed', 'inbox', 'human'];
+const agentsJson = (n) => (n ? {
+  defaults: { worktree: false },
+  agents: Object.fromEntries(Array.from({ length: n }, (_, i) => [`${TEAM[i % TEAM.length]}${i >= TEAM.length ? i : ''}`, { enabled: false, listen: LISTEN[i % LISTEN.length], run: 'node -e 0' }])),
+} : undefined);
+const p95 = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(0.95 * (s.length - 1))] : 0; };
 
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 const ms = (t0) => Number(process.hrtime.bigint() - t0) / 1e6;
@@ -165,7 +178,7 @@ async function main() {
   out.tx = txParts(board, dir);
 
   let t0 = process.hrtime.bigint();
-  const s = await startServer({ dir, manifest: { idPrefix: board.idPrefix } });
+  const s = await startServer({ dir, manifest: { idPrefix: board.idPrefix }, agents: agentsJson(AGENTS) });
   out.bootMs = Math.round(ms(t0));
   const B = `/api/boards/${board.id}`;
   const ids = Object.keys(board.items);
@@ -186,6 +199,30 @@ async function main() {
       wr.push(ms(t));
     }
     out.write = { medianMs: +median(wr).toFixed(1), maxMs: +Math.max(...wr).toFixed(1), writesPerSecond: +(1000 / median(wr)).toFixed(1) };
+
+    // human edits wake standing agents (INT-154): the writes' own latency, and a reader's alongside them
+    if (HUMAN_BURST) {
+      const stateFile = path.join(dir, 'data', 'agents.state.json');
+      let reading = true;
+      const lat = [];
+      const reader = (async () => { while (reading) { lat.push((await get(`${B}/summary`)).ms); await sleep(10); } })();
+      const hw = [];
+      for (let i = 0; i < HUMAN_BURST; i++) {
+        const t = process.hrtime.bigint();
+        await s.ok('PATCH', `${B}/items/${pick(3000 + i)}`, { properties: { human: i } }, { user: 'James' });
+        hw.push(ms(t));
+      }
+      reading = false;
+      await reader;
+      const team = AGENTS ? (await s.ok('GET', '/api/agents', undefined, { user: 'James' })).agents : [];
+      out.humanBurst = {
+        writes: HUMAN_BURST, agents: AGENTS,
+        writeMedianMs: +median(hw).toFixed(1), writeP95Ms: +p95(hw).toFixed(1),
+        readerMedianMs: +median(lat).toFixed(1), readerP95Ms: +p95(lat).toFixed(1), reads: lat.length,
+        queuedEvents: team.reduce((n, a) => n + (a.queued || 0), 0),
+        stateKB: fs.existsSync(stateFile) ? kb(fs.statSync(stateFile).size) : 0,
+      };
+    }
 
     const exe = flag('no-ui') ? null : findBrowser();
     if (!flag('no-ui') && !exe) out.ui = 'skipped: no Edge or Chrome found (--browser <exe>)';
