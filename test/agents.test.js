@@ -581,7 +581,7 @@ describe('what a run inherits (INT-246)', () => {
     process.env.IA_T_SECRET = 's';
     process.env.IA_T_KEEP = 'k';
     try {
-      const all = childEnv({ env: { IA_T_SECRET: null, IA_T_ADD: 1 } }, { INTELLAGENT_URL: 'u' }, { INTELLAGENT_AGENT: 'me' });
+      const all = childEnv({ run: 'claude -p go', env: { IA_T_SECRET: null, IA_T_ADD: 1 } }, { INTELLAGENT_URL: 'u' }, { INTELLAGENT_AGENT: 'me' });
       assert.equal(all.IA_T_SECRET, undefined, 'dropped');
       assert.equal(all.IA_T_KEEP, 'k', 'everything else is still inherited');
       assert.equal(all.IA_T_ADD, '1');
@@ -590,8 +590,37 @@ describe('what a run inherits (INT-246)', () => {
       assert.ok(Object.keys(only).some((k) => k.toUpperCase() === 'PATH'), 'a shell can still start');
       assert.equal(only.INTELLAGENT_URL, 'u', 'the board\'s own variables are not inherited, so inheritEnv never drops them');
       assert.equal(only.INTELLAGENT_AGENT, 'me', 'an agent cannot pose as another');
-      if (process.platform === 'win32') assert.equal(childEnv({ env: { ia_t_secret: null } }, {}, {}).IA_T_SECRET, undefined, 'Windows names ignore case');
+      if (process.platform === 'win32') assert.equal(childEnv({ run: 'claude -p go', env: { ia_t_secret: null } }, {}, {}).IA_T_SECRET, undefined, 'Windows names ignore case');
     } finally { delete process.env.IA_T_SECRET; delete process.env.IA_T_KEEP; }
+  });
+
+  it('a custom run inherits only what a shell needs unless inheritEnv adds names; a claude run still inherits everything (INT-260)', () => {
+    const token = process.env.INTELLAGENT_TOKEN; // set when the suite itself runs inside an agent
+    process.env.IA_T_API_KEY = 'secret';
+    process.env.INTELLAGENT_TOKEN = 'the-boards-own';
+    try {
+      const shell = ['PATH', 'PATHEXT', 'SystemRoot', 'windir', 'ComSpec', 'TEMP', 'TMP', 'HOME', 'USERPROFILE'].map((k) => k.toUpperCase());
+      const fromBoard = (env) => Object.keys(env).filter((k) => k !== 'INTELLAGENT_URL' && k !== 'INTELLAGENT_AGENT');
+      for (const run of ['node adapter.js', ['node', 'adapter.js'], 'C:/tools/claude.exe -p go', undefined]) {
+        const env = childEnv({ run }, { INTELLAGENT_URL: 'u' }, { INTELLAGENT_AGENT: 'me' });
+        const stray = fromBoard(env).filter((k) => !shell.includes(k.toUpperCase()));
+        assert.deepEqual(stray, [], `${JSON.stringify(run)} inherits nothing beyond the shell's names`);
+        assert.equal(env.INTELLAGENT_URL, 'u');
+        assert.equal(env.INTELLAGENT_AGENT, 'me');
+      }
+      const widened = childEnv({ run: 'node adapter.js', inheritEnv: ['ia_t_api_key'] }, {}, {});
+      assert.equal(process.platform === 'win32' ? widened.IA_T_API_KEY : widened.ia_t_api_key, process.platform === 'win32' ? 'secret' : undefined,
+        'inheritEnv adds a name (case-insensitively on Windows only)');
+      assert.equal(childEnv({ run: 'node adapter.js', inheritEnv: ['IA_T_API_KEY'] }, {}, {}).IA_T_API_KEY, 'secret');
+      assert.equal(childEnv({ run: 'node adapter.js', env: { IA_T_API_KEY: 'given' } }, {}, {}).IA_T_API_KEY, 'given', 'env still gives a value outright');
+      const claude = childEnv({ run: 'claude -p go' }, {}, {});
+      assert.equal(claude.IA_T_API_KEY, 'secret', 'claude runs keep today\'s default');
+      assert.equal(claude.INTELLAGENT_TOKEN, 'the-boards-own');
+      assert.equal(childEnv({ run: 'claude -p go', inheritEnv: [] }, {}, {}).IA_T_API_KEY, undefined, 'inheritEnv still narrows a claude run');
+    } finally {
+      delete process.env.IA_T_API_KEY;
+      if (token == null) delete process.env.INTELLAGENT_TOKEN; else process.env.INTELLAGENT_TOKEN = token;
+    }
   });
 
   it('a run gets the env the agent asked for; keepAlive with a non-claude run runs one-shot; a bad env leaves the agent off', async () => {
@@ -600,7 +629,8 @@ describe('what a run inherits (INT-246)', () => {
     try {
       s = await startServer({ agents: { defaults: fast, agents: {
         narrow: { run: run('env', 'IA_T_BOARD_SECRET,IA_T_MINE'), env: { IA_T_BOARD_SECRET: null, IA_T_MINE: 'x' } },
-        plain: { run: run('env', 'IA_T_MINE'), keepAlive: true },
+        plain: { run: run('env', 'IA_T_BOARD_SECRET,IA_T_MINE'), keepAlive: true },
+        wide: { run: run('env', 'IA_T_BOARD_SECRET'), inheritEnv: ['IA_T_BOARD_SECRET'] },
         broken: { run: run('ok'), inheritEnv: 'PATH' },
       } } });
     } finally { delete process.env.IA_T_BOARD_SECRET; }
@@ -611,11 +641,13 @@ describe('what a run inherits (INT-246)', () => {
       assert.equal(agents.find((a) => a.name === 'plain').keepAlive, false);
       assert.equal(agents.find((a) => a.name === 'broken').status, 'paused');
       const it = await s.ok('POST', `${B}/items`, { title: 'env', column: 'Backlog' }, USER);
-      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@narrow @plain @broken go' }, USER);
-      await until(async () => (await comments(s, it.id)).filter((c) => / env /.test(c)).length === 2, 15000, 'both replied');
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@narrow @plain @wide @broken go' }, USER);
+      await until(async () => (await comments(s, it.id)).filter((c) => / env /.test(c)).length === 3, 15000, 'all three replied');
       const said = await comments(s, it.id);
       assert.ok(said.includes('narrow: handled 1 event(s) env IA_T_BOARD_SECRET=- IA_T_MINE=x'), said.join('\n'));
-      assert.ok(said.includes('plain: handled 1 event(s) env IA_T_MINE=-'), 'plain ran one-shot instead of hanging on a turn');
+      assert.ok(said.includes('plain: handled 1 event(s) env IA_T_BOARD_SECRET=- IA_T_MINE=-'),
+        'plain ran one-shot instead of hanging on a turn, and a custom run never sees a board variable it was not given (INT-260)');
+      assert.ok(said.includes('wide: handled 1 event(s) env IA_T_BOARD_SECRET=leak'), 'inheritEnv lets that one name through');
       assert.equal((await agentState(s, 'plain')).session, null);
       assert.ok(!said.some((c) => c.startsWith('broken:')), 'broken never ran');
     } finally { await s.stop(); }
