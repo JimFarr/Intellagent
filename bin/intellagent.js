@@ -6,7 +6,7 @@
  *   intellagent init [dir] [--template software] [--name "My App"] [--prefix APP] [--port 7421] [--agent claude] [--no-mcp] [--no-claude] [--no-start]
  *   intellagent brief [--agent name]    everything an agent needs to start working
  *   intellagent templates               list board templates
- *   intellagent preset list|add|diff|update   packages of board: init --preset, add one to a board, take updates piece by piece
+ *   intellagent preset list|add|diff|update|export   packages of board: init --preset, add one to a board, take updates piece by piece
  *   intellagent skill install [--project] install the intellagent skills for Claude Code
  *   intellagent start [--open]          run the board for the nearest .intellagent/ folder
  *   intellagent open | status | docs
@@ -385,6 +385,29 @@ async function applyStep(board, s) {
   if (kind === 'directives') return asHuman('PUT', `${b}/directives`, { directives: s.value });
 }
 
+// Writes the live board as <folder>/preset.json and prints what it left out and why.
+async function presetExport(folder, f) {
+  humanOnly('intellagent preset export');
+  if (!folder) { console.error('Usage: intellagent preset export <folder> [--name N] [--version V] [--board B] [--force]'); process.exit(1); }
+  const mp = requireManifest();
+  const board = String(f.board || readManifest(mp)?.defaultBoard || 'main');
+  const live = (await asHuman('GET', `/api/boards/${board}`)).board;
+  const name = String(f.name === true || f.name == null ? live.name || board : f.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  const { preset, left } = presets.fromBoard(live, { name, version: f.version === true || f.version == null ? '1' : String(f.version) });
+  const why = presets.validate(preset);
+  if (why) { console.error(`error 400 BAD_REQUEST: the board does not make a usable preset: ${why} — hint: intellagent preset export ${folder} --name <lowercase-name>`); process.exit(1); }
+  const dest = path.resolve(folder);
+  const file = path.join(dest, 'preset.json');
+  if (fs.existsSync(file) && !f.force) { console.error(`error 409 CONFLICT: ${file} already exists — hint: add --force to replace it, or pick another folder`); process.exit(1); }
+  fs.mkdirSync(dest, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(preset, null, 2) + '\n');
+  console.log(`  ✓ ${preset.name}@${preset.version} written to ${file}`);
+  console.log(`    ${Object.keys(presets.parts(preset)).length} pieces: ${preset.board.columns.length} columns, ${preset.board.schema.fields.length} fields, ${preset.board.ticketTemplates.length} ticket templates${preset.board.directives ? ', board rules' : ''}`);
+  console.log('  Left out:');
+  for (const l of left) console.log(`    - ${l.what}: ${l.why}`);
+  console.log(`  Install it with: intellagent init --preset ${folder}   (or preset add ${folder} on a board that exists)`);
+}
+
 async function presetCmd() {
   const [sub = 'list', spec] = rest;
   const f = flags(rest.slice(1));
@@ -398,7 +421,8 @@ async function presetCmd() {
     }
     return;
   }
-  if (!['add', 'diff', 'update'].includes(sub)) { console.error('Usage: intellagent preset list | add <name|folder> [--yes] | diff <name|folder> | update <name|folder> [--accept all|id,id]'); process.exit(1); }
+  if (sub === 'export') return presetExport(spec, f);
+  if (!['add', 'diff', 'update'].includes(sub)) { console.error('Usage: intellagent preset list | add <name|folder> [--yes] | diff <name|folder> | update <name|folder> [--accept all|id,id] | export <folder> [--name N] [--force]'); process.exit(1); }
   if (!spec) { console.error(`Usage: intellagent preset ${sub} <name|folder>`); process.exit(1); }
   humanOnly(`intellagent preset ${sub}`);
   const mp = requireManifest();
@@ -833,7 +857,7 @@ const HELP = `intellagent — a kanban for you and your agents
                    --port N (default: the first free port from 7420)  --prefix XX (ticket ids)  --open-agents (agents need no token)
                    also adds the MCP tools (.mcp.json) and CLAUDE.md instructions; opt out: --no-mcp --no-claude --no-start --no-token
   templates        list board templates (software, research, ops, ...)
-  preset           packages of board: preset list | add NAME|FOLDER [--yes] | diff NAME|FOLDER | update NAME|FOLDER [--accept all|id,id]
+  preset           packages of board: preset list | add NAME|FOLDER [--yes] | diff NAME|FOLDER | update NAME|FOLDER [--accept all|id,id] | export FOLDER [--name N] [--force]
                    init --preset NAME|FOLDER sets a board up from one; it lists the powers it brings and asks first (--yes agrees)
                    an update never overwrites what you edited: edited pieces are kept, the rest you accept one by one
   skill install    add the intellagent skills to Claude Code (working a ticket; setting up)   [--project]

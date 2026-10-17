@@ -312,3 +312,55 @@ describe('presets: preset add, diff and update on a board that exists', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('presets: preset export (INT-303)', () => {
+  it('writes the live board as a preset that installs back to the same board, and says what it left out', async () => {
+    const s = await startServer();
+    try {
+      await s.ok('POST', '/api/boards/main/columns', { name: 'Shipped', color: '#222222', flags: { humanOnlyIn: true } }, USER);
+      await s.ok('POST', '/api/boards/main/schema/fields', { key: 'size', type: 'enum', options: ['s', 'm'] }, USER);
+      await s.ok('POST', '/api/boards/main/ticket-templates', { label: 'Chore', type: 'task', description: 'see C:\\Users\\me\\notes.txt' }, USER);
+      await s.ok('PUT', '/api/boards/main/directives', { directives: '- keep it small' }, USER);
+      await s.ok('POST', '/api/boards/main/items', { title: 'a secret ticket', column: 'Ready' }, USER);
+      const out = path.join(tmp('export'), 'mine');
+      const r = cli(['preset', 'export', out, '--name', 'Mine Preset'], { cwd: s.dir });
+      assert.equal(r.code, 0, r.err);
+      assert.match(r.out, /mine-preset@1 written/);
+      assert.match(r.out, /Left out:[\s\S]*the tickets, comments and attachments[\s\S]*tokens[\s\S]*idle-alarm[\s\S]*roles, agents/);
+      assert.match(r.out, /absolute path in ticket template "chore"/);
+      const text = fs.readFileSync(path.join(out, 'preset.json'), 'utf8');
+      const p = JSON.parse(text);
+      assert.equal(presets.validate(p), null);
+      assert.doesNotMatch(text, /a secret ticket|Users|itemIds|token|local\.json/, 'no tickets, ids, paths or secrets');
+      assert.ok(p.board.columns.some((c) => c.name === 'Shipped' && c.flags.humanOnlyIn));
+      assert.ok(p.board.ticketTemplates.find((t) => t.key === 'chore').description.includes('<path>'));
+      // the board matches its export, except the one text the export changed on purpose
+      const live = await board(s);
+      const states = Object.fromEntries(presets.plan(p, undefined, live).map((x) => [x.id, x.state]));
+      assert.equal(states['column:Shipped'], 'same');
+      assert.equal(states['field:size'], 'same');
+      assert.equal(states.directives, 'same');
+      assert.equal(states['ticket-template:chore'], 'edited', 'the path was redacted, so it differs from the board');
+      // a new board installs every piece
+      const fresh = tmp('roundtrip');
+      const init = cli(['init', '--preset', out, '--yes', '--no-start', '--no-open', '--no-mcp', '--no-claude'], { cwd: fresh });
+      assert.equal(init.code, 0, init.err);
+      const lock = JSON.parse(fs.readFileSync(path.join(fresh, '.intellagent', 'presets.json'), 'utf8')).presets['mine-preset'];
+      assert.deepEqual(Object.keys(lock.parts).sort(), Object.keys(presets.parts(p)).sort());
+      // an existing preset.json is kept unless --force
+      const again = cli(['preset', 'export', out, '--name', 'mine-preset'], { cwd: s.dir });
+      assert.equal(again.code, 1);
+      assert.match(again.err, /error 409 CONFLICT.*hint: add --force/);
+      assert.equal(cli(['preset', 'export', out, '--name', 'mine-preset', '--force'], { cwd: s.dir }).code, 0);
+    } finally { await s.stop(); }
+  });
+  it('it is the human\'s and needs a folder: an agent is refused, a missing folder has a usage line', async () => {
+    const s = await startServer();
+    try {
+      const r = cli(['preset', 'export', path.join(tmp('x'), 'p')], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'ada' } });
+      assert.equal(r.code, 1);
+      assert.match(r.err, /error 403 HUMAN_ONLY.*hint: ask the human/);
+      assert.match(cli(['preset', 'export'], { cwd: s.dir }).err, /Usage: intellagent preset export <folder>/);
+    } finally { await s.stop(); }
+  });
+});
