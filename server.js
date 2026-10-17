@@ -1212,7 +1212,7 @@ function reviewerVerdict(ctx, id, name, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
     const r = (item.reviewers || []).find((x) => x.name === name);
-    if (!r) fail(404, `${name} is not a reviewer on ${item.id}`);
+    if (!r) fail(404, `${name} is not a reviewer on ${item.id}`, { code: 'NOT_REVIEWER', hint: `An @mention doesn't make a reviewer: ask the receptionist or the human to add you (POST …/items/${item.id}/reviewers { "name": "${name}" }), or post your review as a comment` });
     if (authorsOf(item).has(name)) fail(403, `${name} has worked on ${item.id} since being asked to review it — a reviewer never judges its own work`, { code: 'OWN_WORK', hint: 'Leave the verdict to another reviewer or the human' });
     const author = (item.questions || []).find((q) => q.kind === 'review')?.raisedBy || item.review?.requestedBy || item.workedBy?.at(-1) || null;
     const ask = verdict === 'concerns' && author && !comment.includes(`@${author}`) ? `\n\n@${author} please take a look.` : '';

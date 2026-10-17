@@ -782,6 +782,33 @@ describe('delegated approval on a reviewer\'s ok', () => {
   });
 });
 
+describe('asking for review again keeps the reviewers (INT-298)', () => {
+  it('the reviewer stays on the card, its tick is cleared, it is woken, and it can give a new verdict', async () => {
+    const s = await startServer({ agents: { agents: { kraglin: { role: 'reviewer', enabled: false } } } });
+    try {
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'asked twice', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'c', evidence: 'e' }, { agent: 'dev' });
+      const verdict = (v) => s.api('POST', `/api/boards/main/items/${it.id}/reviewers/kraglin/verdict`, { verdict: v, comment: 'see above' }, { agent: 'kraglin' });
+      const unasked = await verdict('ok');
+      assert.equal(unasked.status, 404, 'only @mentioned, not added: no tick');
+      assert.equal(unasked.body.code, 'NOT_REVIEWER');
+      assert.match(unasked.body.hint, /\/reviewers/);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/reviewers`, { name: 'kraglin' }, USER);
+      assert.equal((await verdict('concerns')).status, 200);
+      const { seq } = await s.ok('GET', '/api/app');
+      await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'fixed', evidence: 'e' }, { agent: 'dev' });
+      const after = await s.ok('GET', `/api/boards/main/items/${it.id}`);
+      assert.deepEqual(after.reviewers.map((r) => [r.name, r.verdict]), [['kraglin', null]], 'still a reviewer, tick cleared');
+      const [ev] = (await s.ok('GET', `/api/events?since=${seq}&for=kraglin&types=review.reviewer_assigned`)).events;
+      assert.equal(ev?.again, true, 'woken to look again');
+      assert.equal((await verdict('ok')).status, 200, 'a verdict after the re-request is a tick');
+      assert.equal((await s.ok('GET', `/api/boards/main/items/${it.id}`)).reviewers[0].verdict, 'ok');
+    } finally { await s.stop(); }
+  });
+});
+
 describe('a verdict the board could not check never stands in for the human', () => {
   it("without the reviewer's token, Nebula's ok is not enough, and the chase says why with a stable wake tag", async () => {
     const s = await startServer({ agents: { agents: {
