@@ -758,7 +758,7 @@ const permsFor = (name) => {
    agents.control pause / resume / run other standing agents
    An agent never uses a grant on its own work: a ticket it worked on, or a review it requested.
    The powers are listed in the permission library (lib/permissions.js) beside the tool permissions. */
-const { POWERS, createLibrary: createPermLibrary } = require('./lib/permissions');
+const { POWERS, createLibrary: createPermLibrary, guidanceLine } = require('./lib/permissions');
 const { createRoles } = require('./lib/agents/roles');
 const { BASE_MAX, shipped: shippedBase } = require('./lib/agents/base');
 const { layersFor } = require('./lib/agents/prompt');
@@ -771,20 +771,46 @@ const { createRequests } = require('./lib/requests');
 const landers = () => { try { return standing.list().agents.filter((a) => a.enabled && grantsOf(a.name).some((g) => g.power === 'work.land')).map((a) => a.name); } catch { return []; } };
 function grantsOf(name) {
   const raw = [...arr(standing?.grantsOf?.(name)), ...arr(M.permissions[name]?.grants)];
+  const ignore = (power, g, why) => {
+    const key = `${name}:${power}:${JSON.stringify(g)}`;
+    if (!badGrantsWarned.has(key)) { badGrantsWarned.add(key); console.warn(`agents.json: ${name}'s ${power} grant is ignored — ${why}`); }
+    return null;
+  };
   return raw.map((g) => {
     if (typeof g === 'string') return { power: g };
     if (!isObj(g)) return null;
     const power = String(g.power || '');
-    if (g.where == null) return { power };
     // A scope that can't be read as { key: value(s) } can't be trusted to narrow the power, so the grant is
     // dropped — no power beats every power (agents.json is hand-written: "fields.risk=low" is an easy slip).
-    const ok = isObj(g.where) && Object.keys(g.where).length && Object.values(g.where).every((v) => [].concat(v).some((x) => String(x ?? '').trim()));
-    if (ok) return { power, where: g.where };
-    const key = `${name}:${power}:${JSON.stringify(g.where)}`;
-    if (!badGrantsWarned.has(key)) { badGrantsWarned.add(key); console.warn(`agents.json: ${name}'s ${power} grant is ignored — its "where" must be an object like { "fields.risk": "low" }`); }
-    return null;
+    if (g.where != null && !(isObj(g.where) && Object.keys(g.where).length && Object.values(g.where).every((v) => [].concat(v).some((x) => String(x ?? '').trim())))) {
+      return ignore(power, g.where, 'its "where" must be an object like { "fields.risk": "low" }');
+    }
+    const out = { power, ...(g.where != null ? { where: g.where } : {}) };
+    // The required-reviewers rule (INT-230): { minOks: 2 | "all", from?: [names] }. Same rule as "where": one
+    // that can't be read drops the grant, never the rule.
+    if (g.minOks != null || g.from != null) {
+      const rule = okRule(g);
+      if (typeof rule === 'string') return ignore(power, { minOks: g.minOks, from: g.from }, rule);
+      if (!APPROVAL_POWERS.has(power)) return ignore(power, { minOks: g.minOks, from: g.from }, '"minOks" and "from" only apply to review.decide and column.gate, the powers that act on a reviewed ticket');
+      Object.assign(out, rule);
+    }
+    return out;
   }).filter((g) => g && POWERS[g.power]);
 }
+// { minOks, from } read from a grant, or a string saying why it can't be. minOks is a whole number ≥ 1 or "all";
+// from is a list of reviewer names (left out: every reviewer assigned to the ticket). from alone means "all".
+function okRule(g) {
+  const from = g.from == null ? null : [...new Set([].concat(g.from).map((x) => String(x ?? '').trim().toLowerCase()).filter(Boolean))];
+  if (from && (!from.length || from.some((n) => !/^[\w.-]{1,64}$/.test(n)))) return '"from" must be a list of agent names, like ["nebula", "kraglin"]';
+  const min = g.minOks == null ? 'all' : String(g.minOks).toLowerCase() === 'all' ? 'all' : Number(g.minOks);
+  if (min !== 'all' && !(Number.isInteger(min) && min >= 1)) return '"minOks" must be a whole number of at least 1, or "all"';
+  if (from && min !== 'all' && min > from.length) return `"minOks" is ${min} but "from" names only ${from.length}, so it could never be met`;
+  return { minOks: min, ...(from ? { from } : {}) };
+}
+// The rule in words, for the brief: "2 standing oks from nebula, kraglin" / "an ok from every assigned reviewer".
+const okRuleText = (g) => (g.minOks === 'all'
+  ? `an ok from ${g.from ? `each of ${g.from.join(', ')}` : 'every assigned reviewer'}`
+  : `${g.minOks} ok(s) from ${g.from ? g.from.join(', ') : 'the assigned reviewers'}`) + ' (current, from a reviewer with a token, never an author)';
 const badGrantsWarned = new Set();
 // Does a grant's scope cover this ticket? where: { column: name|id|[…], "<dotted path>": value|[values] }
 // The commits a ticket would land (its author's, not yet on main), as one string: a verdict records it, so a
@@ -878,6 +904,45 @@ function inScope(ctx, item, where) {
     return have.some((v) => wants.includes(v));
   });
 }
+// Where a grant's required-reviewers rule stands on this ticket. An ok counts while it stands (verdictStands:
+// given with the reviewer's own token, about the commits the ticket has now) and comes from someone who could
+// review it (never an author). A rule is a condition on the ticket as it is, not a token an ok is spent on, so
+// one ok can satisfy any number of rules, as GitHub's required reviewers do.
+// → { met, need, have, short: [{ name, state }], key, text, early } — state: unassigned | waiting | concerns |
+// unverified | stale; early: every shortfall is a verdict asked for less than 30 min ago (nothing to chase yet).
+function okStatus(ctx, item, g) {
+  if (!g.minOks) return { met: true };
+  if (!item) return { met: false, need: 1, have: 0, short: [], key: 'oks:no-ticket', text: 'a ticket with reviewers (this rule only applies to one)', early: false };
+  const authors = authorsOf(item);
+  const rs = item.reviewers || [];
+  const find = (n) => rs.find((r) => r.name.toLowerCase() === n);
+  const pool = (g.from || rs.map((r) => r.name.toLowerCase())).filter((n) => ![...authors].some((a) => a.toLowerCase() === n));
+  const need = g.minOks === 'all' ? Math.max(1, (g.from || pool).length) : g.minOks;
+  const state = (n) => {
+    const r = find(n);
+    if (!r) return 'unassigned';
+    if (!r.verdict) return 'waiting';
+    if (r.verdict !== 'ok') return 'concerns';
+    if (!r.verified) return 'unverified';
+    return verdictStands(item, r, ctx) ? 'ok' : 'stale';
+  };
+  const states = pool.map((name) => ({ name, state: state(name) }));
+  const have = states.filter((s) => s.state === 'ok').length;
+  if (have >= need) return { met: true, need, have };
+  const short = states.filter((s) => s.state !== 'ok');
+  const WHY = { unassigned: 'not assigned as reviewer', waiting: 'verdict pending', concerns: 'has concerns', unverified: "ok can't count: the board doesn't check that reviewer's token", stale: 'ok is stale: commits since' };
+  const missing = need - have;
+  // Authors named in "from" can never count; say so, or a rule that can't be met looks like a slow reviewer.
+  const lost = (g.from || []).filter((n) => !pool.includes(n));
+  // Named reviewers are a fixed list; without "from", more reviewers can still be assigned.
+  const impossible = !!g.from && pool.length < need;
+  const unstaffed = !g.from && pool.length < need ? need - pool.length : 0;
+  const text = impossible
+    ? `${need} ok(s) from ${g.from.join(', ')}, but only ${pool.length} of them can review it${lost.length ? ` (${lost.join(', ')} worked on it)` : ''}`
+    : `${missing} more ok(s)${g.from ? ` from ${g.from.join(', ')}` : ' from the assigned reviewers'}${short.length ? `: ${short.map((s) => `${s.name} ${WHY[s.state]}`).join('; ')}` : ''}${unstaffed ? `${short.length ? '; ' : ': '}${unstaffed} more reviewer(s) to assign` : ''}`;
+  const early = !impossible && !unstaffed && short.length > 0 && short.every((s) => s.state === 'waiting' && Date.now() - Date.parse(find(s.name).at || 0) < 30 * 60_000);
+  return { met: false, need, have, short, key: `oks:${impossible ? 'impossible' : [...short.map((s) => `${s.name}=${s.state}`), ...(unstaffed ? [`assign=${unstaffed}`] : [])].join(',')}`, text, early };
+}
 const ownWork = (item, name) => !!item && ((item.workedBy || []).includes(name) || (item.questions || []).some((q) => q.kind === 'review' && q.raisedBy === name)
   || item.review?.requestedBy === name);
 // The grant an agent would use for this action, or a fail() saying why not. Humans never need one.
@@ -886,16 +951,22 @@ const ownWork = (item, name) => !!item && ((item.workedBy || []).includes(name) 
 // that was already approved goes on. The manifest's approvalsOff says where a board starts.
 const APPROVAL_POWERS = new Set(['review.decide', 'column.gate']);
 const approvalsOff = (ctx) => !!(ctx?.board?.approvalsOff ?? M.approvalsOff);
-function grantFor(ctx, actor, power, item, what) {
+// oks: false skips the required-reviewers rule (a delegated "changes" verdict: asking for changes needs no oks).
+function grantFor(ctx, actor, power, item, what, { oks = true } = {}) {
   if (actor.kind === 'user') return null;
   const mine = grantsOf(actor.name).filter((g) => g.power === power);
   if (!mine.length) fail(403, `Only the human can ${what}`, { code: 'HUMAN_ONLY', hint: `The human can delegate this by adding "grants": ["${power}"] to your entry in agents.json` });
   if (APPROVAL_POWERS.has(power) && approvalsOff(ctx)) fail(403, 'Approvals for the human are switched off on this board', { code: 'APPROVALS_OFF', hint: 'Leave it for the human: they switch approvals back on from the Agents page' });
   if (power === 'review.decide' && item && !inActiveFocus(ctx, item)) fail(409, `${item.id} is outside the focus board "${activeFocus(ctx).name}": approvals wait until the human retires it`, { code: 'OUT_OF_FOCUS', hint: 'Leave it; work on the focus board tickets (your …/work lists them)' });
   if (item && ownWork(item, actor.name)) fail(403, `${actor.name} worked on ${item.id} or asked for its review — an agent never approves its own work`, { code: 'OWN_WORK', hint: 'Leave it for the human or another agent' });
-  const g = mine.find((x) => inScope(ctx, item, x.where));
-  if (!g) fail(403, `${item?.id || 'This'} is outside your ${power} grant (${JSON.stringify(mine.map((x) => x.where || 'any'))})`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
-  return g;
+  const scoped = mine.filter((x) => inScope(ctx, item, x.where));
+  if (!scoped.length) fail(403, `${item?.id || 'This'} is outside your ${power} grant (${JSON.stringify(mine.map((x) => x.where || 'any'))})`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
+  if (!oks) return scoped[0];
+  const g = scoped.find((x) => okStatus(ctx, item, x).met);
+  if (g) return g;
+  // In scope, but no grant's reviewers have passed it yet: say exactly what is missing (the closest grant's).
+  const st = scoped.map((x) => okStatus(ctx, item, x)).sort((a, b) => (a.need - a.have) - (b.need - b.have))[0];
+  return fail(409, `${item?.id || 'This'} needs ${st.text} before you can use ${power} on it`, { code: 'OKS_MISSING', missing: st.short || [], hint: 'Ask whoever owes an ok (@mention them), or leave it for the human' });
 }
 
 // How the board is governed (gates, coordinator, rules, column order) is the human's: an agent may not
@@ -1924,7 +1995,7 @@ function decideReview(ctx, id, d, actor) {
   const verdict = d.verdict === 'approve' || d.verdict === 'approved' ? 'approve' : d.verdict === 'changes' ? 'changes' : fail(400, '"verdict" must be "approve" or "changes"');
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
-    const grant = grantFor(ctx, actor, 'review.decide', item, 'decide reviews');
+    const grant = grantFor(ctx, actor, 'review.decide', item, 'decide reviews', { oks: verdict === 'approve' });
     // No open review: say whether it was already decided (and by whom), before the evidence check reads the review.
     const decided = item.review?.verdict && !reviewWithdrawnUndecided(item) ? item.review : null;
     if (grant && !(item.questions || []).some((x) => x.kind === 'review')) {
@@ -2081,7 +2152,13 @@ function delegationGaps(ctx, it, q, grants) {
   if (worried.length) gap(`concerns:${worried.join(',')}`, `${worried.join(', ')}'s concerns resolved (the author fixes them and asks for review again)`);
   const open = openBlockersOf(ctx, it);
   if (open.length) gap(`blocked:${open.join(',')}`, `its blockers done first: it waits on ${open.join(', ')}`);
-  if (!grants.some((g) => inScope(ctx, it, g.where))) {
+  const scoped = grants.filter((g) => inScope(ctx, it, g.where));
+  if (scoped.length && !scoped.some((g) => okStatus(ctx, it, g).met)) {
+    // In scope, waiting on a required-reviewers rule: name each ok still missing (the closest grant's).
+    const st = scoped.map((g) => okStatus(ctx, it, g)).sort((a, b) => (a.need - a.have) - (b.need - b.have))[0];
+    if (st.early) early = true;
+    else gap(st.key, st.text);
+  } else if (!scoped.length) {
     // Several grants can each name a reviewer (reviewers.nebula, reviewers.drax): any one of them passing is
     // enough. Only reviewers who could review this ticket count (never one of its authors).
     const authors = authorsOf(it);
@@ -2465,8 +2542,11 @@ function briefing(ctx, name, base, via = 'cli') {
         'agents.control': `${cli('POST', '/api/agents/<name>/pause')} · …/resume · …/run`,
         'agents.manage': `${cli('PATCH', '/api/agents/<name>', 'label="…" model=haiku alignment="…"')} — models: ${MANAGER_MODELS.join(', ')}; perms and permissions can only narrow; never your own record`,
       };
+      let said = {};
+      try { said = standing?.guidanceOf?.(name) || {}; } catch { /* not a standing agent */ }
       return ['', '## Powers the human delegated to you',
-        ...g.map((x) => `- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}: ${how[x.power]}`),
+        ...g.flatMap((x) => [`- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
+          ...(Object.hasOwn(said, x.power) ? [`  ${guidanceLine(said[x.power])}`] : [])]),
         'Your verdicts and moves are final and recorded as made on the human\'s behalf; the human can still override them. Never use a power on your own work (a ticket you worked on or asked to have reviewed) — the board refuses it. Explain each decision in its comment.',
         ...(approvalsOff(ctx) && g.some((x) => APPROVAL_POWERS.has(x.power)) ? ['**Approvals are switched off on this board right now:** the human paused them, so review.decide and column.gate are suspended (403 APPROVALS_OFF). Leave reviews for the human until they switch approvals back on.'] : [])];
     })(),
@@ -4385,7 +4465,15 @@ function cleanGrants(list) {
     if (!POWERS[power]) fail(400, `Unknown power "${power}". Powers: ${Object.keys(POWERS).join(', ')}`);
     // A scope narrows a power, so a malformed one is refused, never dropped: dropping it would turn "only
     // where risk is low" into "everywhere".
-    if (typeof g === 'string' || g?.where == null) return power;
+    if (typeof g === 'string') return power;
+    // The required-reviewers rule narrows it too: refused when malformed, same as a scope.
+    let rule = {};
+    if (g?.minOks != null || g?.from != null) {
+      rule = okRule(g);
+      if (typeof rule === 'string') fail(400, `The rule of ${power}: ${rule}`, { code: 'BAD_REQUEST' });
+      if (!APPROVAL_POWERS.has(power)) fail(400, `"minOks" and "from" only apply to review.decide and column.gate, not ${power}`, { code: 'BAD_REQUEST' });
+    }
+    if (g?.where == null) return Object.keys(rule).length ? { power, ...rule } : power;
     if (!isObj(g.where)) fail(400, `The scope ("where") of ${power} must be an object like { "fields.risk": "low" }`, { code: 'BAD_REQUEST' });
     const where = {};
     for (const [k, v] of Object.entries(g.where)) {
@@ -4395,7 +4483,7 @@ function cleanGrants(list) {
       where[k] = Array.isArray(v) ? vs : vs[0];
     }
     if (!Object.keys(where).length) fail(400, `The scope of ${power} is empty`, { code: 'BAD_REQUEST', hint: 'Leave "where" out to grant it everywhere, on purpose' });
-    return { power, where };
+    return { power, where, ...rule };
   });
 }
 // Board access the UI sets: { columns?: [names], readOnly? } (stored as "limits")
@@ -4628,6 +4716,8 @@ route('GET', '/api/permissions/me', 'What you are allowed to do (from the manife
   name: actor.name, kind: actor.kind, permissions: actor.kind === 'agent' ? permsFor(actor.name) : null,
   perms, runAuthorsCode: run.ok, ...(run.ok ? {} : { runAuthorsCodeWhy: run.why, runAuthorsCodeHint: run.hint }),
   grants: actor.kind === 'agent' ? grantsOf(actor.name).map((g) => ({ ...g, means: POWERS[g.power] })) : null,
+  // the human's words beside each permission (never enforced); kept apart from the rules above
+  guidance: actor.kind === 'agent' ? (() => { try { return { ...(standing?.guidanceOf?.(actor.name) || {}) }; } catch { return {}; } })() : null,
   tokenRequired: actor.kind === 'user' ? !!M.auth.userToken : !!M.auth.agentTokens?.[actor.name] || !!M.auth.requireAgentTokens,
   boardHasUserToken: !!M.auth.userToken,
   };

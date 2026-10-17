@@ -4745,7 +4745,13 @@
               const was = { columns: (edit?.limits?.columns || []).map(String), readOnly: !!edit?.limits?.readOnly };
               return JSON.stringify(lim) !== JSON.stringify(was) ? { limits: lim } : {};
             })(),
-            ...(grantsEditable ? { grants: $$('[data-grant]', f).filter((c) => c.checked).map((c) => { const where = parseScope($(`[data-grant-where="${c.dataset.grant}"]`, f).value); return where ? { power: c.dataset.grant, where } : c.dataset.grant; }) } : {}),
+            ...(grantsEditable ? { grants: $$('[data-grant]', f).filter((c) => c.checked).map((c) => {
+              const where = parseScope($(`[data-grant-where="${c.dataset.grant}"]`, f).value);
+              // a required-reviewers rule this form can't show yet (INT-230) is kept, never dropped: dropping it would widen the grant
+              const was = (edit?.grants || []).find((g) => typeof g === 'object' && g.power === c.dataset.grant && (g.minOks != null || g.from != null));
+              const rule = was ? { ...(was.minOks != null ? { minOks: was.minOks } : {}), ...(was.from != null ? { from: was.from } : {}) } : {};
+              return where || was ? { power: c.dataset.grant, ...(where ? { where } : {}), ...rule } : c.dataset.grant;
+            }) } : {}),
           });
           if (coord) state.board.coordinator = name;
           toast(edit ? `Saved ${name}` : `${name} is on call`, { icon: 'bot', kind: 'ok', timeout: 2500 });
@@ -4801,7 +4807,8 @@
     try { v = await api('GET', `/api/boards/${state.board.id}/approvals`); } catch { el.innerHTML = ''; return; }
     if (!v.approvers.length) { el.innerHTML = ''; return; }
     const who = v.approvers.map((a) => {
-      const when = (power) => a.grants.filter((g) => g.power === power).map((g) => scopeWords(g.where));
+      const oks = (g) => (!g.minOks ? '' : ` and ${g.minOks === 'all' ? `every one of ${g.from ? g.from.map(nameOf).join(', ') : 'its reviewers'} says ok` : `${g.minOks} of ${g.from ? g.from.map(nameOf).join(', ') : 'its reviewers'} say ok`}`);
+      const when = (power) => a.grants.filter((g) => g.power === power).map((g) => scopeWords(g.where) + oks(g));
       const parts = [];
       if (when('review.decide').length) parts.push(`approves when ${when('review.decide').join(', or when ')}`);
       if (when('column.gate').length) parts.push(`moves work past your gates when ${when('column.gate').join(', or when ')}`);

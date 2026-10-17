@@ -863,6 +863,108 @@ describe('a verdict the board could not check never stands in for the human', ()
   });
 });
 
+describe('required reviewers: "N oks from named reviewers" on a grant (INT-230)', () => {
+  it('refuses with OKS_MISSING until enough verified oks from the named reviewers are in, and the chase names each one missing', async () => {
+    const s = await startServer({ agents: { agents: {
+      gamora: { role: 'coordinator', enabled: false, grants: [{ power: 'review.decide', minOks: 2, from: ['nebula', 'kraglin', 'drax'] }],
+        guidance: { 'review.decide': 'Docs tickets first.\nSay why in one line.', read: 'Skim; never run anything.', edit: 'Only the docs folder.' } },
+      quill: { role: 'builder', enabled: false, grants: [{ power: 'review.decide', minOks: 'all' }] },
+      yondu: { role: 'builder', enabled: false, grants: [{ power: 'review.decide', minOks: 2, from: ['dev', 'nebula'] }] },
+      sloppy: { role: 'builder', enabled: false, grants: [{ power: 'review.decide', minOks: 0 }, { power: 'work.land', minOks: 1 }] },
+      nebula: { role: 'reviewer', enabled: false },
+      kraglin: { role: 'reviewer', enabled: false },
+      drax: { role: 'builder', enabled: false, reviewer: true },
+    } }, manifest: { auth: { agentTokens: { nebula: 't-nebula', kraglin: 't-kraglin' } } } });
+    try {
+      const inReview = async (title, reviewers) => {
+        const it = await s.ok('POST', '/api/boards/main/items', { title, column: 'Ready' }, USER);
+        await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+        await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+        for (const name of reviewers) await s.ok('POST', `/api/boards/main/items/${it.id}/reviewers`, { name }, USER);
+        return it;
+      };
+      // nebula and kraglin send their tokens (verified); drax has none here (unverified)
+      const verdict = async (id, who, v) => {
+        const r = await fetch(`${s.base}/api/boards/main/items/${id}/reviewers/${who}/verdict`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': who, ...(who === 'drax' ? {} : { authorization: `Bearer t-${who}` }) }, body: JSON.stringify({ verdict: v, comment: v === 'ok' ? 'holds' : 'not yet' }) });
+        assert.ok(r.ok, `${who}'s verdict: ${r.status}`);
+      };
+      const decide = (id, agent, v = 'approve') => s.api('POST', `/api/boards/main/items/${id}/review/decision`, { verdict: v, comment: 'on the oks' }, { agent });
+      const action = async (id, agent) => (await s.ok('GET', '/api/boards/main/work', undefined, { agent })).next.find((n) => n.id === id && (n.action === 'decide' || n.action === 'chase'));
+
+      const a = await inReview('two of three', ['nebula', 'drax']);
+      let no = await decide(a.id, 'gamora');
+      assert.equal(no.status, 409);
+      assert.equal(no.body.code, 'OKS_MISSING');
+      assert.ok(no.body.hint, 'the refusal carries a hint');
+      assert.deepEqual(no.body.missing.map((m) => `${m.name}=${m.state}`), ['nebula=waiting', 'kraglin=unassigned', 'drax=waiting'], 'in the order "from" names them');
+      let ch = await action(a.id, 'gamora');
+      assert.equal(ch?.action, 'chase', 'kraglin is not even assigned: worth chasing now');
+      assert.match(ch.why, /2 more ok\(s\) from nebula, kraglin, drax: nebula verdict pending; kraglin not assigned as reviewer; drax verdict pending/);
+
+      // nebula's ok counts; drax's doesn't (the board can't check who sent it)
+      await verdict(a.id, 'nebula', 'ok');
+      await verdict(a.id, 'drax', 'ok');
+      no = await decide(a.id, 'gamora');
+      assert.equal(no.body.code, 'OKS_MISSING', 'an unverified ok never counts');
+      ch = await action(a.id, 'gamora');
+      assert.match(ch.why, /1 more ok\(s\).*drax ok can't count/);
+      assert.equal(ch.tag, 'oks:kraglin=unassigned,drax=unverified', 'the wake tag names who and why, never minutes');
+      await s.ok('POST', `/api/boards/main/items/${a.id}/reviewers`, { name: 'kraglin' }, USER);
+      await verdict(a.id, 'kraglin', 'ok');
+      assert.equal((await action(a.id, 'gamora'))?.action, 'decide');
+      const ok = await decide(a.id, 'gamora');
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+
+      // asking for changes needs no oks
+      const b = await inReview('send it back', ['nebula']);
+      assert.equal((await decide(b.id, 'gamora', 'changes')).status, 200, 'a delegated "changes" is not held to the rule');
+
+      // "all" with no names: every assigned reviewer (the INT-152 case). One just asked: nothing to chase yet
+      const c = await inReview('wait for everyone', ['nebula', 'kraglin']);
+      await verdict(c.id, 'nebula', 'ok');
+      no = await decide(c.id, 'quill');
+      assert.equal(no.body.code, 'OKS_MISSING');
+      assert.match(no.body.error, /kraglin verdict pending/);
+      assert.equal(await action(c.id, 'quill'), undefined, 'kraglin was asked under 30 min ago: no chase yet');
+      await verdict(c.id, 'kraglin', 'ok');
+      assert.equal((await decide(c.id, 'quill')).status, 200);
+
+      // an author named in "from" never counts, and the chase says the rule can't be met
+      const d = await inReview('author in from', ['nebula']);
+      await verdict(d.id, 'nebula', 'ok');
+      assert.equal((await decide(d.id, 'yondu')).body.code, 'OKS_MISSING');
+      assert.match((await action(d.id, 'yondu')).why, /only 1 of them can review it \(dev worked on it\)/);
+
+      // a rule that can't be read drops the grant (never the rule); a rule on a power without a ticket too
+      assert.equal((await decide(d.id, 'sloppy')).body.code, 'HUMAN_ONLY');
+      assert.equal((await s.ok('GET', '/api/permissions/me', undefined, { agent: 'sloppy' })).grants.length, 0);
+
+      // the brief shows the rule and, apart from it, the human's guidance; permissions/me lists the guidance
+      const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'gamora' })).body;
+      const md = typeof brief === 'string' ? brief : brief.markdown;
+      assert.match(md, /\*\*review\.decide\*\*.*only with 2 ok\(s\) from nebula, kraglin, drax/);
+      assert.match(md, /\n {2}Guidance from the human \(not enforced\): Docs tickets first\. Say why in one line\./);
+      assert.match(md, /\*\*Read files\*\*\n {2}Guidance from the human \(not enforced\): Skim; never run anything\./, 'guidance beside a built-in permission it holds');
+      assert.doesNotMatch(md, /Only the docs folder/, 'guidance for a permission it does not hold stays out of the brief');
+      const me = await s.ok('GET', '/api/permissions/me', undefined, { agent: 'gamora' });
+      assert.equal(me.guidance.read, 'Skim; never run anything.');
+      assert.deepEqual(me.grants[0].from, ['nebula', 'kraglin', 'drax']);
+    } finally { await s.stop(); }
+  });
+  it('the human can save a grant with a rule from the browser; a malformed rule is refused, never dropped', async () => {
+    const s = await startServer({ agents: { agents: { gamora: { role: 'builder', enabled: false } } }, manifest: { auth: { userToken: 'u-1' } } });
+    try {
+      const post = (body) => fetch(`${s.base}/api/agents`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-user': 'James', origin: s.base, authorization: 'Bearer u-1' }, body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+      const bad = await post({ name: 'gamora', role: 'builder', grants: [{ power: 'review.decide', minOks: 3, from: ['nebula', 'kraglin'] }] });
+      assert.equal(bad.status, 400);
+      assert.match(bad.body.error, /names only 2/);
+      const good = await post({ name: 'gamora', role: 'builder', grants: [{ power: 'review.decide', where: { column: 'Review' }, minOks: 2, from: ['Nebula', 'kraglin'] }] });
+      assert.equal(good.status, 201, JSON.stringify(good.body));
+      assert.deepEqual(good.body.grants, [{ power: 'review.decide', where: { column: 'Review' }, minOks: 2, from: ['nebula', 'kraglin'] }]);
+    } finally { await s.stop(); }
+  });
+});
+
 describe('a verdict records the commits it saw, looked up without blocking the board (INT-137)', () => {
   it('a later commit makes the verdict stale; the verdict and decision routes never call the sync git lookup', async () => {
     const { execFileSync } = require('child_process');
@@ -892,6 +994,8 @@ console.error('commitsFor stub loaded');
 `);
     const s = await startServer({ dir, env: { NODE_OPTIONS: `--require "${stub.replace(/\\/g, '/')}"` }, agents: { agents: {
       gamora: { role: 'coordinator', enabled: false, grants: [{ power: 'review.decide', where: { 'reviewers.nebula': 'ok' } }] },
+      // the same check through a required-reviewers rule (INT-230): a stale ok doesn't count there either
+      ruler: { enabled: false, grants: [{ power: 'review.decide', minOks: 1, from: ['nebula'] }] },
       nebula: { role: 'reviewer', enabled: false },
       dev: { enabled: false, worktree: true },
     } }, manifest: { auth: { agentTokens: { nebula: 't-nebula' } } } });
@@ -921,7 +1025,10 @@ console.error('commitsFor stub loaded');
       await until(async () => (await action())?.tag === 'stale:nebula', 5000, 'the chase names the stale ok');
       const stale = await decide();
       assert.equal(stale.status, 403, `a stale ok is out of scope: ${JSON.stringify(stale.body)}`);
-      // a fresh ok covers both, and the decision is in scope again
+      const ruled = await s.api('POST', '/api/boards/main/items/T-1/review/decision', { verdict: 'approve', comment: 'x' }, { agent: 'ruler' });
+      assert.equal(ruled.body.code, 'OKS_MISSING', JSON.stringify(ruled.body));
+      assert.match(ruled.body.error, /nebula ok is stale: commits since/);
+      // a fresh ok covers both, and the decision goes through
       assert.ok((await verdict()).ok);
       assert.equal((await rv()).commits, `${first},${second}`);
       assert.equal((await action())?.action, 'decide');
