@@ -699,7 +699,7 @@ function recipientsFor(item, actor, extra = []) {
   if (item.author?.kind === 'agent') s.add(item.author.name);
   if (item.assignee) s.add(item.assignee);
   for (const w of item.workedBy || []) s.add(w); // released after review, still owns the follow-up
-  for (const c of item.comments || []) if (c.author?.name) s.add(c.author.name); // thread participants
+  for (const c of item.comments || []) if (c.author?.name && c.author.kind !== 'system') s.add(c.author.name); // thread participants (the board's own notes have none)
   s.delete(actor.name);
   return [...s];
 }
@@ -1455,7 +1455,10 @@ function createItem(ctx, d, actor) {
     for (const a of arr(d.attachments)) item.attachments.push(saveAttachment(ctx, item, a, actor));
     events.push(itemEvent(ctx, 'item.created', item, actor, item.agentDraft ? { mentions: [item.agentDraft.writer], draft: true } : {}));
     if (focus) events.push(focusEvent(ctx, 'focus.updated', focus, actor, { added: addToFocus(ctx, focus, [id]), removed: [], changes: {} }));
-    if (item.assignee) events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: item.assignee, from: null, mentions: asleep(ctx, item) ? [] : [item.assignee] }));
+    if (item.assignee) {
+      item.assignedBy = assignedByOf(actor);
+      events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: item.assignee, from: null, mentions: asleep(ctx, item) ? [] : [item.assignee] }));
+    }
     const q0 = parseNeedsHuman(d.needsHuman, actor);
     if (q0) openQuestion(ctx, item, q0, actor, events);
     return item;
@@ -1515,6 +1518,10 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null } 
   if (idx !== oldIdx) { events.push(itemEvent(ctx, 'item.reordered', item, actor, { from: oldIdx, position: idx })); return true; }
   return false;
 }
+
+// Who made the current assignment, for automatic rebalancing (INT-234): the human's own choice stays put.
+// Set by the board only; assignedBy, pinned and rebalanced are not PATCHABLE.
+const assignedByOf = (actor) => ({ kind: actor.kind, name: actor.name, at: now() });
 
 const PATCHABLE = ['title', 'description', 'type', 'priority', 'parent', 'blockedBy', 'needsHuman', 'properties', 'replaceProperties', 'fields', 'cover', 'assignee', 'agentDraft',
   'columnId', 'column', 'position', 'beforeId', 'afterId', 'version'];
@@ -1587,6 +1594,7 @@ function applyPatch(ctx, item, p, actor, events) {
     const next = p.assignee ? str(p.assignee, 64).trim() : null;
     if (prev !== next) {
       set('assignee', next);
+      item.assignedBy = next ? assignedByOf(actor) : null;
       // In a sleeping column an assignment is a note of who will take it, not a call to start.
       events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: next, from: prev, mentions: asleep(ctx, item) ? [] : [next, prev].filter(Boolean) }));
     }
@@ -1985,6 +1993,7 @@ function startWork(ctx, id, d, actor) {
     } else addWorker(item, actor.name);
     if (!item.assignee && actor.kind === 'agent') {
       item.assignee = actor.name;
+      item.assignedBy = assignedByOf(actor);
       events.push(itemEvent(ctx, 'item.assigned', item, actor, { assignee: actor.name, from: null }));
     }
     item.version++;
@@ -3741,6 +3750,162 @@ function recordIdleAlarm(boardId, rec) {
     events.push({ board: ctx.id, type: 'agent.idle_alarm', actor: { kind: 'system', name: 'intellagent' }, ...rec });
   });
 }
+
+// Automatic rebalancing (INT-234). The scheduler says when and how each agent stands (lib/agents/scheduler.js
+// checkRebalance); lib/agents/rebalance.js plans from a snapshot; here each move is checked again against the live
+// ticket inside one tx() and applied as the system, never the human: a move doesn't pin itself and doesn't wake a
+// coordinator listening to the human. A move wakes its new owner once (item.assigned); the ↔ comment @mentions nobody.
+const { plan: planRebalance, DEFAULTS: REBALANCE_DEFAULTS, staysBecause } = require('./lib/agents/rebalance');
+const REBALANCER = { kind: 'system', name: 'rebalance' };
+const REBALANCE_LIMITS = { minGap: [2, 50], minWaitMinutes: [0, 1440], maxMoves: [1, 20], onceEveryMinutes: [60, 10080] };
+// A board without the setting is on with the defaults, so older data loads unchanged.
+function rebalanceOf(ctx) {
+  const s = ctx.board.rebalance || {};
+  return { on: s.on !== false, ...Object.fromEntries(Object.keys(REBALANCE_LIMITS).map((k) => [k, s[k] ?? REBALANCE_DEFAULTS[k]])) };
+}
+const rebalanceView = (ctx) => ({ ...rebalanceOf(ctx), recent: (ctx.board.rebalanceLog || []).slice(-20).reverse() });
+// Did the human make this assignment? Tickets assigned before assignedBy existed: the last item.assigned the board
+// still has. Unknown counts as the human's: a rebalancer that guesses wrong moves their own choices.
+function assignedByHuman(ctx, it) {
+  if (it.assignedBy) return it.assignedBy.kind === 'user';
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const e = recent[i];
+    if (e.board === ctx.id && e.itemId === it.id && e.type === 'item.assigned') return e.assignee !== it.assignee || e.actor?.kind === 'user';
+  }
+  return true;
+}
+// A ticket as the planner sees it. Outside the active focus board it is not workable now: it neither counts nor moves.
+function rebalanceTicket(ctx, it, pickup) {
+  return {
+    id: it.id, assignee: it.assignee, column: it.columnId, inPickup: pickup.has(it.columnId) && inActiveFocus(ctx, it),
+    held: !!activeLease(it), started: (it.workedBy || []).length > 0, waitingOnHuman: (it.questions || []).length > 0,
+    blocked: openBlockersOf(ctx, it).length > 0, pinned: !!it.pinned, assignedByHuman: assignedByHuman(ctx, it),
+    queuedAt: Date.parse(it.assignedBy?.at || it.enteredColumnAt || it.createdAt) || null,
+    lastMovedAt: it.rebalanced ? Date.parse(it.rebalanced.at) || null : null,
+    text: `${it.title}\n${it.description || ''}`, area: [].concat(it.fields?.area || []), risk: it.fields?.risk || null,
+  };
+}
+// The scheduler's view of each agent, plus this board's rails: the columns it may work in (the manifest's
+// permissions after limits), and a read-only agent takes no work.
+function rebalanceTeam(ctx, agents) {
+  return agents.map((a) => {
+    const p = a.state === 'removed' ? null : permsFor(a.name);
+    const allowed = p?.columns ? arr(p.columns).map((x) => String(x).toLowerCase()) : null;
+    const columns = allowed ? ctx.board.columns.filter((c) => allowed.includes(c.id) || allowed.includes(c.name.toLowerCase())).map((c) => c.id) : null;
+    return { ...a, edits: !!a.edits && !p?.readOnly, columns };
+  });
+}
+function runRebalance({ reason, agents }) {
+  for (const ctx of boards.values()) {
+    const s = rebalanceOf(ctx);
+    if (!s.on) continue;
+    const team = rebalanceTeam(ctx, agents);
+    const pickup = new Set(pickupColumns(ctx).map((c) => c.id));
+    const tickets = Object.values(ctx.board.items).filter((it) => it.assignee && !it.test).map((it) => rebalanceTicket(ctx, it, pickup));
+    const moves = planRebalance({ agents: team, tickets, now: Date.now(), settings: s });
+    if (moves.length) applyRebalance(ctx, moves, team, s, reason);
+  }
+}
+// The plan is from a snapshot: an agent may have started a ticket since. Every rail is checked again on the live
+// ticket, and one that fails is skipped, never forced.
+function applyRebalance(ctx, moves, team, s, reason) {
+  const byName = new Map(team.map((a) => [a.name, a]));
+  const pickup = new Set(pickupColumns(ctx).map((c) => c.id));
+  return tx(ctx, (events) => {
+    const done = [];
+    for (const m of moves) {
+      const it = ctx.board.items[m.id];
+      const src = byName.get(m.from);
+      const dst = byName.get(m.to);
+      if (!it || it.assignee !== m.from || !dst || dst.state !== 'active' || !dst.edits || (dst.columns && !dst.columns.includes(it.columnId))) continue;
+      const t = rebalanceTicket(ctx, it, pickup);
+      if (src?.state === 'removed' ? !t.inPickup || t.held || t.started : staysBecause(t, Date.now(), s)) continue;
+      const at = now();
+      // only a removed agent's pin gives way, and it goes with the move: the board picked the new owner, the human didn't
+      const wasPinned = !!it.pinned;
+      if (wasPinned) delete it.pinned;
+      it.assignee = m.to;
+      it.assignedBy = { ...REBALANCER, at };
+      it.rebalanced = { from: m.from, to: m.to, at, why: m.why, reason, ...(wasPinned ? { unpinned: true } : {}) };
+      const c = { id: rid('c'), author: REBALANCER, body: `↔ Moved from ${m.from} to ${m.to}: ${m.why}${wasPinned ? ` (was pinned to ${m.from}; not pinned now)` : ''}.`, createdAt: at };
+      it.comments.push(c);
+      it.version++;
+      it.updatedAt = at;
+      events.push(itemEvent(ctx, 'item.assigned', it, REBALANCER, { assignee: m.to, from: m.from, mentions: asleep(ctx, it) ? [] : [m.to], rebalanced: true }));
+      events.push(itemEvent(ctx, 'comment.added', it, REBALANCER, { comment: { id: c.id, body: c.body, attachments: 0 } }));
+      done.push({ id: it.id, from: m.from, to: m.to, why: m.why });
+    }
+    if (!done.length) return done;
+    ctx.board.rebalanceLog = [...(ctx.board.rebalanceLog || []), { at: now(), reason, moves: done }].slice(-200);
+    digest.add(ctx, events, REBALANCER, `↔ Rebalanced ${done.length} ticket${done.length > 1 ? 's' : ''}: ${done.map((x) => `${x.id} ${x.from} → ${x.to}`).join(', ')}`, done.map((x) => x.id));
+    return done;
+  });
+}
+route('GET', '/api/boards/:board/rebalance', 'Automatic rebalancing: { on, minGap, minWaitMinutes, maxMoves, onceEveryMinutes } and its last passes (which tickets moved, from whom, to whom, why)', ({ p }) => rebalanceView(getCtx(p.board)));
+route('PUT', '/api/boards/:board/rebalance', 'Human only: switch automatic rebalancing { on?, minGap? (2-50), minWaitMinutes? (0-1440), maxMoves? (1-20), onceEveryMinutes? (60-10080) }', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  humanConfig(actor, 'change automatic rebalancing');
+  // Only what was sent is stored: a key the human never set keeps following the defaults when they change.
+  const sent = {};
+  if ('on' in body) {
+    if (typeof body.on !== 'boolean') fail(400, '"on" must be true or false', { code: 'BAD_REQUEST', hint: 'PUT …/rebalance { "on": false }' });
+    sent.on = body.on;
+  }
+  for (const [k, [lo, hi]] of Object.entries(REBALANCE_LIMITS)) {
+    if (!(k in body)) continue;
+    const n = Number(body[k]);
+    if (!Number.isInteger(n) || n < lo || n > hi) fail(400, `"${k}" must be a whole number from ${lo} to ${hi}`, { code: 'BAD_REQUEST', hint: `e.g. { "${k}": ${REBALANCE_DEFAULTS[k]} }` });
+    sent[k] = n;
+  }
+  tx(ctx, (events) => {
+    const stored = ctx.board.rebalance || {};
+    if (Object.entries(sent).every(([k, v]) => stored[k] === v)) return;
+    const cur = rebalanceOf(ctx);
+    ctx.board.rebalance = { ...stored, ...sent };
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rebalance: { from: cur, to: rebalanceOf(ctx) } } });
+  });
+  return rebalanceView(ctx);
+});
+// Pinning keeps a ticket with its assignee: rebalancing never moves it. The human's alone, so an agent can't pin
+// tickets to keep them, or unpin the human's.
+function setPin(ctx, id, on, actor) {
+  humanConfig(actor, on ? 'pin a ticket' : 'unpin a ticket');
+  return tx(ctx, (events) => {
+    const it = getItem(ctx, id);
+    if (!!it.pinned === on) return it;
+    if (on) it.pinned = { by: actor.name, at: now() }; else delete it.pinned;
+    it.version++;
+    it.updatedAt = now();
+    events.push(itemEvent(ctx, 'item.updated', it, actor, { changes: { pinned: { from: !on, to: on } } }));
+    return it;
+  });
+}
+route('POST', '/api/boards/:board/items/:id/pin', 'Human only: pin a ticket to its assignee (automatic rebalancing never moves it)', ({ p, actor }) => setPin(getCtx(p.board), p.id, true, actor));
+route('DELETE', '/api/boards/:board/items/:id/pin', 'Human only: unpin a ticket', ({ p, actor }) => setPin(getCtx(p.board), p.id, false, actor));
+route('POST', '/api/boards/:board/items/:id/rebalance/undo', 'Human only: undo the last automatic move of this ticket — back to who had it, and pinned there', ({ p, actor }) => {
+  const ctx = getCtx(p.board);
+  humanConfig(actor, 'undo a rebalancing move');
+  return tx(ctx, (events) => {
+    const it = getItem(ctx, p.id);
+    const r = it.rebalanced;
+    if (!r || it.assignee !== r.to) fail(409, `${it.id} has no automatic move to undo${r ? ` (it is with ${it.assignee || 'nobody'} now, not ${r.to})` : ''}`, { code: 'CONFLICT', hint: 'Assign it by hand instead: PATCH …/items/<ID> { "assignee": "…" }' });
+    // started since the move: handing it back would leave two owners (the lease or the work with one, the ticket with the other)
+    const lease = activeLease(it);
+    if (lease || (it.workedBy || []).includes(r.to)) fail(409, `${it.id} can't be undone: ${lease ? `${lease.claimant} holds it` : `${r.to} has started it`}`, { code: 'CONFLICT', hint: `Reassign it by hand once ${r.to} lets it go: PATCH …/items/<ID> { "assignee": "${r.from}" }` });
+    const at = now();
+    it.assignee = r.from;
+    it.assignedBy = assignedByOf(actor);
+    it.pinned = { by: actor.name, at };
+    it.rebalanced = { ...r, undone: { by: actor.name, at } };
+    const c = { id: rid('c'), author: actor, body: `↩ Move undone: back to ${r.from}, and pinned.`, createdAt: at };
+    it.comments.push(c);
+    it.version++;
+    it.updatedAt = at;
+    events.push(itemEvent(ctx, 'item.assigned', it, actor, { assignee: r.from, from: r.to, mentions: asleep(ctx, it) ? [] : [r.from] }));
+    events.push(itemEvent(ctx, 'comment.added', it, actor, { comment: { id: c.id, body: c.body, attachments: 0 } }));
+    return it;
+  });
+});
 route('GET', '/api/boards/:board/focus', 'Focus boards: saved views over this board (a handful of its tickets), and which board is active — the agents work only on the active one', ({ p }) => {
   const ctx = getCtx(p.board);
   return { active: ctx.board.activeFocus, focusBoards: ctx.board.focusBoards.map((f) => focusView(ctx, f)) };
@@ -5087,6 +5252,10 @@ standing = require('./lib/agents').createAgents({
   waiting: (board) => waitingWork(board),
   idleAlarms: () => [...boards.values()].map((ctx) => ({ board: ctx.id, ...idleAlarmOf(ctx) })),
   onIdleAlarm: (board, rec) => recordIdleAlarm(board, rec),
+  // a sandbox's agents never run: moving its tickets between them would only confuse a preview
+  rebalance: M.sandbox ? null : (x) => runRebalance(x),
+  // how long an agent must stay out of agents.json before its queue moves (default 10 minutes)
+  removalGraceMs: M.removalGraceMinutes == null ? undefined : Number(M.removalGraceMinutes) * 60_000,
   lastSeen: (name) => presence.get(name)?.lastSeen || null, // a running agent's last call to the board (stalled runs)
   activityOf,
   // a run's leaseless status line ends with it
