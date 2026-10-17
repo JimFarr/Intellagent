@@ -327,8 +327,8 @@ describe('standing agents pick up work already on the board', () => {
     } finally { await s.stop(); }
   });
 
-  it('the idle-board alarm wakes its agent once per quiet stretch while tickets wait, and stays quiet while the builders are paused', async () => {
-    // idleAlarmMinutes 0.03: the alarm is due ~1.8 s after the last builder run (or the board start)
+  it('the idle-board alarm reaches its agent through a real board: what waits, from the pickup columns, and how the builders stand', async () => {
+    // idleAlarmMinutes 0.03: due ~1.8 s after the board starts. The timing rules are in scheduler.test.js.
     const s = await startServer({ agents: { defaults: fast, agents: {
       worker: { run: run('ok'), worktree: true },
       watch: { run: run('ok'), idleAlarm: true, idleAlarmMinutes: 0.03 },
@@ -336,21 +336,12 @@ describe('standing agents pick up work already on the board', () => {
     try {
       const alarms = async () => (await s.ok('GET', '/api/events?types=agent.run.started')).events.filter((e) => e.agent === 'watch' && e.why === 'board.idle');
       const waiting = await s.ok('POST', `${B}/items`, { title: 'nobody started this', column: 'Ready' }, USER);
+      await s.ok('POST', `${B}/items`, { title: 'parked', column: 'Backlog' }, USER);
       await until(async () => (await alarms()).length === 1, 8000, 'alarm');
       const log = (await s.ok('GET', '/api/agents/watch/log', undefined, USER)).log;
-      assert.match(log, /board\.idle — no builder has run for \d+ min, yet 1 ticket\(s\) wait/);
+      assert.match(log, /board\.idle — no builder has run for \d+ min, yet 1 ticket\(s\) wait/, 'Backlog is not waiting work');
       assert.match(log, new RegExp(`${waiting.id} "nobody started this" — unassigned`));
       assert.match(log, /builders: worker idle/);
-      await new Promise((r) => setTimeout(r, 2500));
-      assert.equal((await alarms()).length, 1, 'once per quiet stretch');
-      // a builder run starts a new stretch: quiet for a while, then due again
-      await s.ok('POST', `${B}/items/${waiting.id}/comments`, { body: '@worker have a look' }, USER);
-      await until(async () => (await alarms()).length === 2, 8000, 'alarm after the next quiet stretch');
-      // paused builders (stop all): nothing to alarm about
-      await s.ok('POST', '/api/agents/worker/pause', {}, USER);
-      await s.ok('POST', `${B}/items/${waiting.id}/comments`, { body: 'note' }, USER);
-      await new Promise((r) => setTimeout(r, 3000));
-      assert.equal((await alarms()).length, 2, 'quiet while the builders are paused');
     } finally { await s.stop(); }
   });
 });
