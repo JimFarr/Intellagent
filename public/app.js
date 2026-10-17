@@ -5007,7 +5007,8 @@
   };
 
   // Patches `el` to hold `html` in place: nodes that stay keep their running animations, hover and focus (INT-266).
-  // Children with data-agent / data-now are matched by that key, others by position; [data-appr] and [data-idle] blocks fill themselves.
+  // Children with data-agent / data-now are matched by that key, others by position. A node with data-keep="x" meeting
+  // one with the same data-keep is left alone: it fills itself (approvals, idle alarm) or is a live editor (Speciality).
   const morphKey = (n) => (n.nodeType === 1 ? n.dataset.agent ?? n.dataset.now ?? null : null);
   function patchHTML(el, html) {
     const to = el.cloneNode(false);
@@ -5016,6 +5017,7 @@
   }
   function morphNode(from, to) {
     if (from.nodeType !== 1) { if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue; return; }
+    if (to.dataset.keep && from.dataset.keep === to.dataset.keep) return;
     for (const { name } of [...from.attributes]) if (!to.hasAttribute(name)) from.removeAttribute(name);
     for (const { name, value } of to.attributes) {
       // a ring keeps the phase it started with: a new --phase on a running animation makes it jump
@@ -5024,7 +5026,7 @@
       const v = name === 'class' && from.classList.contains('spot') && !to.classList.contains('spot') ? `${value} spot` : value;
       if (from.getAttribute(name) !== v) from.setAttribute(name, v);
     }
-    if (!('appr' in to.dataset || 'idle' in to.dataset)) morphChildren(from, to);
+    morphChildren(from, to);
   }
   function morphChildren(from, to) {
     const keyed = new Map([...from.children].filter((n) => morphKey(n) != null).map((n) => [morphKey(n), n]));
@@ -5057,7 +5059,7 @@
     // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266).
     const first = !body._agentsFilled;
     body._agentsFilled = true;
-    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(stopRow + agentsNowHTML() + '<div class="appr-row" data-appr></div><div class="appr-row idle-row" data-idle></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
+    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(stopRow + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
@@ -5385,26 +5387,30 @@
   async function openAgent(name) {
     const body = openDrawer('agentDrawer', name, 'bot');
     let spec = null; // the Speciality editor survives redraws (a half-typed edit must not vanish)
-    const draw = (activity = null) => {
+    let activity = null; // null until the events arrive: the Activity area shows placeholder rows meanwhile
+    // The first draw fills the page; later ones patch it, so scroll, focus and the editor stay put (INT-267).
+    let drawn = false;
+    const draw = () => {
       const p = state.profiles[name] || {};
       const pres = state.presence.find((x) => x.name === name);
       const items = Object.values(state.board?.items || {});
       const chip = (id, ic) => `<span class="mini-chip link" data-open="${esc(id)}" title="${esc(state.board.items[id]?.title || '')}">${icon(ic, 'sm')}${esc(id)}</span>`;
       const section = (title, ic, html) => (html ? `<div class="section"><div class="section-head">${icon(ic, 'sm')}<span>${title}</span><span class="rule"></span></div><div class="deps">${html}</div></div>` : '');
       const mode = pres ? (pres.connections.stream ? 'stream' : pres.connections.waiting ? 'polling' : pres.online ? 'active' : 'offline') : 'never seen';
-      body.innerHTML = `<div class="agent-hero">${avatar({ kind: p.kind || 'agent', name }, 'xl')}<div style="min-width:0"><div class="ah-name">${esc(p.label || name)}</div>
+      const html = `<div class="agent-hero">${avatar({ kind: p.kind || 'agent', name }, 'xl')}<div style="min-width:0"><div class="ah-name">${esc(p.label || name)}</div>
           <div class="ah-sub"><span class="status-dot ${pres?.online ? 'on' : ''}"></span><span>${esc(name)}</span><span>· ${mode}</span>${pres?.lastSeen ? `<span>· ${rel(pres.lastSeen)}</span>` : ''}</div></div></div>
         ${p.description || state.standing[name]?.description ? `<div class="md ah-desc">${md(p.description || state.standing[name].description)}</div>` : ''}
         ${state.standing[name] ? standingSection(state.standing[name]) : ''}
-        ${state.standing[name] ? '<div class="spec-slot"></div>' : ''}
+        ${state.standing[name] ? '<div class="spec-slot" data-keep="spec"></div>' : ''}
         ${section('Holding', 'clock', (pres?.leases || []).map((l) => chip(l.id, 'clock')).join(''))}
         ${section('Assigned', 'user', items.filter((i) => i.assignee === name).map((i) => chip(i.id, i.type)).join(''))}
         ${section('Listening to', 'radio', Object.entries(state.listeners).filter(([, ns]) => ns.includes(name)).map(([id]) => chip(id, 'radio')).join(''))}
         ${section('Subscriptions', 'bell', (pres?.subscriptions || []).map((x) => `<span class="mini-chip" title="${esc(JSON.stringify(x.filter))}">${icon('bell', 'sm')}${esc(x.label || Object.entries(x.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join(''))}
         <div class="section"><div class="section-head">${icon('activity', 'sm')}<span>Activity</span><span class="rule"></span></div>
-          <div class="ah-act">${activity == null ? '' : activity.length ? activity.map((ev) => `<div class="act">${icon(eventIcon(ev.type), 'sm')}<div>${describe(ev, true)}</div><time>${rel(ev.ts)}</time></div>`).join('') : `<div class="empty-note">${icon('activity')}</div>`}</div></div>`;
+          <div class="ah-act">${activity == null ? '<div class="act sk" aria-hidden="true"><i></i><span></span><time></time></div>'.repeat(3) : activity.length ? activity.map((ev) => `<div class="act">${icon(eventIcon(ev.type), 'sm')}<div>${describe(ev, true)}</div><time>${rel(ev.ts)}</time></div>`).join('') : `<div class="empty-note">${icon('activity')}</div>`}</div></div>`;
+      if (drawn) patchHTML(body, html); else { body.innerHTML = html; drawn = true; }
       const slot = $('.spec-slot', body);
-      if (slot) { spec ||= specialityEditor(name); slot.replaceWith(spec); }
+      if (slot) { spec ||= specialityEditor(name); spec.dataset.keep = 'spec'; slot.replaceWith(spec); }
     };
     draw();
     body.onclick = (e) => {
@@ -5416,8 +5422,9 @@
     };
     try {
       const r = await api('GET', `/api/events?since=0&limit=30&tail=true&actor=${encodeURIComponent(name)}`);
-      if ($('#agentDrawer')) draw(r.events.slice().reverse());
-    } catch { /* offline */ }
+      activity = r.events.slice().reverse();
+    } catch { activity = []; /* offline */ }
+    if ($('#agentDrawer') && body.isConnected) draw();
   }
 
   /* What makes an agent a specialist: the code it owns (guidance), what it watches for, and its context page.

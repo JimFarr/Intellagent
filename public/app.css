@@ -774,6 +774,16 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .act b { color: var(--text); font-weight: 600; }
 .act > div { overflow-wrap: anywhere; }
 .act time { font: 11px var(--mono); }
+/* placeholder rows while an agent's activity loads: the same height as a real row, so nothing moves when it arrives (INT-267) */
+.act.sk > * { display: block; border-radius: 99px; background: color-mix(in oklab, var(--text) 9%, transparent); animation: sk-breathe 1.6s var(--ease-io, ease-in-out) infinite alternate; }
+.act.sk > i { width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; }
+.act.sk > span { height: 10px; margin: 4px 0; width: 70%; }
+.act.sk:nth-child(2) > span { width: 52%; }
+.act.sk:nth-child(3) > span { width: 61%; }
+.act.sk > time { width: 26px; height: 10px; margin-top: 4px; }
+@keyframes sk-breathe { from { opacity: 1; } to { opacity: .45; } }
+.reduced .act.sk > * { animation: none; }
+@media (prefers-reduced-motion: reduce) { .act.sk > * { animation: none; } }
 .empty-note { color: var(--muted); font-size: 12.5px; padding: 14px 0; opacity: .7; text-align: center; }
 
 @media (max-width: 1180px) {
