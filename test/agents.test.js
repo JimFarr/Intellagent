@@ -455,6 +455,27 @@ describe('standing agents pick up work already on the board', () => {
     } finally { await s.stop(); }
   });
 
+  it('the idle-board alarm tells the human when the agent it names is down, and the notice stands until someone is back (INT-294)', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      worker: { run: run('ok'), worktree: true },
+      watch: { run: run('ok'), idleAlarm: true, idleAlarmMinutes: 0.03, enabled: false },
+    } } });
+    try {
+      const waiting = await s.ok('POST', `${B}/items`, { title: 'nobody started this', column: 'Ready' }, USER);
+      const view = await until(async () => { const v = await s.ok('GET', `${B}/idle-alarm`); return v.notice ? v : null; }, 8000, 'notice');
+      assert.deepEqual([view.notice.woke, view.notice.waiting, view.notice.human], [['human'], [waiting.id], true]);
+      assert.deepEqual(view.notice.down, [{ name: 'watch', status: 'disabled' }]);
+      assert.deepEqual(view.notice.builders.map((b) => b.name), ['worker']);
+      assert.equal((await s.ok('GET', `${B}/metrics?days=7`)).idle.alarms, 1, 'counted like any alarm');
+      const ev = (await s.ok('GET', '/api/events?types=agent.idle_alarm')).events;
+      assert.deepEqual(ev.map((e) => [e.woke, e.recipients || []]), [[['human'], []]], 'an event for the UI that wakes no agent');
+      assert.equal((await s.ok('GET', '/api/events?types=agent.run.started')).events.length, 0, 'nobody was run');
+      // a builder runs: the board is moving again, so the notice goes
+      await s.ok('POST', '/api/agents/worker/run', {}, USER);
+      await until(async () => (await s.ok('GET', `${B}/idle-alarm`)).notice === null, 8000, 'notice gone');
+    } finally { await s.stop(); }
+  });
+
   it('the idle-board alarm is a board setting: the human picks who it wakes and a note for them; agents.json flags are the fallback', async () => {
     const s = await startServer({ agents: { defaults: fast, agents: {
       worker: { run: run('ok'), worktree: true, enabled: false },
@@ -466,9 +487,12 @@ describe('standing agents pick up work already on the board', () => {
       assert.deepEqual([before.on, before.minutes, before.wake, before.from], [true, 30, ['lander'], 'agents.json'], 'until the human sets it, agents.json decides');
       assert.deepEqual(before.agents.sort(), ['lander', 'lead', 'worker']);
       assert.equal((await s.api('PUT', `${B}/idle-alarm`, { on: false }, { agent: 'lead' })).status, 403, 'human only');
-      for (const bad of [{ minutes: 2 }, { minutes: 20.5 }, { wake: ['nobody'] }, { on: true, wake: [] }, { note: 'x'.repeat(1001) }, { on: 'yes' }]) {
+      for (const bad of [{ minutes: 2 }, { minutes: 20.5 }, { wake: ['nobody'] }, { on: true, wake: [], human: false }, { note: 'x'.repeat(1001) }, { on: 'yes' }, { human: 'yes' }]) {
         assert.ok([400].includes((await s.api('PUT', `${B}/idle-alarm`, bad, USER)).status), JSON.stringify(bad).slice(0, 40));
       }
+      // INT-294: nobody named is fine while the human hears it
+      const none = await s.ok('PUT', `${B}/idle-alarm`, { on: true, wake: [] }, USER);
+      assert.deepEqual([none.on, none.wake, none.human], [true, [], true]);
       const set = await s.ok('PUT', `${B}/idle-alarm`, { wake: ['lead'], minutes: 45, note: 'Nudge the assignees first; ask Gamora for anything unassigned.' }, USER);
       assert.deepEqual([set.on, set.minutes, set.wake, set.from], [true, 45, ['lead'], 'settings']);
       assert.equal(set.note, 'Nudge the assignees first; ask Gamora for anything unassigned.');

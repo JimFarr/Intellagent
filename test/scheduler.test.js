@@ -351,6 +351,85 @@ describe('the idle-board alarm (fake clock)', () => {
   });
 });
 
+// INT-294: the alarm's only target is down, so it tells the human instead of going silent
+describe('the idle-board alarm falls back to the human (fake clock)', () => {
+  beforeEach(() => mock.timers.enable({ apis: ['setTimeout', 'Date'], now: T0 }));
+  afterEach(() => mock.timers.reset());
+  const humanRig = () => {
+    const r = alarmRig();
+    r.recorded = [];
+    r.core.deps.onIdleAlarm = (board, rec) => r.recorded.push({ board, ...rec, at: Date.now() - T0 });
+    return r;
+  };
+
+  it('a failed target: the human is told what waits and who is down, with the same backoff, and nobody is woken', () => {
+    const { scheduler, agents, alarms, recorded, st, builderRuns } = humanRig();
+    Object.assign(st('watch'), { status: 'failed', failures: 3, lastRun: { code: 1 } });
+    scheduler.checkIdle();
+    advance(20 * MIN + 5000);
+    assert.equal(recorded.length, 1, 'told the human at 20 min');
+    const [rec] = recorded;
+    assert.deepEqual(rec.woke, ['human']);
+    assert.equal(rec.human, true);
+    assert.deepEqual(rec.waiting, ['T-1']);
+    assert.deepEqual(rec.down, [{ name: 'watch', status: 'failed', code: 1, failures: 3 }]);
+    assert.deepEqual(rec.builders.map((b) => b.name), ['worker']);
+    assert.equal(agents.watch.queue.length + alarms.length, 0, 'the failed agent is not woken');
+    // the builder runs and starts nothing, again and again: the human hears at 20, 60, 140 min, never every pass
+    for (let i = 0; i < 5; i++) { builderRuns(); advance(20 * MIN + 100); } // to ~120 min
+    assert.equal(recorded.length, 2, 'one repeat in the next 100 minutes, not five');
+    assert.ok(recorded[1].at >= 60 * MIN);
+    assert.equal(recorded[1].repeat, 2);
+    advance(25 * MIN);
+    assert.equal(recorded.length, 3, 'the third 80 min after the second');
+    assert.ok(recorded[2].at >= 140 * MIN);
+  });
+
+  it('once the target is back, the alarm wakes it again instead of the human', () => {
+    const { scheduler, alarms, recorded, st, board } = humanRig();
+    st('watch').paused = true;
+    scheduler.checkIdle();
+    advance(20 * MIN + 5000);
+    assert.deepEqual(recorded.map((r) => r.down.map((d) => d.status)), [['paused']]);
+    st('watch').paused = false;
+    board.waiting = [...board.waiting, { board: 'main', id: 'T-2', title: 'two', assignee: null }];
+    scheduler.checkIdle();
+    advance(5000);
+    assert.deepEqual(alarms.map((a) => a.agent), ['watch'], 'watch is woken for the new set');
+    assert.deepEqual(recorded.map((r) => r.woke), [['human'], ['watch']]);
+  });
+
+  it('none named still reaches the human; the switch off keeps it quiet', () => {
+    const { scheduler, core, recorded } = humanRig();
+    let setting = { board: 'main', on: true, minutes: 20, wake: [], note: '' };
+    core.deps.idleAlarms = () => [setting];
+    scheduler.checkIdle();
+    advance(20 * MIN + 5000);
+    assert.deepEqual(recorded.map((r) => [r.board, r.woke, r.down]), [['main', ['human'], []]]);
+    setting = { ...setting, human: false, wake: ['watch'] };
+    core.defs.watch.enabled = false;
+    advance(300 * MIN);
+    scheduler.checkIdle();
+    assert.equal(recorded.length, 1, 'human: false and nobody to wake: quiet');
+  });
+
+  it('quiet during Stop all and while the builders wait for the usage limit: both end by themselves or by the human', () => {
+    const { scheduler, recorded, st } = humanRig();
+    st('watch').status = 'failed';
+    st('worker').paused = true; // Stop all pauses every agent, builders too
+    scheduler.checkIdle();
+    advance(60 * MIN);
+    scheduler.checkIdle();
+    assert.equal(recorded.length, 0, 'Stop all: the human did it, nothing to tell');
+    st('worker').paused = false;
+    scheduler.holdForLimit('worker', Date.now() + 60 * MIN);
+    advance(60 * MIN + 19 * MIN);
+    assert.equal(recorded.length, 0, 'the usage limit recovers by itself; then the usual quiet stretch');
+    advance(2 * MIN + 5000);
+    assert.deepEqual(recorded.map((r) => r.woke), [['human']]);
+  });
+});
+
 // Two builders and a reviewer; deps.rebalance records each call, the way the board's planner would be asked.
 function rebalanceRig({ loadError = null } = {}) {
   const calls = [];

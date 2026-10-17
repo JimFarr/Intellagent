@@ -3771,20 +3771,37 @@ route('PUT', '/api/boards/:board/approvals', 'Human only: switch approvals for t
 const standingAgents = () => { try { return standing.list().agents; } catch { return []; } };
 function idleAlarmOf(ctx) {
   const set = ctx.board.idleAlarm;
-  if (set) return { on: !!set.on, minutes: set.minutes || 20, wake: [].concat(set.wake || []), note: set.note || '', from: 'settings' };
+  // human: when nobody in `wake` can be woken (failed, paused, or none named), the alarm tells the human instead (INT-294)
+  if (set) return { on: !!set.on, minutes: set.minutes || 20, wake: [].concat(set.wake || []), note: set.note || '', human: set.human !== false, from: 'settings' };
   const flagged = standingAgents().filter((a) => a.idleAlarm);
-  return { on: flagged.length > 0, minutes: flagged.length ? Math.min(...flagged.map((a) => a.idleAlarm.minutes)) : 20, wake: flagged.map((a) => a.name), note: '', from: 'agents.json' };
+  return { on: flagged.length > 0, minutes: flagged.length ? Math.min(...flagged.map((a) => a.idleAlarm.minutes)) : 20, wake: flagged.map((a) => a.name), note: '', human: true, from: 'agents.json' };
 }
-const idleAlarmView = (ctx) => ({ ...idleAlarmOf(ctx), agents: standingAgents().map((a) => a.name), recent: (ctx.board.idleLog || []).slice(-10).reverse() });
-route('GET', '/api/boards/:board/idle-alarm', 'The idle-board alarm: { on, minutes, wake, note } (who is woken when tickets wait but no builder has run for that long), and its last alarms', ({ p }) => idleAlarmView(getCtx(p.board)));
-route('PUT', '/api/boards/:board/idle-alarm', 'Human only: set the idle-board alarm { on?, minutes? (5-1440), wake? (standing agents), note? (what they should do, up to 1000 characters) }', ({ p, body, actor }) => {
+// The alarm that went to the human, while it still stands: no builder has run since, and an agent it found down is
+// still down (or it named nobody). The UI shows it with Resume buttons; it goes by itself once someone is back.
+function idleNotice(ctx) {
+  const last = (ctx.board.idleLog || []).at(-1);
+  if (!last?.human) return null;
+  const agents = new Map(standingAgents().map((a) => [a.name, a]));
+  const since = Date.parse(last.at);
+  if ((last.builders || []).some((b) => { const a = agents.get(b.name); return a && (a.runningSince || Date.parse(a.lastRun?.startedAt || 0) > since); })) return null;
+  const down = (last.down || []).filter((d) => { const a = agents.get(d.name); return a && (a.status === 'failed' || !a.enabled); });
+  if ((last.down || []).length && !down.length) return null;
+  return { ...last, down };
+}
+const idleAlarmView = (ctx) => ({ ...idleAlarmOf(ctx), agents: standingAgents().map((a) => a.name), notice: idleNotice(ctx), recent: (ctx.board.idleLog || []).slice(-10).reverse() });
+route('GET', '/api/boards/:board/idle-alarm', 'The idle-board alarm: { on, minutes, wake, note, human } (who is woken when tickets wait but no builder has run for that long; human: tell the human when none of them can be), the human notice while it stands, and its last alarms', ({ p }) => idleAlarmView(getCtx(p.board)));
+route('PUT', '/api/boards/:board/idle-alarm', 'Human only: set the idle-board alarm { on?, minutes? (5-1440), wake? (standing agents), note? (what they should do, up to 1000 characters), human? (tell the human when nobody in wake can be woken; default true) }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   humanConfig(actor, 'set the idle-board alarm');
   const cur = idleAlarmOf(ctx);
-  const next = { on: cur.on, minutes: cur.minutes, wake: cur.wake, note: cur.note };
+  const next = { on: cur.on, minutes: cur.minutes, wake: cur.wake, note: cur.note, human: cur.human };
   if ('on' in body) {
     if (typeof body.on !== 'boolean') fail(400, '"on" must be true or false', { code: 'BAD_REQUEST', hint: 'PUT …/idle-alarm { "on": true }' });
     next.on = body.on;
+  }
+  if ('human' in body) {
+    if (typeof body.human !== 'boolean') fail(400, '"human" must be true or false', { code: 'BAD_REQUEST', hint: 'PUT …/idle-alarm { "human": false }' });
+    next.human = body.human;
   }
   if ('minutes' in body) {
     const m = Number(body.minutes);
@@ -3803,10 +3820,10 @@ route('PUT', '/api/boards/:board/idle-alarm', 'Human only: set the idle-board al
     if (String(body.note || '').length > 1000) fail(400, '"note" is longer than 1000 characters', { code: 'TOO_LARGE', hint: 'Keep it to a few lines: what they should do when the board goes idle' });
     next.note = String(body.note || '').trim();
   }
-  if (next.on && !next.wake.length) fail(400, 'The alarm needs someone to wake', { code: 'BAD_REQUEST', hint: 'Pass "wake": ["<agent>"], or "on": false' });
+  if (next.on && !next.wake.length && !next.human) fail(400, 'The alarm needs someone to wake', { code: 'BAD_REQUEST', hint: 'Pass "wake": ["<agent>"], "human": true, or "on": false' });
   tx(ctx, (events) => {
     ctx.board.idleAlarm = next;
-    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { idleAlarm: { from: { on: cur.on, minutes: cur.minutes, wake: cur.wake }, to: { on: next.on, minutes: next.minutes, wake: next.wake } } } });
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { idleAlarm: { from: { on: cur.on, minutes: cur.minutes, wake: cur.wake, human: cur.human }, to: { on: next.on, minutes: next.minutes, wake: next.wake, human: next.human } } } });
   });
   return idleAlarmView(ctx);
 });
