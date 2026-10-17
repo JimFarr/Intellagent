@@ -239,6 +239,14 @@ describe('any-of, groups, the age fact and rule names with spaces (INT-292)', ()
       assert.throws(() => parseCondition(bad), (e) => e instanceof RuleError && !!e.message && !!e.hint, bad);
     }
     assert.match(assertThrowsHint('(@a or (@b))'), /one level/i);
+    assert.match(assertThrowsHint('!(@a or @b)'), /! on the terms inside/);
+  });
+  it('a bracket pair inside a value stays in its term, as it did before groups', () => {
+    const t = parseCondition('fields.note:foo(bar) or (fields.note:a(b)c @drax)');
+    assert.equal(t.any[0][0].value, 'foo(bar)');
+    assert.equal(t.any[1][0].any[0][0].value, 'a(b)c');
+    assert.equal(t.any[1][0].any[0][1].value, 'drax');
+    assert.ok(holds(parseCondition('fields.note:foo(bar)'), { fields: { note: 'foo(bar)' } }));
   });
   it('columnDays compares like review.oks', () => {
     assert.ok(ok('columnDays>=3'));
