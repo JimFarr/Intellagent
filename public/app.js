@@ -5385,8 +5385,20 @@
   }
 
   async function openAgent(name) {
-    const body = openDrawer('agentDrawer', name, 'bot');
+    const body = openDrawer('agentDrawer', state.profiles[name]?.label || name, 'bot'); // named as the hero names it (INT-269)
     let spec = null; // the Speciality editor survives redraws (a half-typed edit must not vanish)
+    let showDone = false; // Assigned lists open tickets; the done ones wait behind "N done — show" (INT-269)
+    // Open tickets grouped by column in board order, then one line for the done ones.
+    const assignedSection = (mine, chip) => {
+      if (!mine.length) return '';
+      const last = state.board.columns.at(-1)?.id;
+      const done = mine.filter((i) => i.columnId === last);
+      const groups = state.board.columns.filter((c) => c.id !== last).map((c) => [c, mine.filter((i) => i.columnId === c.id)]).filter(([, g]) => g.length);
+      const row = (label, list) => `<div class="as-group"><span class="as-col">${esc(label)}</span>${list.map((i) => chip(i.id, i.type)).join('')}</div>`;
+      return `<div class="section"><div class="section-head">${icon('user', 'sm')}<span>Assigned</span><span class="rule"></span></div><div class="deps as-list">
+        ${groups.map(([c, g]) => row(c.name, g)).join('')}${groups.length ? '' : '<span class="muted as-none">Nothing open</span>'}
+        ${done.length ? `<button class="as-done" type="button" data-show-done aria-expanded="${showDone}">${done.length} done — ${showDone ? 'hide' : 'show'}</button>${showDone ? row(state.board.columns.at(-1).name, done) : ''}` : ''}</div></div>`;
+    };
     let activity = null; // null until the events arrive: the Activity area shows placeholder rows meanwhile
     // The first draw fills the page; later ones patch it, so scroll, focus and the editor stay put (INT-267).
     let drawn = false;
@@ -5403,7 +5415,7 @@
         ${state.standing[name] ? standingSection(state.standing[name]) : ''}
         ${state.standing[name] ? '<div class="spec-slot" data-keep="spec"></div>' : ''}
         ${section('Holding', 'clock', (pres?.leases || []).map((l) => chip(l.id, 'clock')).join(''))}
-        ${section('Assigned', 'user', items.filter((i) => i.assignee === name).map((i) => chip(i.id, i.type)).join(''))}
+        ${assignedSection(items.filter((i) => i.assignee === name), chip)}
         ${section('Listening to', 'radio', Object.entries(state.listeners).filter(([, ns]) => ns.includes(name)).map(([id]) => chip(id, 'radio')).join(''))}
         ${section('Subscriptions', 'bell', (pres?.subscriptions || []).map((x) => `<span class="mini-chip" title="${esc(JSON.stringify(x.filter))}">${icon('bell', 'sm')}${esc(x.label || Object.entries(x.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join(''))}
         <div class="section"><div class="section-head">${icon('activity', 'sm')}<span>Activity</span><span class="rule"></span></div>
@@ -5418,6 +5430,7 @@
       if (sb) { standingAction(sb).then(() => draw()); return; }
       const rv = e.target.closest('[data-revert]');
       if (rv) { revertChange(rv).then(() => draw()); return; }
+      if (e.target.closest('[data-show-done]')) { showDone = !showDone; draw(); return; }
       const o = e.target.closest('[data-open]'); if (o) openItem(o.dataset.open, cardEls.get(o.dataset.open));
     };
     try {

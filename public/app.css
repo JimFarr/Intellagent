@@ -697,6 +697,15 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 .deps { display: flex; flex-wrap: wrap; gap: 6px; }
 .deps + .dd, .deps + .btn { margin-top: 8px; }
+/* an agent's Assigned: open tickets by column, then "N done — show" (INT-269) */
+.deps.as-list { flex-direction: column; align-items: stretch; gap: 8px; }
+.as-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.as-col { min-width: 88px; font: 500 11px var(--mono); color: var(--muted); }
+.as-done { align-self: flex-start; padding: 2px 8px; margin-left: -8px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 12px var(--font); cursor: pointer; transition: background .15s var(--ease), color .15s var(--ease); }
+.as-done:hover { background: color-mix(in oklab, var(--text) 7%, transparent); color: var(--text); }
+.as-done:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.as-none { font-size: 12px; }
+@media (max-width: 520px) { .as-col { min-width: 0; flex-basis: 100%; } }
 .dep { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 4px 0 9px; border-radius: 8px; font: 500 11.5px var(--mono); background: var(--hover); cursor: pointer; max-width: 100%; border: 0; color: var(--text); }
 .dep.readonly { padding-right: 9px; }
 .dep.open { background: color-mix(in oklab, var(--danger) 14%, transparent); color: color-mix(in oklab, var(--danger) 80%, var(--text)); }
