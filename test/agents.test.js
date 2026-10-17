@@ -327,6 +327,33 @@ describe('standing agents pick up work already on the board', () => {
     } finally { await s.stop(); }
   });
 
+  it('a blocked ticket in a builder\'s queue wakes nobody until its blocker is done, and stays listed as blocked (INT-273)', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { maker: { run: run('ok') } } } });
+    try {
+      const runs = async () => (await s.ok('GET', '/api/events?types=agent.run.started')).events.filter((e) => e.agent === 'maker');
+      const settled = async (n, label) => {
+        await until(async () => (await runs()).length === n && (await agentState(s, 'maker')).status === 'idle', 8000, label);
+        await new Promise((r) => setTimeout(r, 1200));
+        assert.equal((await runs()).length, n, `${label}: nothing more wakes it`);
+      };
+      const blocker = await s.ok('POST', `${B}/items`, { title: 'the blocker', column: 'Backlog' }, USER);
+      const waits = await s.ok('POST', `${B}/items`, { title: 'waits on it', column: 'Backlog', assignee: 'maker', blockedBy: [blocker.id] }, USER);
+      // The assignment wakes it once; the queue is not offered on top, since it can't start a blocked ticket
+      await settled(1, 'the assignment only');
+      const next = (await s.ok('GET', `${B}/work?agent=maker`)).next.find((n) => n.id === waits.id);
+      assert.equal(next?.action, 'start');
+      assert.match(next.why, new RegExp(`blocked by ${blocker.id}`), 'the brief still lists it, marked as blocked');
+      // The blocker is done: item.unblocked wakes the assignee, and the queue is offered once, as after an assignment
+      await s.ok('POST', `${B}/items/${blocker.id}/move`, { column: 'Done' }, USER);
+      await settled(3, 'unblocked');
+      const [, woke, offer] = await runs();
+      assert.deepEqual(woke.items, [waits.id], 'item.unblocked wakes the assignee');
+      assert.equal(offer.why, 'work.pending');
+      assert.deepEqual(offer.items, [waits.id]);
+      assert.equal((await s.ok('GET', `${B}/work?agent=maker`)).next.find((n) => n.id === waits.id)?.why, 'Assigned to you');
+    } finally { await s.stop(); }
+  });
+
   it('the idle-board alarm reaches its agent through a real board: what waits, from the pickup columns, and how the builders stand', async () => {
     // idleAlarmMinutes 0.03: due ~1.8 s after the board starts. The timing rules are in scheduler.test.js.
     const s = await startServer({ agents: { defaults: fast, agents: {

@@ -2249,7 +2249,12 @@ function workFor(ctx, name) {
     add('review_ticket', brief(it), 'You are a reviewer: read its commits (listed in the review comment; git show <sha>) against your concerns, then give a verdict — ok, or concerns with what should change',
       `POST /api/boards/${ctx.id}/items/${it.id}/reviewers/${name}/verdict { "verdict": "ok" | "concerns", "comment": "…" }`);
   }
-  for (const x of assigned) add('start', x, 'Assigned to you', call(x.id, 'start'));
+  // Blocked ones stay listed, after the rest and marked: they can't be started until their blockers are done
+  const blockers = (x) => openBlockersOf(ctx, b.items[x.id]);
+  for (const x of [...assigned].sort((p, q) => !!blockers(p).length - !!blockers(q).length)) {
+    const on = blockers(x);
+    add('start', x, on.length ? `Assigned to you · blocked by ${on.join(', ')}: start it once ${on.length > 1 ? 'they are' : 'that is'} done` : 'Assigned to you', call(x.id, 'start'));
+  }
   // A router (the coordinator) assigns Ready work; it never picks it up itself.
   const router = isCoordinator(ctx, name);
   if (!router && (!next.length || next.every((n) => n.action === 'renew'))) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
@@ -2397,6 +2402,8 @@ function pendingWork(name, pickup = false) {
       if (n.action === 'renew' || n.action === 'continue' || n.action === 'triage') continue; // housekeeping, mid-run, or pickup's job
       const it = n.id && b.items[n.id];
       if (it && n.action === 'start' && (busy || it.assignee !== name || waitingOnHuman(it))) continue; // "ready" suggestions are pickup's job
+      // a blocked ticket can't be started: its item.unblocked wakes the assignee, and its key coming back then offers it once more
+      if (it && n.action === 'start' && openBlockersOf(ctx, it).length) continue;
       const tag = n.action === 'start' ? freedAt.toString(36)
         : n.action === 'supervise' ? w.supervise?.find((x) => x.id === n.id)?.lastActivity
         : n.action === 'resume' ? w.answered.find((x) => x.id === n.id)?.questionId
@@ -2410,6 +2417,7 @@ function pendingWork(name, pickup = false) {
     const cols = new Set((pickup === 'all' ? b.columns : pickupColumns(ctx)).map((c) => c.id));
     for (const it of untriaged(ctx)) {
       if (!cols.has(it.columnId) || !inActiveFocus(ctx, it)) continue;
+      if (!(pickup === 'all' || router) && openBlockersOf(ctx, it).length) continue; // nothing to pick up yet; triage still sees it
       out.push({ key: `${ctx.id}:triage:${it.id}`, board: ctx.id, action: pickup === 'all' || router ? 'triage' : 'pickup', id: it.id, title: it.title,
         why: pickup === 'all' || router ? `Unassigned in ${b.columns.find((c) => c.id === it.columnId)?.name}: triage it — assign, ask, or leave it` : `Ready and unassigned (${it.priority})` });
     }
