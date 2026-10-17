@@ -4449,7 +4449,7 @@
   // Who a new ask goes to: what you picked this session, else the coordinator, else whoever you asked last, else a standing agent.
   const askTo = () => {
     const b = state.boardId;
-    return ask.to[b] || state.board?.coordinator || askStore.to[b] || Object.keys(state.standing || {})[0] || '';
+    return ask.to[b] || state.board?.coordinator || askStore.to[b] || '';
   };
   const askReqs = () => (state.board?.requests || []).slice().reverse();
   const agentReplied = (q) => q.replies.filter((r) => r.author?.kind === 'agent');
@@ -4539,7 +4539,7 @@
     const drawTo = () => {
       const to = askTo();
       $('.ask-to', pop).innerHTML = to ? `<span class="muted">To</span>${avatar({ kind: 'agent', name: to })}<b>${nameHTML(to)}</b>${icon('chev', 'sm')}` : `<span class="muted">To</span><b class="ph">Choose an agent</b>${icon('chev', 'sm')}`;
-      $('.ask-to', pop).dataset.tip = to === state.board.coordinator ? 'Coordinator|The board’s default agent for asks · click to send to someone else' : 'Recipient|Click to choose another agent';
+      $('.ask-to', pop).dataset.tip = to && to === state.board.coordinator ? 'Coordinator|The board’s default agent for asks · click to send to someone else' : to ? 'Recipient|Click to choose another agent' : 'No coordinator|Pick who gets the ask: the board has no coordinator and no saved choice';
       ta.placeholder = to ? `Ask ${nameOf(to)} to plan, create tickets, explain…` : 'Ask an agent…';
       // A paused (or failed) standing agent won't answer: say so here, with one click to wake it.
       const sa = to && state.standing?.[to];
