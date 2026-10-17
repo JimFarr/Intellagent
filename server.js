@@ -2364,6 +2364,22 @@ function pendingWork(name, pickup = false) {
   return out;
 }
 
+// Tickets a builder could start now, for the idle-board alarm: in a pickup column, not held, not blocked, not
+// waiting on the human, and on the active focus board if there is one.
+function waitingWork() {
+  const out = [];
+  for (const ctx of boards.values()) {
+    const cols = new Set(pickupColumns(ctx).map((c) => c.id));
+    for (const c of ctx.board.columns.filter((x) => cols.has(x.id))) {
+      for (const it of c.itemIds.map((id) => ctx.board.items[id]).filter(Boolean)) {
+        if (it.test || activeLease(it) || (it.questions || []).length || openBlockersOf(ctx, it).length || !inActiveFocus(ctx, it)) continue;
+        out.push({ board: ctx.id, id: it.id, title: it.title, assignee: it.assignee || null });
+      }
+    }
+  }
+  return out;
+}
+
 // The brief's Project line. A sandbox's projectRoot is the checkout whose code it runs, not where its work
 // happens: name the sandbox's own folder as the project and the code it runs apart.
 function briefProjectLine() {
@@ -4749,6 +4765,7 @@ standing = require('./lib/agents').createAgents({
   env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
   emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
   pending: (name, def) => pendingWork(name, def.pickup === true ? 'ready' : def.pickup || false),
+  waiting: () => waitingWork(),
   lastSeen: (name) => presence.get(name)?.lastSeen || null, // a running agent's last call to the board (stalled runs)
   activityOf,
   // a run's leaseless status line ends with it
