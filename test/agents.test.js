@@ -1377,7 +1377,7 @@ describe('specialised agents', () => {
       await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('pixel:')), 8000, 'pixel ran');
       const logs = fs.readdirSync(path.join(s.dir, 'data', 'agent-runs', 'pixel')).filter((x) => x.endsWith('.log'));
       const log = fs.readFileSync(path.join(s.dir, 'data', 'agent-runs', 'pixel', logs.at(-1)), 'utf8');
-      assert.match(log, /## Your speciality[\s\S]*Pixel/);
+      assert.match(log, /## Base: how every agent works here\n\*\*The loop\.\*\*[\s\S]*## Your speciality[\s\S]*Pixel/);
       // agents without a grant can't change it; input is checked
       assert.equal((await s.api('PATCH', '/api/agents/pixel', { areas: ['x'] }, { agent: 'desk' })).status, 403);
       assert.equal((await s.api('PATCH', '/api/agents/pixel', { areas: Array.from({ length: 41 }, (_, i) => `f${i}`) }, USER)).status, 400);
@@ -1562,5 +1562,53 @@ describe('stopping a board stops what it started', () => {
     }, 8000, 'the child started');
     assert.ok(killTree(p.pid));
     await until(() => !alive(p.pid) && !kids.some(alive), 5000, 'parent and child stopped');
+  });
+});
+
+describe('base context and prompt layers (INT-251)', () => {
+  const { REVIEW_PARTS, createBase, shipped } = require('../lib/agents/base');
+  const { promptFor, layersFor } = require('../lib/agents/prompt');
+  const ROLES = require('../lib/agents/roles.json');
+  const NUMBERS = { three: 3, four: 4, five: 5, six: 6 };
+
+  it('the shipped base is used until the human saves their own; their copy survives, and saving the shipped text again removes it', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-base-'));
+    const base = createBase(dir);
+    assert.deepEqual(base.read(), { text: shipped(), shipped: shipped(), edited: false });
+    base.write('**Be kind.**\r\nAlways.');
+    assert.deepEqual(base.read(), { text: '**Be kind.**\nAlways.', shipped: shipped(), edited: true });
+    assert.ok(fs.existsSync(path.join(dir, 'base-context.md')), 'their copy is a file beside agents.json');
+    assert.equal(base.write(`${shipped()}\n\n`), '**Be kind.**\nAlways.', 'returns what agents got before');
+    assert.equal(fs.existsSync(path.join(dir, 'base-context.md')), false, 'the shipped text again is no copy, so updates reach them');
+    base.write('mine'); base.write('   ');
+    assert.equal(base.read().edited, false, 'empty resets to the shipped text');
+    assert.throws(() => base.write('x'.repeat(9000)), /at most/);
+  });
+
+  it('a first turn carries base, role and speciality in that order, each labelled; a warm turn carries none', () => {
+    const layers = layersFor({ base: 'BASE', brief: 'ROLE', speciality: '## Your speciality\nSPEC' });
+    assert.deepEqual(layers.map((l) => [l.layer, l.chars]), [['base', 4], ['role', 4], ['agent', 23]]);
+    assert.deepEqual(layersFor({ base: 'BASE' }).map((l) => l.layer), ['base'], 'an empty layer is left out');
+    const opts = { listen: 'inbox', evFile: 'e.json', base: 'BASE', brief: 'ROLE', speciality: '## Your speciality\nSPEC' };
+    const cold = promptFor('pixel', [], opts);
+    assert.match(cold, /^## Base: how every agent works here\nBASE\n\n## Your role\nROLE\n\n## Your speciality\nSPEC\n/);
+    assert.doesNotMatch(promptFor('pixel', [], { ...opts, warm: true }), /BASE|ROLE|SPEC/);
+  });
+
+  it('every role brief, the base and AGENTS.md name the review parts the board asks for, and no others', () => {
+    const texts = {
+      'base.md': shipped(),
+      'AGENTS.md': fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8'),
+      ...Object.fromEntries(Object.entries(ROLES).map(([k, r]) => [`roles.json ${k}`, r.brief])),
+    };
+    let named = 0;
+    for (const [where, t] of Object.entries(texts)) {
+      for (const m of t.matchAll(/\bin (\w+) parts\b(?:\s*\(([^)]*)\))?/gi)) {
+        named++;
+        assert.equal(NUMBERS[m[1].toLowerCase()], REVIEW_PARTS.length, `${where}: "${m[0]}"`);
+        if (m[2]) assert.deepEqual(m[2].split(/\s*[,/]\s*/).map((x) => x.trim()).sort(), [...REVIEW_PARTS].sort(), `${where}: "${m[0]}"`);
+      }
+    }
+    assert.ok(named >= 4, 'the check found the briefs it is meant to cover');
   });
 });

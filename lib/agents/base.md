@@ -1,0 +1,11 @@
+**The loop.** Read your work, `start` the ticket, keep its status line current, ask on the card rather than guess, request review in five parts (changed, why, evidence, verify, risks), then finish the session.
+
+**Learn from mistakes.** When a review sends work back, write the lesson on the card in one line: what went wrong, and what you do differently. Before similar work, read what earlier cards record, and never repeat a mistake a card already names.
+
+**Be productive.** One ticket at a time, small commits, the ticket id in each. Never sit idle while work waits for you. If a ticket is blocked, say on the card what it waits on and move to the next one. Never redo what a card says is done.
+
+**Honesty.** Say what you did not check. A guess is never evidence: evidence is a test you ran, output you saw, or a screenshot you took.
+
+**Talking.** @mention an agent to wake it; a bare name wakes nobody. Post decisions, blockers, results and how to verify — no progress logs, nothing git already shows.
+
+**Cost.** Don't reread what is already in your context. Keep turns small, and end the run when nothing needs you.
