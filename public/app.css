@@ -342,6 +342,22 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .fchip b { font-weight: 600; color: var(--text); }
 .fbadge { --fc: var(--accent); display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 6px; font: 600 10.5px var(--font); text-transform: uppercase; letter-spacing: .02em; color: var(--fc); background: color-mix(in oklab, var(--fc) 15%, transparent); }
 
+/* card rules (INT-253): a badge beside the id, and .c-look under the content for outline, tint and ribbon.
+   .card's layout containment makes it a stacking context, so z-index -1 sits above its background and below its text. */
+.rbadge { --rc: var(--accent); display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px; border-radius: 6px; font: 600 10.5px var(--font); letter-spacing: .02em; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: color-mix(in oklab, var(--rc) 78%, var(--text)); background: color-mix(in oklab, var(--rc) 15%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rc) 32%, transparent); }
+.rbadge .i { width: 11px; height: 11px; flex: none; }
+.c-look { position: absolute; inset: calc(var(--bw) * -1); z-index: -1; border-radius: inherit; pointer-events: none; overflow: hidden; }
+.c-look[data-outline] { --ro: var(--accent); overflow: visible; box-shadow: 0 0 0 1.5px color-mix(in oklab, var(--ro) 85%, transparent), 0 0 18px -5px color-mix(in oklab, var(--ro) 60%, transparent); }
+.c-tint { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(160deg, color-mix(in oklab, var(--rt) 15%, transparent), color-mix(in oklab, var(--rt) 7%, transparent)); }
+/* the ribbon crosses the top-right corner; its own clip keeps it inside the card when the outline lets the glow out */
+.c-ribbon { position: absolute; top: 0; right: 0; width: 64px; height: 64px; overflow: hidden; border-top-right-radius: inherit; font: 700 8.5px/15px var(--font); letter-spacing: .06em; text-transform: uppercase; }
+.c-ribbon > span { position: absolute; top: 13px; right: -24px; width: 96px; height: 15px; rotate: 45deg; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 20px; box-sizing: border-box; color: color-mix(in oklab, var(--rr) 72%, var(--text)); background: color-mix(in oklab, var(--rr) 24%, var(--surface)); box-shadow: 0 1px 2px color-mix(in oklab, var(--rr) 25%, transparent); }
+.card:has(.c-ribbon) .c-top { padding-right: max(20px, var(--corner, 0px)); }
+:root[data-tape="corner"] .card:has(.c-ribbon) .tape { display: none; } /* the dog-ear and the ribbon share the corner */
+/* a state ring (selected, open, unseen) says more in the moment than a rule's outline */
+.card:is(.selected, .is-open, .unseen) .c-look[data-outline] { box-shadow: none; }
+.card > .c-body { border-radius: inherit; } /* .c-look sits in .c-body and takes the card's corners from it */
+
 .prio { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 6px; font: 600 10.5px var(--font); letter-spacing: .02em; text-transform: uppercase; }
 .prio .i { width: 11px; height: 11px; }
 .prio[data-p="low"] { color: var(--muted); }
@@ -1353,6 +1369,27 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .tcard .tparent { width: 120px; height: 26px; font-size: 12px; }
 .tcard .tdesc { resize: vertical; min-height: 64px; font: 12.5px/1.5 var(--mono); }
 .tcard .tfields { display: flex; flex-wrap: wrap; gap: 5px; }
+/* Settings › Card rules (INT-253) */
+.set-note { margin: -2px 0 12px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.set-note code { font: 11.5px var(--mono); color: var(--text); }
+.rcard { display: grid; gap: 7px; transition: opacity .25s var(--ease); }
+.rcard.off { opacity: .6; }
+.rcard .ccount { font: 600 11px var(--mono); color: var(--muted); padding: 2px 7px; border-radius: 99px; background: var(--hover); flex: none; }
+.rcard .icon-x:disabled { opacity: .3; cursor: default; }
+.rcard .cup { rotate: 180deg; }
+.rcond { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.rcond .inp { flex: 1; min-width: 0; height: 30px; font-size: 12.5px; }
+.rhint { min-height: 15px; margin: -3px 0 0 44px; font: 11.5px/1.3 var(--mono); color: var(--muted); }
+.rhint.bad { color: var(--danger); }
+.rlook { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; }
+.rlook .rl { font-size: 12px; color: var(--muted); }
+.rlook .seg.mini { justify-self: start; flex-wrap: wrap; }
+.tone-seg button { display: inline-flex; align-items: center; gap: 5px; }
+.tone-seg button i { width: 9px; height: 9px; border-radius: 50%; background: var(--rc); box-shadow: 0 0 0 1px color-mix(in oklab, var(--rc) 40%, transparent); }
+.rlook > .inp, .rbadge-in .inp { height: 28px; font-size: 12.5px; max-width: 220px; }
+.rbadge-in { display: flex; align-items: center; gap: 6px; }
+.rbadge-in .icon-pick { border: 0; background: none; cursor: pointer; color: var(--accent); padding: 0; }
+@media (max-width: 480px) { .rhint { margin-left: 0; } .rlook { grid-template-columns: 1fr; gap: 4px; } .rlook .rl:not(:first-child) { margin-top: 4px; } }
 
 .token-hint { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
 .token-hint code { font: 11.5px var(--mono); color: var(--text); }

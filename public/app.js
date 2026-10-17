@@ -841,7 +841,7 @@
 
   const state = {
     app: { name: 'Intellagent' }, boards: [], boardId: null, board: null, hash: null, seq: 0, offset: 0, archivedCount: 0,
-    presence: [], standing: {}, profiles: {}, listeners: {}, listenersSig: '', inbox: [], bulk: false, selected: new Set(), focusId: null, query: '', expanded: new Set(), folded: new Set(),
+    presence: [], standing: {}, profiles: {}, listeners: {}, listenersSig: '', looks: {}, looksSig: '', inbox: [], bulk: false, selected: new Set(), focusId: null, query: '', expanded: new Set(), folded: new Set(),
     modal: null, live: false, refreshing: false, refreshAgain: false,
   };
 
@@ -911,6 +911,7 @@
     render();
     state.modal?.refresh();
     scheduleListeners();
+    scheduleLooks();
     renderCatch();
     const dg = $('#digestDrawer .drawer-body');
     if (dg?._redraw && !dg.contains(document.activeElement)) dg._redraw();
@@ -933,6 +934,7 @@
     renderHeader();
     render();
     state.modal?.refresh();
+    scheduleLooks();
     renderCatch();
     clearTimeout(syncCheckTimer);
     syncCheckTimer = setTimeout(checkHash, 3000);
@@ -1857,7 +1859,7 @@
     c.classList.toggle('review', it.needsHuman?.kind === 'review');
     c.classList.toggle('unseen', !!(state.boardId && seenFor(state.boardId).items[it.id]));
     markFresh(c, it.id);
-    const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), Math.floor(idleDays(it))].join('|');
+    const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), Math.floor(idleDays(it)), JSON.stringify(state.looks[it.id] || null), state.board.cardRules?.length && JSON.stringify(state.board.cardRules).length].join('|');
     if (c._sig === sig) return;
     const changed = c._v != null && c._v !== it.version;
     c._sig = sig;
@@ -1939,6 +1941,13 @@
       const t = fieldText(f, it.fields[f.key]);
       if (t) top.push(`<span class="fbadge" style="--fc:${esc(optColor(f, it.fields[f.key]) || 'var(--accent)')}" title="${esc(f.label)}|${esc(f.help || t)}">${esc(t)}</span>`);
     }
+    // Card rules: badges in the top row (up to 2, each in its rule's tone); outline, tint and ribbon in .c-look below
+    const look = it.look !== undefined ? it.look : state.looks[it.id];
+    const lookRules = look ? (state.board?.cardRules || []).filter((r) => look.rules?.includes(r.name)) : [];
+    const toneOf = (k, i = 0) => lookRules.filter((r) => r.look[k] != null).map((r) => ruleTone(r.name))[i] || 'accent';
+    for (const [i, b] of (look?.badges || []).entries()) {
+      top.push(`<span class="rbadge" style="--rc:${toneVar(b.tone || toneOf('badge', i))}" title="${esc(b.text)}|Card rule: ${esc(lookRules.filter((r) => r.look.badge)[i]?.name || b.text)}">${ICONS[b.icon] ? icon(b.icon, 'sm') : ''}${esc(b.text)}</span>`);
+    }
     if (stub('priority') && it.priority !== 'Medium') {
       const p = it.priority.toLowerCase();
       top.push(`<span class="prio" data-p="${p}" title="Priority|${it.priority}">${icon('flag')}${p === 'high' || p === 'critical' ? it.priority : ''}</span>`);
@@ -1981,7 +1990,10 @@
     const right = top.slice(top.indexOf('<span class="grow"></span>') + 1);
     const lead = !s.id && stub('type') ? `<span class="c-type inline" title="${TYPE_TIPS[it.type]}">${icon(it.type, 'sm')}</span>` : '';
     const head = s.id ? `<div class="c-top">${top.join('')}</div>` : right.length ? `<div class="c-top float">${right.join('')}</div>` : '';
-    return `${head}<h3 class="c-title ${lead ? 'has-lead' : ''}">${lead}${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(nameOf(lease.claimant))} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
+    const deco = look && (look.outline || look.tint || look.ribbon)
+      ? `<span class="c-look" aria-hidden="true"${look.outline ? ` data-outline style="--ro:${toneVar(look.outline)}"` : ''}>${look.tint ? `<i class="c-tint" style="--rt:${toneVar(look.tint)}"></i>` : ''}${look.ribbon ? `<b class="c-ribbon" style="--rr:${toneVar(look.ribbonTone || toneOf('ribbon'))}"><span>${esc(look.ribbon)}</span></b>` : ''}</span>`
+      : '';
+    return `${deco}${head}<h3 class="c-title ${lead ? 'has-lead' : ''}">${lead}${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(nameOf(lease.claimant))} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
   }
 
   function tickRings(root = document) {
@@ -2026,6 +2038,7 @@
       if (flag === 'blocked' && !openBlockers(it).length) return false;
       if (flag === 'leased' && !activeLease(it)) return false;
       if (flag === 'free' && activeLease(it)) return false;
+      if (flag.startsWith('rule:') && !state.looks[it.id]?.rules?.some((n) => [n, n.replace(/\s+/g, '-')].some((x) => x.toLowerCase() === flag.slice(5)))) return false; // is:rule:full-approval finds "full approval"
     }
     const bag = { ...(it.properties || {}), ...(it.fields || {}) };
     for (const [k, v] of f.props) {
@@ -5185,6 +5198,26 @@
     } catch { /* offline */ }
   }
 
+  /* ═════════════════════════ card rules (INT-253) ═════════════════════════ */
+
+  // The look each card earns comes from the server: the review facts a rule reads (verdicts that still stand)
+  // are only known there, so a rule means the same on the board, in search and in an agent's brief.
+  let looksTimer = null;
+  function scheduleLooks() { clearTimeout(looksTimer); looksTimer = setTimeout(refreshLooks, 200); }
+  async function refreshLooks() {
+    if (!state.boardId) return;
+    let l = {};
+    if ((state.board?.cardRules || []).some((r) => r.enabled !== false)) {
+      try { l = await api('GET', B('/card-rules/matches')); } catch { return; /* offline: keep what is shown */ }
+    }
+    const sig = JSON.stringify(l);
+    if (sig !== state.looksSig) { state.looks = l; state.looksSig = sig; render(); applyFilter(); }
+  }
+  const RULE_TONES = ['ok', 'accent', 'warn', 'danger'];
+  const toneVar = (t) => `var(--${t === 'accent' ? 'accent' : t})`;
+  // A badge or ribbon takes its rule's tone: the outline's, else the tint's, else the accent.
+  const ruleTone = (name) => { const r = (state.board?.cardRules || []).find((x) => x.name === name); return r?.look.outline || r?.look.tint || 'accent'; };
+
   /* ═════════════════════════ while you were away ═════════════════════════ */
 
   const SEEN_KEY = 'intellagent.seen.v1';
@@ -5646,6 +5679,7 @@
         <button data-tab="fields">${icon('layers')}Fields</button>
         <button data-tab="columns">${icon('board')}Columns</button>
         <button data-tab="templates">${icon('copy')}Templates</button>
+        <button data-tab="rules">${icon('sparkle')}Card rules</button>
         <button data-tab="notify">${icon('bell')}Alerts</button>
         <button data-tab="about">${icon('info')}About</button>
       </nav><div class="set-pane"></div></div></div></div>`);
@@ -5672,7 +5706,7 @@
     // Live data (schema, profiles) changed elsewhere: redraw quietly unless the user is typing in the pane.
     m.refresh = () => {
       const typing = pane.contains(document.activeElement) && document.activeElement.matches('input, textarea');
-      if (['fields', 'board', 'templates', 'columns'].includes(m.tab) && !typing) show(m.tab, true);
+      if (['fields', 'board', 'templates', 'columns', 'rules'].includes(m.tab) && !typing) show(m.tab, true);
     };
     show(tab);
   }
@@ -5808,6 +5842,7 @@
     }
     if (t === 'fields') return fieldsPane();
     if (t === 'templates') return templatesPane();
+    if (t === 'rules') return rulesPane();
     if (t === 'columns') return columnsPane();
     if (t === 'notify') {
       const perm = 'Notification' in window ? Notification.permission : 'unsupported';
@@ -5874,6 +5909,107 @@
     return `<h3>${esc(state.board?.name || '')} · ticket templates</h3>
       ${cards || `<div class="empty-note">${icon('copy')}</div>`}
       <div class="fadd"><input class="inp" data-newtpl placeholder="New template, e.g. Bug"><button class="btn primary sm" data-tpladd>${icon('plus', 'sm')}Add</button></div>`;
+  }
+
+  /* ─── card rules: a condition and the look a matching card earns (INT-253) ─── */
+  const RULE_ICONS = ['check', 'checks', 'eye', 'flag', 'sparkle', 'lock', 'clock', 'ask', 'bot', 'pin', 'target'];
+  const toneSeg = (key, val) => `<div class="seg mini tone-seg" data-rseg="${key}">${['', ...RULE_TONES].map((t) => `<button class="${(val || '') === t ? 'on' : ''}" data-v="${t}" title="${t ? `${key === 'outline' ? 'Outline' : 'Tint'}: ${t}` : `No ${key}`}">${t ? `<i style="--rc:${toneVar(t)}"></i>${t}` : '–'}</button>`).join('')}</div>`;
+  function rulesPane() {
+    const rules = state.board?.cardRules || [];
+    const cards = rules.map((r, i) => {
+      const n = Object.values(state.looks).filter((l) => l.rules?.includes(r.name)).length;
+      return `<div class="fcard rcard ${r.enabled === false ? 'off' : ''}" data-ri="${i}">
+        <div class="srow">${sw(`rule-${i}`, r.enabled !== false)}<input class="inp lab" data-rf="name" value="${esc(r.name)}" maxlength="40" aria-label="Rule name"><span class="ccount" data-rcount title="Matching cards|Open tickets this rule matches now">${r.enabled === false ? '–' : n}</span>
+          <button class="icon-x" data-rmove="-1" ${i === 0 ? 'disabled' : ''} title="Earlier|The first rule's outline, tint and ribbon win">${icon('chev', 'cup')}</button><button class="icon-x" data-rmove="1" ${i === rules.length - 1 ? 'disabled' : ''} title="Later">${icon('chev', 'cdown')}</button>
+          <button class="icon-x" data-rdel title="Remove rule">${icon('x', 'sm')}</button></div>
+        <label class="rcond"><span>When</span><input class="inp mono" data-rf="condition" value="${esc(r.condition)}" spellcheck="false" autocomplete="off" aria-label="Condition" placeholder="review.allOk review.oks>=2 review.evidence"></label>
+        <div class="rhint" data-rhint></div>
+        <div class="rlook">
+          <span class="rl">Outline</span>${toneSeg('outline', r.look.outline)}
+          <span class="rl">Tint</span>${toneSeg('tint', r.look.tint)}
+          <span class="rl">Badge</span><span class="rbadge-in"><button class="ficon icon-pick" data-ricon title="Badge icon">${icon(ICONS[r.look.badge?.icon] ? r.look.badge.icon : 'tag')}</button><input class="inp" data-rf="badge" value="${esc(r.look.badge?.text || '')}" maxlength="24" placeholder="none"></span>
+          <span class="rl">Ribbon</span><input class="inp" data-rf="ribbon" value="${esc(r.look.ribbon || '')}" maxlength="16" placeholder="none">
+        </div>
+      </div>`;
+    }).join('');
+    return `<h3>${esc(state.board?.name || '')} · card rules</h3>
+      <p class="set-note">A card that meets a rule's condition takes its look. Rules are checked in order: the first outline, tint and ribbon win; badges stack, two at most. <code>is:rule:&lt;name&gt;</code> in the filter shows a rule's cards.</p>
+      ${cards || `<div class="empty-note">${icon('sparkle')}</div>`}
+      <div class="fadd"><input class="inp" data-newrule placeholder="New rule, e.g. full approval"><button class="btn primary sm" data-ruleadd>${icon('plus', 'sm')}Add</button></div>`;
+  }
+  async function rulesCall(rules) {
+    try { const r = await api('PUT', B('/card-rules'), { rules }); state.board.cardRules = r.rules; pulseSaved(); scheduleRefresh(0); scheduleLooks(); return true; }
+    catch (e) { toast(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message, { kind: 'error' }); state.modal?.refresh(); return false; }
+  }
+  function wireRules(pane) {
+    const rules = () => (state.board.cardRules || []).map((r) => ({ ...r, look: { ...r.look } }));
+    const idx = (n) => Number(n.closest('[data-ri]')?.dataset.ri ?? -1);
+    const save = (i, fn) => { const all = rules(); if (!all[i]) return; fn(all[i], all); return rulesCall(all); };
+    pane.addEventListener('click', (e) => {
+      const i = idx(e.target);
+      const s = e.target.closest('[data-sw^="rule-"]');
+      if (s && i >= 0) { save(i, (r) => { r.enabled = r.enabled === false; }); return; }
+      const sb = e.target.closest('[data-rseg] button');
+      if (sb && i >= 0) { const k = sb.parentElement.dataset.rseg; save(i, (r) => { if (sb.dataset.v) r.look[k] = sb.dataset.v; else delete r.look[k]; }); return; }
+      const ic = e.target.closest('[data-ricon]');
+      if (ic && i >= 0) {
+        const cur = rules()[i];
+        if (!cur.look.badge) { $(`[data-ri="${i}"] [data-rf="badge"]`, pane)?.focus(); return; }
+        menu(ic, [{ label: 'No icon', icon: 'x', run: () => save(i, (r) => { r.look.badge = { text: r.look.badge.text }; }) },
+          ...RULE_ICONS.map((n) => ({ label: n, icon: n, cls: n === cur.look.badge.icon ? 'on' : '', run: () => save(i, (r) => { r.look.badge = { ...r.look.badge, icon: n }; }) }))]);
+        return;
+      }
+      const mv = e.target.closest('[data-rmove]');
+      if (mv && i >= 0) { save(i, (r, all) => { const j = i + Number(mv.dataset.rmove); all.splice(i, 1); all.splice(j, 0, r); }); return; }
+      if (e.target.closest('[data-rdel]') && i >= 0) {
+        const before = rules();
+        save(i, (r, all) => all.splice(i, 1))?.then((ok) => ok && toast(`Removed ${before[i].name}`, { icon: 'sparkle', action: 'Undo', onAction: () => rulesCall(before) }));
+        return;
+      }
+      if (e.target.closest('[data-ruleadd]')) addRule(pane);
+    });
+    // The condition is checked as it is typed: how many cards it would match, or why it does not parse.
+    let timer = null;
+    const check = async (inp) => {
+      const hint = $('[data-rhint]', inp.closest('.rcard'));
+      const v = inp.value.trim();
+      if (!v) { hint.className = 'rhint bad'; hint.textContent = 'Write at least one term, e.g. review.allOk'; return; }
+      try {
+        const r = await api('GET', B(`/card-rules/check?condition=${encodeURIComponent(v)}`));
+        if (inp.value.trim() !== v) return;
+        hint.className = 'rhint'; hint.textContent = `Matches ${r.count} card${r.count === 1 ? '' : 's'} now${r.ids?.length ? `: ${r.ids.slice(0, 6).join(', ')}${r.count > 6 ? '…' : ''}` : ''}`;
+      } catch (e) { if (inp.value.trim() === v) { hint.className = 'rhint bad'; hint.textContent = e.data?.hint ? `${e.message}. ${e.data.hint}` : e.message; } }
+    };
+    pane.addEventListener('input', (e) => { if (e.target.matches('[data-rf="condition"]')) { clearTimeout(timer); timer = setTimeout(() => check(e.target), 220); } });
+    pane.addEventListener('focusin', (e) => { if (e.target.matches('[data-rf="condition"]')) check(e.target); });
+    pane.addEventListener('change', (e) => {
+      const f = e.target.dataset.rf;
+      const i = idx(e.target);
+      if (!f || i < 0) return;
+      const v = e.target.value.trim();
+      if ((f === 'name' || f === 'condition') && !v) { e.target.value = rules()[i][f]; return; }
+      save(i, (r) => {
+        if (f === 'badge') { if (v) r.look.badge = { ...r.look.badge, text: v }; else delete r.look.badge; }
+        else if (f === 'ribbon') { if (v) r.look.ribbon = v; else delete r.look.ribbon; }
+        else r[f] = v;
+      });
+    });
+    pane.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      if (e.target.matches('[data-newrule]')) addRule(pane);
+      else if (e.target.matches('input.inp')) e.target.blur();
+    });
+  }
+  async function addRule(pane) {
+    const inp = $('[data-newrule]', pane);
+    const name = inp.value.trim();
+    if (!name) { inp.focus(); return; }
+    const n = (state.board.cardRules || []).length;
+    // A new rule starts with James's example: every assigned reviewer said ok, two at least, and the review carries evidence
+    if (await rulesCall([...(state.board.cardRules || []), { name, condition: 'review.allOk review.oks>=2 review.evidence', look: { outline: 'ok', badge: { text: name.slice(0, 24), icon: 'checks' } } }])) {
+      inp.value = '';
+      setTimeout(() => $(`[data-ri="${n}"] [data-rf="condition"]`, pane)?.focus(), 300);
+    }
   }
 
   /* ─── columns: rename, colour, icon, flags, reorder, add; delete only when empty ─── */
@@ -6071,6 +6207,7 @@
     if (t === 'fields' && !pane._fieldsWired) { pane._fieldsWired = true; wireFields(pane); }
     if (t === 'templates' && !pane._tplWired) { pane._tplWired = true; wireTemplates(pane); }
     if (t === 'columns' && !pane._colWired) { pane._colWired = true; wireColumns(pane); }
+    if (t === 'rules' && !pane._rulesWired) { pane._rulesWired = true; wireRules(pane); }
     pane.onclick = async (e) => {
       const uc = e.target.closest('[data-ucolor]');
       if (uc) { try { await api('PATCH', '/api/profiles/me', { color: uc.dataset.ucolor || null }); pulseSaved(); } catch (err) { toast(err.message, { kind: 'error' }); } return; }
