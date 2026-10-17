@@ -38,8 +38,11 @@ function mcp(env) {
 }
 
 // The CLI as an agent runs it: no TTY, no stdin, JSON out.
+// A sandbox the CLI starts here takes its port from a range of this test process's own (never 7431 up, where
+// a live sandbox of a real board may be mid-restart), so two test processes do not meet either.
+const SANDBOX_FIRST_PORT = 20000 + (process.pid % 20000);
 function cli(args, { cwd, env = {} } = {}) {
-  const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv(env), encoding: 'utf8', input: '', timeout: 60000 });
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv({ INTELLAGENT_SANDBOX_FIRST_PORT: String(SANDBOX_FIRST_PORT), ...env }), encoding: 'utf8', input: '', timeout: 60000 });
   return { code: r.status, out: r.stdout, err: r.stderr, json: (() => { try { return JSON.parse(r.stdout); } catch { return null; } })() };
 }
 
@@ -503,6 +506,10 @@ describe('sandbox boards', () => {
       const r = cli(['sandbox', 'tester', '--seed', 'snapshot', '--json'], { cwd: s.dir });
       assert.equal(r.code, 0, r.err);
       assert.notEqual(r.json.url, s.base);
+      // the port comes from the test's own range, and the server on it is the process start spawned
+      assert.ok(r.json.port >= SANDBOX_FIRST_PORT && r.json.port < SANDBOX_FIRST_PORT + 200, `port ${r.json.port}`);
+      const pid = Number(fs.readFileSync(path.join(r.json.dir, 'data', 'server.pid'), 'utf8'));
+      assert.doesNotThrow(() => process.kill(pid, 0), 'server.pid names a live process');
       const got = await get(`${r.json.url}/api/boards/main/items/${it.id}`);
       assert.equal(got.title, 'copied over');
       // named for whoever runs it, even though its board was copied from the real one
