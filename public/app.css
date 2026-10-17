@@ -1686,6 +1686,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .cmt-why { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
 .cmt:hover .cmt-why, .cmt-why:focus-visible { opacity: 1; }
 .cmt-why:hover { background: var(--hover); color: var(--accent); }
+.unans-chip { font-size: 10px; padding: 1px 7px; background: color-mix(in oklab, var(--warn) 16%, transparent); color: color-mix(in oklab, var(--warn) 80%, var(--text)); }
 .explain-chip { font-size: 10px; padding: 1px 7px; background: color-mix(in oklab, var(--accent-2) 16%, transparent); color: var(--accent-2); }
 .cmt.is-explain > div > .md { padding-left: 10px; border-left: 2px solid color-mix(in oklab, var(--accent-2) 55%, transparent); }
 .why-box { margin-top: 8px; }
