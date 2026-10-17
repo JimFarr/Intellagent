@@ -9,14 +9,16 @@ Where it lives on our board today: the team and grants in `agents.json`, the age
 | Role | Model | Why |
 |---|---|---|
 | **Coordinator** (one) | cheap (haiku) | Routing, triage and nudges are many small reads. It never builds. |
-| **Senior builders** (two or more, split by area) | opus | Risky or cross-cutting work: permissions, tokens, data formats, landing. **One senior per area**, not one for everything: our single server senior's queue was the biggest cause of waiting (55 hours in Staged in a week while others sat empty). |
+| **Senior builders** (two, split by area) | opus | Risky or cross-cutting work: permissions, tokens, data formats, landing. **One senior per area**, not one for everything: our single server senior's queue was the biggest cause of waiting (55 hours in Staged in a week while others sat empty). |
 | **Mid builders** | sonnet | Normal features and bugs. |
 | **Junior builders** | haiku | Small, well-specified tickets, cleanups. |
-| **Designer(s)** | opus, with a browser tool | Screens. Each takes its own screenshots (light, dark, 375 px) in its own sandbox. Two designers once the screen queue backs up. |
+| **Designer(s)** | sonnet, with a browser tool | Screens. Each takes its own screenshots (light, dark, 375 px) in its own sandbox. Two designers once the screen queue backs up. |
 | **Code reviewer** | sonnet, read + test + run-authors-code | Reads the diff line by line and runs the author's tests. |
 | **Design reviewer** | sonnet, with a browser tool | Looks at the screenshots and the running branch. |
 | **Lander** | sonnet, `work.land` | Lands approved work whose cherry-pick conflicted, so approvals never wait on a merge. |
 | **A lead agent** (the chat-side one) | best model, `review.decide` | Approves technical tickets for the human (below). |
+
+**Keep opus for the seniors only.** On one day here, five opus agents were two thirds of the spend on a quarter of the runs, mostly on runs that only checked the board, merged main or answered a comment. Designers and second builders do well on sonnet. The coordinator sends small, exact tickets to the junior first.
 
 Give every agent an **areas** list (files it owns) and **concerns** (what it checks before review). The coordinator routes by areas first, then role, then tier.
 
