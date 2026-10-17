@@ -323,7 +323,7 @@ if (!fs.existsSync(APP_FILE)) saveApp();
 let previewOk = null;
 const previewable = () => (previewOk ??= !M.sandbox && (() => { try { return jsonfile.read(path.join(PROJECT_ROOT, 'package.json')).name === 'intellagent' && fs.existsSync(path.join(PROJECT_ROOT, 'server.js')); } catch { return false; } })());
 // The commit this board started from, and how far main has moved since (INT-319). Re-read on the sweep.
-const codeState = require('./lib/codestate').createCodeState({ dir: __dirname, mainBranch: () => { try { return worktrees?.mainBranch() || null; } catch { return null; } } });
+const codeState = require('./lib/codestate').createCodeState({ dir: process.env.INTELLAGENT_CODE_DIR || __dirname, mainBranch: () => { try { return worktrees?.mainBranch() || null; } catch { return null; } } });
 const appInfo = () => ({
   name: app.name, version: VERSION, build: BUILD, defaultBoard: M.defaultBoard,
   lease: M.lease, serverTime: now(), seq, preview: previewable(), sandbox: !!M.sandbox,

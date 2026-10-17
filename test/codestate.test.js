@@ -67,3 +67,34 @@ describe('GET /api/app and the restart (INT-319)', () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('the brief says when the board is behind main (INT-319)', () => {
+  it('a review.decide or work.land holder is told after a commit lands past the start commit; a plain builder is not', async () => {
+    const code = fs.mkdtempSync(path.join(os.tmpdir(), 'codebrief-'));
+    git(code, 'init', '-q', '-b', 'main');
+    commit(code, 'first (INT-1)');
+    const idle = 'node -e 0';
+    const s = await startServer({
+      env: { INTELLAGENT_CODE_DIR: code },
+      agents: { agents: {
+        approver: { run: idle, grants: ['review.decide'] },
+        lander: { run: idle, grants: ['work.land'] },
+        plain: { run: idle },
+      } },
+    });
+    try {
+      const brief = async (a) => (await s.api('GET', '/api/boards/main/brief', undefined, { agent: a })).body;
+      const app0 = await s.ok('GET', '/api/app', undefined, USER);
+      assert.equal(app0.behind, 0);
+      assert.doesNotMatch(await brief('approver'), /commits? behind main/, 'quiet while nothing landed');
+
+      commit(code, 'Landed rule (INT-297)');
+      const app1 = await s.ok('GET', '/api/app', undefined, USER); // re-reads main
+      assert.equal(app1.behind, 1);
+      assert.deepEqual(app1.behindTickets, ['INT-297']);
+      assert.match(await brief('approver'), /1 commit behind main \(INT-297\)/);
+      assert.match(await brief('lander'), /1 commit behind main \(INT-297\)/);
+      assert.doesNotMatch(await brief('plain'), /commits? behind main/, 'only holders of the two powers are told');
+    } finally { await s.stop(); }
+  });
+});
