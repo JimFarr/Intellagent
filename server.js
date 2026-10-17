@@ -1610,7 +1610,8 @@ function addComment(ctx, id, d, actor) {
     item.comments.push(c);
     item.version++;
     item.updatedAt = c.createdAt;
-    const mentions = intent ? explainTargets(item, c) : mentionsIn(c.body);
+    // an agent on probation mentions nobody: its introduction reaches the human, not other agents (INT-233)
+    const mentions = actor.kind === 'agent' && standing?.probationOf(actor.name) ? [] : intent ? explainTargets(item, c) : mentionsIn(c.body);
     events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(c.body), attachments: atts.length, ...(intent ? { intent } : {}) }, mentions, ...(intent ? { intent } : {}) }));
     // An agent that names another agent without @ has alerted nobody: say so in the reply (not stored), so it
     // can comment again with the @mention if it meant to.
@@ -4768,6 +4769,7 @@ route('POST', '/api/agents', 'Human: add or update a standing agent { name, role
   if (body.grants !== undefined) body.grants = cleanGrants(body.grants);
   const a = standing.define(body.name, body, { kind: actor.kind, name: actor.name });
   issueAgentToken(a.name);
+  if (a.probation) askForIntroduction(a.name, actor); // the one run a new agent gets: introduce itself, read-only
   if (body.coordinator) {
     const ctx = getCtx(q.board || M.defaultBoard);
     tx(ctx, (events) => { ctx.board.coordinator = a.name; events.push({ board: ctx.id, type: 'board.updated', actor, changes: { coordinator: { to: a.name } } }); });
@@ -4972,6 +4974,17 @@ route('POST', '/api/agents/resume-all', 'Human (or the agents.control grant): re
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
   return standing ? standing.resumeAll() : { resumed: [] };
 });
+route('POST', '/api/agents/:name/accept', 'Human only (no grant delegates it): accept a new agent\'s introduction — it comes off probation and works like any agent', ({ p, actor }) => {
+  humanOnly(actor);
+  return standing.acceptProbation(p.name, { kind: actor.kind, name: actor.name });
+});
+route('POST', '/api/agents/:name/return', 'Human only: send a new agent back to introduce itself again { note? } — it stays on probation and is asked once more', ({ p, body, actor }) => {
+  humanOnly(actor);
+  const note = body.note ? str(body.note, 2000) : '';
+  const a = standing.returnProbation(p.name, note, { kind: actor.kind, name: actor.name });
+  askForIntroduction(a.name, actor, note, true);
+  return a;
+});
 route('POST', '/api/agents/:name/pause', 'Human: pause (current run finishes; events keep queueing)', ({ p, actor }) => { controls(actor, p.name); return standing.pause(p.name); });
 route('POST', '/api/agents/:name/resume', 'Human: resume a paused or failed agent', ({ p, actor }) => { controls(actor, p.name); return standing.unpause(p.name); });
 route('POST', '/api/agents/:name/run', 'Human: start a run now: { note? }', ({ p, body, actor }) => { controls(actor, p.name); return standing.runNow(p.name, body.note, actor); });
@@ -5119,6 +5132,41 @@ for (const [urlPath, file] of Object.entries(STATIC)) {
   });
 }
 
+/* Probation (INT-233): an agent nobody has met yet may only introduce itself. An ALLOW-list, so a route added
+   tomorrow is closed to it by default: reads, its own profile, the reply to the request that asks for its
+   introduction, and (when the human named a ticket at creation) an intro comment on that ticket. Everything else
+   that writes answers 409 PROBATION. Lifting it is the human's alone (…/accept), never a grant. */
+function probationGate(method, pathname, body, actor) {
+  const prob = standing?.probationOf(actor.name);
+  if (!prob) return;
+  const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+  if (method === 'PATCH' && pathname === '/api/profiles/me') return;
+  const r = /^\/api\/boards\/([^/]+)\/requests\/([^/]+)\/reply$/.exec(pathname);
+  if (method === 'POST' && r) {
+    const ctx = boards.get(r[1]) || boards.get(slug(decodeURIComponent(r[1])));
+    const asked = (ctx?.board.requests || []).find((x) => x.id === decodeURIComponent(r[2]));
+    if (asked && same(asked.to, actor.name) && asked.by?.kind !== 'agent') return;
+  }
+  const c = /^\/api\/boards\/[^/]+\/items\/([^/]+)\/comments$/.exec(pathname);
+  if (method === 'POST' && c && body?.intro === true && prob.ticket && same(prob.ticket, decodeURIComponent(c[1]))) return;
+  fail(409, `${actor.name} is on probation: it may only introduce itself until the human accepts it`, { code: 'PROBATION', hint: 'Reply to the request that asked you to introduce yourself ("done": true) and stop. The human accepts you on the Agents page.' });
+}
+const INTRO_TAG = '[introduction]';
+// Ask a probationer to introduce itself, once: the request is what wakes its one read-only run.
+// Once per probation (open or answered, so the file watcher can call it on every change): `again` is the human sending it back.
+function askForIntroduction(name, by, note, again = false) {
+  const ctx = getCtx(M.defaultBoard);
+  const prob = standing.probationOf(name);
+  const since = Date.parse(prob?.since || 0) || 0;
+  const asked = (ctx.board.requests || []).some((x) => String(x.to).toLowerCase() === name.toLowerCase() && x.body.startsWith(INTRO_TAG) && (Date.parse(x.at) || 0) >= since - 1000);
+  if (asked && !again) return null;
+  return createRequest(ctx, {
+    to: name,
+    body: `${INTRO_TAG} You are new on this board and on probation: you can read it and reply to this request, nothing else. Reply with your introduction, in your own words: who you are, what you will do and what you won't, what your permissions let you do, and what you need from the human. Mention nobody. Pass "done": true and stop. The human accepts you (then you can work) or sends you back with a note.`
+      + `${note ? `\n\n**Sent back with a note:** ${note}` : ''}${prob?.ticket ? `\n\nYou may also post it as a comment with "intro": true on ${prob.ticket}.` : ''}`,
+  }, by);
+}
+
 /* ───────────────────────── server ───────────────────────── */
 
 /* Idempotency-Key: a retried write (same caller, same key) gets the first reply back instead of acting
@@ -5162,6 +5210,7 @@ const server = http.createServer(async (req, res) => {
     const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {};
     const actor = actorOf(req, q);
     checkAuth(req, q, actor, u.pathname, m.r.policy);
+    if (actor.kind === 'agent' && req.method !== 'GET') probationGate(req.method, u.pathname, body, actor);
     const bm = /^\/api\/boards\/([^/]+)(?:\/(.*))?$/.exec(u.pathname);
     const gctx = bm && (boards.get(bm[1]) || boards.get(slug(decodeURIComponent(bm[1]))));
     if (m.r.policy && gctx && !m.r.policy.held) guardBoard(gctx, actor);
@@ -5282,7 +5331,13 @@ standing = require('./lib/agents').createAgents({
       } catch { /* comment gone */ }
     }
   },
-  onAgentsChanged: (names) => { for (const n of names) issueAgentToken(n); },
+  // an agent added by editing the file (intellagent agents add) is on probation too, and is asked the same way
+  onAgentsChanged: (names) => {
+    for (const n of names) {
+      issueAgentToken(n);
+      try { if (standing.probationOf(n) && !standing.probationOf(n).returned) askForIntroduction(n, { kind: 'system', name: 'intellagent' }); } catch (e) { console.error(`introduction request for ${n}: ${e.message}`); }
+    }
+  },
   // the run's own token (INTELLAGENT_TOKEN), read fresh so a rotated one reaches the next run; never the user token
   tokenOf: (name) => readLocalAgentTokens()[name] || M.auth.agentTokens?.[name] || null,
   onRunEnd: (name) => {

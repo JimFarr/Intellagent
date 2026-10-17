@@ -13,7 +13,7 @@
  *   intellagent api <METHOD> <path> [json | @file | -]
  *   intellagent mcp                     MCP server over stdio
  *   intellagent hook install | post-commit | sync-ci
- *   intellagent agents [add|remove|pause|resume|run|log] standing agents the board wakes up itself
+ *   intellagent agents [add|remove|pause|resume|run|accept|return|log] standing agents the board wakes up itself
  *   intellagent autostart on|off|status  start this board when you log in
  *   intellagent leases status|machine|ask|renew|done|ceiling|start|stop   the machine's leases for heavy work
  */
@@ -674,7 +674,7 @@ async function agentsCmd() {
     const badPerms = (perms || []).filter((k) => !lib.holdable(k));
     if (badPerms.length) { console.error(`Unknown permission(s): ${badPerms.join(', ')}. Use: ${Object.keys(lib.labels()).join(', ')}`); process.exit(1); }
     doc.agents[name] = {
-      ...(doc.agents[name] || {}),
+      ...(doc.agents[name] || { probation: { since: new Date().toISOString() } }), // a new agent starts on probation (INT-233)
       ...(f.role ? { role: String(f.role) } : {}),
       ...(perms ? { perms } : {}),
       ...(f.listen || !f.role ? { listen } : {}),
@@ -703,9 +703,9 @@ async function agentsCmd() {
     console.log(`Removed "${name}".`);
     return;
   }
-  if (['pause', 'resume', 'run'].includes(sub)) {
-    const a = await asHuman('POST', `/api/agents/${encodeURIComponent(name)}/${sub}`, sub === 'run' && f.note ? { note: String(f.note) } : {});
-    console.log(`${a.name}: ${a.status}`);
+  if (['pause', 'resume', 'run', 'accept', 'return'].includes(sub)) {
+    const a = await asHuman('POST', `/api/agents/${encodeURIComponent(name)}/${sub}`, (sub === 'run' || sub === 'return') && f.note ? { note: String(f.note) } : {});
+    console.log(`${a.name}: ${a.status}${a.probation ? ' (on probation)' : ''}`);
     return;
   }
   if (sub === 'log') {

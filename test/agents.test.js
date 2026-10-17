@@ -172,8 +172,10 @@ describe('standing agents', () => {
     assert.equal((await s.api('POST', '/api/agents', { name: 'bob', role: 'wizard' }, USER)).status, 400);
     assert.equal((await s.api('POST', '/api/agents', { name: 'bob', perms: ['rm -rf'] }, USER)).status, 400);
     const a = await s.ok('POST', '/api/agents', { name: 'bob', role: 'builder', perms: ['edit', 'test'], run: 'evil --command' }, USER);
-    assert.match(a.run, /^claude -p .*--allowedTools .*"Bash\(npm test:\*\)"/);
-    assert.ok(!a.run.includes('evil'), 'a run command from the API is ignored');
+    assert.ok(a.probation && !a.run.includes('"Bash(npm test:*)"') && !/--tools "[^"]*Edit/.test(a.run), 'a new agent starts on probation (INT-233): its run reads and nothing more');
+    const acc = await s.ok('POST', '/api/agents/bob/accept', {}, USER);
+    assert.match(acc.run, /^claude -p .*--allowedTools .*"Bash\(npm test:\*\)"/);
+    assert.ok(!a.run.includes('evil') && !acc.run.includes('evil'), 'a run command from the API is ignored');
     assert.equal(a.role, 'builder');
     // the Edit form posts the same shape again: role, perms, wake-ups and throttle change in place
     const e = await s.ok('POST', '/api/agents', { name: 'bob', role: 'reviewer', perms: ['read'], listen: 'inbox', throttleMinutes: 7, model: 'opus', description: 'looks at diffs' }, USER);

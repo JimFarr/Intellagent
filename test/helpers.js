@@ -36,6 +36,10 @@ async function startServer(opts = {}) {
   }
 }
 
+function fakeClaudePath() {
+  const key = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+  return { [key]: `${path.join(__dirname, 'fake-bin')}${path.delimiter}${process.env[key] || ''}` };
+}
 async function startOnce({ manifest = {}, agents, dir, env = {} } = {}) {
   dir ||= fs.mkdtempSync(path.join(os.tmpdir(), 'ia-test-'));
   const port = await freePort();
@@ -44,7 +48,9 @@ async function startOnce({ manifest = {}, agents, dir, env = {} } = {}) {
   if (agents) fs.writeFileSync(path.join(dir, 'agents.json'), JSON.stringify(agents, null, 2));
   const proc = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     // every test board shares one run-guard helper (INT-262), so it is built once per machine, not once per board
-    env: cleanEnv({ INTELLAGENT_RUN_GUARD_BIN: path.join(os.tmpdir(), 'ia-test-guard-bin'), ...env, INTELLAGENT_MANIFEST: mp, INTELLAGENT_PORT: String(port) }),
+    // A new agent starts on probation and is woken once to introduce itself (INT-233), with a `claude` run built from
+    // its permissions. A stand-in `claude` first on PATH keeps those tests off a real model and the run strings real.
+    env: cleanEnv({ ...fakeClaudePath(), INTELLAGENT_RUN_GUARD_BIN: path.join(os.tmpdir(), 'ia-test-guard-bin'), ...env, INTELLAGENT_MANIFEST: mp, INTELLAGENT_PORT: String(port) }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
