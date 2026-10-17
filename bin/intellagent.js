@@ -383,7 +383,7 @@ function printPowers(p) {
   console.log(`\n  ${p.name}@${p.version} brings:`);
   console.log(`    ${Object.keys(presets.parts(p)).length} pieces of board: ${Object.keys(presets.parts(p)).join(', ')}`);
   console.log(powers.length ? `  and gives it these powers:\n${powers.map((x) => `    - ${x}`).join('\n')}` : '  and gives it no powers beyond a plain board.');
-  console.log('  It brings no commands or tools yet (permissions and roles are not part of a preset).\n');
+  console.log(`  It never brings a run command, env, commands or MCP config${p.team ? '; agents it installs start on probation and run nothing until you accept them, and proposed grants are written only if you accept each' : ''}.\n`);
 }
 
 // --agents slot=name,slot=name: the names the human gives the preset's role slots
@@ -536,7 +536,7 @@ async function presetCmd() {
     return;
   }
   if (sub === 'export') return presetExport(spec, f);
-  if (!['add', 'diff', 'update'].includes(sub)) { console.error('Usage: intellagent preset list | add <name|folder> [--yes] | diff <name|folder> | update <name|folder> [--accept all|id,id] | export <folder> [--name N] [--force]'); process.exit(1); }
+  if (!['add', 'diff', 'update'].includes(sub)) { console.error('Usage: intellagent preset list | add <name|folder> [--yes] [--agents slot=name,…] [--grants] | diff <name|folder> | update <name|folder> [--accept all|id,id] | export <folder> [--name N] [--force]'); process.exit(1); }
   if (!spec) { console.error(`Usage: intellagent preset ${sub} <name|folder>`); process.exit(1); }
   humanOnly(`intellagent preset ${sub}`);
   const mp = requireManifest();
@@ -989,7 +989,8 @@ const HELP = `intellagent — a kanban for you and your agents
                    --port N (default: the first free port from 7420)  --prefix XX (ticket ids)  --open-agents (agents need no token)
                    also adds the MCP tools (.mcp.json) and CLAUDE.md instructions; opt out: --no-mcp --no-claude --no-start --no-token
   templates        list board templates (software, research, ops, ...)
-  preset           packages of board: preset list | add NAME|FOLDER [--yes] | diff NAME|FOLDER | update NAME|FOLDER [--accept all|id,id] | export FOLDER [--name N] [--force]
+  preset           packages of board: preset list | add NAME|FOLDER [--yes] [--agents slot=name,…] [--grants] | diff NAME|FOLDER | update NAME|FOLDER [--accept all|id,id] | export FOLDER [--name N] [--force]
+                   a preset with a team: --agents names its role slots (an unnamed slot is skipped); --yes alone accepts no proposed grant, --yes --grants all
                    init --preset NAME|FOLDER sets a board up from one; it lists the powers it brings and asks first (--yes agrees)
                    an update never overwrites what you edited: edited pieces are kept, the rest you accept one by one
   skill install    add the intellagent skills to Claude Code (working a ticket; setting up)   [--project]
