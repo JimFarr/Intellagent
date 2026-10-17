@@ -5114,7 +5114,7 @@
       <header class="perm-head">${avatar({ kind: 'agent', name: agent })}<b class="perm-nm">${esc(nameOf(agent))}</b><span class="muted">·</span><b class="perm-nm">${esc(p.name)}</b><code class="perm-key">${esc(key)}</code><span class="grow"></span><button class="btn sm ghost" data-pg-close title="Close">${icon('x', 'sm')}<span>Close</span></button></header>
       ${p.enforced ? '' : `<p class="perm-warn">${icon('info', 'sm')}<span><b>Not enforced:</b> ${esc(String(p.warning || 'words only: the agent is trusted to follow it').replace(/^not enforced:\s*/i, ''))}</span></p>`}
       ${cell.implied ? `<p class="perm-warn">${icon('info', 'sm')}<span>On because ${esc((cell.by || []).join(', '))} ${(cell.by || []).length > 1 ? 'need' : 'needs'} it. Turn that off to turn this off.</span></p>` : ''}
-      <div class="seg pg-modes" role="radiogroup" aria-label="Mode">${modes.map(([m, l]) => `<button type="button" role="radio" aria-checked="${cell.mode === m}" class="${cell.mode === m ? 'on' : ''}" data-mode="${m}">${l}</button>`).join('')}</div>
+      <div class="seg pg-modes" role="radiogroup" aria-label="Mode">${modes.map(([m, l]) => `<button type="button" role="radio" aria-checked="${cell.mode === m}" class="${cell.mode === m ? 'on' : ''}" data-pg-mode="${m}">${l}</button>`).join('')}</div>
       <div class="pg-rules" ${cell.mode === 'rules' ? '' : 'hidden'}>
         ${approval ? `<div class="perm-two"><label><span class="aa-label">Oks needed</span><input class="inp" data-r="minOks" value="${esc(r.minOks ?? '')}" placeholder="2, or all" inputmode="numeric"></label>
           <label><span class="aa-label">From reviewers</span><input class="inp" data-r="from" value="${esc((r.from || []).join(', '))}" placeholder="nebula, kraglin"></label></div>` : ''}
@@ -5127,17 +5127,18 @@
     const pan = $('.pg-pan', host);
     let mode = cell.mode;
     const sync = () => {
-      $$('[data-mode]', pan).forEach((b) => { b.classList.toggle('on', b.dataset.mode === mode); b.setAttribute('aria-checked', String(b.dataset.mode === mode)); });
+      $$('[data-pg-mode]', pan).forEach((b) => { b.classList.toggle('on', b.dataset.pgMode === mode); b.setAttribute('aria-checked', String(b.dataset.pgMode === mode)); });
       $('.pg-rules', pan).hidden = mode !== 'rules';
     };
     pan.addEventListener('input', () => pan.classList.add('dirty'));
     pan.addEventListener('click', (e) => {
-      const m = e.target.closest('[data-mode]');
-      if (m) { mode = m.dataset.mode; pan.classList.add('dirty'); sync(); return; }
+      const m = e.target.closest('[data-pg-mode]');
+      if (m) { mode = m.dataset.pgMode; pan.classList.add('dirty'); sync(); return; }
       if (e.target.closest('[data-pg-close]')) { body._sel = null; host.innerHTML = ''; $$('.pg-cell[aria-current]', body).forEach((c) => c.removeAttribute('aria-current')); $(`.pg-cell[data-agent="${CSS.escape(agent)}"][data-key="${CSS.escape(key)}"]`, body)?.focus(); }
     });
     pan.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); $('[data-pg-close]', pan).click(); } });
     $('[data-pg-save]', pan).onclick = async (e) => {
+      const btn = e.currentTarget; // null after an await, so keep it
       const err = $('.perm-err', pan);
       const send = {};
       const guide = $('[data-pg-guide]', pan).value.trim();
@@ -5152,6 +5153,7 @@
         const where = {};
         for (const line of $('[data-r="where"]', pan).value.split(/\r?\n/)) {
           const i = line.indexOf('=');
+          if (line.trim() && i < 1) { err.hidden = false; err.textContent = `"${line.trim()}" is not a scope: write it as key=value, e.g. fields.risk=low`; return; }
           if (i > 0) where[line.slice(0, i).trim()] = line.slice(i + 1).split(',').map((s) => s.trim()).filter(Boolean);
         }
         if (Object.keys(where).length) rules.where = where;
@@ -5159,7 +5161,7 @@
       }
       if (!Object.keys(send).length) { err.hidden = false; err.textContent = 'Nothing changed.'; return; }
       err.hidden = true;
-      e.currentTarget.disabled = true;
+      btn.disabled = true;
       try {
         const res = await api('PUT', `/api/agents/${encodeURIComponent(agent)}/permissions/${encodeURIComponent(key)}`, send);
         pan.classList.remove('dirty');
@@ -5170,7 +5172,7 @@
       } catch (e2) {
         err.hidden = false;
         err.textContent = e2.data?.hint ? `${e2.message}. ${e2.data.hint}` : e2.message;
-        e.currentTarget.disabled = locked;
+        btn.disabled = locked;
       }
     };
     if (!quiet) { $('.pg-modes [aria-checked="true"]', pan)?.focus(); pan.scrollIntoView({ block: 'nearest' }); }
