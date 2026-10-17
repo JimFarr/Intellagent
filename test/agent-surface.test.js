@@ -157,6 +157,27 @@ describe('the CLI for agents', () => {
     assert.ok(!fs.existsSync(path.join(dir, 'data')), 'no board was started: no data folder');
     assert.equal(await fetch(`http://127.0.0.1:${port}/api/app`).then(() => 'up', () => 'down'), 'down');
   });
+  it('init and open as an agent say who signs in and how, and the rule stays (INT-326)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-owner-'));
+    const env = { INTELLAGENT_AGENT: 'quill' };
+    try {
+      const i = cli(['init', dir, '--name', 'Own', '--prefix', 'OWN', '--template', 'simple', '--no-start'], { cwd: dir, env });
+      assert.equal(i.code, 0, i.err);
+      assert.match(i.out, /Whoever owns the board signs in by running "intellagent open"/);
+      assert.match(i.out, /tell whoever started this run/);
+      for (const args of [['open'], ['start', '--open']]) {
+        const r = cli(args, { cwd: dir, env });
+        assert.equal(r.code, 1, args.join(' '));
+        assert.match(r.err, /HUMAN_ONLY/);
+        assert.match(r.err, /an agent cannot sign in to a board/);
+        assert.match(r.err, /tell whoever started this run/);
+        assert.ok(!/ask the human on the card \(intellagent do ask_human id=<ID> reason="…"\)$/.test(r.err.trim()), 'not the card-only hint');
+      }
+    } finally {
+      const unlock = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, f.name); if (f.isDirectory()) unlock(p); else fs.chmodSync(p, 0o666); } };
+      try { unlock(dir); fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  });
   it('--url and --as reach a board from anywhere, for shells that may only run "intellagent …"', () => {
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-nowhere-'));
     const r = cli(['do', 'create_item', 'title=by flag', 'column=Backlog', '--url', s.base, '--as', 'flagged'], { cwd: elsewhere });

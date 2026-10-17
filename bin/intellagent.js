@@ -70,7 +70,7 @@ function agentPrompt(url, agent, board = 'main') {
 
 async function init() {
   const f = flags(rest);
-  if (asAgent() && !f['no-open']) { f['no-open'] = true; console.log(`(Running as ${asAgent()}: the board won't be opened signed in — the human opens it with: intellagent open)`); }
+  if (asAgent() && !f['no-open']) { f['no-open'] = true; console.log(`(Running as ${asAgent()}: the board won't be opened signed in. Whoever owns the board signs in by running "intellagent open" in the project folder from their own terminal, with no agent name set; tell whoever started this run.)`); }
   const dir = path.resolve(f._[0] || '.');
   const folder = path.join(dir, '.intellagent');
   const manifestPath = path.join(folder, 'intellagent.manifest.json');
@@ -174,7 +174,7 @@ async function startBackground(mp, url) {
 // Opens the board; the user token rides in the URL fragment (never sent to the server or logged).
 function openBoard(mp = requireManifest()) {
   // here, not on the commands: open, start --open and init all come through this (it carries the user token)
-  humanOnly('opening the board signed in');
+  humanOnly('opening the board signed in', OPEN_HINT);
   const u = baseUrl(readManifest(mp));
   const t = userToken(mp);
   openUrl(t ? `${u}/#token=${t}` : u);
@@ -273,7 +273,7 @@ function openUrl(url) {
 
 async function start() {
   const f = flags(rest);
-  if (f.open) humanOnly('intellagent start --open (opening the board signed in)'); // before anything boots
+  if (f.open) humanOnly('intellagent start --open (opening the board signed in)', OPEN_HINT); // before anything boots
   const mp = requireManifest();
   const url = baseUrl(readManifest(mp));
   if (await alive(url)) { console.log(`Already running at ${url}`); if (f.open) openBoard(mp); return; }
@@ -616,10 +616,11 @@ function asAgent() {
 // Commands that act as the human (with the user token from local.json) or write the human's files refuse to
 // run as an agent: a standing agent's shell may run "intellagent …", and it must not merge, steer other agents
 // or change grants that way.
-function humanOnly(what) {
+const OPEN_HINT = 'an agent cannot sign in to a board. Whoever owns the board runs "intellagent open" in the project folder in their own terminal (no agent name set); tell whoever started this run. If a card exists, ask there (intellagent do ask_human id=<ID> reason="…")';
+function humanOnly(what, hint = 'ask the human on the card (intellagent do ask_human id=<ID> reason="…")') {
   const agent = asAgent();
   if (!agent) return;
-  console.error(`error 403 HUMAN_ONLY: ${what} is the human's — refused for ${agent} — hint: ask the human on the card (intellagent do ask_human id=<ID> reason="…")`);
+  console.error(`error 403 HUMAN_ONLY: ${what} is the human's — refused for ${agent} — hint: ${hint}`);
   process.exit(1);
 }
 
