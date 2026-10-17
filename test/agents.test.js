@@ -1765,4 +1765,11 @@ describe('automatic rebalancing planner (INT-234)', () => {
       [{ id: 'nap-1', from: 'napper', to: 'drax', why: 'napper has been paused for long' }]);
     assert.deepEqual(plan({ agents: [A('gone', { state: 'removed' }), A('kraglin', { edits: false })], tickets, now: NOW }), [], 'nobody to take it: nothing moves');
   });
+
+  it("an agent that is off neither gives nor takes; a target's allowed columns are respected", () => {
+    const tickets = [...queueOf('napper', 6, { column: 'ready' }), ...queueOf('rocket', 6, { column: 'ready' })];
+    assert.deepEqual(plan({ agents: [A('napper', { state: 'off' }), A('rocket', { state: 'off' }), A('drax')], tickets, now: NOW }), [], 'paused less than an hour, or stopped: its queue waits for it');
+    assert.deepEqual(plan({ agents: [A('rocket'), A('drax', { columns: ['backlog'] })], tickets, now: NOW }), [], 'drax may not work in ready');
+    assert.equal(plan({ agents: [A('rocket'), A('drax', { columns: ['ready'] })], tickets, now: NOW }).length, 2);
+  });
 });

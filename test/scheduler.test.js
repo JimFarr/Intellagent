@@ -404,3 +404,131 @@ describe('a run that is catching up its worktree (fake clock)', () => {
     assert.equal(agents.bot.status, 'paused');
   });
 });
+
+// Two builders and a reviewer; deps.rebalance records each call, the way the board's planner would be asked.
+function rebalanceRig({ loadError = null } = {}) {
+  const calls = [];
+  const started = [];
+  const agents = {};
+  const st = (n) => (agents[n] ||= { status: 'idle', cursor: 0, queue: [], inflight: null, runs: [], failures: 0, lastRun: null });
+  const defs = {
+    rocket: { name: 'rocket', enabled: true, worktree: true, role: 'builder', model: 'opus', areas: ['server.js'], settleSeconds: 3, throttleMinutes: 0 },
+    drax: { name: 'drax', enabled: true, worktree: true, role: 'builder', model: 'sonnet', settleSeconds: 3, throttleMinutes: 0 },
+    kraglin: { name: 'kraglin', enabled: true, role: 'reviewer', settleSeconds: 3, throttleMinutes: 0 },
+  };
+  const state = { agents };
+  const core = {
+    deps: { emit() {}, seq: () => 1, recent: () => [], rebalance: (x) => calls.push({ at: Date.now() - T0, ...x }) },
+    state, save() {}, st, requeueInflight() {}, defs,
+    running: new Map(), sessions: new Map(), timers: new Map(), procs: new Map(), held: new Map(),
+    config: { wakes: () => true, need: (n) => n, loadError: () => loadError },
+    runner: { lingering: () => 0, endSession() {}, start(name, d, s) { started.push(name); s.runs.push(new Date().toISOString()); s.queue.splice(0); } },
+    view: (name) => ({ name }),
+  };
+  for (const n of Object.keys(defs)) st(n);
+  const scheduler = createScheduler(core);
+  core.scheduler = scheduler;
+  const stateOf = (n) => scheduler.rebalanceAgents().find((a) => a.name === n);
+  return { scheduler, core, defs, state, calls, started, stateOf };
+}
+
+describe('when rebalancing is asked for (INT-234, fake clock)', () => {
+  beforeEach(() => mock.timers.enable({ apis: ['setTimeout', 'Date'], now: T0 }));
+  afterEach(() => mock.timers.reset());
+
+  it('describes each agent for the planner: builders active, a reviewer takes no work, tiers from the model', () => {
+    const { stateOf } = rebalanceRig();
+    assert.deepEqual(stateOf('rocket'), { name: 'rocket', state: 'active', edits: true, role: 'builder', tier: 'senior', areas: ['server.js'] });
+    assert.equal(stateOf('drax').tier, 'mid');
+    assert.equal(stateOf('kraglin').edits, false);
+  });
+
+  it('an agent paused on its own is off for an hour, then away; resuming makes it active again', () => {
+    const { scheduler, stateOf } = rebalanceRig();
+    scheduler.api.pause('drax');
+    assert.equal(stateOf('drax').state, 'off', 'just paused: it neither gives nor takes');
+    mock.timers.tick(59 * MIN);
+    assert.equal(stateOf('drax').state, 'off');
+    mock.timers.tick(2 * MIN);
+    assert.deepEqual([stateOf('drax').state, stateOf('drax').awayAs], ['away', 'paused']);
+    scheduler.api.unpause('drax');
+    assert.equal(stateOf('drax').state, 'active');
+  });
+
+  it('Stop all never counts as away, however long it lasts; resuming everyone sets off nothing', () => {
+    const { scheduler, stateOf, calls } = rebalanceRig();
+    scheduler.api.pause('drax'); // paused on its own before the stop: it stays away from then
+    mock.timers.tick(10 * MIN);
+    scheduler.api.stopAll();
+    mock.timers.tick(3 * 60 * MIN);
+    assert.equal(stateOf('rocket').state, 'off', 'stopped, not away');
+    assert.equal(stateOf('drax').state, 'away', 'its own pause still counts');
+    scheduler.api.resumeAll();
+    assert.deepEqual(['rocket', 'drax'].map((n) => stateOf(n).state), ['active', 'active']);
+    assert.equal(calls.length, 0, 'the human controls never ask for a rebalance themselves');
+  });
+
+  it('a failed agent is away an hour after it failed', () => {
+    const { scheduler, stateOf } = rebalanceRig();
+    scheduler.setStatus('rocket', 'failed', { failedAt: new Date().toISOString() });
+    mock.timers.tick(30 * MIN);
+    assert.equal(stateOf('rocket').state, 'off');
+    mock.timers.tick(31 * MIN);
+    assert.deepEqual([stateOf('rocket').state, stateOf('rocket').awayAs], ['away', 'failed']);
+  });
+
+  it('a sweep asks at most every ten minutes; a change to the team asks at once', () => {
+    const { scheduler, calls } = rebalanceRig();
+    scheduler.checkRebalance('sweep');
+    scheduler.checkRebalance('sweep');
+    mock.timers.tick(9 * MIN);
+    scheduler.checkRebalance('sweep');
+    assert.equal(calls.length, 1);
+    mock.timers.tick(MIN);
+    scheduler.checkRebalance('sweep');
+    assert.equal(calls.length, 2);
+    scheduler.checkRebalance('agents.changed');
+    assert.deepEqual(calls.map((c) => c.reason), ['sweep', 'sweep', 'agents.changed']);
+  });
+
+  it('an agent taken out of agents.json is removed for a day, and coming back clears it; a file with a problem removes nobody', () => {
+    const { scheduler, defs, calls, stateOf } = rebalanceRig();
+    const before = { rocket: 'builder', drax: 'builder', kraglin: 'reviewer' };
+    delete defs.drax;
+    scheduler.agentsChanged(before);
+    assert.equal(calls.length, 1, 'asked at once');
+    assert.equal(stateOf('drax').state, 'removed');
+    defs.drax = { name: 'drax', enabled: true, worktree: true, role: 'builder', settleSeconds: 3 };
+    scheduler.agentsChanged({ rocket: 'builder', kraglin: 'reviewer' });
+    assert.equal(stateOf('drax').state, 'active', 'back: not removed');
+    delete defs.drax;
+    scheduler.agentsChanged(before);
+    mock.timers.tick(25 * 60 * MIN);
+    assert.equal(stateOf('drax'), undefined, 'a day on, a removed agent is forgotten');
+    // a role change is a change to the team; the same team is not
+    const n = calls.length;
+    scheduler.agentsChanged({ rocket: 'reviewer', kraglin: 'reviewer' });
+    scheduler.agentsChanged({ rocket: 'builder', kraglin: 'reviewer' });
+    assert.equal(calls.length, n + 1);
+
+    const bad = rebalanceRig({ loadError: 'agents.json: agent "drax": unknown permission(s) x' });
+    delete bad.defs.drax;
+    bad.scheduler.agentsChanged(before);
+    assert.equal(bad.stateOf('drax'), undefined, 'dropped by a problem in the file: never treated as removed');
+  });
+
+  it('no loop: the wake a move causes (an assignment for its new owner) never asks for another rebalance', () => {
+    const { scheduler, calls, started, core } = rebalanceRig();
+    // the board applies a move: drax is woken by its item.assigned, runs, and finishes
+    core.deps.rebalance = (x) => { calls.push(x); scheduler.enqueue('drax', [{ seq: 50 + calls.length, type: 'item.assigned' }]); };
+    scheduler.checkRebalance('sweep');
+    mock.timers.tick(3100);
+    assert.deepEqual(started, ['drax'], 'the move woke its new owner once');
+    scheduler.checkPending('drax');
+    scheduler.sweepAll();
+    scheduler.checkRebalance('sweep');
+    mock.timers.tick(5 * MIN);
+    assert.equal(calls.length, 1, 'nothing it caused asked again');
+    assert.deepEqual(started, ['drax']);
+  });
+});
