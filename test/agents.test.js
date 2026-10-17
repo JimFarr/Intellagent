@@ -363,6 +363,7 @@ describe('model tiers', () => {
       mid: { role: 'builder', enabled: false },
       pinned: { run: 'claude -p "x" --model opus', model: 'haiku', enabled: false },
       scripted: { run: run('ok'), model: 'haiku', enabled: false },
+      seeker: { role: 'reviewer', model: 'deepseek-chat', provider: 'deepseek', enabled: false, run: run('ok') },
     } } });
     try {
       const a = async (n) => s.ok('GET', `/api/agents/${n}`);
@@ -379,6 +380,7 @@ describe('model tiers', () => {
       const text = typeof brief === 'string' ? brief : brief.markdown;
       assert.match(text, /Agents you can route to/);
       assert.match(text, /\*\*junior\*\* · builder · haiku \(junior\)/);
+      assert.match(text, /\*\*seeker\*\* · reviewer · deepseek-chat · deepseek/, 'the team line shows the provider beside the model (INT-255)');
     } finally { await s.stop(); }
   });
 });

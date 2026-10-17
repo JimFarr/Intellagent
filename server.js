@@ -2453,7 +2453,7 @@ function briefing(ctx, name, base, via = 'cli') {
       const team = isCoordinator(ctx, name) && standing ? standing.list().agents.filter((a) => a.name !== name) : [];
       if (!team.length) return [];
       return ['', '## Agents you can route to (set "assignee")',
-        ...team.map((a) => `- **${a.name}**${a.role ? ` · ${a.role}` : ''}${a.model ? ` · ${a.model}${a.tier ? ` (${a.tier})` : ''}` : ''}${a.enabled ? '' : ' · paused'}${a.description ? ` — ${a.description}` : ''}${a.areas?.length ? `\n  owns: ${a.areas.map((x) => `\`${x}\``).join(', ')}` : ''}${a.concerns?.length ? `\n  watches for: ${a.concerns.join('; ')}` : ''}`),
+        ...team.map((a) => `- **${a.name}**${a.role ? ` · ${a.role}` : ''}${a.model ? ` · ${a.model}${a.tier ? ` (${a.tier})` : ''}${a.provider ? ` · ${a.provider}` : ''}` : ''}${a.enabled ? '' : ' · paused'}${a.description ? ` — ${a.description}` : ''}${a.areas?.length ? `\n  owns: ${a.areas.map((x) => `\`${x}\``).join(', ')}` : ''}${a.concerns?.length ? `\n  watches for: ${a.concerns.join('; ')}` : ''}`),
         'Route by tier when agents have models: **junior** (haiku) gets small, well-specified tickets; **mid** (sonnet) normal features and bugs; **senior** (opus) risky or cross-cutting work and anything with risk: high. Match the code first: give a ticket to the agent whose areas cover the files it touches (and whose concerns fit it); then the role (a designer gets design work); then the tier.'];
     })(),
     ...(() => {
@@ -4368,7 +4368,7 @@ function cleanLimits(v) {
   if (v.readOnly) out.readOnly = true;
   return out;
 }
-route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, model?, description?, listen?, throttleMinutes?, maxRunsPerHour?, keepAlive?, limits?: { columns?, readOnly? }, grants?, coordinator? } — permissions from the fixed list, never a command. grants need a board with a user token (the signed-in human)', ({ body, actor, q }) => {
+route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, model?, provider?, description?, listen?, throttleMinutes?, maxRunsPerHour?, keepAlive?, limits?: { columns?, readOnly? }, grants?, coordinator? } — permissions from the fixed list, never a command. grants need a board with a user token (the signed-in human)', ({ body, actor, q }) => {
   humanOnly(actor);
   // Grants bypass the human's own approval, so only a request that proves it is the human may set them:
   // the board must have a user token (checked by authenticate for every X-User request).
