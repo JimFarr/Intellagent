@@ -2133,6 +2133,8 @@
     const q = state.query.trim();
     const f = q ? parseQuery(q) : null;
     for (const [id, c] of cardEls) c.classList.toggle('dim', !!f && !matches(state.board.items[id], f));
+    // a group's header (its cover) fades with the search too when none of its tickets matches
+    for (const g of groupEls.values()) g.classList.toggle('nomatch', !!f && !!g._ids?.length && g._ids.every((id) => cardEls.get(id)?.classList.contains('dim')));
   }
 
   /* ═════════════════════════ drag & drop ═════════════════════════ */

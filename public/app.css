@@ -308,6 +308,7 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .group.placeholder > * { visibility: hidden; }
 .morph-ghost { position: fixed !important; z-index: 160; margin: 0; pointer-events: none; transition: none !important; rotate: 0deg !important; transform-origin: 0 0; }
 .card.dim { opacity: .22; filter: grayscale(.7); }
+.group.nomatch > .group-head, .group.nomatch > .g-bg { opacity: .22; filter: grayscale(.7); }
 .card.flash { animation: flash 1.4s var(--ease); }
 @keyframes flash { 0% { box-shadow: 0 0 0 3px var(--accent), 0 0 28px color-mix(in oklab, var(--accent) 55%, transparent); } }
 .card.landed { animation: land .38s var(--spring); }
