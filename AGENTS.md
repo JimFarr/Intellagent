@@ -446,6 +446,8 @@ POST  /api/boards/main/columns            { "name": "QA", "color": "#f2a541", "i
 PATCH /api/boards/main/columns/QA         { "flags": { "allowCreate": true } }
 PUT   /api/boards/main/directives         { "directives": "markdown" }
 PATCH /api/app                            { "name": "Acme Ops" }
+GET   /api/app                            → also runningCommit, runningSince, mainCommit, behind, behindCommits, behindTickets
+POST  /api/app/restart                    (human only) restart onto the code on main; never happens by itself
 GET   /api/presence                       → who is connected, their leases and subscriptions
 ```
 
@@ -517,7 +519,7 @@ Schema       GET/PUT …/schema                    POST …/schema/fields       
 Focus        GET/POST …/focus                    GET/PATCH/DELETE …/focus/:id      PUT …/focus/active
 Idle alarm   GET/PUT …/idle-alarm (PUT human)
 Rebalancing  GET/PUT …/rebalance (PUT human)  POST/DELETE …/items/:id/pin  POST …/items/:id/rebalance/undo (human)
-Rules        GET/PUT …/directives                PATCH /api/boards/:board          POST /api/boards      PATCH /api/app
+Rules        GET/PUT …/directives                PATCH /api/boards/:board          POST /api/boards      PATCH /api/app  POST /api/app/restart (human)
 Card rules   GET/PUT …/card-rules (PUT human)    GET …/card-rules/check  …/card-rules/matches
 Search       GET/POST /api/search
 Events       GET /api/events  /api/events/wait  /api/stream   POST /api/stream-ticket (the UI)

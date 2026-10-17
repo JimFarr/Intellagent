@@ -322,9 +322,12 @@ if (!fs.existsSync(APP_FILE)) saveApp();
 // (Worked out on first use: PROJECT_ROOT is declared further down.)
 let previewOk = null;
 const previewable = () => (previewOk ??= !M.sandbox && (() => { try { return jsonfile.read(path.join(PROJECT_ROOT, 'package.json')).name === 'intellagent' && fs.existsSync(path.join(PROJECT_ROOT, 'server.js')); } catch { return false; } })());
+// The commit this board started from, and how far main has moved since (INT-319). Re-read on the sweep.
+const codeState = require('./lib/codestate').createCodeState({ dir: __dirname, mainBranch: () => { try { return worktrees?.mainBranch() || null; } catch { return null; } } });
 const appInfo = () => ({
   name: app.name, version: VERSION, build: BUILD, defaultBoard: M.defaultBoard,
   lease: M.lease, serverTime: now(), seq, preview: previewable(), sandbox: !!M.sandbox,
+  ...codeState.snapshot(),
 });
 
 const boards = new Map(); // id -> ctx
@@ -2652,8 +2655,10 @@ function briefing(ctx, name, base, via = 'cli') {
       if (!g.length) return [];
       let said = {};
       try { said = standing?.guidanceOf?.(name) || {}; } catch { /* not a standing agent */ }
+      const behind = g.some((x) => x.power === 'review.decide' || x.power === 'work.land') ? codeState.line() : '';
       return ['', '## Powers the human delegated to you',
         ...g.flatMap((x) => powerBriefLines(ctx, x, said)),
+        ...(behind ? [`**${behind}** A rule you rely on may have just landed and not be live.`] : []),
         'Your verdicts and moves are final and recorded as made on the human\'s behalf; the human can still override them. Never use a power on your own work (a ticket you worked on or asked to have reviewed) — the board refuses it. Explain each decision in its comment.',
         ...(approvalsOff(ctx) && g.some((x) => APPROVAL_POWERS.has(x.power)) ? ['**Approvals are switched off on this board right now:** the human paused them, so review.decide and column.gate are suspended (403 APPROVALS_OFF). Leave reviews for the human until they switch approvals back on.'] : [])];
     })(),
@@ -3357,6 +3362,7 @@ const warned = new Set();
 
 setInterval(() => { reconcileLandings().catch((e) => console.warn(`landing sweep: ${e.message}`)); }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => { try { sweepStale(); } catch (e) { console.warn(`stale sweep: ${e.message}`); } }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
+setInterval(() => { codeState.refresh().catch((e) => console.warn(`code state: ${e.message}`)); }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => {
   for (const ctx of boards.values()) {
     const ms = ctx.board.master;
@@ -3648,7 +3654,18 @@ route('GET', '/api/docs', 'Agent guide (markdown). Start here.', ({ req, res }) 
 
 route('GET', '/api/schema', 'Data model, event types, filter keys, search operators', () => SCHEMA);
 
-route('GET', '/api/app', 'App name, version, build', () => appInfo());
+route('GET', '/api/app', 'App name, version, build, and the code it runs: runningCommit, runningSince, mainCommit, behind (commits on main since the board started; null when not a git checkout), behindCommits [{ sha, subject }], behindTickets [ids named in those subjects]. Re-read on the sweep and on every call', async () => { await codeState.refresh(); return appInfo(); });
+route('POST', '/api/app/restart', 'Human only: restart the board so it runs the code on main (the same path as `intellagent restart`). Answers at once; the board is back in a few seconds → { restarting: true }', ({ actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Only the human restarts the board', { code: 'HUMAN_ONLY', hint: 'Tell the human the board is behind main (GET /api/app → behind)' });
+  if (M.sandbox) fail(409, 'A sandbox is restarted with `intellagent sandbox <you>`', { code: 'CONFLICT', hint: 'Run it again from the shell' });
+  const env = { ...process.env, INTELLAGENT_MANIFEST: MANIFEST_PATH };
+  delete env.INTELLAGENT_AGENT; // the CLI's restart is the human's
+  setTimeout(() => {
+    try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'bin', 'intellagent.js'), 'restart'], { cwd: path.dirname(MANIFEST_PATH), env, detached: true, stdio: 'ignore', windowsHide: true }).unref(); }
+    catch (e) { console.warn(`restart: ${e.message}`); }
+  }, 300);
+  return { restarting: true };
+});
 route('PATCH', '/api/app', 'Rename the app (white label): { name }', ({ body, actor }) => {
   if (!String(body.name || '').trim()) fail(400, '"name" is required');
   const from = app.name;
