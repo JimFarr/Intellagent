@@ -78,7 +78,9 @@ describe('analytics: the pieces', () => {
     assert.equal(a.toolsUnknown, 1);
     assert.deepEqual(a.commands, [{ name: 'git', count: 2 }, { name: 'npm', count: 1 }]);
     assert.equal(b.models.haiku.cost, 0.1);
-    assert.deepEqual(r.totals, { runs: 3, tokens: { input: 200, output: 20, cacheRead: 0, cacheWrite: 0 }, cost: 0.5, unpriced: 1 });
+    const { daily, ...totals } = r.totals;
+    assert.deepEqual(totals, { runs: 3, tokens: { input: 200, output: 20, cacheRead: 0, cacheWrite: 0 }, cost: 0.5, unpriced: 1 });
+    assert.deepEqual(daily.map((d) => [d.day, d.runs, d.cost]), [['2026-10-09', 3, 0.5]], 'the daily series is covered in analytics-daily.test.js');
   });
 
   it('per ticket: a run woken for two tickets shares its cost between them, so tickets add up to the total', () => {
