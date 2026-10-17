@@ -2184,8 +2184,55 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .spec-add { display: flex; gap: 6px; }
 .spec-add .inp { flex: 1; min-width: 0; }
 .spec-ctx { width: 100%; min-height: 120px; resize: vertical; font: 12.5px/1.5 var(--mono, ui-monospace, monospace); }
-.spec-foot { display: flex; align-items: center; gap: 8px; }
+.spec-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .spec-state { font-size: 12px; }
+
+/* Base context (INT-277): its row on the Agents page, the editor, and the diff against the shipped text */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.base-row > .btn { justify-self: end; }
+@media (max-width: 520px) { .base-row > .btn { justify-self: start; } }
+.base-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.base-bar [data-base-state] { display: inline-flex; align-items: center; gap: 8px; }
+.base-dirty { font-size: 12px; }
+.base-ta { min-height: 280px; margin-bottom: 8px; }
+.base-ta[hidden], .base-diff[hidden] { display: none; }
+/* Mantis's spec: only the background is tinted, the text stays --text; the sign alone takes the colour */
+.base-diff { margin-bottom: 8px; padding: 6px 0; border-radius: var(--r-ctl); border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  background: color-mix(in oklab, var(--surface) 70%, transparent); font: 12.5px/1.5 var(--mono); }
+.base-diff:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dl { display: grid; grid-template-columns: 1.5em minmax(0, 1fr); padding: 0 10px 0 0; color: var(--muted); }
+.dl > i { font-style: normal; text-align: center; user-select: none; }
+.dl > span:last-child { white-space: pre-wrap; overflow-wrap: anywhere; }
+.dl.add, .dl.rm { color: var(--text); }
+.dl.add { background: color-mix(in oklab, var(--ok) 14%, transparent); }
+.dl.add > i { color: var(--ok); }
+.dl.rm { background: color-mix(in oklab, var(--danger) 14%, transparent); }
+.dl.rm > i { color: var(--danger); }
+.dl.fold { display: block; width: 100%; margin: 2px 0; padding: 2px 10px 2px 1.5em; border: 0; background: none; text-align: left; font: inherit; color: var(--muted); cursor: pointer; }
+.dl.fold:hover { color: var(--text); background: var(--hover); }
+.dl.fold:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Context layers on the agent page (INT-277): one row per layer, its size and share of the whole */
+.ly-list { display: grid; gap: 6px; }
+.ly { border-radius: var(--r-ctl); border: 1px solid color-mix(in oklab, var(--border) 85%, transparent); background: color-mix(in oklab, var(--surface) 70%, transparent); }
+.ly > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; list-style: none; min-width: 0; font-size: 13px; }
+.ly > summary::-webkit-details-marker { display: none; }
+.ly > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--r-ctl); }
+.ly-chev { width: 13px; height: 13px; flex: none; order: 2; color: var(--muted); rotate: -90deg; transition: rotate .3s var(--ease-io); }
+.ly[open] .ly-chev { rotate: 0deg; }
+.ly-n { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 600 10px var(--mono); color: var(--muted); background: var(--hover); }
+.ly-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ly-kind { flex: none; font: 10.5px var(--mono); color: var(--muted); }
+.ly-size { flex: none; }
+/* the .col-wip shape, with an even curve: the spring overshoots */
+.ly-bar { flex: none; order: 1; width: 56px; height: 3px; border-radius: 3px; background: color-mix(in oklab, var(--text) 7%, transparent); overflow: hidden; }
+.ly-bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width .3s var(--ease-io); }
+.reduced .ly-bar > i, .reduced .ly-chev { transition: none; }
+@media (prefers-reduced-motion: reduce) { .ly-bar > i, .ly-chev { transition: none; } }
+.ly-text { margin: 0 10px 10px; padding: 8px 10px; max-height: 320px; overflow: auto; border-radius: var(--r-ctl); border: 1px solid var(--border); background: var(--hover);
+  font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+/* at phone width the label and chip stay on top and the bar runs full width underneath */
+@media (max-width: 520px) { .ly-kind { display: none; } .ly-bar { order: 3; width: 100%; } }
 
 /* Agent reviewers (INT-64): ticks on cards and in the ticket */
 .rv-tick { display: inline-flex; align-items: center; }

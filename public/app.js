@@ -4073,7 +4073,7 @@
     ['metricsDrawer', 'Flow', 'activity', () => openMetrics()],
     ['archiveDrawer', 'Archive', 'archive', () => openArchive()],
   ];
-  const HUB_PARENT = { agentDrawer: 'agentsDrawer', runLogDrawer: 'agentsDrawer' };
+  const HUB_PARENT = { agentDrawer: 'agentsDrawer', runLogDrawer: 'agentsDrawer', baseDrawer: 'agentsDrawer' };
 
   // Opens (or reuses) the hub on a page and returns that page's body element. Pages keep their old
   // drawer ids, so code that looks for `#agentsDrawer .drawer-body` still finds them.
@@ -4812,6 +4812,138 @@
       put({ minutes: Number($('[data-idle-min]', el).value), wake, note: $('[data-idle-note]', el).value, ...(wake.length ? {} : { on: false }) }, 'Idle alarm saved');
     };
   }
+
+  /* The base context (INT-277, on INT-276's routes): what every agent is taught first. The human reads it, keeps
+     their own copy (base-context.md, untouched by updates) and sees how it differs from the shipped text. */
+  async function fillBaseRow(el) {
+    if (!el) return;
+    let v;
+    try { v = await api('GET', '/api/agents/base-context'); } catch { el.innerHTML = ''; return; }
+    patchHTML(el, `<div class="cr-label"><span>Base context</span><span class="sr-auto">what every agent is taught first · ${v.edited ? 'your own copy' : 'the shipped text'}</span></div>
+      <button class="btn sm ghost" data-open-base>${icon('text', 'sm')}Open</button>`);
+  }
+  // Line diff of a → b by longest common subsequence: [[' ' | '-' | '+', line]], removals before additions.
+  function lineDiff(a, b) {
+    const x = a.split('\n'), y = b.split('\n'), n = x.length, m = y.length;
+    const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = x[i] === y[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    const out = [];
+    for (let i = 0, j = 0; i < n || j < m;) {
+      if (i < n && j < m && x[i] === y[j]) { out.push([' ', x[i]]); i++; j++; }
+      else if (i < n && (j === m || L[i + 1][j] >= L[i][j + 1])) out.push(['-', x[i++]]);
+      else out.push(['+', y[j++]]);
+    }
+    return out;
+  }
+  // Changed lines with three lines of context around them; a longer unchanged run folds into a button that opens it.
+  function diffHTML(rows, ctx = 3) {
+    const line = ([op, t]) => {
+      const cls = op === '+' ? 'add' : op === '-' ? 'rm' : '';
+      return `<div class="dl ${cls}"><i aria-hidden="true">${op === '+' ? '+' : op === '-' ? '−' : ''}</i>${cls ? `<span class="sr-only">${cls === 'add' ? 'added: ' : 'removed: '}</span>` : ''}<span>${esc(t) || ' '}</span></div>`;
+    };
+    let html = '';
+    for (let k = 0; k < rows.length;) {
+      if (rows[k][0] !== ' ') { html += line(rows[k++]); continue; }
+      let end = k;
+      while (end < rows.length && rows[end][0] === ' ') end++;
+      const run = rows.slice(k, end);
+      // keep ctx lines next to a change on each side; fold the middle only when that hides more than 6
+      const head = k ? ctx : 0, tail = end < rows.length ? ctx : 0;
+      const hidden = run.length - head - tail;
+      if (hidden > 6) {
+        html += run.slice(0, head).map(line).join('')
+          + `<button type="button" class="dl fold" data-dl-fold aria-expanded="false">⋯ ${hidden} unchanged lines</button><div class="dl-run" hidden>${run.slice(head, head + hidden).map(line).join('')}</div>`
+          + run.slice(head + hidden).map(line).join('');
+      } else html += run.map(line).join('');
+      k = end;
+    }
+    return html;
+  }
+  async function openBaseContext() {
+    const body = openDrawer('baseDrawer', 'Base context', 'text');
+    body.innerHTML = '<div class="empty-note">Loading…</div>';
+    let v;
+    try { v = await api('GET', '/api/agents/base-context'); } catch (e) { body.innerHTML = `<div class="empty-note">${esc(e.message)}</div>`; return; }
+    if (!body.isConnected) return;
+    let view = 'text';
+    body.innerHTML = `<p class="perm-intro">Every agent reads this first, before the board rules, its role and its own context. Your copy is kept when Intellagent updates; <b>Reset to shipped</b> puts back the text Intellagent ships, so later updates reach your agents again.</p>
+      <div class="base-bar"><span data-base-state></span><span class="grow"></span>
+        <div class="seg mini" role="tablist" aria-label="View"><button type="button" role="tab" data-base-view="text">Text</button><button type="button" role="tab" data-base-view="diff">Changes from shipped</button></div></div>
+      <textarea class="inp spec-ctx base-ta" spellcheck="true" aria-label="Base context" maxlength="${v.max}"></textarea>
+      <div class="base-diff" data-base-diff role="region" aria-label="Changes from the shipped text" tabindex="0" hidden></div>
+      <div class="spec-foot"><span class="spec-state muted" data-base-count aria-live="polite"></span><span class="grow"></span>
+        <button class="btn sm ghost" type="button" data-base-reset title="Reset to shipped|Fill in the text Intellagent ships; Save to use it">${icon('x', 'sm')}Reset to shipped</button>
+        <button class="btn primary sm" type="button" data-base-save disabled>${icon('check', 'sm')}Save</button></div>`;
+    const ta = $('.base-ta', body), save = $('[data-base-save]', body), reset = $('[data-base-reset]', body), diff = $('[data-base-diff]', body);
+    const norm = (t) => t.replace(/\r\n/g, '\n').trim();
+    ta.value = v.text;
+    const sync = () => {
+      const t = norm(ta.value);
+      const dirty = t !== norm(v.text);
+      const rows = lineDiff(v.shipped, t || v.shipped);
+      const changes = rows.filter((r) => r[0] !== ' ').length;
+      save.disabled = !dirty;
+      reset.hidden = !t || t === v.shipped;
+      $('[data-base-state]', body).innerHTML = `<span class="mini-chip">${icon(v.edited ? 'pencil' : 'check', 'sm')}${v.edited ? 'Your own copy' : 'The shipped text'}</span>${dirty ? '<span class="muted base-dirty">unsaved changes</span>' : ''}`;
+      $('[data-base-count]', body).textContent = `${t.length.toLocaleString()} / ${v.max.toLocaleString()} characters`;
+      $('[data-base-view="diff"]', body).textContent = changes ? `Changes from shipped · ${changes}` : 'Changes from shipped';
+      for (const b of $$('[data-base-view]', body)) { const on = b.dataset.baseView === view; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
+      ta.hidden = view !== 'text';
+      diff.hidden = view !== 'diff';
+      if (view === 'diff') diff.innerHTML = changes ? diffHTML(rows) : '<div class="empty-note">No changes: this is the text Intellagent ships.</div>';
+      else autosize(ta);
+    };
+    const doSave = async () => {
+      if (save.disabled) return;
+      save.disabled = true;
+      try {
+        v = await api('PUT', '/api/agents/base-context', { text: ta.value });
+        ta.value = v.text;
+        toast(v.edited ? 'Base context saved: agents get it from their next session' : 'Back to the shipped base context', { icon: 'check', kind: 'ok', timeout: 2600 });
+      } catch (e) { toast(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message, { kind: 'error', wrap: true }); }
+      sync();
+    };
+    diff.onclick = (e) => {
+      const f = e.target.closest('[data-dl-fold]');
+      if (!f) return;
+      f.nextElementSibling.hidden = false;
+      f.nextElementSibling.firstElementChild?.setAttribute('tabindex', '-1');
+      f.nextElementSibling.firstElementChild?.focus();
+      f.remove();
+    };
+    ta.addEventListener('input', sync);
+    ta.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); doSave(); } });
+    save.onclick = doSave;
+    reset.onclick = () => { ta.value = v.shipped; view = 'text'; sync(); ta.focus(); };
+    const tabs = $('[role="tablist"]', body);
+    tabs.onclick = (e) => { const b = e.target.closest('[data-base-view]'); if (b) { view = b.dataset.baseView; sync(); } };
+    // arrows move between the two views, as in any tab list
+    tabs.onkeydown = (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      view = view === 'text' ? 'diff' : 'text';
+      sync();
+      $(`[data-base-view="${view}"]`, body).focus();
+    };
+    sync();
+  }
+
+  // What an agent is taught on its first turn, layer by layer (INT-277, from GET /api/agents/<name>/layers: the
+  // same layers the runner joins). Fetched once when the page opens; a redraw leaves it alone (data-keep).
+  function layersSection(name) {
+    const root = el(`<div class="section layers"><div class="section-head">${icon('layers', 'sm')}<span>Context layers</span><span class="rule"></span></div>
+      <p class="perm-intro ly-intro">What it is taught on its first turn, in this order.</p><div class="ly-list">${'<div class="act sk" aria-hidden="true"><i></i><span></span><time></time></div>'.repeat(3)}</div></div>`);
+    api('GET', `/api/agents/${encodeURIComponent(name)}/layers?board=${encodeURIComponent(state.boardId)}`).then((r) => {
+      const total = r.layers.reduce((s, l) => s + l.chars, 0);
+      const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+      $('.ly-intro', root).textContent = `What it is taught on its first turn, in this order: ${total.toLocaleString()} characters in all.${r.standing ? '' : ' Not a standing agent: it reads the base in its brief.'}`;
+      $('.ly-list', root).innerHTML = r.layers.length ? r.layers.map((l, i) => `<details class="ly" data-layer="${esc(l.layer)}"><summary>
+          <span class="ly-n">${i + 1}</span><b class="ly-label">${esc(l.label)}</b><code class="ly-kind">${esc(l.layer)}</code><span class="grow"></span>
+          <span class="mini-chip ly-size">${l.chars.toLocaleString()} chars · ${pct(l.chars)}%</span>${icon('chev', 'ly-chev')}<span class="ly-bar" aria-hidden="true"><i style="width:${Math.max(2, pct(l.chars))}%"></i></span></summary>
+          <pre class="ly-text">${esc(l.text)}</pre></details>`).join('') : '<div class="empty-note">Nothing yet</div>';
+    }, (e) => { $('.ly-list', root).innerHTML = `<div class="empty-note">${esc(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message)}</div>`; });
+    return root;
+  }
   /* The permission library (INT-244, on INT-228's /api/permissions): every permission an agent can hold, grouped
      by kind. Built-ins and powers are read-only; the human adds, edits and removes their own. A verbal permission
      is only words, so it looks different everywhere: dashed, a speech mark instead of a lock, and the warning. */
@@ -5073,7 +5205,7 @@
     // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266).
     const first = !body._agentsFilled;
     body._agentsFilled = true;
-    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(stopRow + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
+    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(stopRow + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + '<div class="coord-row base-row" data-base data-keep="base"></div>' + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
@@ -5086,7 +5218,9 @@
     }).join('') : `<div class="empty-note">${icon('bot')}</div>`));
     fillApprovals($('[data-appr]', body));
     fillIdleAlarm($('[data-idle]', body));
+    fillBaseRow($('[data-base]', body));
     body.onclick = async (e) => {
+      if (e.target.closest('[data-open-base]')) { e.stopPropagation(); openBaseContext(); return; }
       const co = e.target.closest('[data-coord]');
       if (co) {
         e.stopPropagation();
@@ -5421,6 +5555,7 @@
   async function openAgent(name) {
     const body = openDrawer('agentDrawer', state.profiles[name]?.label || name, 'bot'); // named as the hero names it (INT-269)
     let spec = null; // the Speciality editor survives redraws (a half-typed edit must not vanish)
+    let layers = null; // so do the context layers, with whichever ones are open
     let showDone = false; // Assigned lists open tickets; the done ones wait behind "N done — show" (INT-269)
     // Open tickets grouped by column in board order, then one line for the done ones.
     const assignedSection = (mine, chip) => {
@@ -5448,6 +5583,7 @@
         ${p.description || state.standing[name]?.description ? `<div class="md ah-desc">${md(p.description || state.standing[name].description)}</div>` : ''}
         ${state.standing[name] ? standingSection(state.standing[name]) : ''}
         ${state.standing[name] ? '<div class="spec-slot" data-keep="spec"></div>' : ''}
+        ${p.kind === 'user' ? '' : '<div class="layers-slot" data-keep="layers"></div>'}
         ${section('Holding', 'clock', (pres?.leases || []).map((l) => chip(l.id, 'clock')).join(''))}
         ${assignedSection(items.filter((i) => i.assignee === name), chip)}
         ${section('Listening to', 'radio', Object.entries(state.listeners).filter(([, ns]) => ns.includes(name)).map(([id]) => chip(id, 'radio')).join(''))}
@@ -5457,6 +5593,8 @@
       if (drawn) patchHTML(body, html); else { body.innerHTML = html; drawn = true; }
       const slot = $('.spec-slot', body);
       if (slot) { spec ||= specialityEditor(name); spec.dataset.keep = 'spec'; slot.replaceWith(spec); }
+      const lslot = $('.layers-slot', body);
+      if (lslot) { layers ||= layersSection(name); layers.dataset.keep = 'layers'; lslot.replaceWith(layers); }
     };
     draw();
     body.onclick = (e) => {
