@@ -3397,7 +3397,7 @@
   }
 
   const REVIEW_LABELS = [['changed', 'What changed', 'pencil'],['why', 'Why', 'sparkle'], ['verify', 'How to verify', 'check'], ['evidence', 'Evidence', 'eye'], ['risks', 'Risks & open questions', 'flag']];
-  // The agent's explanation in full: its four parts when it gave them, else its whole review comment.
+  // The agent's explanation in full: its five parts when it gave them, else its whole review comment.
   function reviewNotesHTML(it, q) {
     if (q.notes && Object.keys(q.notes).length > (q.notes.changed && Object.keys(q.notes).length === 1 ? 1 : 0)) {
       return `<div class="rv-clamp"><div class="rv-notes">${REVIEW_LABELS.filter(([k]) => q.notes[k]).map(([k, label, ic]) => `<div class="rv-part"><div class="rv-label">${icon(ic, 'sm')}${label}</div><div class="md">${md(q.notes[k])}</div></div>`).join('')}</div></div>`;

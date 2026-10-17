@@ -82,9 +82,9 @@ const TASKS = [
     check: async (c) => (await c('GET', `${B}/items/T-1`)).comments.some((x) => x.author?.name === AGENT && /^Answer:/i.test(x.body) && /okta/i.test(x.body)),
   },
   {
-    key: 'review', title: 'Request review with a four-part explanation',
+    key: 'review', title: 'Request review with a five-part explanation',
     setup: async (c) => { await c('POST', `${B}/items`, { title: 'Fix the login typo', column: 'Ready' }); await c('POST', `${B}/items/T-1/start`, {}, bot); },
-    prompt: 'You finished Intellagent ticket T-1 in an earlier session: you fixed the typo "Pasword" → "Password" in login.html, committed it, and the tests pass (the code is not in this folder — no need to look for it). Now request the human\'s review with the board\'s four-part explanation.',
+    prompt: 'You finished Intellagent ticket T-1 in an earlier session: you fixed the typo "Pasword" → "Password" in login.html, committed it, and the tests pass (the code is not in this folder — no need to look for it). Now request the human\'s review with the board\'s five-part explanation.',
     check: async (c) => { const it = await c('GET', `${B}/items/T-1`); const n = it.comments.find((x) => x.review)?.review || {}; return it.column === 'Review' && !!(n.changed && n.why && n.verify); },
   },
   {

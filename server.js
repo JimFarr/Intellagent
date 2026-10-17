@@ -1185,7 +1185,7 @@ function requestReview(ctx, id, d, actor, commits = null) {
     if (!col) fail(400, 'No review column. Flag one with { "flags": { "review": true } } or pass "column".');
     guardWrite(ctx, item, actor);
     if (item.columnId !== col.id) moveInto(ctx, item, col.id, 'top', actor, events);
-    // A review explains itself in four parts (what changed / why / how to verify / risks); a plain
+    // A review explains itself in five parts (changed / why / evidence / verify / risks); a plain
     // summary still works. The parts become one readable comment and travel with the review question.
     const part = (k) => str(d[k] || '', 8000).trim();
     const notes = Object.fromEntries(REVIEW_PARTS.map(([k]) => [k, part(k)]).filter(([, v]) => v));
@@ -3414,7 +3414,7 @@ const SCHEMA = {
     fields: 'object — values for the board custom fields declared in GET /api/boards/:board/schema; validated by type',
     cover: '"auto" (first image) | "none" | attachment id — the image shown on the card',
     attachments: '{ id, kind: "file"|"link", name, mime, size, url, addedAt, author }[]',
-    comments: '{ id, author, body (markdown), createdAt, attachments?, answers? (the question id it answers), form? ({ key: value } answers), review? (the four-part review it carries), reactions? }[]', version: 'integer — bumps on every change; send it back for safe writes',
+    comments: '{ id, author, body (markdown), createdAt, attachments?, answers? (the question id it answers), form? ({ key: value } answers), review? (the five-part review it carries: changed, why, evidence, verify, risks), reactions? }[]', version: 'integer — bumps on every change; send it back for safe writes',
     createdAt: 'ISO', updatedAt: 'ISO', enteredColumnAt: 'ISO', template: 'ticket template key it was created from',
     flow: '[{ col, at }] — when it entered each column', waits: '[{ raisedBy, raisedAt, resolvedAt, by }] — closed needs-you requests',
   },

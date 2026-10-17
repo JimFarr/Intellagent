@@ -1569,7 +1569,7 @@ describe('base context and prompt layers (INT-251)', () => {
   const { REVIEW_PARTS, createBase, shipped } = require('../lib/agents/base');
   const { promptFor, layersFor } = require('../lib/agents/prompt');
   const ROLES = require('../lib/agents/roles.json');
-  const NUMBERS = { three: 3, four: 4, five: 5, six: 6 };
+  const NUMBERS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 };
 
   it('the shipped base is used until the human saves their own; their copy survives, and saving the shipped text again removes it', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-base-'));
@@ -1583,6 +1583,8 @@ describe('base context and prompt layers (INT-251)', () => {
     base.write('mine'); base.write('   ');
     assert.equal(base.read().edited, false, 'empty resets to the shipped text');
     assert.throws(() => base.write('x'.repeat(9000)), /at most/);
+    fs.writeFileSync(path.join(dir, 'base-context.md'), 'y'.repeat(9000));
+    assert.match(base.read().text, /^y{8000}\n…\(base context cut at 8000 characters\)$/, 'a copy edited by hand past the cap says it was cut');
   });
 
   it('a first turn carries base, role and speciality in that order, each labelled; a warm turn carries none', () => {
@@ -1595,20 +1597,28 @@ describe('base context and prompt layers (INT-251)', () => {
     assert.doesNotMatch(promptFor('pixel', [], { ...opts, warm: true }), /BASE|ROLE|SPEC/);
   });
 
-  it('every role brief, the base and AGENTS.md name the review parts the board asks for, and no others', () => {
+  it('every text that counts the review parts (role briefs, the base, AGENTS.md, the schema, the UI, the skills) names the ones the board asks for', () => {
+    const root = path.join(__dirname, '..');
+    const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
+    const under = (dir, ext) => { try { return fs.readdirSync(path.join(root, dir), { recursive: true }).filter((f) => f.endsWith(ext)).map((f) => path.join(dir, f)); } catch { return []; } };
+    // lib/agents.js is left out: its "four parts" are the modules createAgents wires, not a review
+    const files = ['AGENTS.md', 'server.js', 'mcp.js', 'bin/intellagent.js', 'public/app.js', 'public/app.css', ...under('scripts', '.js'), ...under('skills', '.md')];
     const texts = {
       'base.md': shipped(),
-      'AGENTS.md': fs.readFileSync(path.join(__dirname, '..', 'AGENTS.md'), 'utf8'),
+      ...Object.fromEntries(files.filter((f) => fs.existsSync(path.join(root, f))).map((f) => [f, read(f)])),
       ...Object.fromEntries(Object.entries(ROLES).map(([k, r]) => [`roles.json ${k}`, r.brief])),
     };
     let named = 0;
     for (const [where, t] of Object.entries(texts)) {
-      for (const m of t.matchAll(/\bin (\w+) parts\b(?:\s*\(([^)]*)\))?/gi)) {
+      // "five parts", "five-part review", and "the other four parts" (all but changed)
+      for (const m of t.matchAll(/\b(?:(other) )?(\w+)[- ]parts?\b(?:\s*\(([^)]*)\))?/gi)) {
+        const n = NUMBERS[m[2].toLowerCase()];
+        if (!n) continue;
         named++;
-        assert.equal(NUMBERS[m[1].toLowerCase()], REVIEW_PARTS.length, `${where}: "${m[0]}"`);
-        if (m[2]) assert.deepEqual(m[2].split(/\s*[,/]\s*/).map((x) => x.trim()).sort(), [...REVIEW_PARTS].sort(), `${where}: "${m[0]}"`);
+        assert.equal(n, REVIEW_PARTS.length - (m[1] ? 1 : 0), `${where}: "${m[0]}"`);
+        if (m[3]) assert.deepEqual(m[3].split(/\s*[,/]\s*/).map((x) => x.trim()).sort(), [...REVIEW_PARTS].sort(), `${where}: "${m[0]}"`);
       }
     }
-    assert.ok(named >= 4, 'the check found the briefs it is meant to cover');
+    assert.ok(named >= 8, `the check found the texts it is meant to cover (${named})`);
   });
 });

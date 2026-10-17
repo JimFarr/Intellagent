@@ -1583,7 +1583,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 :root[data-tape="corner"] .card[data-slot="2"] .tape { width: 26px; height: 26px; }
 /* sticky notes lose their tape tilt link when the slot sets its own angle */
 
-/* review explanations: the agent's four parts, each in full */
+/* review explanations: the agent's five parts, each in full */
 .rv-notes { display: grid; gap: 10px; margin: 2px 0 12px; }
 .rv-part { padding: 9px 12px; border-radius: calc(var(--r-ctl) + 2px); background: color-mix(in oklab, var(--text) 4%, transparent); }
 .rv-label { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
