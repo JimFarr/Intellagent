@@ -1056,7 +1056,7 @@
   function openDd(btn, items, opts = {}) {
     if (btn.classList.contains('open')) { closeMenus(); return; }
     btn.classList.add('open');
-    menu(btn, items, { ...opts, width: Math.max(btn.offsetWidth, 200), onClose: () => btn.classList.remove('open') });
+    menu(btn, items, { ...opts, width: Math.max(btn.offsetWidth, 200), onClose: () => { btn.classList.remove('open'); opts.onClose?.(); } });
   }
 
   // Text area with an accept button bottom-right (and optional extra tool buttons on the left).
@@ -5707,7 +5707,17 @@
     // Live data (schema, profiles) changed elsewhere: redraw quietly unless the user is typing in the pane.
     m.refresh = () => {
       const typing = pane.contains(document.activeElement) && document.activeElement.matches('input, textarea');
-      if (['fields', 'board', 'templates', 'columns', 'rules'].includes(m.tab) && !typing) show(m.tab, true);
+      if (!['fields', 'board', 'templates', 'columns', 'rules'].includes(m.tab) || typing) return;
+      const keep = pane.contains(document.activeElement) && focusSel(document.activeElement);
+      show(m.tab, true);
+      if (keep) $(keep, pane)?.focus({ preventScroll: true });
+    };
+    // The same control after a redraw, found by its own data-* attribute inside its rule and row (INT-289: keyboard users keep their place)
+    const focusSel = (n) => {
+      const own = [...n.attributes].find((x) => x.name.startsWith('data-'));
+      if (!own) return null;
+      const scope = [['ri', n.parentElement?.closest('[data-ri]')], ['row', n.parentElement?.closest('[data-row]')]].filter(([, p]) => p).map(([k, p]) => `[data-${k}="${p.dataset[k]}"]`);
+      return [...scope, `[${own.name}${own.value ? `="${CSS.escape(own.value)}"` : ''}]`].join(' ');
     };
     show(tab);
   }
@@ -5915,16 +5925,105 @@
   /* ─── card rules: a condition and the look a matching card earns (INT-253) ─── */
   const RULE_ICONS = ['check', 'checks', 'eye', 'flag', 'sparkle', 'lock', 'clock', 'ask', 'bot', 'pin', 'target'];
   const toneSeg = (key, val) => `<div class="seg mini tone-seg" data-rseg="${key}">${['', ...RULE_TONES].map((t) => `<button class="${(val || '') === t ? 'on' : ''}" data-v="${t}" title="${t ? `${key === 'outline' ? 'Outline' : 'Tint'}: ${t}` : `No ${key}`}">${t ? `<i style="--rc:${toneVar(t)}"></i>${t}` : '–'}</button>`).join('')}</div>`;
+  /* ─── rule builder: a condition made of rows (field, test, value), all of which must hold (INT-289) ─── */
+  // The builder writes INT-253's condition text and reads it back, so the server stays the one place a rule is matched.
+  // kind: choice (one value from a list), tags (a list on the ticket), number, flag (yes or no), text, who, raw (a term as written).
+  function ruleFields() {
+    const of = (vals) => vals.map((v) => ({ v, l: v }));
+    const people = of(knownPeople());
+    return [
+      { path: 'type', label: 'Type', kind: 'choice', options: of(TYPES) },
+      { path: 'priority', label: 'Priority', kind: 'choice', options: of(PRIORITIES) },
+      { path: 'columnId', label: 'Column', kind: 'choice', options: state.board.columns.map((c) => ({ v: c.id, l: c.name })) },
+      { path: 'assignee', label: 'Assignee', kind: 'choice', options: people },
+      { path: '@', label: 'Assigned or held by', kind: 'who', options: people },
+      { path: 'needsHuman', label: 'Has an open question', kind: 'flag' },
+      { path: 'blockedBy', label: 'Is blocked', kind: 'flag' },
+      { path: 'review.oks', label: 'Reviewers who said ok', kind: 'number' },
+      { path: 'review.concerns', label: 'Reviewers with concerns', kind: 'number' },
+      { path: 'review.pending', label: 'Reviewers yet to answer', kind: 'number' },
+      { path: 'review.allOk', label: 'Every reviewer said ok', kind: 'flag' },
+      { path: 'review.evidence', label: 'The review has evidence', kind: 'flag' },
+      ...knownPeople().filter(isAgentName).map((n) => ({ path: `reviewers.${n.toLowerCase()}`, label: `${nameOf(n)}'s verdict`, kind: 'choice', options: of(['ok', 'concerns']) })),
+      ...schema().fields.map((f) => ({
+        path: `fields.${f.key}`, label: f.label || f.key,
+        kind: f.type === 'number' ? 'number' : f.type === 'boolean' ? 'flag' : f.type === 'tags' ? 'tags' : f.options?.length || f.type === 'user' ? 'choice' : 'text',
+        options: f.type === 'user' ? people : (f.options || []).map((o) => ({ v: o.value, l: o.value })),
+      })),
+      { path: '', label: 'Written as text', kind: 'raw' },
+    ];
+  }
+  const RULE_TESTS = {
+    is: { label: 'is', op: ':' }, not: { label: 'is not', op: ':', not: true }, any: { label: 'is one of', op: ':', many: true }, none: { label: 'is none of', op: ':', not: true, many: true },
+    set: { label: 'is set', op: 'set' }, unset: { label: 'is not set', op: 'set', not: true }, yes: { label: 'yes', op: 'set' }, no: { label: 'no', op: 'set', not: true },
+    gte: { label: 'at least', op: '>=' }, lte: { label: 'at most', op: '<=' }, gt: { label: 'more than', op: '>' }, lt: { label: 'fewer than', op: '<' }, eq: { label: 'exactly', op: '=' },
+    raw: { label: '', op: 'raw' },
+  };
+  const KIND_TESTS = { choice: ['is', 'not', 'any', 'none', 'set', 'unset'], tags: ['is', 'not', 'any', 'none', 'set', 'unset'], number: ['gte', 'lte', 'gt', 'lt', 'eq'], flag: ['yes', 'no'], text: ['is', 'not', 'set', 'unset'], who: ['is'], raw: ['raw'] };
+  const TAG_LABELS = { is: 'has', not: 'has no', any: 'has any of', none: 'has none of', set: 'has some', unset: 'has none' };
+  const testLabel = (kind, t) => (kind === 'tags' && TAG_LABELS[t]) || RULE_TESTS[t].label;
+  // "type:issue review.oks>=2 @drax" -> [{ path, test, value }]. A term the builder has no field for stays as written.
+  function ruleRows(text, fields = ruleFields()) {
+    return String(text || '').trim().split(/\s+/).filter(Boolean).map((raw) => {
+      const asText = { path: '', test: 'raw', value: raw };
+      if (/^@[\w.-]+$/.test(raw)) return { path: '@', test: 'is', value: raw.slice(1) };
+      const m = /^(!?)([A-Za-z_][\w.-]*?)(?:(>=|<=|>|<|=|:)(.+))?$/.exec(raw);
+      const f = m && fields.find((x) => x.path === m[2]);
+      if (!f || f.kind === 'who' || f.kind === 'raw') return asText;
+      const [, not, path, op, value] = m;
+      let test;
+      if (!op) test = f.kind === 'flag' ? (not ? 'no' : 'yes') : (not ? 'unset' : 'set');
+      else if (op === ':') test = value.includes('|') ? (not ? 'none' : 'any') : (not ? 'not' : 'is');
+      else test = !not && Object.keys(RULE_TESTS).find((k) => RULE_TESTS[k].op === op);
+      if (!test || !KIND_TESTS[f.kind].includes(test)) return asText;
+      return { path, test, value: RULE_TESTS[test].many ? value.split('|') : value ?? '' };
+    });
+  }
+  // One row back to its term, or null while it is not finished (no value yet, or a value with a space in it).
+  function ruleTerm(row) {
+    const t = RULE_TESTS[row.test];
+    if (!t) return null;
+    if (t.op === 'raw') return String(row.value || '').trim() || null;
+    if (row.path === '@') return /^[\w.-]+$/.test(row.value || '') ? `@${row.value}` : null;
+    if (t.op === 'set') return `${t.not ? '!' : ''}${row.path}`;
+    const vals = [].concat(row.value ?? []).map((v) => String(v).trim()).filter(Boolean);
+    if (!vals.length || vals.some((v) => /\s/.test(v)) || (t.op !== ':' && !Number.isFinite(Number(vals[0])))) return null;
+    return `${t.not ? '!' : ''}${row.path}${t.op}${vals.join('|')}`;
+  }
+  const ruleDrafts = new Map(); // rule name -> rows being built that do not make a whole condition yet
+  const ruleAsText = new Set(); // rule names shown as text
+  function ruleBuilderHTML(r, i, fields) {
+    const rows = ruleDrafts.get(r.name) || ruleRows(r.condition, fields);
+    const rowHTML = rows.map((row, j) => {
+      const f = fields.find((x) => x.path === row.path) || fields[fields.length - 1];
+      const t = RULE_TESTS[row.test];
+      const shown = (v) => esc(f.options?.find((o) => o.v === v)?.l || v);
+      let val = '';
+      if (f.kind === 'raw') val = `<input class="inp mono" data-bv value="${esc(row.value || '')}" spellcheck="false" aria-label="Condition term" placeholder="e.g. is:rule:urgent">`;
+      else if (t.op === 'set') val = '';
+      else if (f.options?.length) val = ddHTML(`rbv-${j}`, [].concat(row.value ?? []).filter(Boolean).map(shown).join(', '), { placeholder: t.many ? 'pick some' : 'pick one' }).replace('<button', `<button data-bvdd aria-label="${esc(f.label)}: value"`);
+      else val = `<input class="inp" data-bv ${f.kind === 'number' ? 'type="number" min="0" inputmode="numeric"' : 'spellcheck="false"'} value="${esc(row.value ?? '')}" aria-label="${esc(f.label)}: value" placeholder="${f.kind === 'number' ? '2' : 'value'}">`;
+      return `<div class="rb-row ${ruleTerm(row) ? '' : 'todo'}" data-row="${j}" role="group" aria-label="Condition ${j + 1}">
+        ${ddHTML(`rbf-${j}`, esc(f.label)).replace('<button', `<button data-bfdd aria-label="Condition ${j + 1}: field"`)}
+        ${f.kind === 'raw' ? '' : ddHTML(`rbt-${j}`, esc(testLabel(f.kind, row.test))).replace('<button', `<button data-btdd aria-label="Condition ${j + 1}: test"`)}
+        ${val}<button class="icon-x" data-rbdel title="Remove this condition" aria-label="Remove condition ${j + 1}">${icon('x', 'sm')}</button></div>`;
+    }).join('');
+    return `<div class="rbuild" data-rbuild>
+        <div class="rb-head"><span>When all of these hold</span><button class="link-btn" data-rtext aria-pressed="false">Show as text</button></div>
+        ${rowHTML}<button class="btn ghost sm rb-add" data-rbadd>${icon('plus', 'sm')}Add a condition</button></div>`;
+  }
   function rulesPane() {
     const rules = state.board?.cardRules || [];
+    const fields = rules.length ? ruleFields() : [];
     const cards = rules.map((r, i) => {
       const n = Object.values(state.looks).filter((l) => l.rules?.includes(r.name)).length;
       return `<div class="fcard rcard ${r.enabled === false ? 'off' : ''}" data-ri="${i}">
         <div class="srow">${sw(`rule-${i}`, r.enabled !== false)}<input class="inp lab" data-rf="name" value="${esc(r.name)}" maxlength="40" aria-label="Rule name"><span class="ccount" data-rcount title="Matching cards|Open tickets this rule matches now">${r.enabled === false ? '–' : n}</span>
           <button class="icon-x" data-rmove="-1" ${i === 0 ? 'disabled' : ''} title="Earlier|The first rule's outline, tint and ribbon win">${icon('chev', 'cup')}</button><button class="icon-x" data-rmove="1" ${i === rules.length - 1 ? 'disabled' : ''} title="Later">${icon('chev', 'cdown')}</button>
           <button class="icon-x" data-rdel title="Remove rule">${icon('x', 'sm')}</button></div>
-        <label class="rcond"><span>When</span><input class="inp mono" data-rf="condition" value="${esc(r.condition)}" spellcheck="false" autocomplete="off" aria-label="Condition" placeholder="review.allOk review.oks>=2 review.evidence"></label>
-        <div class="rhint" data-rhint></div>
+        ${ruleAsText.has(r.name) ? `<label class="rcond"><span>When</span><input class="inp mono" data-rf="condition" value="${esc(r.condition)}" spellcheck="false" autocomplete="off" aria-label="Condition" placeholder="review.allOk review.oks>=2 review.evidence"></label>
+        <div class="rb-head as-text"><button data-rtext aria-pressed="true">Use the builder</button></div>` : ruleBuilderHTML(r, i, fields)}
+        <div class="rcount"><div class="rhint" data-rhint aria-live="polite"></div>${r.enabled === false ? '' : `<button class="rb-show" data-rshow title="Show on the board|Filters the board to this rule's cards">${icon('eye', 'sm')}Show on board</button>`}</div>
         <div class="rlook">
           <span class="rl">Outline</span>${toneSeg('outline', r.look.outline)}
           <span class="rl">Tint</span>${toneSeg('tint', r.look.tint)}
@@ -5969,21 +6068,88 @@
       }
       if (e.target.closest('[data-ruleadd]')) addRule(pane);
     });
-    // The condition is checked as it is typed: how many cards it would match, or why it does not parse.
-    let timer = null;
-    const check = async (inp) => {
-      const hint = $('[data-rhint]', inp.closest('.rcard'));
-      const v = inp.value.trim();
-      if (!v) { hint.className = 'rhint bad'; hint.textContent = 'Write at least one term, e.g. review.allOk'; return; }
-      try {
-        const r = await api('GET', B(`/card-rules/check?condition=${encodeURIComponent(v)}`));
-        if (inp.value.trim() !== v) return;
-        hint.className = 'rhint'; hint.textContent = `Matches ${r.count} card${r.count === 1 ? '' : 's'} now${r.ids?.length ? `: ${r.ids.slice(0, 6).join(', ')}${r.count > 6 ? '…' : ''}` : ''}`;
-      } catch (e) { if (inp.value.trim() === v) { hint.className = 'rhint bad'; hint.textContent = e.data?.hint ? `${e.message}. ${e.data.hint}` : e.message; } }
+    // The builder: rows that make a whole condition are saved; a row still missing its value is kept as a draft.
+    const rowsOf = (i) => { const r = rules()[i]; return (ruleDrafts.get(r.name) || ruleRows(r.condition)).map((x) => ({ ...x })); };
+    const at = (i, j, sel) => `[data-ri="${i}"] [data-row="${j}"] ${sel}`;
+    // sel: where the focus goes after the redraw; a list is tried in order (the value if the row has one, else its test)
+    const redraw = (sel) => { state.modal?.refresh(); if (sel) requestAnimationFrame(() => [].concat(sel).map((s) => $(s, pane)).find(Boolean)?.focus({ preventScroll: true })); };
+    const commit = (i, rows, sel) => {
+      const name = rules()[i]?.name;
+      if (!name) return;
+      const terms = rows.map(ruleTerm);
+      if (rows.length && terms.every(Boolean)) { ruleDrafts.delete(name); save(i, (r) => { r.condition = terms.join(' '); })?.then(() => redraw(sel)); }
+      else { ruleDrafts.set(name, rows); redraw(sel); }
     };
-    pane.addEventListener('input', (e) => { if (e.target.matches('[data-rf="condition"]')) { clearTimeout(timer); timer = setTimeout(() => check(e.target), 220); } });
-    pane.addEventListener('focusin', (e) => { if (e.target.matches('[data-rf="condition"]')) check(e.target); });
+    const valueSel = (i, j) => [at(i, j, '[data-bvdd]'), at(i, j, '[data-bv]'), at(i, j, '[data-btdd]')];
+    const builderClick = (e, i) => {
+      const j = Number(e.target.closest('[data-row]')?.dataset.row ?? -1);
+      const fields = ruleFields();
+      const rows = () => rowsOf(i);
+      const fdd = e.target.closest('[data-bfdd]');
+      if (fdd) {
+        const cur = rows()[j];
+        openDd(fdd, fields.map((f) => ({ label: f.label, cls: f.path === cur.path ? 'on' : '', run: () => {
+          const all = rows();
+          all[j] = f.kind === 'raw' ? { path: '', test: 'raw', value: ruleTerm(cur) || '' } : { path: f.path, test: KIND_TESTS[f.kind][0], value: '' };
+          commit(i, all, f.kind === 'raw' ? at(i, j, '[data-bv]') : at(i, j, '[data-btdd]'));
+        } })), { search: true, placeholder: 'Find a field…' });
+        return true;
+      }
+      const tdd = e.target.closest('[data-btdd]');
+      if (tdd) {
+        const cur = rows()[j];
+        const f = fields.find((x) => x.path === cur.path);
+        openDd(tdd, KIND_TESTS[f.kind].map((t) => ({ label: testLabel(f.kind, t), cls: t === cur.test ? 'on' : '', run: () => {
+          const all = rows();
+          const v = [].concat(cur.value ?? []).filter(Boolean);
+          all[j] = { ...cur, test: t, value: RULE_TESTS[t].many ? v : v[0] ?? '' };
+          commit(i, all, valueSel(i, j));
+        } })));
+        return true;
+      }
+      const vdd = e.target.closest('[data-bvdd]');
+      if (vdd) {
+        const cur = rows()[j];
+        const f = fields.find((x) => x.path === cur.path);
+        if (!RULE_TESTS[cur.test].many) {
+          openDd(vdd, f.options.map((o) => ({ label: o.l, cls: o.v === cur.value ? 'on' : '', run: () => { const all = rows(); all[j].value = o.v; commit(i, all, at(i, j, '[data-bvdd]')); } })), { search: f.options.length > 8 });
+          return true;
+        }
+        // Several values: pick and unpick with the menu open, saved once it closes
+        const picked = new Set([].concat(cur.value ?? []));
+        const items = f.options.map((o) => ({ label: o.l, cls: picked.has(o.v) ? 'on' : '', run: () => { if (picked.has(o.v)) picked.delete(o.v); else picked.add(o.v); items.find((x) => x.label === o.l).cls = picked.has(o.v) ? 'on' : ''; } }));
+        openDd(vdd, items, { keepOpen: true, onClose: () => { const all = rows(); all[j].value = f.options.map((o) => o.v).filter((v) => picked.has(v)); commit(i, all, at(i, j, '[data-bvdd]')); } });
+        return true;
+      }
+      if (e.target.closest('[data-rbdel]')) { const all = rows(); all.splice(j, 1); commit(i, all, `[data-ri="${i}"] [data-rbadd]`); return true; }
+      if (e.target.closest('[data-rbadd]')) { const all = rows(); all.push({ path: 'type', test: 'is', value: '' }); commit(i, all, at(i, all.length - 1, '[data-bfdd]')); return true; }
+      if (e.target.closest('[data-rtext]')) {
+        const name = rules()[i].name;
+        if (ruleAsText.has(name)) ruleAsText.delete(name); else { ruleAsText.add(name); ruleDrafts.delete(name); }
+        redraw(`[data-ri="${i}"] [data-rtext]`);
+        return true;
+      }
+      if (e.target.closest('[data-rshow]')) {
+        $('#search').value = state.query = `is:rule:${rules()[i].name.replace(/\s+/g, '-')}`;
+        applyFilter(); closeModal();
+        return true;
+      }
+      return false;
+    };
+    pane.addEventListener('click', (e) => { const i = idx(e.target); if (i >= 0 && builderClick(e, i)) e.stopPropagation(); }, true);
+    // The condition text is checked as it is typed: how many cards it would match, or why it does not parse.
+    let timer = null;
+    pane.addEventListener('input', (e) => { if (e.target.matches('[data-rf="condition"]')) { clearTimeout(timer); timer = setTimeout(() => ruleCheck(e.target.closest('.rcard'), e.target.value), 220); } });
+    pane.addEventListener('focusin', (e) => { if (e.target.matches('[data-rf="condition"]')) ruleCheck(e.target.closest('.rcard'), e.target.value); });
     pane.addEventListener('change', (e) => {
+      if (e.target.matches('[data-bv]')) {
+        const i = idx(e.target);
+        const j = Number(e.target.closest('[data-row]').dataset.row);
+        const all = rowsOf(i);
+        all[j].value = e.target.value.trim();
+        commit(i, all);
+        return;
+      }
       const f = e.target.dataset.rf;
       const i = idx(e.target);
       if (!f || i < 0) return;
@@ -6000,6 +6166,25 @@
       if (e.target.matches('[data-newrule]')) addRule(pane);
       else if (e.target.matches('input.inp')) e.target.blur();
     });
+  }
+  // How many cards a condition matches now, or why it does not parse, under the rule. A builder draft says what is missing instead.
+  async function ruleCheck(card, text) {
+    const hint = card && $('[data-rhint]', card);
+    if (!hint) return;
+    const say = (msg, bad) => { hint.className = `rhint ${bad ? 'bad' : ''}`; hint.textContent = msg; };
+    const rule = (state.board.cardRules || [])[card.dataset.ri];
+    const draft = rule && !ruleAsText.has(rule.name) && ruleDrafts.get(rule.name);
+    if (draft) {
+      const k = draft.findIndex((row) => !ruleTerm(row));
+      return say(!draft.length ? 'Add at least one condition' : `Condition ${k + 1} needs a value${/\s/.test([].concat(draft[k].value ?? []).join('')) ? ' without spaces' : ''}; the rule keeps its last whole condition until then`, !draft.length);
+    }
+    const v = String(text ?? '').trim();
+    card._checking = v;
+    if (!v) return say('Write at least one term, e.g. review.allOk', true);
+    try {
+      const r = await api('GET', B(`/card-rules/check?condition=${encodeURIComponent(v)}`));
+      if (card._checking === v) say(`Matches ${r.count} card${r.count === 1 ? '' : 's'} now${r.ids?.length ? `: ${r.ids.slice(0, 6).join(', ')}${r.count > 6 ? '…' : ''}` : ''}`);
+    } catch (e) { if (card._checking === v) say(e.data?.hint ? `${e.message}. ${e.data.hint}` : e.message, true); }
   }
   async function addRule(pane) {
     const inp = $('[data-newrule]', pane);
@@ -6211,6 +6396,7 @@
     if (t === 'templates' && !pane._tplWired) { pane._tplWired = true; wireTemplates(pane); }
     if (t === 'columns' && !pane._colWired) { pane._colWired = true; wireColumns(pane); }
     if (t === 'rules' && !pane._rulesWired) { pane._rulesWired = true; wireRules(pane); }
+    if (t === 'rules') $$('.rcard', pane).forEach((c) => ruleCheck(c, state.board.cardRules[c.dataset.ri]?.condition));
     pane.onclick = async (e) => {
       const uc = e.target.closest('[data-ucolor]');
       if (uc) { try { await api('PATCH', '/api/profiles/me', { color: uc.dataset.ucolor || null }); pulseSaved(); } catch (err) { toast(err.message, { kind: 'error' }); } return; }

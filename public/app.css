@@ -1381,6 +1381,28 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .rcond .inp { flex: 1; min-width: 0; height: 30px; font-size: 12.5px; }
 .rhint { min-height: 15px; margin: -3px 0 0 44px; font: 11.5px/1.3 var(--mono); color: var(--muted); }
 .rhint.bad { color: var(--danger); }
+/* Rule builder (INT-289): field · test · value rows that write the condition */
+.rbuild { display: grid; gap: 6px; padding: 8px; border-radius: var(--r-ctl); background: color-mix(in oklab, var(--hover) 60%, transparent); }
+.rb-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+.rb-head.as-text { justify-content: flex-end; margin-top: -3px; }
+.rb-head button, .rb-show { border: 0; background: none; padding: 2px 4px; border-radius: 6px; font: 12px var(--font); color: var(--accent); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.rb-head button:hover, .rb-show:hover { text-decoration: underline; }
+.rb-head button:focus-visible, .rb-show:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rb-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; gap: 6px; align-items: center; }
+.rb-row .dd, .rb-row .inp { height: 30px; font-size: 12.5px; min-width: 0; }
+.rb-row > [data-bfdd] { grid-column: 1; }
+.rb-row > [data-btdd] { grid-column: 2; }
+.rb-row > [data-bvdd], .rb-row > [data-bv] { grid-column: 3; }
+.rb-row > .inp.mono { grid-column: 2 / 4; font-family: var(--mono); }
+.rb-row > .icon-x { grid-column: 4; }
+.rb-row.todo [data-bvdd] .v.ph, .rb-row.todo [data-bv]:placeholder-shown { color: var(--warn); }
+.rb-row.todo [data-bvdd], .rb-row.todo [data-bv] { border-color: color-mix(in oklab, var(--warn) 55%, var(--border)); }
+.rb-add { justify-self: start; }
+.rcount { display: flex; align-items: flex-start; gap: 10px; }
+.rcount .rhint { flex: 1; margin-top: 0; }
+.rbuild ~ .rcount .rhint { margin-left: 0; }
+.rb-show { flex: none; color: var(--muted); }
+.rb-show:hover { color: var(--accent); }
 .rlook { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; }
 .rlook .rl { font-size: 12px; color: var(--muted); }
 .rlook .seg.mini { justify-self: start; flex-wrap: wrap; }
@@ -1389,7 +1411,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .rlook > .inp, .rbadge-in .inp { height: 28px; font-size: 12.5px; max-width: 220px; }
 .rbadge-in { display: flex; align-items: center; gap: 6px; }
 .rbadge-in .icon-pick { border: 0; background: none; cursor: pointer; color: var(--accent); padding: 0; }
-@media (max-width: 480px) { .rhint { margin-left: 0; } .rlook { grid-template-columns: 1fr; gap: 4px; } .rlook .rl:not(:first-child) { margin-top: 4px; } }
+@media (max-width: 480px) { .rhint { margin-left: 0; } .rb-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; } .rb-row > [data-bfdd] { grid-column: 1 / 3; grid-row: 1; } .rb-row > .icon-x { grid-column: 3; grid-row: 1; } .rb-row > [data-btdd] { grid-column: 1; grid-row: 2; } .rb-row > [data-bvdd], .rb-row > [data-bv] { grid-column: 2; grid-row: 2; } .rb-row > .inp.mono { grid-column: 1 / 3; grid-row: 2; } .rb-row + .rb-row { border-top: var(--bw) solid var(--border); padding-top: 6px; } .rlook { grid-template-columns: 1fr; gap: 4px; } .rlook .rl:not(:first-child) { margin-top: 4px; } }
 
 .token-hint { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
 .token-hint code { font: 11.5px var(--mono); color: var(--text); }
