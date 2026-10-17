@@ -22,7 +22,7 @@ const PUBLIC = path.join(ROOT, 'public');
 
 const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join(ROOT, 'intellagent.manifest.json'));
 const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
-const { readLocal } = require('./lib/locate');
+const { readLocal, updateLocal } = require('./lib/locate');
 const jsonfile = require('./lib/jsonfile');
 const MANIFEST_DEFAULTS = {
   appName: 'Intellagent',
@@ -3493,9 +3493,7 @@ function issueAgentToken(name) {
   if (!M.auth.requireAgentTokens || !name || M.auth.agentTokens?.[name] || readLocalAgentTokens()[name]) return;
   // never write over a local.json that can't be read: it may hold the user token
   let local;
-  try { local = readLocal(LOCAL_PATH); } catch (e) { console.error(`No token issued for ${name}: ${e.message}`); return; }
-  local.agentTokens = { ...(local.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') };
-  fs.writeFileSync(LOCAL_PATH, `${JSON.stringify(local, null, 2)}\n`);
+  try { local = updateLocal(LOCAL_PATH, (l) => { l.agentTokens = { ...(l.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') }; }); } catch (e) { console.error(`No token issued for ${name}: ${e.message}`); return; }
   M.auth.agentTokens = { ...(M.auth.agentTokens || {}), [name]: local.agentTokens[name] };
 }
 

@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const os = require('os');
-const { findManifest, readManifest, baseUrl, defaultAgent, userToken, projectOf, readLocal, NO_BOARD } = require('../lib/locate');
+const { findManifest, readManifest, baseUrl, defaultAgent, userToken, projectOf, readLocal, updateLocal, NO_BOARD } = require('../lib/locate');
 const crypto = require('crypto');
 const TEMPLATES = require('../lib/templates');
 const presets = require('../lib/presets');
@@ -187,8 +187,7 @@ function tokenCmd() {
   if (f.agent) {
     const name = String(f.agent);
     if (local.agentTokens?.[name] && !f.rotate) { console.log(`${name} already has a token in ${file}. --rotate replaces it.`); return; }
-    local.agentTokens = { ...(local.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') };
-    fs.writeFileSync(file, `${JSON.stringify(local, null, 2)}\n`);
+    updateLocal(file, (l) => { l.agentTokens = { ...(l.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') }; });
     console.log(`Token for "${name}" saved in ${file} (git-ignored). The board accepts it at once.`);
     console.log(`In this project the CLI and MCP tools send it by themselves when they act as ${name}. Elsewhere, give the agent INTELLAGENT_TOKEN=<the token>.`);
     return;
@@ -197,8 +196,7 @@ function tokenCmd() {
     console.log(`This board already has a user token (${path.relative(process.cwd(), file) || file}).\n  intellagent open           signs the browser in\n  intellagent token --rotate replaces it (signs every browser out)`);
     return;
   }
-  local.userToken = crypto.randomBytes(18).toString('base64url');
-  fs.writeFileSync(file, `${JSON.stringify(local, null, 2)}\n`);
+  updateLocal(file, (l) => { l.userToken = crypto.randomBytes(18).toString('base64url'); });
   // keep it out of git, wherever the manifest lives
   const gi = path.join(dir, '.gitignore');
   const cur = fs.existsSync(gi) ? fs.readFileSync(gi, 'utf8') : '';

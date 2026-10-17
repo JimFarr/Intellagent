@@ -288,6 +288,21 @@ describe('agent tokens on new boards', () => {
       assert.ok(after.agentTokens.late && after.agentTokens.pat);
     } finally { await s.stop(); }
   });
+  it('updateLocal is the one writer of local.json: it merges into what is on disk, leaves no temp file, and refuses a broken file', () => {
+    const { updateLocal } = require('../lib/locate');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-upd-'));
+    const file = path.join(dir, 'local.json');
+    updateLocal(file, (l) => { l.userToken = 'u'; });
+    updateLocal(file, (l) => { l.agentTokens = { ...(l.agentTokens || {}), a: 'x' }; }); // sees what the first wrote
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), other: 1 })); // someone else's key
+    const got = updateLocal(file, (l) => { l.agentTokens.b = 'y'; });
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { userToken: 'u', agentTokens: { a: 'x', b: 'y' }, other: 1 });
+    assert.deepEqual(got, JSON.parse(fs.readFileSync(file, 'utf8')));
+    assert.deepEqual(fs.readdirSync(dir), ['local.json'], 'no temp file left');
+    fs.writeFileSync(file, '{ not json');
+    assert.throws(() => updateLocal(file, (l) => { l.userToken = 'z'; }), /not valid JSON/);
+    assert.equal(fs.readFileSync(file, 'utf8'), '{ not json', 'a broken file is never written over');
+  });
   it('a local.json that does not parse stops the board, naming the file, and the CLI will not write over it', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-badlocal-'));
     const local = path.join(dir, 'local.json');
