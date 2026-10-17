@@ -1235,6 +1235,22 @@ describe('per-agent git worktrees', () => {
       assert.deepEqual(eq.landed, [byHand]);
       assert.equal(eq.equivalent[0].main, byHand);
       assert.equal(git(dir, 'rev-parse', '--short=7', 'HEAD'), byHand, 'no new commit on main');
+      // the twin older than the window searched: still landed, flagged unmatched (the sha is only main's tip)
+      const far = createWorktrees({ root: dir, dir: path.join(dir, '.worktrees'), twinWindow: 1 });
+      const fay = (await far.ensure('fay')).path;
+      write(fay, 'f.txt', 'fay\n');
+      git(fay, 'add', 'f.txt');
+      git(fay, 'commit', '-q', '-m', 'fay adds f (T-7)');
+      write(dir, 'f.txt', 'fay\n');
+      git(dir, 'add', 'f.txt');
+      git(dir, 'commit', '-q', '-m', 'the same change by hand again');
+      write(dir, 'g.txt', 'later\n');
+      git(dir, 'add', 'g.txt');
+      git(dir, 'commit', '-q', '-m', 'something later');
+      const lost = await far.land('fay', 'T-7');
+      assert.equal(lost.via, 'equivalent', JSON.stringify(lost));
+      assert.equal(lost.equivalent[0].unmatched, true);
+      assert.equal(lost.landed[0], git(dir, 'rev-parse', '--short=7', 'HEAD'), 'main\'s tip, the only sha known');
       // INT-137: git never blocks the board (the event loop turns while it lands), and two landings asked for
       // at once go one after the other, so neither cherry-picks into the other's half-done state
       for (const [name, id] of [['cy', 'T-4'], ['di', 'T-5']]) {
