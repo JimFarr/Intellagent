@@ -555,6 +555,30 @@ describe('sandbox boards', () => {
     } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
   });
 
+  it('stop frees the port of a sandbox whose server.pid is missing or names another process; restarting works too (INT-350)', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const r = cli(['sandbox', 'tester', '--seed', 'empty', '--json'], { cwd: s.dir });
+      assert.equal(r.code, 0, r.err);
+      const pidFile = path.join(r.json.dir, 'data', 'server.pid');
+      const real = Number(fs.readFileSync(pidFile, 'utf8'));
+      // a stale record naming some other live process (this test): stop must go by the port's owner, not by it
+      fs.writeFileSync(pidFile, String(process.pid));
+      assert.match(cli(['sandbox', 'stop', 'tester'], { cwd: s.dir }).out, /tester: stopped/);
+      assert.throws(() => process.kill(real, 0), 'the sandbox process is gone');
+      assert.equal(await fetch(`${r.json.url}/api/app`).then(() => true, () => false), false, 'the port is free');
+      // no record at all
+      const again = cli(['sandbox', 'tester', '--json'], { cwd: s.dir });
+      assert.equal(again.code, 0, again.err);
+      fs.rmSync(path.join(again.json.dir, 'data', 'server.pid'));
+      assert.match(cli(['sandbox', 'stop', 'tester'], { cwd: s.dir }).out, /tester: stopped/);
+      // and --fresh starts on that port again
+      const fresh = cli(['sandbox', 'tester', '--fresh', '--seed', 'empty', '--json'], { cwd: s.dir });
+      assert.equal(fresh.code, 0, fresh.err);
+      assert.equal(fresh.json.port, r.json.port);
+    } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+  });
+
   it('a sandbox starts from the board init set up: its fields, rules and columns, no tickets, and says which board', async () => {
     const s = await startServer({ agents: { agents: {} } });
     try {
