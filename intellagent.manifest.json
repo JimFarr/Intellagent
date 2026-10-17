@@ -28,5 +28,8 @@
   },
   "metrics": {
     "prometheus": true
-  }
+  },
+  "allowedHosts": [
+    "host.docker.internal"
+  ]
 }

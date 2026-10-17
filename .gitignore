@@ -8,3 +8,6 @@ local.json
 agents.json
 agent-context/
 mcp-*.json
+
+# The metrics token Prometheus reads (docs/grafana/docker-compose.yml): never published
+docs/grafana/metrics.token

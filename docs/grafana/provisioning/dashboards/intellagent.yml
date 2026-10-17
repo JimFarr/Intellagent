@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: intellagent
+    folder: Intellagent
+    type: file
+    options:
+      path: /etc/dashboards

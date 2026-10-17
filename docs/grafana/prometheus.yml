@@ -1,0 +1,13 @@
+# Scrapes the Intellagent board every 30 s. The board must allow the name host.docker.internal
+# ("allowedHosts" in its manifest); the metrics token comes from ./metrics.token (mounted read-only).
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: intellagent
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/intellagent-metrics.token
+    static_configs:
+      - targets: ["host.docker.internal:7420"]
