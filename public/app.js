@@ -4164,6 +4164,7 @@
     ['gridDrawer', 'Who holds what', 'sliders', () => openPermGrid()],
     ['rulesDrawer', 'Standing rules', 'pin', () => openRules()],
     ['metricsDrawer', 'Flow', 'activity', () => openMetrics()],
+    ['analyticsDrawer', 'Analytics', 'layers', () => openAnalytics()],
     ['archiveDrawer', 'Archive', 'archive', () => openArchive()],
   ];
   const HUB_PARENT = { agentDrawer: 'agentsDrawer', runLogDrawer: 'agentsDrawer', baseDrawer: 'agentsDrawer' };
@@ -5082,6 +5083,75 @@
     : permExpand(a.perms || [], byKey).has(key))).map((a) => a.name);
   // "npm run deploy:staging", "WebFetch", "Edit and Write in docs/**", "test, git": what holding it brings
   const permGives = (p) => [...(p.allows?.commands || []), ...(p.allows?.tools || []), ...(p.allows?.folders || []).map((f) => `Edit and Write in ${f}`), ...(p.allows?.includes || []), ...(p.allows?.powers || [])];
+
+  /* The Analytics page (INT-312, on INT-311's GET /api/analytics, which it reads and nothing else): per agent the
+     time in each state, the queue depth, runs, tokens, cost, models and tools; per ticket what it cost. Nothing is
+     told by colour alone: every state in the bar is also written out with its time. It draws once per window
+     choice; nothing polls. The lane timeline and the suggestions wait for the endpoint (INT-336). */
+  const AN_STATES = ['running', 'queued', 'waiting', 'throttled', 'retrying', 'failed', 'paused', 'idle'];
+  const anDur = (ms) => (ms < 60000 ? `${Math.round(ms / 1000)}s` : ms < 3600000 ? `${Math.round(ms / 60000)}m` : ms < 86400000 ? `${(ms / 3600000).toFixed(1)}h` : `${(ms / 86400000).toFixed(1)}d`);
+  const anNum = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 1e4 ? 0 : 1)}k` : String(n));
+  // cost is null when no run reported one: unknown, never $0
+  const anCost = (c) => (c.cost == null ? '<span title="No run reported a cost">n/a</span>' : `$${c.cost < 10 ? c.cost.toFixed(2) : c.cost.toFixed(0)}${c.unpriced ? `<small title="${c.unpriced} run${c.unpriced === 1 ? '' : 's'} reported no cost, so this is a floor"> +${c.unpriced} unpriced</small>` : ''}`);
+  const anTok = (t) => `${anNum(t.input)} in / ${anNum(t.output)} out`;
+  function anSpark(points, from, to) {
+    if (!points.length) return '';
+    const w = 160, h = 28, max = Math.max(1, ...points.map((p) => p.depth));
+    const span = Math.max(1, Date.parse(to) - Date.parse(from));
+    const xy = points.map((p) => [Math.min(w, Math.max(0, ((Date.parse(p.at) - Date.parse(from)) / span) * w)), h - 2 - (p.depth / max) * (h - 4)]);
+    // a step line: each depth holds until the next change
+    const d = xy.map(([x, y], i) => `${i ? `H${x.toFixed(1)}V` : `M${x.toFixed(1)} `}${y.toFixed(1)}`).join('') + `H${w}`;
+    return `<svg class="an-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><path d="${d}"/></svg>`;
+  }
+  function openAnalytics() {
+    const body = openDrawer('analyticsDrawer', 'Analytics', 'activity');
+    body._reload = () => fillAnalytics(body);
+    fillAnalytics(body);
+  }
+  async function fillAnalytics(body) {
+    const days = body._days || 7;
+    let a;
+    try { a = await api('GET', `/api/analytics?days=${days}`); } catch (e) { body.innerHTML = `<div class="empty-note">${esc(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message)}</div>`; return; }
+    if (!body.isConnected) return;
+    const win = `<div class="seg an-win" role="radiogroup" aria-label="Window">${[7, 30].map((d) => `<button type="button" role="radio" aria-checked="${d === days}" class="${d === days ? 'on' : ''}" data-an-days="${d}">${d} days</button>`).join('')}</div>`;
+    const empty = !a.agents.length;
+    const card = (g) => {
+      const known = Object.entries(g.states).filter(([, ms]) => ms > 0).sort((x, y) => (AN_STATES.indexOf(x[0]) + 1 || 99) - (AN_STATES.indexOf(y[0]) + 1 || 99));
+      const total = known.reduce((s, [, ms]) => s + ms, 0) + g.unknownMs || 1;
+      const bar = known.map(([st, ms]) => `<i class="an-seg" data-st="${esc(st)}" style="flex:${ms}" title="${esc(`${st}|${anDur(ms)} · ${Math.round((100 * ms) / total)}%`)}"></i>`).join('') + (g.unknownMs > 0 ? `<i class="an-seg" data-st="unknown" style="flex:${g.unknownMs}" title="not known|${anDur(g.unknownMs)}"></i>` : '');
+      const legend = known.map(([st, ms]) => `<li><i class="an-key" data-st="${esc(st)}" aria-hidden="true"></i><b>${esc(st)}</b> ${anDur(ms)} <span class="muted">${Math.round((100 * ms) / total)}%</span></li>`).join('') + (g.unknownMs > 0 ? `<li><i class="an-key" data-st="unknown" aria-hidden="true"></i><b>not known</b> ${anDur(g.unknownMs)} <span class="muted">before its first state</span></li>` : '');
+      const r = g.runs;
+      const outcomes = [['ok', 'finished'], ['failed', 'failed'], ['timeout', 'timed out'], ['stopped', 'stopped'], ['limited', 'hit the usage limit']].filter(([k]) => r[k]).map(([k, w]) => `${r[k]} ${w}`);
+      const depths = g.queue.map((p) => p.depth);
+      const models = Object.entries(g.models).sort((x, y) => y[1].runs - x[1].runs);
+      return `<article class="an-agent perm" data-an-agent="${esc(g.agent)}">
+        <header class="perm-head">${avatar({ kind: 'agent', name: g.agent })}<b class="perm-nm">${esc(nameOf(g.agent))}</b><span class="grow"></span><span class="an-cost" title="Cost in the window">${anCost(g)}</span></header>
+        <div class="an-bar" role="img" aria-label="${esc(`Time in each state: ${known.map(([st, ms]) => `${st} ${anDur(ms)}`).join(', ') || 'none known'}`)}">${bar}</div>
+        <ul class="an-legend">${legend}</ul>
+        <dl class="perm-facts">
+          <dt>Runs</dt><dd>${r.count ? `${r.count} · ${anDur(r.ms)} running${outcomes.length ? ` · ${outcomes.join(', ')}` : ''}` : 'none in this window'}</dd>
+          <dt>Tokens</dt><dd>${r.count ? anTok(g.tokens) : '—'}</dd>
+          ${depths.length ? `<dt>Queue</dt><dd class="an-queue">${anSpark(g.queue, a.from, a.to)}<span>peak ${Math.max(...depths)} · latest ${depths.at(-1)} · ${depths.length} change${depths.length === 1 ? '' : 's'}</span></dd>` : ''}
+          ${models.length ? `<dt>Models</dt><dd>${models.map(([m, v]) => `<span class="mini-chip" title="${esc(anTok(v.tokens))}">${esc(m)} · ${v.runs} run${v.runs === 1 ? '' : 's'} · ${anCost(v)}</span>`).join('')}</dd>` : ''}
+          ${g.tools.length ? `<dt>Tools</dt><dd>${g.tools.map((t) => `<span class="mini-chip">${esc(t.name)} <b>${t.count}</b></span>`).join('')}${g.toolsUnknown ? `<span class="muted" title="Runs that reported no tools">${g.toolsUnknown} run${g.toolsUnknown === 1 ? '' : 's'} unknown</span>` : ''}</dd>` : ''}
+          ${g.commands.length ? `<dt>Commands</dt><dd>${g.commands.map((t) => `<span class="mini-chip mono">${esc(t.name)} <b>${t.count}</b></span>`).join('')}</dd>` : ''}
+        </dl></article>`;
+    };
+    const tickets = a.tickets.slice(0, 10);
+    body.innerHTML = `<div class="an-top">${win}<span class="grow"></span></div>
+      ${empty ? `<div class="empty-note">${icon('activity')}<span>No agent has run or changed state in the last ${days} days.</span></div>` : `
+      <dl class="an-totals perm-facts"><dt>Runs</dt><dd>${a.totals.runs}</dd><dt>Tokens</dt><dd>${anTok(a.totals.tokens)}</dd><dt>Cost</dt><dd>${anCost(a.totals)}</dd></dl>
+      ${a.agents.map(card).join('')}
+      ${tickets.length ? `<section class="perm-group"><div class="perm-ghead">${icon('layers', 'sm')}<span class="ag-sec">What each ticket cost</span><span class="perm-ghelp">A run woken for several tickets is shared between them equally. Top ${tickets.length} by cost.</span></div>
+        <table class="an-tickets"><thead><tr><th scope="col">Ticket</th><th scope="col">Runs</th><th scope="col">Time</th><th scope="col">Tokens</th><th scope="col">Cost</th></tr></thead><tbody>${tickets.map((t) => `<tr><th scope="row"><button class="mini-chip link" data-board="${esc(state.boardId)}" data-open="${esc(t.id)}">${esc(t.id)}</button>${t.shared ? '<small title="Some runs covered several tickets"> shared</small>' : ''}</th><td>${t.runs}</td><td>${anDur(t.ms)}</td><td>${anTok(t.tokens)}</td><td>${anCost(t)}</td></tr>`).join('')}</tbody></table></section>` : ''}`}
+      <p class="perm-intro">From ${esc(new Date(a.from).toLocaleDateString())} to now. The lane timeline and suggestions come when the endpoint gives them (INT-336).</p>`;
+    body.onclick = (e) => {
+      const d = e.target.closest('[data-an-days]');
+      if (d) { body._days = +d.dataset.anDays; fillAnalytics(body); return; }
+      const o = e.target.closest('[data-open]');
+      if (o && !e.target.closest('.avatar')) openItem(o.dataset.open, cardEls.get(o.dataset.open));
+    };
+  }
 
   /* The permissions grid (INT-231, on INT-239's /api/agents/grid): agents down the side, the library across,
      grouped by kind. A cell is off, on, or on with rules (the tick plus a padlock). A click opens a panel under
