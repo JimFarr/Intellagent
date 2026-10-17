@@ -956,7 +956,7 @@ async function sandboxExec(sb, mp) {
   child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
 }
 
-// intellagent sandbox [name] [--from main|<agent>|<dir>] [--seed board|demo|empty|snapshot] [--fresh] [--open] [--json]
+// intellagent sandbox [name] [--from main|<agent>|<dir>] [--seed board|demo|empty|snapshot] [--fresh] [--keep] [--idle-hours N] [--open] [--json]
 // intellagent sandbox list | stop <name> | stop --all
 async function sandboxCmd() {
   const sb = require('../lib/sandbox');
@@ -968,18 +968,26 @@ async function sandboxCmd() {
     const all = await sb.list(mp);
     if (f.json) { console.log(JSON.stringify(all, null, 2)); return; }
     if (!all.length) { console.log('No sandboxes yet: intellagent sandbox <agent>'); return; }
-    for (const s of all) console.log(`${s.running ? '●' : '○'} ${s.name.padEnd(12)} ${s.url}  ${s.source || ''}`);
+    for (const s of all) console.log(`${s.running ? '●' : '○'} ${s.name.padEnd(12)} ${s.url}  ${s.source || ''}${s.keep ? '  (kept: never stops itself)' : ''}${s.stopped ? `  (stopped: ${s.stopped.reason}, ${s.stopped.at})` : ''}`);
     return;
   }
   if (sub === 'stop') {
     const names = f.all ? (await sb.list(mp)).map((s) => s.name) : [arg].filter(Boolean);
     if (!names.length) { console.error('Usage: intellagent sandbox stop <name> | --all'); process.exit(2); }
-    for (const n of names) console.log(`${n}: ${(await sb.stop(mp, n)) ? 'stopped' : 'not running'}`);
+    // "not running" only when nothing answers; every other refusal says the sandbox may still be up, and why
+    const results = [];
+    for (const n of names) results.push(await sb.stop(mp, n));
+    if (f.json) console.log(JSON.stringify(results, null, 2));
+    for (const r of results) {
+      const gone = r.stopped || r.code === 'NOT_RUNNING';
+      if (!f.json) console.log(`${r.name}: ${r.stopped ? 'stopped' : r.code === 'NOT_RUNNING' ? 'not running' : 'STILL RUNNING'}${r.stopped ? '' : ` — ${r.reason}`}`);
+      if (!gone) process.exitCode = 1;
+    }
     return;
   }
   const name = sub || defaultAgent(readManifest(mp));
   if (!name) { console.error('Usage: intellagent sandbox <agent name>   (or set INTELLAGENT_AGENT)'); process.exit(2); }
-  const r = await sb.start(mp, String(name), { from: String(f.from || 'main'), seed: f.seed ? String(f.seed) : null, fresh: !!f.fresh });
+  const r = await sb.start(mp, String(name), { from: String(f.from || 'main'), seed: f.seed ? String(f.seed) : null, fresh: !!f.fresh, keep: f.keep === undefined ? null : f.keep !== 'false', idleHours: f['idle-hours'] === undefined ? null : Number(f['idle-hours']) });
   if (f.json) { console.log(JSON.stringify(r, null, 2)); return; }
   console.log(`${name}'s sandbox is running at ${r.url}  (${r.seed === 'kept' ? 'data kept' : `seeded: ${r.seed}${r.from ? `, from the board "${r.from}": its columns, fields and rules, no tickets` : ''}`}; code from ${r.source})`);
   console.log(`  sign in as its human:  ${r.signIn}`);
@@ -1045,7 +1053,7 @@ const HELP = `intellagent — a kanban for you and your agents
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 
-  sandbox [NAME]   a throwaway board of your own, running any checkout (--from main|<agent>|<dir>, --seed board|demo|empty|snapshot, --fresh); sandbox list | stop NAME|--all | exec NAME -- COMMAND… (that checkout's CLI on its board)
+  sandbox [NAME]   a throwaway board of your own, running any checkout (--from main|<agent>|<dir>, --seed board|demo|empty|snapshot, --fresh, --keep: never stops itself, --idle-hours N); sandbox list | stop NAME|--all | exec NAME -- COMMAND… (that checkout's CLI on its board)
   leases           the machine's leases for heavy work — browsers, solves, timings (one per PC; every board shares it)
     status | machine | ask --holder N --cpu T --gpu MB --minutes M [--exclusive] | renew ID | done ID | ceiling | start | stop
 `;

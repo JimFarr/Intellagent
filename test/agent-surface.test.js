@@ -609,6 +609,75 @@ describe('sandbox boards', () => {
     } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
   });
 
+  it('stop names the reason it did not stop a sandbox, and exits 1 when one is still up (INT-374)', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const r = cli(['sandbox', 'tester', '--seed', 'empty', '--json'], { cwd: s.dir });
+      assert.equal(r.code, 0, r.err);
+      // a name that was never started
+      const none = cli(['sandbox', 'stop', 'nobody', '--json'], { cwd: s.dir });
+      assert.equal(none.code, 1);
+      assert.equal(none.json[0].code, 'NO_SANDBOX');
+      // a port that holds the real board: left alone, and said so with the port
+      const ports = path.join(s.dir, 'sandboxes', 'ports.json');
+      const realPort = Number(new URL(s.base).port);
+      fs.writeFileSync(ports, JSON.stringify({ ...JSON.parse(fs.readFileSync(ports, 'utf8')), imposter: realPort }));
+      const bad = cli(['sandbox', 'stop', 'imposter'], { cwd: s.dir });
+      assert.equal(bad.code, 1);
+      assert.match(bad.out, new RegExp(`imposter: STILL RUNNING — the board on port ${realPort} is not a sandbox`));
+      assert.equal((await fetch(`${s.base}/api/app`)).ok, true, 'the real board was not touched');
+      // stopped: exit 0; stopped again: nothing answers, which is "not running" and also exit 0
+      const ok = cli(['sandbox', 'stop', 'tester', '--json'], { cwd: s.dir });
+      assert.equal(ok.code, 0, ok.err);
+      assert.equal(ok.json[0].stopped, true);
+      assert.equal(ok.json[0].port, r.json.port);
+      const again = cli(['sandbox', 'stop', 'tester'], { cwd: s.dir });
+      assert.equal(again.code, 0);
+      assert.match(again.out, new RegExp(`tester: not running — nothing answers on port ${r.json.port}`));
+    } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+  });
+
+  it('a sandbox nobody uses stops itself and list says why; --keep exempts one (INT-374)', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const idle = cli(['sandbox', 'idler', '--seed', 'empty', '--idle-hours', '0.0005', '--json'], { cwd: s.dir });
+      const kept = cli(['sandbox', 'keeper', '--seed', 'empty', '--idle-hours', '0.0005', '--keep', '--json'], { cwd: s.dir });
+      assert.equal(idle.code, 0, idle.err);
+      assert.equal(kept.code, 0, kept.err);
+      const up = (url) => fetch(`${url}/api/app`).then((x) => x.ok, () => false);
+      // polling /api/app is what list does: it must not count as use
+      for (let i = 0; i < 40 && await up(idle.json.url); i++) await new Promise((r) => setTimeout(r, 250));
+      assert.equal(await up(idle.json.url), false, 'the unused sandbox stopped itself');
+      assert.equal(await up(kept.json.url), true, 'the kept one is still up');
+      const list = cli(['sandbox', 'list', '--json'], { cwd: s.dir }).json;
+      const row = (n) => list.find((x) => x.name === n);
+      assert.equal(row('idler').running, false);
+      assert.match(row('idler').stopped.reason, /^idle for 0\.0005 h/);
+      assert.equal(row('keeper').keep, true);
+      assert.match(cli(['sandbox', 'list'], { cwd: s.dir }).out, /idler .*\(stopped: idle for 0\.0005 h/);
+      // starting it again clears the record and keeps its settings
+      const back = cli(['sandbox', 'idler', '--json'], { cwd: s.dir });
+      assert.equal(back.code, 0, back.err);
+      assert.equal(cli(['sandbox', 'list', '--json'], { cwd: s.dir }).json.find((x) => x.name === 'idler').stopped, null);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(back.json.dir, 'intellagent.manifest.json'), 'utf8')).sandboxIdleHours, 0.0005);
+    } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+  });
+
+  it('when all 200 ports are taken, a new sandbox reuses the ports of sandboxes that are not running (INT-374)', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      fs.mkdirSync(path.join(s.dir, 'sandboxes'), { recursive: true });
+      const ports = path.join(s.dir, 'sandboxes', 'ports.json');
+      const old = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`old${i}`, SANDBOX_FIRST_PORT + i]));
+      fs.writeFileSync(ports, JSON.stringify(old));
+      const r = cli(['sandbox', 'fresh1', '--seed', 'empty', '--json'], { cwd: s.dir });
+      assert.equal(r.code, 0, r.err);
+      assert.ok(r.json.port >= SANDBOX_FIRST_PORT && r.json.port < SANDBOX_FIRST_PORT + 200);
+      const now = JSON.parse(fs.readFileSync(ports, 'utf8'));
+      assert.deepEqual(Object.keys(now), ['fresh1'], 'the dead ones gave their ports back');
+    } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+  });
+
   it('a sandbox starts from the board init set up: its fields, rules and columns, no tickets, and says which board', async () => {
     const s = await startServer({ agents: { agents: {} } });
     try {

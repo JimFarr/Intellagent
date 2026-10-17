@@ -5190,7 +5190,12 @@ const HOSTS = allowedHosts(M.port, { host: M.host, extra: M.allowedHosts || [] }
 
 checkPolicies(new Set([...Object.keys(POWERS), ...Object.keys(ADMIN)]));
 
+// A sandbox nobody uses stops itself (INT-374): `sandbox list` and the CLI's own liveness check read
+// /api/app, so that one route does not count as use.
+let lastUsed = Date.now();
+
 const server = http.createServer(async (req, res) => {
+  if (M.sandbox && !(req.method === 'GET' && String(req.url).split('?')[0] === '/api/app')) lastUsed = Date.now();
   try {
     const badHost = hostProblem(req, HOSTS, `http://127.0.0.1:${M.port}`);
     if (badHost) fail(badHost.status, badHost.error, { code: badHost.code, hint: `${badHost.hint}, or add the name to "allowedHosts" in ${MANIFEST_PATH}` });
@@ -5380,3 +5385,16 @@ const shutdown = () => {
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+// sandboxIdleHours (default 4; 0 or sandboxKeep: never) is how long a sandbox may go unused. The reason is
+// left in data/stopped.json for `sandbox list`.
+if (M.sandbox && !M.sandboxKeep) {
+  const idleHours = M.sandboxIdleHours === undefined ? 4 : Number(M.sandboxIdleHours);
+  if (idleHours > 0) {
+    setInterval(() => {
+      if (Date.now() - lastUsed < idleHours * 3600_000) return;
+      try { fs.writeFileSync(path.join(DATA, 'stopped.json'), JSON.stringify({ at: now(), reason: `idle for ${idleHours} h` })); } catch { /* read-only data dir */ }
+      shutdown();
+    }, Math.min(60_000, Math.max(100, idleHours * 3600_000 / 4))).unref();
+  }
+}
