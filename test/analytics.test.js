@@ -102,6 +102,46 @@ describe('analytics: the pieces', () => {
   });
 });
 
+describe('analytics: segments and suggestions (INT-336)', () => {
+  it('segments follow the states, clipped to the window, with the board\'s note; their time adds up to states', () => {
+    const [a, b] = createAnalytics({ dataDir: fixture() })({ days: 1, now: NOW }).agents;
+    assert.deepEqual(a.segments.map((s) => [s.from, s.to, s.status]), [
+      [iso(FROM), iso(FROM + 2 * H), 'idle'], [iso(FROM + 2 * H), iso(FROM + 3 * H), 'running'],
+      [iso(FROM + 3 * H), iso(FROM + 20 * H), 'idle'], [iso(FROM + 20 * H), iso(NOW), 'paused'],
+    ]);
+    assert.deepEqual(b.segments, [{ from: iso(FROM + 23 * H), to: iso(NOW), status: 'running' }]);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-analytics-seg-'));
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), jsonl([status('a', 'waiting', FROM + H, { waitingFor: 'usage limit', resumesAt: iso(FROM + 2 * H) }), status('a', 'idle', FROM + 2 * H)]));
+    const w = createAnalytics({ dataDir: dir })({ days: 1, now: NOW }).agents[0];
+    assert.equal(w.segments[0].note, 'usage limit');
+    assert.equal(w.segments[1].note, undefined);
+  });
+
+  it('keeps only the newest 500 segments per agent', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-analytics-cap-'));
+    const rows = [];
+    for (let i = 0; i < 700; i++) rows.push(status('a', i % 2 ? 'idle' : 'running', FROM + i * 60_000));
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), jsonl(rows));
+    const a = createAnalytics({ dataDir: dir })({ days: 1, now: NOW }).agents[0];
+    assert.equal(a.segments.length, 500);
+    assert.equal(a.segments.at(-1).to, iso(NOW));
+  });
+
+  it('suggests a rebalance when one agent is backed up while another is idle, and tickets waiting on the human', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-analytics-sug-'));
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), jsonl([
+      status('busy', 'queued', FROM + H), status('free', 'idle', FROM + H),
+    ]));
+    const waiting = [{ id: 'INT-9', since: iso(NOW - 3 * 24 * H) }, { id: 'INT-8', since: iso(NOW - 2 * H) }];
+    const r = createAnalytics({ dataDir: dir })({ days: 1, now: NOW, waiting });
+    assert.deepEqual(r.suggestions.map((s) => s.kind), ['rebalance', 'waiting-on-human']);
+    assert.deepEqual(r.suggestions[0].agents, ['busy', 'free']);
+    assert.match(r.suggestions[0].text, /busy spent 96% of the window queued.*free sat idle 96%/);
+    assert.deepEqual(r.suggestions[1].items, ['INT-9'], 'only what has waited over a day');
+    assert.deepEqual(createAnalytics({ dataDir: fixture() })({ days: 1, now: NOW }).suggestions, [], 'nothing to say: no suggestion');
+  });
+});
+
 describe('analytics: cost per call', () => {
   // The worst a call reads: events.jsonl rolls only at start once past 20 MB, so the live file can be bigger; the
   // stats file rolls at 5 MB (about 17k runs). Most event lines are not agent.status and are skipped unparsed.

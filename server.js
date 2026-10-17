@@ -4617,9 +4617,12 @@ const controls = (actor, target) => {
 };
 route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run, now (what a live run is doing), history (last 10 runs). ?recent=N adds the N newest runs across all agents', ({ q }) => standing.list({ recent: Math.min(50, Math.max(0, Number(q.recent) || 0)) }));
 // Anyone who can read the board may read it (decided on INT-311): run records hold command names, never lines.
-route('GET', '/api/analytics', 'Agent analytics over ?days=7|30 (1-90), ?agent=<name> for one: time in each state, queue depth, runs, tokens, cost by model, top tools and commands; per ticket runs, tokens and cost', ({ q }) => {
+route('GET', '/api/analytics', 'Agent analytics over ?days=7|30 (1-90), ?agent=<name> for one: time in each state (and as segments { from, to, status, note? }, newest 500 per agent), queue depth, runs, tokens, cost by model, top tools and commands; per ticket runs, tokens and cost; suggestions [{ kind: rebalance|waiting-on-human, text, agents?, items? }]', ({ q }) => {
   if (q.agent != null && !/^[\w.-]{1,64}$/.test(String(q.agent))) fail(400, `"${String(q.agent).slice(0, 64)}" is not an agent name`, { code: 'BAD_REQUEST', hint: 'Pass ?agent=<name> as in GET /api/agents, or leave it out for every agent' });
-  return analytics({ days: clamp(Number(q.days) || 7, 1, 90), agent: q.agent || null });
+  // tickets waiting on the human, for the suggestions (the analytics file reads logs only)
+  const waiting = [];
+  for (const c of boards.values()) for (const it of Object.values(c.board.items)) if (it.needsHuman?.raisedAt) waiting.push({ id: it.id, since: it.needsHuman.raisedAt });
+  return analytics({ days: clamp(Number(q.days) || 7, 1, 90), agent: q.agent || null, waiting });
 });
 // Prometheus scrape (INT-309). Off until the manifest says metrics: { prometheus: true }; then it answers only to the
 // metrics token in local.json (intellagent token --metrics). That token opens this route and nothing else: checkAuth
