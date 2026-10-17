@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { startServer } = require('./helpers');
-const { createAnalytics, logFiles } = require('../lib/analytics');
+const { createAnalytics, logFiles, waitingOnHuman } = require('../lib/analytics');
 
 const H = 3_600_000;
 const NOW = Date.parse('2026-10-10T00:00:00Z');
@@ -139,6 +139,21 @@ describe('analytics: segments and suggestions (INT-336)', () => {
     assert.match(r.suggestions[0].text, /busy spent 96% of the window queued.*free sat idle 96%/);
     assert.deepEqual(r.suggestions[1].items, ['INT-9'], 'only what has waited over a day');
     assert.deepEqual(createAnalytics({ dataDir: fixture() })({ days: 1, now: NOW }).suggestions, [], 'nothing to say: no suggestion');
+  });
+});
+
+describe('analytics: tickets waiting on the human (INT-336)', () => {
+  const ctx = (items) => ({ board: { items } });
+  const item = (id, extra) => ({ id, needsHuman: { raisedAt: iso(NOW - 3 * 24 * H) }, ...extra });
+
+  it('lists real tickets with an open question, and leaves out test tickets and unreadable dates', () => {
+    const waiting = waitingOnHuman([ctx({
+      a: item('T-1'), b: item('T-2', { test: true }), c: item('T-3', { needsHuman: { raisedAt: 'soon' } }), d: item('T-4', { needsHuman: null }),
+    })]);
+    assert.deepEqual(waiting.map((w) => w.id), ['T-1']);
+    const r = createAnalytics({ dataDir: fixture() })({ days: 1, now: NOW, waiting });
+    assert.deepEqual(r.suggestions.map((s) => s.kind), ['waiting-on-human']);
+    assert.deepEqual(r.suggestions[0].items, ['T-1']);
   });
 });
 
