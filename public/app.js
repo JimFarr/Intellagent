@@ -4715,6 +4715,8 @@
       <div class="aa-grants"><div class="aa-note">Checking…</div></div>
       <div class="aa-label">Description</div>
       <textarea class="inp aa-desc" rows="2" data-aa-desc></textarea>
+      <label><span class="aa-label">Personality <span class="aa-note">how it behaves; it reads this in its brief</span></span>
+      <textarea class="inp aa-desc" rows="2" maxlength="400" data-aa-align placeholder="e.g. Direct and steady; small tested changes; asks before anything risky">${esc(edit ? state.profiles[edit.name]?.alignment || '' : '')}</textarea></label>
       <label class="aa-coord" hidden><input type="checkbox" data-aa-coord checked> Make it this board's coordinator (requests go to it)</label>
       <div class="aa-foot"><span class="aa-hint">It runs headless Claude Code when something is for it — needs <code>claude</code> installed and signed in.</span><span class="grow"></span><button class="btn ghost sm" data-aa-cancel>Cancel</button><button class="btn primary sm" data-aa-add>${edit ? icon('check', 'sm') : icon('plus', 'sm')}${edit ? 'Save changes' : 'Add agent'}</button></div>
     </div>`);
@@ -4808,6 +4810,9 @@
               return where || was ? { power: c.dataset.grant, ...(where ? { where } : {}), ...rule } : c.dataset.grant;
             }) } : {}),
           });
+          // the add route has no personality: it lives on the profile, which the manage route sets
+          const align = $('[data-aa-align]', f).value.trim();
+          if (align !== (edit ? state.profiles[name]?.alignment || '' : '')) await api('PATCH', `/api/agents/${encodeURIComponent(name)}`, { alignment: align || null });
           if (coord) state.board.coordinator = name;
           toast(edit ? `Saved ${name}` : `${name} is on call`, { icon: 'bot', kind: 'ok', timeout: 2500 });
           await refreshPresence();
@@ -5533,7 +5538,7 @@
       // the row's rarer actions live in its ⋯ menu, so they take no room in the row (INT-268)
       const more = [p.name !== coord && 'Make coordinator', forgettable(p) && 'Forget'].filter(Boolean);
       return `<div class="agent-row ${p.online || sa ? '' : 'off'}" data-agent="${esc(p.name)}"${first ? ` style="animation-delay:${i * 40}ms"` : ''}>${avatar({ kind: 'agent', name: p.name }, 'lg')}
-        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(nameOf(p.name))}${nameOf(p.name) !== p.name ? `<span class="nm-id">@${esc(p.name)}</span>` : ''}${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from the Ask field go to this agent unless you pick another">takes requests</span>' : ''}${more.length ? `<button class="row-more" data-row-more="${esc(p.name)}" aria-label="More for ${esc(nameOf(p.name))}" title="More|${more.join(', ')}${more.includes('Forget') ? ' (it comes back if it connects again)' : ''}">${icon('more', 'sm')}</button>` : ''}</div><div class="sub"${p.lastAction ? ` title="${esc(p.lastAction)}"` : ''}>${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(callWords(p.lastAction))}` : ''}</div></div>
+        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(nameOf(p.name))}${nameOf(p.name) !== p.name ? `<span class="nm-id">@${esc(p.name)}</span>` : ''}${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from the Ask field go to this agent unless you pick another">takes requests</span>' : ''}${more.length ? `<button class="row-more" data-row-more="${esc(p.name)}" aria-label="More for ${esc(nameOf(p.name))}" title="More|${more.join(', ')}${more.includes('Forget') ? ' (it comes back if it connects again)' : ''}">${icon('more', 'sm')}</button>` : ''}</div><div class="sub"${p.lastAction ? ` title="${esc(p.lastAction)}"` : ''}>${sa?.role ? `<b class="ag-role">${esc(sa.role)}</b> · ` : ''}${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(callWords(p.lastAction))}` : ''}</div>${sa?.description ? `<div class="sub ag-about" title="${esc(sa.description)}">${esc(sa.description.replace(/\s+/g, ' '))}</div>` : ''}</div>
         ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}</div>`;
     }).join('') : `<div class="empty-note">${icon('bot')}</div>`));
     fillApprovals($('[data-appr]', body));
