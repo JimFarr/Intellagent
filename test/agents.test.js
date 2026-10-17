@@ -1285,6 +1285,12 @@ describe('a lander (work.land) gets approved work onto main', () => {
     try {
       // someone lands it by hand: a commit on main that names the ticket, with an id of its own
       const a = await failedTicket('by hand, found by the sweep', 'bob');
+      // a commit whose body only names the ticket (to say it was left out) is not its landing
+      fs.writeFileSync(path.join(dir, 'other.txt'), 'other\n');
+      git('add', '.');
+      git('commit', '-q', '-m', 'Restore the stylesheet', '-m', `It had brought in rules from tickets that haven't landed (${a.id}).`);
+      await new Promise((r) => setTimeout(r, 1500)); // a few sweeps
+      assert.equal((await s.ok('GET', `${B}/items/${a.id}`)).landing.state, 'failed', 'a mention in a commit body is not a landing');
       fs.writeFileSync(path.join(dir, 'by-hand-a.txt'), 'resolved\n');
       git('add', '.');
       git('commit', '-q', '-m', `Land it myself (${a.id})`);
