@@ -6078,8 +6078,6 @@
     if ($('#agentDrawer') && body.isConnected) draw();
   }
 
-  /* What makes an agent a specialist: the code it owns (guidance), what it watches for, and its context page.
-     Edited here, saved to agents.json and agent-context/<name>.md through PATCH /api/agents/<name>. */
   // A reviewer's tick: ✓ looks good, ! concerns, … still looking.
   const reviewerTick = (r, { rm = false } = {}) => `<span class="rv-tick ${r.verdict || 'pending'}" title="${esc(nameOf(r.name))}|${r.verdict === 'ok' ? 'Looks good' : r.verdict === 'concerns' ? 'Has concerns — see the comment' : 'Reviewing…'}"><span class="rv-face">${avatar({ kind: 'agent', name: r.name })}<i>${r.verdict === 'ok' ? '✓' : r.verdict === 'concerns' ? '!' : '…'}</i></span>${rm ? `<button type="button" data-act="rv-rm" data-rv="${esc(r.name)}" title="Remove reviewer">${icon('x', 'sm')}</button>` : ''}</span>`;
 
@@ -6128,28 +6126,83 @@
     return ok;
   }
 
+  /* An agent's editor, in tabs: who it is, how it behaves, what it owns, what it is told, which commands it may run, and
+     the first turn the board would send it. One Save writes only the tabs that changed, through PATCH /api/agents/<name>. */
+  const DIAL_ENDS = {
+    explains: ['Terse', 'Explains everything'],
+    speed: ['Careful', 'Fast'],
+    autonomy: ['Asks first', 'Decides'],
+  };
+  const AGENT_TABS = [['identity', 'Identity', 'user'], ['personality', 'Personality', 'sparkle'], ['role', 'Role and areas', 'target'], ['context', 'Context', 'text'], ['commands', 'Commands', 'sliders'], ['preview', 'Preview', 'eye']];
+  const hintOf = (e) => (e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message);
+
   function specialityEditor(name) {
     const a = state.standing[name] || {};
-    const st = { areas: [...(a.areas || [])], concerns: [...(a.concerns || [])], context: '', loaded: false, dirty: false };
-    const root = el(`<div class="section spec"><div class="section-head">${icon('target', 'sm')}<span>Speciality</span><span class="rule"></span></div>
+    const prof = state.profiles[name] || {};
+    const pers = a.personality || {};
+    const id = esc(name);
+    const st = { areas: [...(a.areas || [])], concerns: [...(a.concerns || [])], items: null, touched: new Set(), preview: false };
+    const hex = /^#[0-9a-f]{6}$/i.test(prof.color || '') ? prof.color : '#888888';
+    const dial = (k) => {
+      const set = Number.isInteger(pers[k]);
+      return `<div class="pe-dial"><div class="pe-ends"><label for="pe-${k}-${id}">${esc(DIAL_ENDS[k][0])}</label><label class="pe-set"><input type="checkbox" data-dial-set="${k}" ${set ? 'checked' : ''}> say something</label><span>${esc(DIAL_ENDS[k][1])}</span></div>
+        <input type="range" id="pe-${k}-${id}" data-dial="${k}" min="0" max="4" step="1" value="${set ? pers[k] : 2}" ${set ? '' : 'disabled'} style="--p:${(set ? pers[k] : 2) * 25}%"></div>`;
+    };
+    const pane = (k, html) => `<div class="pe-pane" role="tabpanel" id="pepane-${k}-${id}" aria-labelledby="petab-${k}-${id}" data-pane="${k}" ${k === 'identity' ? '' : 'hidden'}>${html}</div>`;
+    const root = el(`<div class="section spec"><div class="section-head">${icon('target', 'sm')}<span>Edit ${esc(prof.label || name)}</span><span class="rule"></span></div>
+      <nav class="tabs pe-tabs" role="tablist" aria-label="Agent settings">${AGENT_TABS.map(([k, l, ic], i) => `<button type="button" role="tab" id="petab-${k}-${id}" aria-controls="pepane-${k}-${id}" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}" data-pt="${k}" class="${i === 0 ? 'on' : ''}">${icon(ic, 'sm')}<span>${l}</span></button>`).join('')}</nav>
       <div class="spec-ed">
-        <div class="spec-label">Owns <span class="muted">— code areas it is routed for (guidance, not a limit)</span></div>
-        <div class="spec-chips" data-k="areas"></div>
-        <div class="spec-add"><input class="inp" data-add="areas" placeholder="Add a file or folder — type to search the repo" autocomplete="off" list="specfiles-${esc(name)}"><datalist id="specfiles-${esc(name)}"></datalist><button class="btn sm ghost" type="button" data-add-btn="areas">${icon('plus', 'sm')}Add</button></div>
-        <div class="spec-label">Watches for <span class="muted">— concerns it checks before asking for review</span></div>
-        <div class="spec-chips" data-k="concerns"></div>
-        <div class="spec-add"><input class="inp" data-add="concerns" placeholder="e.g. accessibility contrast, dark/light parity, performance" autocomplete="off"><button class="btn sm ghost" type="button" data-add-btn="concerns">${icon('plus', 'sm')}Add</button></div>
-        <label class="spec-toggle"><input type="checkbox" data-reviewer ${a.reviewer ? 'checked' : ''}> <span><b>Can review</b> other agents' work in its areas — the receptionist may assign it; it comments, you approve</span></label>
-        <div class="spec-label">Context <span class="muted spec-file">${esc(a.contextFile || '')} — how its area works, conventions, traps; read on each session's first turn</span></div>
-        <textarea class="inp spec-ctx" rows="8" placeholder="Loading…" spellcheck="true"></textarea>
-        <div class="spec-foot"><span class="spec-state muted"></span><span class="grow"></span><button class="btn primary sm" type="button" data-spec-save disabled>${icon('check', 'sm')}Save</button></div>
+        ${pane('identity', `<label class="spec-label" for="pe-label-${id}">Title</label><input class="inp" id="pe-label-${id}" data-id="label" maxlength="60" value="${esc(prof.label || '')}">
+          <div class="pe-row">
+            <div><label class="spec-label" for="pe-glyph-${id}">Glyph</label><input class="inp" id="pe-glyph-${id}" data-id="glyph" maxlength="8" value="${esc(prof.glyph || '')}"></div>
+            <div><label class="spec-label" for="pe-color-${id}">Colour</label><input class="inp pe-color" id="pe-color-${id}" data-id="color" type="color" value="${hex}"></div>
+            <div><label class="spec-label" for="pe-model-${id}">Model tier</label><input class="inp" id="pe-model-${id}" data-id="model" list="pe-models-${id}" maxlength="64" value="${esc(a.model || '')}"><datalist id="pe-models-${id}"><option value="haiku"><option value="sonnet"><option value="opus"></datalist></div>
+          </div>
+          <label class="spec-label" for="pe-desc-${id}">Description <span class="muted">— what the receptionist routes by</span></label><textarea class="inp" id="pe-desc-${id}" data-id="description" rows="3" maxlength="2000">${esc(prof.description || a.description || '')}</textarea>`)}
+        ${pane('personality', `${['explains', 'speed', 'autonomy'].map(dial).join('')}
+          <label class="spec-label" for="pe-ptext-${id}">In its own words <span class="muted">— one or two sentences added to its brief</span></label><textarea class="inp" id="pe-ptext-${id}" data-ptext rows="3">${esc(pers.text || '')}</textarea>`)}
+        ${pane('role', `<label class="spec-label" for="pe-role-${id}">Role</label><select class="inp" id="pe-role-${id}" data-role><option value="${esc(a.role || '')}">${esc(a.role || 'none')}</option></select>
+          <div class="spec-label">Owns <span class="muted">— code areas it is routed for (guidance, not a limit)</span></div>
+          <div class="spec-chips" data-k="areas"></div>
+          <div class="spec-add"><input class="inp" data-add="areas" aria-label="Add an area" placeholder="Add a file or folder — type to search the repo" autocomplete="off" list="specfiles-${id}"><datalist id="specfiles-${id}"></datalist><button class="btn sm ghost" type="button" data-add-btn="areas">${icon('plus', 'sm')}Add</button></div>
+          <div class="spec-label">Watches for <span class="muted">— concerns it checks before asking for review</span></div>
+          <div class="spec-chips" data-k="concerns"></div>
+          <div class="spec-add"><input class="inp" data-add="concerns" aria-label="Add a concern" placeholder="e.g. accessibility contrast, dark/light parity, performance" autocomplete="off"><button class="btn sm ghost" type="button" data-add-btn="concerns">${icon('plus', 'sm')}Add</button></div>
+          <label class="spec-toggle"><input type="checkbox" data-reviewer ${a.reviewer ? 'checked' : ''}> <span><b>Can review</b> other agents' work in its areas — the receptionist may assign it; it comments, you approve</span></label>
+          <div class="muted pe-note">What it may do is the permissions grid; its wake-ups (${esc(listenLabel(a.listen))}) are set in agents.json.</div>`)}
+        ${pane('context', `<div class="muted pe-note">Read on each session's first turn. Switch an item off to keep it without sending it.</div>
+          <div class="pe-items" data-items><div class="muted">Loading…</div></div>
+          <div class="spec-add pe-addrow"><button class="btn sm ghost" type="button" data-add-item="note">${icon('plus', 'sm')}Note</button><button class="btn sm ghost" type="button" data-add-item="file">${icon('plus', 'sm')}Repo file</button><button class="btn sm ghost" type="button" data-add-item="link">${icon('plus', 'sm')}Link</button></div>`)}
+        ${pane('commands', `<div class="muted pe-note">A command is exact, or ends in <code>:*</code> to allow any arguments. Type one to see what the run builder would do with it. Nothing is changed here: commands live in agents.json.</div>
+          <div class="spec-add"><input class="inp" data-cmd aria-label="Command to check" placeholder="npm run measure:board" autocomplete="off" spellcheck="false"><button class="btn sm ghost" type="button" data-cmd-check>${icon('check', 'sm')}Check</button></div>
+          <div class="pe-result" data-cmd-out aria-live="polite"></div>`)}
+        ${pane('preview', `<div class="muted pe-note">The first turn the board would send now, built by the code a real run uses. It shows the saved agent: save first to see an edit in it.</div>
+          <div class="spec-add"><button class="btn sm ghost" type="button" data-pv>${icon('restore', 'sm')}Rebuild</button><span class="muted" data-pv-state></span></div>
+          <div class="pe-layers" data-pv-layers></div>
+          <pre class="pe-prompt" data-pv-text tabindex="0" aria-label="Prompt text"></pre>`)}
+        <div class="spec-foot"><span class="spec-state muted" aria-live="polite"></span><span class="grow"></span><button class="btn primary sm" type="button" data-spec-save disabled>${icon('check', 'sm')}Save</button></div>
       </div></div>`);
-    const ta = $('.spec-ctx', root);
     const saveBtn = $('[data-spec-save]', root);
-    const touch = () => { st.dirty = true; saveBtn.disabled = false; $('.spec-state', root).textContent = 'Unsaved changes'; };
+    const stateEl = $('.spec-state', root);
+    const touch = (g) => { st.touched.add(g); saveBtn.disabled = false; stateEl.textContent = 'Unsaved changes'; };
+
+    // tabs: arrows, Home and End move between them
+    const tabs = $$('[data-pt]', root);
+    const showTab = (k, focus) => {
+      tabs.forEach((b) => { const on = b.dataset.pt === k; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); b.tabIndex = on ? 0 : -1; if (on && focus) b.focus(); });
+      $$('[data-pane]', root).forEach((p) => { p.hidden = p.dataset.pane !== k; });
+      if (k === 'preview' && !st.preview) loadPreview();
+    };
+    $('.pe-tabs', root).addEventListener('keydown', (e) => {
+      const i = tabs.indexOf(document.activeElement);
+      if (i < 0) return;
+      const to = e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i + tabs.length - 1) % tabs.length : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+      if (to >= 0) { e.preventDefault(); showTab(tabs[to].dataset.pt, true); }
+    });
+
     const drawChips = (k) => {
       $(`[data-k="${k}"]`, root).innerHTML = st[k].length
-        ? st[k].map((x, i) => `<span class="spec-chip ${k === 'areas' ? 'path' : ''}">${k === 'areas' ? icon('text', 'sm') : icon('eye', 'sm')}<span>${esc(x)}</span><button type="button" data-rm="${k}" data-i="${i}" title="Remove">${icon('x', 'sm')}</button></span>`).join('')
+        ? st[k].map((x, i) => `<span class="spec-chip ${k === 'areas' ? 'path' : ''}">${k === 'areas' ? icon('text', 'sm') : icon('eye', 'sm')}<span>${esc(x)}</span><button type="button" data-rm="${k}" data-i="${i}" title="Remove" aria-label="Remove ${esc(x)}">${icon('x', 'sm')}</button></span>`).join('')
         : `<span class="muted spec-none">${k === 'areas' ? 'No areas yet' : 'No concerns yet'}</span>`;
     };
     drawChips('areas');
@@ -6158,36 +6211,138 @@
       const inp = $(`[data-add="${k}"]`, root);
       const v = inp.value.trim();
       if (!v) { inp.focus(); return; }
-      if (!st[k].includes(v)) { st[k].push(v); drawChips(k); touch(); }
+      if (!st[k].includes(v)) { st[k].push(v); drawChips(k); touch('role'); }
       inp.value = '';
       inp.focus();
     };
-    api('GET', `/api/agents/${encodeURIComponent(name)}/context`).then((r) => { ta.value = r.text || ''; ta.placeholder = 'Markdown: what this agent should know about its area'; st.loaded = true; autosize(ta); }, () => { ta.placeholder = 'Could not load the context page'; });
-    // file suggestions from the repo as you type a path
-    let t = null;
-    $('[data-add="areas"]', root).addEventListener('input', (e) => {
-      clearTimeout(t);
-      const q = e.target.value.trim();
-      t = setTimeout(async () => {
-        try { const list = await api('GET', `/api/files?q=${encodeURIComponent(q)}`); $('datalist', root).innerHTML = list.map((x) => `<option value="${esc(x)}"></option>`).join(''); } catch { /* offline */ }
-      }, 150);
+
+    // context items: notes, repo files and links, each switched on or off
+    const ITEM_KINDS = { note: ['text', 'Note'], file: ['target', 'Repo file'], link: ['link', 'Link'] };
+    const drawItems = () => {
+      const host = $('[data-items]', root);
+      host.innerHTML = st.items.length ? st.items.map((it, i) => {
+        const body = it.kind === 'note' ? `<textarea class="inp spec-ctx" data-f="body" rows="4" aria-label="Note text">${esc(it.body || '')}</textarea>`
+          : it.kind === 'file' ? `<input class="inp" data-f="path" aria-label="Repo path" placeholder="docs/guide.md" value="${esc(it.path || '')}" list="specfiles-${id}">${it.check && it.check.ok === false ? `<div class="pe-bad">${esc(it.check.why || 'Not readable')}</div>` : ''}`
+          : `<input class="inp" data-f="url" aria-label="Link address" placeholder="https://…" value="${esc(it.url || '')}">`;
+        return `<div class="pe-item ${it.on === false ? 'off' : ''}" data-ix="${i}"><div class="pe-item-head">${icon(ITEM_KINDS[it.kind]?.[0] || 'text', 'sm')}<input class="inp" data-f="title" aria-label="Item title" placeholder="${ITEM_KINDS[it.kind]?.[1] || 'Item'} title" value="${esc(it.title || '')}">
+          <label class="spec-toggle pe-on"><input type="checkbox" data-f="on" ${it.on === false ? '' : 'checked'}> on</label>
+          <button class="btn sm ghost" type="button" data-up="${i}" aria-label="Move up" ${i ? '' : 'disabled'}>↑</button><button class="btn sm ghost" type="button" data-down="${i}" aria-label="Move down" ${i < st.items.length - 1 ? '' : 'disabled'}>↓</button>
+          <button class="btn sm ghost" type="button" data-del="${i}" aria-label="Remove item">${icon('x', 'sm')}</button></div>${body}</div>`;
+      }).join('') : '<div class="muted spec-none">No context items yet</div>';
+      $$('textarea', host).forEach(autosize);
+    };
+    api('GET', `/api/agents/${encodeURIComponent(name)}/context`).then((r) => { st.items = (r.items || []).map((i) => ({ ...i })); drawItems(); }, (e) => { $('[data-items]', root).innerHTML = `<div class="pe-bad">${esc(hintOf(e))}</div>`; });
+    api('GET', '/api/roles').then((r) => {
+      $('[data-role]', root).innerHTML = `<option value="">none</option>${(r.roles || []).map((x) => `<option value="${esc(x.key)}" ${x.key === a.role ? 'selected' : ''}>${esc(x.label || x.key)}</option>`).join('')}`;
+    }, () => { /* the current role stays as the only option */ });
+
+    // commands: what the run builder would do with one
+    const checkCmd = async () => {
+      const inp = $('[data-cmd]', root);
+      const out = $('[data-cmd-out]', root);
+      if (!inp.value.trim()) { inp.focus(); return; }
+      try {
+        const r = await api('POST', `/api/agents/${encodeURIComponent(name)}/commands/check`, { command: inp.value });
+        out.innerHTML = `<div class="${r.kept ? 'pe-ok' : 'pe-bad'}">${icon(r.kept ? 'check' : 'x', 'sm')}<b>${r.kept ? 'Kept' : 'Dropped'}</b> — ${esc(r.why || '')}</div>
+          ${r.listed ? `<div class="muted">Listed as <code>${esc(r.listed)}</code></div>` : ''}
+          ${(r.allowedBy || []).length ? `<div class="muted">Already allowed by ${r.allowedBy.map((x) => `<code>${esc(x)}</code>`).join(', ')}</div>` : ''}
+          ${r.denied ? `<div class="pe-bad">${icon('lock', 'sm')}Kept but denied: needs ${esc(r.denied.needs)}${r.denied.why ? ` — ${esc(r.denied.why)}` : ''}</div>` : ''}`;
+      } catch (e) { out.innerHTML = `<div class="pe-bad">${esc(hintOf(e))}</div>`; }
+    };
+
+    // preview: the board's own first turn for this agent
+    async function loadPreview() {
+      const s = $('[data-pv-state]', root);
+      s.textContent = 'Building…';
+      try {
+        const r = await api('GET', `/api/agents/${encodeURIComponent(name)}/preview`);
+        st.preview = true;
+        $('[data-pv-text]', root).textContent = r.prompt || '';
+        $('[data-pv-layers]', root).innerHTML = (r.layers || []).map((l) => `<span class="mini-chip">${esc(l.label || l.layer)} · ${Number(l.chars ?? (l.text || '').length)}</span>`).join('');
+        s.textContent = `${(r.prompt || '').length} characters`;
+      } catch (e) { s.textContent = hintOf(e); }
+    }
+
+    root.addEventListener('input', (e) => {
+      const t = e.target;
+      if (t.dataset.add === 'areas') {
+        clearTimeout(root._t);
+        const q = t.value.trim();
+        root._t = setTimeout(async () => {
+          try { const list = await api('GET', `/api/files?q=${encodeURIComponent(q)}`); $('datalist[id^="specfiles-"]', root).innerHTML = list.map((x) => `<option value="${esc(x)}"></option>`).join(''); } catch { /* offline */ }
+        }, 150);
+        return;
+      }
+      if (t.dataset.id) touch('identity');
+      else if (t.dataset.dial) { t.style.setProperty('--p', `${Number(t.value) * 25}%`); touch('personality'); }
+      else if (t.dataset.ptext !== undefined) { autosize(t); touch('personality'); }
+      else if (t.dataset.f) {
+        const ix = t.closest('[data-ix]');
+        const it = st.items?.[Number(ix?.dataset.ix)];
+        if (!it) return;
+        it[t.dataset.f] = t.type === 'checkbox' ? t.checked : t.value;
+        if (t.dataset.f === 'on') ix.classList.toggle('off', !t.checked);
+        if (t.tagName === 'TEXTAREA') autosize(t);
+        if (t.dataset.f === 'path') delete it.check;
+        touch('context');
+      }
     });
-    root.addEventListener('keydown', (e) => { const k = e.target.dataset?.add; if (k && e.key === 'Enter') { e.preventDefault(); add(k); } });
-    ta.addEventListener('input', () => { autosize(ta); touch(); });
-    $('[data-reviewer]', root).addEventListener('change', touch);
+    root.addEventListener('change', (e) => {
+      const t = e.target;
+      if (t.dataset.dialSet) { $(`[data-dial="${t.dataset.dialSet}"]`, root).disabled = !t.checked; touch('personality'); }
+      else if (t.matches('[data-reviewer], [data-role]')) touch('role');
+    });
+    root.addEventListener('keydown', (e) => {
+      const k = e.target.dataset?.add;
+      if (k && e.key === 'Enter') { e.preventDefault(); add(k); }
+      if (e.target.dataset?.cmd !== undefined && e.key === 'Enter') { e.preventDefault(); checkCmd(); }
+    });
     root.addEventListener('click', async (e) => {
+      const tb = e.target.closest('[data-pt]');
+      if (tb) { showTab(tb.dataset.pt); return; }
       const b = e.target.closest('[data-add-btn]');
       if (b) { add(b.dataset.addBtn); return; }
       const rm = e.target.closest('[data-rm]');
-      if (rm) { st[rm.dataset.rm].splice(Number(rm.dataset.i), 1); drawChips(rm.dataset.rm); touch(); return; }
+      if (rm) { st[rm.dataset.rm].splice(Number(rm.dataset.i), 1); drawChips(rm.dataset.rm); touch('role'); return; }
+      const ai = e.target.closest('[data-add-item]');
+      if (ai && st.items) {
+        const kind = ai.dataset.addItem;
+        st.items.push({ kind, title: '', on: true, ...(kind === 'note' ? { body: '' } : kind === 'file' ? { path: '' } : { url: '' }) });
+        drawItems(); touch('context');
+        $$('[data-ix]', root).at(-1)?.querySelector('[data-f="title"]')?.focus();
+        return;
+      }
+      const mv = e.target.closest('[data-up],[data-down],[data-del]');
+      if (mv && st.items) {
+        const i = Number(mv.dataset.up ?? mv.dataset.down ?? mv.dataset.del);
+        if (mv.dataset.del !== undefined) st.items.splice(i, 1);
+        else { const j = mv.dataset.up !== undefined ? i - 1 : i + 1; [st.items[i], st.items[j]] = [st.items[j], st.items[i]]; }
+        drawItems(); touch('context');
+        return;
+      }
+      if (e.target.closest('[data-cmd-check]')) { checkCmd(); return; }
+      if (e.target.closest('[data-pv]')) { loadPreview(); return; }
       if (e.target.closest('[data-spec-save]')) {
+        const body = {};
+        if (st.touched.has('identity')) for (const k of ['label', 'glyph', 'color', 'model', 'description']) body[k] = $(`[data-id="${k}"]`, root).value.trim() || null;
+        if (st.touched.has('personality')) {
+          const per = {};
+          for (const k of Object.keys(DIAL_ENDS)) if ($(`[data-dial-set="${k}"]`, root).checked) per[k] = Number($(`[data-dial="${k}"]`, root).value);
+          const text = $('[data-ptext]', root).value.trim();
+          if (text) per.text = text;
+          body.personality = Object.keys(per).length ? per : null;
+        }
+        if (st.touched.has('role')) Object.assign(body, { role: $('[data-role]', root).value || null, areas: st.areas, concerns: st.concerns, reviewer: $('[data-reviewer]', root).checked });
+        if (st.touched.has('context') && st.items) body.contextItems = st.items.map(({ check, ...it }) => it);
         saveBtn.disabled = true;
         try {
-          const r = await api('PATCH', `/api/agents/${encodeURIComponent(name)}`, { areas: st.areas, concerns: st.concerns, reviewer: $('[data-reviewer]', root).checked, ...(st.loaded ? { context: ta.value } : {}) });
-          st.dirty = false;
-          $('.spec-state', root).textContent = Object.keys(r.changes || {}).length ? 'Saved — used from its next session' : 'No changes';
+          const r = await api('PATCH', `/api/agents/${encodeURIComponent(name)}`, body);
+          st.touched.clear();
+          stateEl.textContent = Object.keys(r.changes || {}).length ? 'Saved — used from its next session' : 'No changes';
           await refreshPresence();
-        } catch (err) { saveBtn.disabled = false; toast(err.message, { kind: 'error' }); }
+          await refreshProfiles();
+          if (st.preview) loadPreview();
+        } catch (err) { saveBtn.disabled = false; toast(hintOf(err), { kind: 'error', wrap: true }); }
       }
     });
     return root;
