@@ -37,7 +37,7 @@ Errors are `{ "error": "…", "code": "LEASED", "hint": "…" }`. Branch on `cod
 ## 0. Rules of the road
 
 1. **Identify yourself** on every request: header `X-Agent: <your-name>` (or `?agent=<name>`). Use one stable name per agent.
-2. **Read the standing rules first**: `GET /api/boards/main/directives` returns the board's workflow rules **and** the project's own convention files (e.g. CLAUDE.md, under `projectRules`). Conventions live in the repo; the board only adds how to use the board. Never copy one into the other.
+2. **Read the board rules first**: `GET /api/boards/main/directives` returns the board rules (how to use the board) **and** the project conventions, the project's own convention files (e.g. CLAUDE.md, under `projectRules`). Conventions live in the repo; the board only adds how to use the board. Never copy one into the other.
 3. **Start before you work** (`POST …/start` leases the ticket for you), renew while working, request review when done — or, if you are the only agent, **hold the whole board** once (master lease, below).
 4. **Ask, don't guess**: `POST …/attention` when blocked on a decision — allowed even on tickets others hold. The answer shows up in `GET …/work`.
 5. **Never write `data/` files directly.** They are read-only on purpose. The API is the only writer.

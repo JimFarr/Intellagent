@@ -2820,7 +2820,7 @@ setInterval(() => {
 const SCHEMA = {
   board: {
     id: 'string (slug)', name: 'string', idPrefix: 'string, e.g. "INT" → items are INT-1, INT-2…', nextNumber: 'integer',
-    directives: 'markdown — standing rules from the human. Read before working.',
+    directives: 'markdown — the board rules, from the human. Read before working.',
     columns: 'Column[] (ordered)', items: 'Record<itemId, Item>', createdAt: 'ISO date', updatedAt: 'ISO date',
   },
   column: {
@@ -3238,7 +3238,7 @@ route('GET', '/api/boards', 'List boards', () => [...boards.values()].map((ctx) 
   archived: Object.keys(ctx.archive.items).length,
 })));
 
-route('GET', '/api/templates', 'Board templates: columns, ticket fields and standing rules', () => Object.entries(TEMPLATES).map(([key, t]) => ({
+route('GET', '/api/templates', 'Board templates: columns, ticket fields and board rules', () => Object.entries(TEMPLATES).map(([key, t]) => ({
   key, label: t.label, description: t.description, columns: t.columns.map((c) => ({ name: c.name, flags: c.flags || {} })),
   fields: (t.schema?.fields || []).map((f) => ({ key: f.key, type: f.type })), directives: t.directives || '',
 })));
@@ -3299,7 +3299,7 @@ function projectRules() {
   }).filter(Boolean);
 }
 
-route('GET', '/api/boards/:board/directives', 'Standing rules: board workflow rules (editable) + the project\'s own convention files (read-only)', ({ p }) => {
+route('GET', '/api/boards/:board/directives', 'Board rules (editable) + the project conventions, the project\'s own convention files (read-only)', ({ p }) => {
   const ctx = getCtx(p.board);
   return { directives: ctx.board.directives, projectRules: projectRules(), updatedAt: ctx.board.updatedAt };
 });
@@ -3616,7 +3616,7 @@ route('PATCH', '/api/boards/:board/focus/:id', 'Change a focus board { name?, ad
   return focusView(ctx, updateFocus(ctx, p.id, body, actor));
 });
 route('DELETE', '/api/boards/:board/focus/:id', 'Human or admin.focus: retire a focus board — the view goes, no ticket moves. Returns what moved while it was open', ({ p, actor }) => retireFocus(getCtx(p.board), p.id, actor));
-route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directives } (human or admin.rules)', ({ p, body, actor }) => {
+route('PUT', '/api/boards/:board/directives', 'Replace the board rules: { directives } (human or admin.rules)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {
     const v = str(body.directives ?? body.markdown, 50_000);

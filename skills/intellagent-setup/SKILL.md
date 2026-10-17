@@ -1,6 +1,6 @@
 ---
 name: intellagent-setup
-description: Set up an Intellagent kanban board in the current project and shape it to the work — template, columns, ticket fields, standing rules, seed tickets, MCP and git wiring. Use when the user asks to set up, add, install or initialise Intellagent, an agent kanban, or a task board for coordinating with agents in a project.
+description: Set up an Intellagent kanban board in the current project and shape it to the work — template, columns, ticket fields, board rules, seed tickets, MCP and git wiring. Use when the user asks to set up, add, install or initialise Intellagent, an agent kanban, or a task board for coordinating with agents in a project.
 ---
 
 # Set up Intellagent in this project
@@ -139,7 +139,7 @@ Features that are not on the board yet (card rules, rebalancing, analytics, agen
 
 - `POST /api/boards/main/finish { "summary": "…" }` summarising what you set up (it also releases anything you hold).
 - Raise *needs you* (`POST /items/<id>/attention`) on anything you were unsure about — on the card, not only in chat, so the answer stays with the work.
-- Tell the user the board URL (or run `intellagent open`), what was created, and how to use it: answer questions on cards, approve reviews, edit standing rules.
+- Tell the user the board URL (or run `intellagent open`), what was created, and how to use it: answer questions on cards, approve reviews, edit the board rules.
 
 ## Boundaries
 
