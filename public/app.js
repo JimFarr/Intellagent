@@ -1325,6 +1325,38 @@
     menu(anchor, items, { width: 300 });
   }
 
+  // The board runs the code it started with (INT-319); say so when main has moved on. Quiet when behind is 0 or null.
+  // Restart is a deliberate click: the board never restarts by itself.
+  function codeBehindHTML() {
+    const a = state.app;
+    if (!a.behind) return '';
+    const n = `${a.behind} commit${a.behind === 1 ? '' : 's'}`;
+    const tix = a.behindTickets || [];
+    const named = tix.length ? ` (${tix.slice(0, 6).map(esc).join(', ')}${tix.length > 6 ? ', …' : ''})` : '';
+    const since = a.runningSince ? new Date(a.runningSince).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    return `<span class="fb-ic">${icon('restore')}</span>
+      <span class="fb-text"><small>Board is behind main</small><b>Running code from ${esc(since)} — ${n} behind main${named}. Restart to use them</b></span>
+      <span class="fb-actions"><button class="btn sm" data-restart-board title="Restart the board|Runs the code on main. Agents' runs are interrupted and retried; the page reconnects by itself">${icon('restore', 'sm')}Restart</button></span>`;
+  }
+  function renderCodeBar() {
+    const h = codeBehindHTML();
+    for (const bar of document.querySelectorAll('#codebar, .code-row')) {
+      bar.hidden = !h;
+      if (bar.innerHTML !== h) bar.innerHTML = h;
+    }
+  }
+  async function refreshCodeState() {
+    try { Object.assign(state.app, await api('GET', '/api/app')); } catch { return; }
+    renderCodeBar();
+  }
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-restart-board]');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    try { await api('POST', '/api/app/restart'); toast('Restarting — the page reconnects in a few seconds', { icon: 'restore', kind: 'ok' }); }
+    catch (err) { btn.disabled = false; toast(`${err.message}${err.hint ? ` — ${err.hint}` : ''}`, { kind: 'err' }); }
+  });
+
   function renderHeader() {
     if (!state.board) return;
     $('#appName').textContent = state.app.name;
@@ -1347,6 +1379,7 @@
     document.title = `${viewFocus() ? `${viewFocus().name} · ` : ''}${state.board.name} · ${state.app.name}`;
     renderFocusBar();
     renderIdleBadge();
+    renderCodeBar();
     renderPresenceButton();
     renderAsk();
     $('#build').innerHTML = `<span class="live-dot ${state.live ? 'on' : ''}" title="${state.live ? 'Live' : 'Reconnecting'}"></span>
@@ -4187,6 +4220,7 @@
     // the idle notice (INT-316) appears with the alarm and goes when a builder runs or a downed agent is back:
     // only those events ask again, and only while a notice stands
     if (ev.type === 'agent.idle_alarm' || (state.idleNotice && /^(agent\.(status|run\.started|failed|resumed|paused)|agents\.changed)$/.test(ev.type))) refreshIdleNotice();
+    if (ev.type === 'item.moved' && ev.columnId === 'done') refreshCodeState();
     if (ev.type === 'app.renamed') { state.app.name = ev.to; renderHeader(); }
     if (ev.type === 'profile.updated') refreshProfiles();
     if (ev.type === 'board.created' || ev.type === 'board.updated' || ev.type?.startsWith('item.')) refreshBoards();
@@ -5661,7 +5695,7 @@
     // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266).
     const first = !body._agentsFilled;
     body._agentsFilled = true;
-    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(stopRow + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + '<div class="coord-row base-row" data-base data-keep="base"></div>' + addBtn + (rows.length ? rows.map((p, i) => {
+    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(`<div class="focusbar codebar code-row" ${state.app.behind ? '' : 'hidden'}>${codeBehindHTML()}</div>` + stopRow + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + '<div class="coord-row base-row" data-base data-keep="base"></div>' + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
