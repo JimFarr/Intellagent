@@ -135,6 +135,21 @@ describe('board admin powers (INT-256)', () => {
   });
 });
 
+describe('delegated metrics (INT-256)', () => {
+  it('every delegated event counts once: reviews, moves, admin, and anything else under other', () => {
+    const { createMetrics } = require('../lib/metrics');
+    const ts = new Date().toISOString();
+    const ev = (type, power, name) => ({ board: 'main', ts, type, actor: { kind: 'agent', name }, delegated: { power, onBehalfOf: 'human' } });
+    const recent = [ev('review.approved', 'review.decide', 'a'), ev('item.moved', 'column.gate', 'a'), ev('board.updated', 'admin.rules', 'b'),
+      ev('agent.paused', 'agents.control', 'b'), { board: 'main', ts, type: 'item.moved', actor: { kind: 'agent', name: 'c' } }];
+    const metrics = createMetrics({ doneColumnId: () => 'done', workingColumn: () => null, recent });
+    const ctx = { id: 'main', board: { columns: [{ id: 'done', name: 'Done', itemIds: [] }], items: {} }, archive: { items: {} } };
+    const d = metrics(ctx, 7).delegated;
+    assert.deepEqual([d.reviews, d.moves, d.admin, d.other], [1, 1, 1, 1]);
+    assert.deepEqual(d.byAgent, { a: { reviews: 1, moves: 1, admin: 0, other: 0 }, b: { reviews: 0, moves: 0, admin: 1, other: 1 } });
+  });
+});
+
 describe("the human's switch for board admin (INT-256)", () => {
   it('lists who holds admin powers; off suspends them all until the human switches it back on', async () => {
     const s = await startServer({ agents: { agents: { cy: { enabled: false, grants: ['admin.rules', 'review.decide'] }, dee: { enabled: false } } } });
