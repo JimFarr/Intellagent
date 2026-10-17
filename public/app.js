@@ -4753,9 +4753,9 @@
       if (when('column.gate').length) parts.push(`moves work past your gates when ${when('column.gate').join(', or when ')}`);
       return `<div class="appr-who">${avatar({ kind: 'agent', name: a.name })}<b>${esc(nameOf(a.name))}</b><span>${esc(parts.join('; '))}${a.status === 'paused' ? ' · paused' : ''}${a.standing === false ? ' · not a standing agent (granted in the manifest)' : ''}</span></div>`;
     }).join('');
-    el.innerHTML = `<div class="cr-label"><span>Approves for you</span><span class="sr-auto">${v.on ? 'On: these agents may approve on your behalf' : 'Off: every approval waits for you'}</span></div>
+    patchHTML(el, `<div class="cr-label"><span>Approves for you</span><span class="sr-auto">${v.on ? 'On: these agents may approve on your behalf' : 'Off: every approval waits for you'}</span></div>
       <button class="switch ${v.on ? 'on' : ''}" data-appr-toggle title="${v.on ? 'Stop all approvals|Suspend every approval grant on this board until you switch it back on' : 'Allow approvals|Let these agents approve on your behalf again'}"></button>
-      <div class="appr-list ${v.on ? '' : 'off'}">${who}</div>`;
+      <div class="appr-list ${v.on ? '' : 'off'}">${who}</div>`);
     $('[data-appr-toggle]', el).onclick = async () => {
       try {
         await api('PUT', `/api/boards/${state.board.id}/approvals`, { on: !v.on });
@@ -5006,6 +5006,40 @@
     return 'used the board';
   };
 
+  // Patches `el` to hold `html` in place: nodes that stay keep their running animations, hover and focus (INT-266).
+  // Children with data-agent / data-now are matched by that key, others by position; [data-appr] and [data-idle] blocks fill themselves.
+  const morphKey = (n) => (n.nodeType === 1 ? n.dataset.agent ?? n.dataset.now ?? null : null);
+  function patchHTML(el, html) {
+    const to = el.cloneNode(false);
+    to.innerHTML = html;
+    morphChildren(el, to);
+  }
+  function morphNode(from, to) {
+    if (from.nodeType !== 1) { if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue; return; }
+    for (const { name } of [...from.attributes]) if (!to.hasAttribute(name)) from.removeAttribute(name);
+    for (const { name, value } of to.attributes) {
+      // a ring keeps the phase it started with: a new --phase on a running animation makes it jump
+      if (name === 'style' && value.startsWith('--phase:') && from.getAttribute('style')?.startsWith('--phase:')) continue;
+      // a "spot" the drawer just put on a row outlives the refresh that follows it
+      const v = name === 'class' && from.classList.contains('spot') && !to.classList.contains('spot') ? `${value} spot` : value;
+      if (from.getAttribute(name) !== v) from.setAttribute(name, v);
+    }
+    if (!('appr' in to.dataset || 'idle' in to.dataset)) morphChildren(from, to);
+  }
+  function morphChildren(from, to) {
+    const keyed = new Map([...from.children].filter((n) => morphKey(n) != null).map((n) => [morphKey(n), n]));
+    let at = from.firstChild;
+    for (const next of [...to.childNodes]) {
+      const k = morphKey(next);
+      const old = k != null ? keyed.get(k) : at && morphKey(at) == null && at.nodeName === next.nodeName ? at : null;
+      if (!old) { from.insertBefore(next, at); continue; }
+      keyed.delete(k);
+      morphNode(old, next);
+      if (old === at) at = at.nextSibling; else from.insertBefore(old, at);
+    }
+    while (at) { const n = at.nextSibling; at.remove(); at = n; }
+  }
+
   function fillAgents(body) {
     const seen = new Set(state.presence.map((p) => p.name));
     const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
@@ -5020,17 +5054,20 @@
     const stopRow = sa.length || state.presence.some((p) => p.leases?.length) ? `<div class="stop-row">${allPaused
       ? `<button class="btn sm" data-resume-all title="Resume all|Unpause every standing agent; their queued events run">${icon('play', 'sm')}Resume all agents</button>`
       : `<button class="btn sm danger" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}Stop all agents</button>`}</div>` : '';
-    body.innerHTML = stopRow + agentsNowHTML() + '<div class="appr-row" data-appr></div><div class="appr-row idle-row" data-idle></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
+    // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266).
+    const first = !body._agentsFilled;
+    body._agentsFilled = true;
+    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(stopRow + agentsNowHTML() + '<div class="appr-row" data-appr></div><div class="appr-row idle-row" data-idle></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
       const subs = p.subscriptions.map((s) => `<span class="mini-chip" title="${esc(JSON.stringify(s.filter))}">${icon('bell', 'sm')}${esc(s.label || Object.entries(s.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join('');
       // the row's rarer actions live in its ⋯ menu, so they take no room in the row (INT-268)
       const more = [p.name !== coord && 'Make coordinator', forgettable(p) && 'Forget'].filter(Boolean);
-      return `<div class="agent-row ${p.online || sa ? '' : 'off'}" data-agent="${esc(p.name)}" style="animation-delay:${i * 40}ms">${avatar({ kind: 'agent', name: p.name }, 'lg')}
+      return `<div class="agent-row ${p.online || sa ? '' : 'off'}" data-agent="${esc(p.name)}"${first ? ` style="animation-delay:${i * 40}ms"` : ''}>${avatar({ kind: 'agent', name: p.name }, 'lg')}
         <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(nameOf(p.name))}${nameOf(p.name) !== p.name ? `<span class="nm-id">@${esc(p.name)}</span>` : ''}${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from the Ask field go to this agent unless you pick another">takes requests</span>' : ''}${more.length ? `<button class="row-more" data-row-more="${esc(p.name)}" aria-label="More for ${esc(nameOf(p.name))}" title="More|${more.join(', ')}${more.includes('Forget') ? ' (it comes back if it connects again)' : ''}">${icon('more', 'sm')}</button>` : ''}</div><div class="sub"${p.lastAction ? ` title="${esc(p.lastAction)}"` : ''}>${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(callWords(p.lastAction))}` : ''}</div></div>
         ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}</div>`;
-    }).join('') : `<div class="empty-note">${icon('bot')}</div>`);
+    }).join('') : `<div class="empty-note">${icon('bot')}</div>`));
     fillApprovals($('[data-appr]', body));
     fillIdleAlarm($('[data-idle]', body));
     body.onclick = async (e) => {
