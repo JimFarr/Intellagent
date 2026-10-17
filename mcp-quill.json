@@ -15,7 +15,7 @@
         "--output-dir",
         "C:/Development/apps/Intellagent/sandboxes/quill/shots",
         "--blocked-origins",
-        "http://127.0.0.1:7420;http://localhost:7420;http://127.0.0.1:7421;http://localhost:7421;http://127.0.0.1:7499;http://localhost:7499"
+        "http://127.0.0.1:7420;http://localhost:7420;http://127.0.0.1:7499;http://localhost:7499"
       ]
     }
   }
