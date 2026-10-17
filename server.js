@@ -3643,7 +3643,7 @@ function issueAgentToken(name) {
 }
 
 // Optional auth from the manifest. Off by default; docs and app name stay public so agents can discover it.
-function checkAuth(req, q, actor, pathname) {
+function checkAuth(req, q, actor, pathname, policy) {
   // the route index, docs and app name stay public so agents can discover the board (and ask for a token)
   if (!pathname.startsWith('/api') || pathname === '/api' || pathname === '/api/docs' || pathname === '/api/app') return;
   // the UI's live stream: a valid ticket stands in for the human's token, on this one request
@@ -3667,7 +3667,8 @@ function checkAuth(req, q, actor, pathname) {
     fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name} (the CLI and MCP tools then send it by themselves)` });
   }
   const p = permsFor(actor.name);
-  if (p?.readOnly && req.method !== 'GET' && /^\/api\/boards\//.test(pathname) && !/\/(comments|attention)$/.test(pathname)) {
+  // the route policy says what a read-only agent may still do (INT-144): talk, never change
+  if (p?.readOnly && policy && !policy.readOnly) {
     fail(403, `${actor.name} is read-only (it may still comment and ask for help)`);
   }
 }
@@ -3683,11 +3684,143 @@ function actorOf(req, q) {
   return { kind: 'agent', name: 'anonymous' };
 }
 
+/* Who may call each write route (INT-144): one table, read by the dispatcher before the handler runs.
+   who — besides the human, who may call it:
+     'human'        nobody else: enforced here, 403 HUMAN_ONLY with `why` and `hint`
+     'any'          any agent; the handler applies the ticket's own rules (leases, gates, columns, fields)
+     'self'         an agent acting for itself: its own lease, question, request, profile, memory, subscription
+     'coordinator'  the board's coordinator
+     '<power>'      an agent holding that grant; the handler checks its scope, the human's switches and own work
+   (a list means any of them). readOnly: true — a read-only agent may still call it (it may talk, never change).
+   held: true — allowed while another agent holds the board (master lease).
+   Field-level rules (which column flags are gated, which keys an agents.manage grant may set) stay in the handler.
+   A write route missing here, or an entry with no route, stops the board at start. */
+const humanAsk = (what) => ({ why: `Only the human can ${what}`, hint: 'Ask the human on a card (POST …/items/<id>/attention) to change it' });
+const LIBRARY_HUMAN = { why: 'Only the human can change the permission library', hint: 'Ask on a card' };
+const B_ = '/api/boards/:board';
+const POLICY = {
+  'POST /api/app/restart': { who: 'human', why: 'Only the human restarts the board', hint: 'Tell the human the board is behind main (GET /api/app → behind)' },
+  'PATCH /api/app': { who: 'any', readOnly: true },
+  'POST /api/boards': { who: 'any', readOnly: true },
+  [`PATCH ${B_}`]: { who: ['any', 'admin.rules', 'admin.coordinator'] },
+  [`POST ${B_}/master`]: { who: 'any', held: true },
+  [`PUT ${B_}/master/status`]: { who: 'self', held: true },
+  [`DELETE ${B_}/master`]: { who: 'self', held: true },
+  [`PUT ${B_}/approvals`]: { who: 'human', ...humanAsk('switch approvals on or off') },
+  [`PUT ${B_}/admin`]: { who: 'human', ...humanAsk('switch board admin on or off') },
+  [`PUT ${B_}/idle-alarm`]: { who: 'human', ...humanAsk('set the idle-board alarm') },
+  [`PUT ${B_}/rebalance`]: { who: 'admin.rebalancing' },
+  [`POST ${B_}/items/:id/pin`]: { who: 'human', ...humanAsk('pin a ticket') },
+  [`DELETE ${B_}/items/:id/pin`]: { who: 'human', ...humanAsk('unpin a ticket') },
+  [`POST ${B_}/items/:id/rebalance/undo`]: { who: 'human', ...humanAsk('undo a rebalancing move') },
+  [`POST ${B_}/focus`]: { who: 'admin.focus' },
+  [`PUT ${B_}/focus/active`]: { who: 'admin.focus' },
+  [`PATCH ${B_}/focus/:id`]: { who: ['admin.focus', 'coordinator'] },
+  [`DELETE ${B_}/focus/:id`]: { who: 'admin.focus' },
+  [`PUT ${B_}/directives`]: { who: 'admin.rules' },
+  [`PUT ${B_}/card-rules`]: { who: 'admin.cardRules' },
+  [`PUT ${B_}/schema`]: { who: ['any', 'admin.fields'] },
+  [`POST ${B_}/ticket-templates`]: { who: 'any' },
+  [`PATCH ${B_}/ticket-templates/:key`]: { who: 'any' },
+  [`DELETE ${B_}/ticket-templates/:key`]: { who: 'any' },
+  [`POST ${B_}/schema/fields`]: { who: 'any' },
+  [`PATCH ${B_}/schema/fields/:key`]: { who: 'any' },
+  [`DELETE ${B_}/schema/fields/:key`]: { who: 'any' },
+  [`POST ${B_}/columns`]: { who: 'admin.columns' },
+  [`PATCH ${B_}/columns/:column`]: { who: ['any', 'admin.columns'] },
+  [`DELETE ${B_}/columns/:column`]: { who: 'admin.columns' },
+  [`POST ${B_}/items`]: { who: 'any' },
+  [`POST ${B_}/items/bulk`]: { who: ['any', 'column.gate'] },
+  [`PATCH ${B_}/items/:id`]: { who: ['any', 'column.gate'] },
+  [`POST ${B_}/items/:id/move`]: { who: ['any', 'column.gate'] },
+  [`POST ${B_}/items/:id/comments`]: { who: 'any', readOnly: true, held: true },
+  [`POST ${B_}/items/:id/attachments`]: { who: 'any' },
+  [`DELETE ${B_}/items/:id/attachments/:att`]: { who: 'any' },
+  [`POST ${B_}/items/:id/lease`]: { who: 'any' },
+  [`PUT ${B_}/items/:id/status`]: { who: 'self' },
+  [`DELETE ${B_}/items/:id/lease`]: { who: 'self' },
+  [`POST ${B_}/items/:id/review`]: { who: 'any' },
+  [`POST ${B_}/items/:id/preview`]: { who: 'human', why: 'Only the human opens previews', hint: 'Agents run their own: intellagent sandbox <you> --from <author> --seed snapshot' },
+  [`POST ${B_}/digest`]: { who: 'any', held: true },
+  [`POST ${B_}/requests`]: { who: 'any', held: true },
+  [`POST ${B_}/requests/:id/reply`]: { who: 'self', held: true },
+  [`POST ${B_}/requests/:id/withdraw`]: { who: ['self', 'coordinator'], held: true },
+  [`POST ${B_}/items/:id/questions/:qid/withdraw`]: { who: ['self', 'coordinator'] },
+  [`POST ${B_}/items/:id/start`]: { who: 'any' },
+  [`POST ${B_}/items/:id/land`]: { who: 'work.land' },
+  [`POST ${B_}/items/:id/review/decision`]: { who: 'review.decide' },
+  [`POST ${B_}/finish`]: { who: 'self', held: true },
+  [`POST ${B_}/items/:id/reviewers`]: { who: 'coordinator' },
+  [`DELETE ${B_}/items/:id/reviewers/:name`]: { who: 'coordinator' },
+  [`POST ${B_}/items/:id/reviewers/:name/verdict`]: { who: 'self' },
+  [`POST ${B_}/items/:id/reactions`]: { who: 'any', held: true },
+  [`DELETE ${B_}/items/:id/reactions`]: { who: 'self', held: true },
+  [`POST ${B_}/items/:id/typing`]: { who: 'human', why: 'Typing is a human signal: agents show what they do with a status line', hint: 'PUT …/items/<ID>/status { status } shows it on the card' },
+  [`POST ${B_}/items/:id/lease/request`]: { who: 'any', held: true },
+  [`POST ${B_}/items/:id/lease/handover`]: { who: 'self' },
+  [`POST ${B_}/items/:id/lease/decline`]: { who: 'self', held: true },
+  [`POST ${B_}/items/:id/attention`]: { who: 'any', readOnly: true, held: true },
+  [`DELETE ${B_}/items/:id/attention`]: { who: ['self', 'coordinator'], readOnly: true, held: true },
+  [`DELETE ${B_}/items/:id`]: { who: 'any' },
+  [`DELETE ${B_}/test-items`]: { who: 'human', why: 'Only a human can delete all test tickets at once — delete them one by one' },
+  [`POST ${B_}/items/:id/archive`]: { who: 'any' },
+  [`POST ${B_}/archive`]: { who: 'any' },
+  [`POST ${B_}/archive/:id/restore`]: { who: 'any' },
+  'POST /api/search': { who: 'any', readOnly: true },
+  'POST /api/stream-ticket': { who: 'human', why: 'Stream tickets are for the board UI', hint: 'Agents open /api/stream with their token in the Authorization header' },
+  'POST /api/subscriptions': { who: 'any', readOnly: true },
+  'DELETE /api/subscriptions/:id': { who: 'self', readOnly: true },
+  'POST /api/subscriptions/:id/ack': { who: 'self', readOnly: true },
+  'PUT /api/agents/base-context': { who: 'human', why: 'Only the human changes the base context: every agent is taught it', hint: 'Suggest the change on a card instead' },
+  'POST /api/permissions': { who: 'human', ...LIBRARY_HUMAN },
+  'PATCH /api/permissions/:key': { who: 'human', ...LIBRARY_HUMAN },
+  'DELETE /api/permissions/:key': { who: 'human', ...LIBRARY_HUMAN },
+  'PUT /api/agents/:name/permissions/:key': { who: 'human', why: 'Only the human sets what an agent may do', hint: 'Ask on a card, and say which permission and which agent' },
+  'POST /api/agents': { who: 'human', why: 'Only the human can control standing agents' },
+  'DELETE /api/agents/:name': { who: 'human', why: 'Only the human can control standing agents' },
+  'POST /api/agents/:name/commands/check': { who: ['self', 'agents.manage'], readOnly: true },
+  'PATCH /api/agents/:name': { who: 'agents.manage', readOnly: true },
+  'POST /api/agents/stop-all': { who: 'agents.control', readOnly: true },
+  'POST /api/agents/resume-all': { who: 'agents.control', readOnly: true },
+  'POST /api/agents/:name/pause': { who: 'agents.control', readOnly: true },
+  'POST /api/agents/:name/resume': { who: 'agents.control', readOnly: true },
+  'POST /api/agents/:name/run': { who: 'agents.control', readOnly: true },
+  'DELETE /api/presence/:name': { who: 'human', why: 'Only the human can forget agents' },
+  'PUT /api/profiles/me/status': { who: 'self', readOnly: true },
+  'PATCH /api/profiles/me': { who: 'self', readOnly: true },
+  'POST /api/profiles/:name/memory': { who: 'self', readOnly: true },
+  'PATCH /api/profiles/:name/memory/:id': { who: 'self', readOnly: true },
+  'DELETE /api/profiles/:name/memory/:id': { who: 'self', readOnly: true },
+  'PUT /api/profiles/:name/memory': { who: 'human', why: 'Only the human switches memory on or off', hint: 'Ask on a card' },
+};
+const WHO_KINDS = new Set(['human', 'any', 'self', 'coordinator']);
+const WRITE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
 const routes = [];
 function route(method, pattern, desc, handler) {
   const keys = [];
   const re = new RegExp(`^${pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; })}/?$`);
-  routes.push({ method, pattern, desc, re, keys, handler });
+  routes.push({ method, pattern, desc, re, keys, handler, policy: POLICY[`${method} ${pattern}`] || null });
+}
+// Run once every route is defined: the table and the routes must agree, or the board does not start.
+function checkPolicies(powers) {
+  const problems = [];
+  const seen = new Set();
+  for (const r of routes) {
+    const key = `${r.method} ${r.pattern}`;
+    if (!WRITE.has(r.method)) continue;
+    seen.add(key);
+    if (!r.policy) { problems.push(`${key} declares no policy`); continue; }
+    for (const w of [].concat(r.policy.who)) if (!WHO_KINDS.has(w) && !powers.has(w)) problems.push(`${key}: unknown who "${w}"`);
+    if ([].concat(r.policy.who).includes('human') && [].concat(r.policy.who).length > 1) problems.push(`${key}: "human" can't be combined`);
+  }
+  for (const key of Object.keys(POLICY)) if (!seen.has(key)) problems.push(`${key} is in the policy table but no route has it`);
+  if (problems.length) throw new Error(`Route policy table (INT-144):\n  ${problems.join('\n  ')}`);
+}
+// The human-only part of a policy, checked before the handler runs.
+function checkWho(policy, actor) {
+  if (actor.kind === 'user' || policy.who !== 'human') return;
+  fail(403, policy.why || 'Only the human can do this', { code: 'HUMAN_ONLY', ...(policy.hint ? { hint: policy.hint } : {}) });
 }
 
 function serveFile(res, file, type) {
@@ -3699,9 +3832,10 @@ function serveFile(res, file, type) {
 
 /* ───────────────────────── routes ───────────────────────── */
 
-route('GET', '/api', 'This index', () => ({
+route('GET', '/api', 'This index; ?policies=true adds who may call each write route', ({ q }) => ({
   app: appInfo(), docs: '/api/docs', schema: '/api/schema',
   endpoints: routes.filter((r) => r.desc && r.pattern.startsWith('/api')).map((r) => `${r.method.padEnd(6)} ${r.pattern} — ${r.desc}`),
+  ...(q.policies === 'true' ? { policies: routes.filter((r) => WRITE.has(r.method)).map((r) => ({ method: r.method, pattern: r.pattern, ...r.policy })) } : {}),
 }));
 
 route('GET', '/api/docs', 'Agent guide (markdown). Start here.', ({ req, res }) => {
@@ -3715,7 +3849,6 @@ route('GET', '/api/schema', 'Data model, event types, filter keys, search operat
 
 route('GET', '/api/app', 'App name, version, build, and the code it runs: runningCommit, runningSince, mainCommit, behind (commits on main since the board started; null when not a git checkout), behindCommits [{ sha, subject }], behindTickets [ids named in those subjects]. Re-read on the sweep and on every call', async () => { await codeState.refresh(); return appInfo(); });
 route('POST', '/api/app/restart', 'Human only: restart the board so it runs the code on main (the same path as `intellagent restart`). Answers at once; the board is back in a few seconds → { restarting: true }', ({ actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Only the human restarts the board', { code: 'HUMAN_ONLY', hint: 'Tell the human the board is behind main (GET /api/app → behind)' });
   if (M.sandbox) fail(409, 'A sandbox is restarted with `intellagent sandbox <you>`', { code: 'CONFLICT', hint: 'Run it again from the shell' });
   const env = { ...process.env, INTELLAGENT_MANIFEST: MANIFEST_PATH };
   delete env.INTELLAGENT_AGENT; // the CLI's restart is the human's
@@ -3839,7 +3972,6 @@ function approvalsView(ctx) {
 route('GET', '/api/boards/:board/approvals', 'Who approves for the human on this board, and when (their review.decide / column.gate grants); on: false while the human has approvals switched off', ({ p }) => approvalsView(getCtx(p.board)));
 route('PUT', '/api/boards/:board/approvals', 'Human only: switch approvals for the human on or off { on }. Off suspends every review.decide and column.gate grant on this board until switched back on', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  humanConfig(actor, 'switch approvals on or off');
   if (typeof body.on !== 'boolean') fail(400, '"on" must be true or false', { code: 'BAD_REQUEST', hint: 'PUT …/approvals { "on": true } switches approvals on; { "on": false } switches them off' });
   const on = body.on;
   tx(ctx, (events) => {
@@ -3858,7 +3990,6 @@ function adminView(ctx) {
 route('GET', '/api/boards/:board/admin', 'Board admin for the human: who holds an admin.* power (columns, rules, coordinator, fields, focus, card rules, rebalancing), and on: false while the human has it switched off', ({ p }) => adminView(getCtx(p.board)));
 route('PUT', '/api/boards/:board/admin', 'Human only: switch board admin for the human on or off { on }. Off suspends every admin.* grant on this board (403 ADMIN_OFF) until switched back on; agents.control, agents.manage and work.land given through admin stay on', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  humanConfig(actor, 'switch board admin on or off');
   if (typeof body.on !== 'boolean') fail(400, '"on" must be true or false', { code: 'BAD_REQUEST', hint: 'PUT …/admin { "on": false } suspends every admin.* grant; { "on": true } brings them back' });
   const on = body.on;
   tx(ctx, (events) => {
@@ -3896,7 +4027,6 @@ const idleAlarmView = (ctx) => ({ ...idleAlarmOf(ctx), agents: standingAgents().
 route('GET', '/api/boards/:board/idle-alarm', 'The idle-board alarm: { on, minutes, wake, note, human } (who is woken when tickets wait but no builder has run for that long; human: tell the human when none of them can be), the human notice while it stands, and its last alarms', ({ p }) => idleAlarmView(getCtx(p.board)));
 route('PUT', '/api/boards/:board/idle-alarm', 'Human only: set the idle-board alarm { on?, minutes? (5-1440), wake? (standing agents), note? (what they should do, up to 1000 characters), human? (tell the human when nobody in wake can be woken; default true) }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  humanConfig(actor, 'set the idle-board alarm');
   const cur = idleAlarmOf(ctx);
   const next = { on: cur.on, minutes: cur.minutes, wake: cur.wake, note: cur.note, human: cur.human };
   if ('on' in body) {
@@ -4077,7 +4207,6 @@ route('POST', '/api/boards/:board/items/:id/pin', 'Human only: pin a ticket to i
 route('DELETE', '/api/boards/:board/items/:id/pin', 'Human only: unpin a ticket', ({ p, actor }) => setPin(getCtx(p.board), p.id, false, actor));
 route('POST', '/api/boards/:board/items/:id/rebalance/undo', 'Human only: undo the last automatic move of this ticket — back to who had it, and pinned there', ({ p, actor }) => {
   const ctx = getCtx(p.board);
-  humanConfig(actor, 'undo a rebalancing move');
   return tx(ctx, (events) => {
     const it = getItem(ctx, p.id);
     const r = it.rebalanced;
@@ -4458,7 +4587,6 @@ route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call
 // itself, the board starts a sandbox board ("preview") from the author's worktree with a fresh snapshot of
 // the tickets, and hands back its sign-in link (the sandbox's own token, never the human's).
 route('POST', '/api/boards/:board/items/:id/preview', "Human: run this ticket's work on a temporary board (the author's branch, a copy of the tickets) and get its link → { url, from, author }", async ({ p, actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Only the human opens previews', { code: 'HUMAN_ONLY', hint: 'Agents run their own: intellagent sandbox <you> --from <author> --seed snapshot' });
   if (!previewable()) fail(400, "This board's code isn't Intellagent, so it can't run as a preview", { code: 'NO_PREVIEW', hint: 'Ask the agent for screenshots or a link in its evidence' });
   const ctx = getCtx(p.board);
   const item = getItem(ctx, p.id);
@@ -4588,7 +4716,6 @@ route('DELETE', '/api/boards/:board/items/:id/reactions', 'Remove your reaction:
 const typing = new Map(); // board/ID/name → time of the last one sent
 const TYPING_GAP_MS = 3000;
 route('POST', '/api/boards/:board/items/:id/typing', 'Someone is writing a comment on this ticket (people only): shared live over the stream as item.typing { itemId, actor } to everyone watching, never stored, logged or replayed, and it wakes nobody. At most one per person and ticket every 3 s: { sent: true } or { sent: false }', ({ p, actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Typing is a human signal: agents show what they do with a status line', { code: 'HUMAN_ONLY', hint: 'PUT …/items/<ID>/status { status } shows it on the card' });
   const ctx = getCtx(p.board);
   const item = getItem(ctx, p.id);
   const t = Date.now();
@@ -4617,7 +4744,6 @@ route('DELETE', '/api/boards/:board/items/:id/attention', 'Answer: { reply?, que
 
 route('DELETE', '/api/boards/:board/items/:id', 'Permanently delete a TEST ticket (created with "test": true); any other ticket → 403 NOT_TEST, archive it instead', ({ p, actor }) => ({ deleted: deleteItems(getCtx(p.board), [p.id], actor) }));
 route('DELETE', '/api/boards/:board/test-items', 'Human: permanently delete every test ticket on the board (archived ones too)', ({ p, actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Only a human can delete all test tickets at once — delete them one by one', { code: 'HUMAN_ONLY' });
   const ctx = getCtx(p.board);
   const ids = [...Object.values(ctx.board.items), ...Object.values(ctx.archive.items)].filter((it) => it.test).map((it) => it.id);
   return { deleted: ids.length ? deleteItems(ctx, ids, actor) : [] };
@@ -4649,7 +4775,6 @@ route('GET', '/api/events/wait', 'Long-poll: blocks until a matching event or ti
 route('GET', '/api/stream', 'Server-Sent Events stream: ?<filter>&agent=<name>', ({ req, res, q, actor }) =>
   openStream(req, res, parseFilter(q), q.ui || q.ticket ? null : actor.kind === 'agent' ? actor.name : null, !!(q.ui || q.ticket)));
 route('POST', '/api/stream-ticket', 'The UI: trade the human token for a one-use ticket to open /api/stream?ui=1&ticket=… (human only)', ({ actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Stream tickets are for the board UI', { code: 'HUMAN_ONLY', hint: 'Agents open /api/stream with their token in the Authorization header' });
   return issueStreamTicket();
 });
 
@@ -4825,7 +4950,6 @@ route('GET', '/api/agents/roles', 'Roles and permissions available for standing 
 // The base context (INT-251): one document every agent starts from. Before /api/agents/:name, so it isn't a name.
 route('GET', '/api/agents/base-context', 'The base context every agent starts from: { text, shipped, edited, max } (edited: the human has their own copy)', () => ({ ...standing.baseContext(), max: BASE_MAX }));
 route('PUT', '/api/agents/base-context', 'Human, signed in: replace the base context { text }; empty, or the shipped text, goes back to the shipped one. In the event log as agent.base_updated, which wakes nobody', ({ body, actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Only the human changes the base context: every agent is taught it', { code: 'HUMAN_ONLY', hint: 'Suggest the change on a card instead' });
   // what every agent is taught first is as strong as a grant, so it takes the same proof that this is the human
   if (!M.auth.userToken) fail(403, 'The base context can be changed only on a board with a sign-in token', { code: 'NO_TOKEN', hint: 'Run "intellagent token", restart the board and sign in with "intellagent open"; or edit base-context.md beside agents.json' });
   if (typeof body.text !== 'string') fail(400, 'Send the new base context as { text }', { code: 'BAD_REQUEST', hint: 'An empty text goes back to the shipped one' });
@@ -4875,7 +4999,6 @@ route('GET', '/api/permissions', 'The permission library: every permission an ag
   return { permissions: lib.list(), kinds: ['builtin', 'power', ...require('./lib/permissions').KINDS], errors: lib.errors, file: standing?.file ? path.basename(standing.file) : null };
 });
 route('POST', '/api/permissions', 'Human: add a custom permission { key, kind: command|tool|folders|bundle|verbal, name, description?, brief?, commands?|tools?|folders?|includes?, needs? } — stored in agents.json', ({ body, actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Only the human can change the permission library', { code: 'HUMAN_ONLY', hint: 'Ask on a card' });
   if (!standing) fail(404, 'No standing agents on this board');
   if (permLibrary().get(String(body.key || ''))) fail(409, `"${body.key}" already exists`, { code: 'CONFLICT', hint: `Change it with PATCH /api/permissions/${body.key}` });
   const r = standing.definePerm(body.key, permBody(body));
@@ -4883,14 +5006,12 @@ route('POST', '/api/permissions', 'Human: add a custom permission { key, kind: c
   return created(r.permission);
 });
 route('PATCH', '/api/permissions/:key', 'Human: change a custom permission (merged; null removes a key). Built-ins can\'t change', ({ p, body, actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Only the human can change the permission library', { code: 'HUMAN_ONLY', hint: 'Ask on a card' });
   if (!standing) fail(404, 'No standing agents on this board');
   const r = standing.definePerm(p.key, permBody(body), { merge: true });
   permChanged(actor, p.key, r.before, r.permission);
   return r.permission;
 });
 route('DELETE', '/api/permissions/:key', 'Human: remove a custom permission no agent or other permission uses (409 CONFLICT names them)', ({ p, actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Only the human can change the permission library', { code: 'HUMAN_ONLY', hint: 'Ask on a card' });
   if (!standing) fail(404, 'No standing agents on this board');
   const r = standing.removePerm(p.key);
   permChanged(actor, p.key, r.before, null);
@@ -4940,7 +5061,6 @@ route('GET', '/api/agents/grid', 'The permissions grid: every standing agent aga
   };
 });
 route('PUT', '/api/agents/:name/permissions/:key', 'Human, signed in: set one cell of the grid { mode?: off|on|rules, rules?: { minOks?, from?, where? }, guidance?: text ("" removes it) } — writes agents.json. on also turns on what the permission needs; the reply lists what else changed. rules apply to board powers only (review.decide, column.gate take minOks/from; every power takes where)', ({ p, body, actor, q }) => {
-  if (actor.kind !== 'user') fail(403, 'Only the human sets what an agent may do', { code: 'HUMAN_ONLY', hint: 'Ask on a card, and say which permission and which agent' });
   // a grant bypasses the human's own approval, so this takes the same proof that this is the human
   if (!M.auth.userToken) fail(403, 'Permissions can be set only on a board with a sign-in token', { code: 'NO_TOKEN', hint: 'Run "intellagent token", restart the board and sign in with "intellagent open"; or edit agents.json' });
   if (!standing) fail(404, 'No standing agents on this board', { code: 'NOT_FOUND' });
@@ -5055,7 +5175,6 @@ function cleanLimits(v) {
   return out;
 }
 route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, model?, provider?, description?, listen?, throttleMinutes?, maxRunsPerHour?, keepAlive?, limits?: { columns?, readOnly? }, grants?, coordinator? } — permissions from the fixed list, never a command. grants need a board with a user token (the signed-in human)', ({ body, actor, q }) => {
-  humanOnly(actor);
   // Grants bypass the human's own approval, so only a request that proves it is the human may set them:
   // the board must have a user token (checked by authenticate for every X-User request).
   if (body.grants !== undefined && !M.auth.userToken) fail(403, 'Grants can be set from the browser only on a board with a sign-in token — run "intellagent token", restart the board and sign in with "intellagent open"; or edit agents.json', { code: 'NO_TOKEN' });
@@ -5069,7 +5188,7 @@ route('POST', '/api/agents', 'Human: add or update a standing agent { name, role
   }
   return created(a);
 });
-route('DELETE', '/api/agents/:name', 'Human: remove a standing agent', ({ p, actor }) => { humanOnly(actor); return standing.remove(p.name); });
+route('DELETE', '/api/agents/:name', 'Human: remove a standing agent', ({ p }) => standing.remove(p.name));
 route('GET', '/api/agents/:name', 'One standing agent', ({ p }) => standing.get(p.name));
 route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=20000', ({ p, q }) => {
   const a = standing.get(p.name);
@@ -5274,7 +5393,6 @@ route('POST', '/api/agents/:name/run', 'Human: start a run now: { note? }', ({ p
 route('GET', '/api/presence', 'Agents seen by this instance, online state, leases, subscriptions', () => presenceView());
 // Forget an offline agent: it leaves the agents list (its profile stays, and it reappears if it calls again).
 route('DELETE', '/api/presence/:name', 'Human: forget an offline agent (not standing agents, not while it holds leases)', ({ p, actor }) => {
-  if (actor.kind !== 'user') fail(403, 'Only the human can forget agents', { code: 'HUMAN_ONLY' });
   const name = p.name;
   const v = presenceView().find((x) => x.name === name);
   if (!v) fail(404, `No agent "${name}" in the list`);
@@ -5434,6 +5552,8 @@ function rememberIdem(key, status, body) {
 // names for a proxy or tunnel in front of it.
 const HOSTS = allowedHosts(M.port, { host: M.host, extra: M.allowedHosts || [] });
 
+checkPolicies(new Set([...Object.keys(POWERS), ...Object.keys(ADMIN)]));
+
 const server = http.createServer(async (req, res) => {
   try {
     const badHost = hostProblem(req, HOSTS, `http://127.0.0.1:${M.port}`);
@@ -5455,12 +5575,12 @@ const server = http.createServer(async (req, res) => {
     const q = Object.fromEntries(u.searchParams);
     const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {};
     const actor = actorOf(req, q);
-    checkAuth(req, q, actor, u.pathname);
+    checkAuth(req, q, actor, u.pathname, m.r.policy);
     const bm = /^\/api\/boards\/([^/]+)(?:\/(.*))?$/.exec(u.pathname);
     const gctx = bm && (boards.get(bm[1]) || boards.get(slug(decodeURIComponent(bm[1]))));
-    if (req.method !== 'GET' && gctx && !/(^|\/)(comments|attention|digest|master|finish|reactions|requests|request|decline)(\/|$)/.test(bm[2] || '')) {
-      guardBoard(gctx, actor);
-    }
+    if (m.r.policy && gctx && !m.r.policy.held) guardBoard(gctx, actor);
+    // an unknown board answers 404 from its handler, as before
+    if (m.r.policy && !(bm && !gctx)) checkWho(m.r.policy, actor);
     if (actor.kind === 'agent' && u.pathname.startsWith('/api')) touch(actor.name, `${req.method} ${u.pathname}`);
     const ik = req.method !== 'GET' && req.headers['idempotency-key'] ? `${actor.kind}:${actor.name}:${req.method}:${u.pathname}:${str(req.headers['idempotency-key'], 200)}` : null;
     if (ik && idem.has(ik) && Date.now() - idem.get(ik).at < IDEM_TTL) {

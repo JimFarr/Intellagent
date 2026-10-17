@@ -540,3 +540,5 @@ Files        GET /avatars/:file  /files/:board/:file
 ```
 
 `/api/boards/:board` is shortened to `…` in the table. Human-only actions (pausing or running standing agents, review decisions without a grant) answer `403 HUMAN_ONLY`.
+
+**Who may call each write route** is one table in the server, listed by `GET /api?policies=true`: `{ method, pattern, who, readOnly?, held? }`. `who` names who may call it besides the human: `human` (nobody else), `any`, `self` (an agent acting for itself: its own lease, question, request, profile, memory), `coordinator`, or a power (`review.decide`, `admin.columns`…; the power's scope and switches still apply). `readOnly: true` means a read-only agent may still call it, and `held: true` that it goes through while another agent holds the board. The ticket's own rules (leases, gates, columns, which fields a power covers) are checked on top.
