@@ -764,7 +764,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 .cmt { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 12px 0; animation: drop-in .35s var(--spring); }
 .cmt + .cmt { border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent); }
-.cmt-head { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; margin-bottom: 2px; }
+.cmt-head { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 2px 6px; align-items: center; margin-bottom: 2px; }
 .cmt-head b { color: var(--text); font-weight: 600; }
 .cmt-head .kind { display: inline-flex; color: var(--accent-2); }
 .cmt-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -1686,7 +1686,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .cmt-why { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
 .cmt:hover .cmt-why, .cmt-why:focus-visible { opacity: 1; }
 .cmt-why:hover { background: var(--hover); color: var(--accent); }
-.unans-chip { font-size: 10px; padding: 1px 7px; background: color-mix(in oklab, var(--warn) 16%, transparent); color: color-mix(in oklab, var(--warn) 80%, var(--text)); }
+.unans-chip { white-space: nowrap; font-size: 10px; padding: 1px 7px; background: color-mix(in oklab, var(--warn) 16%, transparent); color: color-mix(in oklab, var(--warn) 80%, var(--text)); }
 .explain-chip { font-size: 10px; padding: 1px 7px; background: color-mix(in oklab, var(--accent-2) 16%, transparent); color: var(--accent-2); }
 .cmt.is-explain > div > .md { padding-left: 10px; border-left: 2px solid color-mix(in oklab, var(--accent-2) 55%, transparent); }
 .why-box { margin-top: 8px; }
