@@ -1249,7 +1249,7 @@
     const size = (t) => (byDollars ? t.cost ?? 0 : freshTokens(t));
     const most = Math.max(1e-9, ...top.map(size));
     box.innerHTML = `<div class="section-head">${icon('activity', 'sm')}<span>Costliest tickets</span><span class="rule"></span></div>
-      ${top.map((t) => `<button class="mbar mcost" data-open="${esc(t.id)}" title="${esc(costTip(t))}"><span class="mb-name">${esc(t.id)}</span><span class="mb-track"><b style="width:${(size(t) / most) * 100}%"></b></span><span class="mb-val">${t.cost != null ? `$${t.cost.toFixed(2)}` : `${tok(freshTokens(t))} tok`}</span><span class="mb-sub">${esc(state.board.items[t.id].title)} ·${t.runs} run${t.runs === 1 ? '' : 's'}</span></button>`).join('')}`;
+      ${top.map((t) => `<button class="mbar mcost" data-open="${esc(t.id)}" title="${esc(costTip(t))}"><span class="mb-name">${esc(t.id)}</span><span class="mb-track"><b style="width:${(size(t) / most) * 100}%"></b></span><span class="mb-val">${t.cost != null ? `$${t.cost.toFixed(2)}` : `${tok(freshTokens(t))} tok`}</span><span class="mb-sub">${esc(state.board.items[t.id].title)} · ${t.runs} run${t.runs === 1 ? '' : 's'}</span></button>`).join('')}`;
     box.onclick = (e) => { const b = e.target.closest('[data-open]'); if (b) openItem(b.dataset.open); };
   }
 
