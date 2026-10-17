@@ -1097,14 +1097,14 @@ describe('per-agent git worktrees', () => {
     git(dir, 'commit', '-q', '-m', 'init');
     const wt = createWorktrees({ root: dir, dir: path.join(dir, '.worktrees') });
     // ann changes f.txt, main changes the same line, ann merges main and resolves the conflict
-    const setup = (name, id) => {
-      const { path: p } = wt.ensure(name);
+    const setup = async (name, id) => {
+      const { path: p } = await wt.ensure(name);
       write(p, 'f.txt', `${name}\n`);
       git(p, 'commit', '-q', '-am', `${name} edits f (${id})`);
       return p;
     };
     try {
-      const ann = setup('ann', 'T-1');
+      const ann = await setup('ann', 'T-1');
       write(dir, 'f.txt', 'main\n');
       git(dir, 'commit', '-q', '-am', 'main edits f');
       assert.throws(() => git(ann, 'merge', 'main'));
@@ -1130,7 +1130,7 @@ describe('per-agent git worktrees', () => {
       assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=no'), '');
       assert.equal(wt.commitsFor('ann', 'T-1').length, 0, 'nothing left to land');
       // a plain ticket still lands by cherry-pick
-      const bob = wt.ensure('bob').path;
+      const bob = (await wt.ensure('bob')).path;
       write(bob, 'h.txt', 'bob\n');
       git(bob, 'add', 'h.txt');
       git(bob, 'commit', '-q', '-m', 'bob adds h (T-3)');
@@ -1138,7 +1138,7 @@ describe('per-agent git worktrees', () => {
       // INT-137: git never blocks the board (the event loop turns while it lands), and two landings asked for
       // at once go one after the other, so neither cherry-picks into the other's half-done state
       for (const [name, id] of [['cy', 'T-4'], ['di', 'T-5']]) {
-        const p = wt.ensure(name).path;
+        const p = (await wt.ensure(name)).path;
         write(p, `${name}.txt`, `${name}\n`);
         git(p, 'add', `${name}.txt`);
         git(p, 'commit', '-q', '-m', `${name} adds a file (${id})`);

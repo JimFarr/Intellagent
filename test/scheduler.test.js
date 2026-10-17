@@ -323,3 +323,71 @@ describe('the idle-board alarm (fake clock)', () => {
     assert.equal(alarms.length, 1);
   });
 });
+
+// INT-212: the runner catches the worktree up with async git. Until that is done the agent holds a starting
+// slot, so nothing else starts it: no second run into the same worktree (INT-196).
+describe('a run that is catching up its worktree (fake clock)', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { createRunner } = require('../lib/agents/runner');
+  beforeEach(() => mock.timers.enable({ apis: ['setTimeout', 'Date'], now: T0 }));
+  afterEach(() => mock.timers.reset());
+  const flush = () => new Promise((r) => setImmediate(r));
+
+  // The real scheduler and runner; ensure() waits on a promise the test settles.
+  function live() {
+    const r = rig({ def: { worktree: true, throttleMinutes: 0, settleSeconds: 0, retrySeconds: 1, maxFailures: 3, run: 'never-spawned' } });
+    const calls = [];
+    let settle;
+    r.core.deps = {
+      ...r.core.deps,
+      logDir: fs.mkdtempSync(path.join(os.tmpdir(), 'ia-run-')), cwd: os.tmpdir(),
+      worktrees: { ensure: (name) => { calls.push(name); return new Promise((res, rej) => { settle = { res, rej }; }); } },
+    };
+    // a failed or stopped run's events go back on the queue, as in lib/agents/state.js
+    r.core.requeueInflight = (s) => { if (s.inflight) s.queue.unshift(...s.inflight); s.inflight = null; };
+    r.core.runner = createRunner(r.core);
+    return { ...r, calls, settle: () => settle };
+  }
+
+  it('a dispatch, a run-now or a new event while ensure() is pending starts nothing', async () => {
+    const { scheduler, core, agents, calls } = live();
+    scheduler.dispatch('bot');
+    assert.deepEqual(calls, ['bot'], 'the run started and is catching up');
+    assert.equal(core.running.get('bot')?.starting, true);
+    scheduler.enqueue('bot', [{ seq: 2, type: 'comment.added' }]);
+    scheduler.dispatch('bot');
+    scheduler.api.runNow('bot', 'again');
+    mock.timers.tick(10 * MIN);
+    await flush();
+    assert.deepEqual(calls, ['bot'], 'still one run');
+    assert.deepEqual(agents.bot.queue.map((e) => e.seq), [2], 'the new event waits for the next run');
+  });
+
+  it('a failed catch-up clears the slot and is retried with back-off', async () => {
+    const { scheduler, core, agents, calls, settle } = live();
+    scheduler.dispatch('bot');
+    settle().rej(new Error('merge in progress'));
+    await flush();
+    assert.equal(core.running.has('bot'), false, 'the slot is gone');
+    assert.equal(agents.bot.failures, 1);
+    assert.equal(agents.bot.status, 'retrying');
+    assert.match(agents.bot.lastRun.error, /worktree: merge in progress/);
+    mock.timers.tick(1000);
+    assert.deepEqual(calls, ['bot', 'bot'], 'retried after the back-off');
+  });
+
+  it('stop all during the catch-up: no process starts, the events wait, and it is not a failure', async () => {
+    const { scheduler, core, agents, settle } = live();
+    scheduler.dispatch('bot');
+    assert.deepEqual(scheduler.api.stopAll().stopped, ['bot']);
+    settle().res({ path: os.tmpdir(), branch: 'agent/bot', main: 'main', note: null });
+    await flush();
+    assert.equal(core.running.has('bot'), false);
+    assert.equal(core.procs.size, 0, 'no process was started');
+    assert.equal(agents.bot.lastRun.code, 'stopped');
+    assert.equal(agents.bot.failures, 0);
+    assert.equal(agents.bot.status, 'paused');
+  });
+});
