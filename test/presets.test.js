@@ -216,7 +216,9 @@ describe('presets: preset add, diff and update on a board that exists', () => {
     assert.deepEqual(steps.map(([n]) => n), steps.map((_, i) => i + 1), 'steps are numbered in order');
     const at = (re) => steps.find(([, t]) => re.test(t))?.[0];
     assert.ok(at(/what the board is for/) < at(/setup details/), 'purpose before details');
-    assert.ok(at(/Recommend a team/) < at(/Seed tickets/) && at(/Walk the features/), 'team and feature steps exist');
+    assert.ok(at(/Recommend a team/) < at(/Seed tickets/), 'team before seed tickets');
+    assert.ok(at(/Seed tickets/) < at(/Walk the features/) && at(/Walk the features/) < at(/Hand over/), 'features walked before the hand over');
+    assert.match(skill, /agents add cosmo --role builder --model haiku/, 'the helper can be added with a line that works');
     assert.match(skill, /Kind of work.*Team size.*How hands-off/s);
     // the roles it names exist, and what it says is the human's is told to the human
     const { ROLES } = require('../lib/agents');
