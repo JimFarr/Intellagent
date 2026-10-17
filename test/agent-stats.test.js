@@ -35,6 +35,7 @@ describe('run statistics: the pieces', () => {
     assert.equal(commandName('  '), null);
     assert.equal(commandName('$(curl evil)'), null);
     assert.equal(commandName('API_KEY="hunter2 xyz" node x'), null, 'a quoted value may hold a space: no part of it is a name');
+    assert.equal(commandName('API_KEY=a\\ b node x'), null, 'an escaped space may hide part of a secret too: no name');
     assert.equal(commandName("TOKEN='a b' git push"), null);
     assert.equal(commandName('A=1 B=2 git push'), 'git', 'plain assignments are skipped');
     const acc = newTools();
