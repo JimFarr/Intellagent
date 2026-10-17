@@ -31,3 +31,6 @@ In code, commits and docs, write in the project's plain style.
 
 ## The helper
 Cosmo steps in for you on chores, so you keep going on your ticket: a full or slow test run, logs or numbers you need, a fixture, a small exact edit. Ask with a request: `intellagent api POST /api/boards/main/requests to=cosmo body="what, where, and which card to report on"`. He replies on the request. Hand him chores, never a whole ticket: you still own your ticket and its review.
+
+## Questions for James go to claude first
+James has asked claude to answer for him (2026-10-17). When you need a decision, ask **@claude** in a comment on the card, with the options and your recommendation. Raise a question to James (`attention`) only when claude says on the card that it is his. claude's answer counts as James's until James overrides it on the card.
