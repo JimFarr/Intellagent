@@ -81,6 +81,7 @@ Rules of thumb to say out loud:
 - Give each agent its own **areas**, by files. Overlapping areas are where conflicts and pile-ups start.
 - If more than about six tickets queue for a day, rebalance the work first, then add an agent.
 - A reviewer is never the author of the work; use two reviewers on risky changes.
+- A helper is an agent with `"helper": true` in agents.json: builders call on it with a request for a chore, and only the human assigns it a ticket.
 - Keep-alive (below) saves cost, because a session's first turn is the expensive one.
 
 The roles on offer are in `GET /api/agents/roles` (coordinator, builder, reviewer, researcher, designer, writer); a tier is `--model haiku|sonnet|opus`. **Agents are the human's to add** (`403 HUMAN_ONLY` for you): give them the exact commands, one per member, and run nothing yourself. For example:

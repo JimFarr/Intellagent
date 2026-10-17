@@ -66,6 +66,24 @@ describe('helper agents (INT-252)', () => {
     assert.equal((await s.api('POST', `${B}/items/${own}/start`, {}, { agent: 'cosmo' })).status, 200);
   });
 
+  it('a capitalised name is still a helper: assigning and calling it are refused alike', async () => {
+    const free = (await s.api('POST', `${B}/items`, { title: 'Free', column: 'Ready' }, USER)).body.id;
+    const no = await s.api('PATCH', `${B}/items/${free}`, { assignee: 'Cosmo' }, { agent: 'gam' });
+    assert.equal(no.body.code, 'NOT_ROUTABLE', JSON.stringify(no.body));
+    const call = await s.api('POST', `${B}/requests`, { to: 'COSMO', body: 'take this' }, { agent: 'rev' });
+    assert.equal(call.body.code, 'NOT_DELEGABLE', JSON.stringify(call.body));
+    // a ticket the human gave to "Cosmo" is cosmo's own
+    const own = (await s.api('POST', `${B}/items`, { title: 'Given too', column: 'Ready', assignee: 'Cosmo' }, USER)).body.id;
+    assert.equal((await s.api('POST', `${B}/items/${own}/lease`, {}, { agent: 'cosmo' })).status, 200);
+  });
+
+  it('a helper never holds the board (master lease)', async () => {
+    const no = await s.api('POST', `${B}/master`, {}, { agent: 'cosmo' });
+    assert.equal(no.status, 403);
+    assert.equal(no.body.code, 'NOT_ROUTABLE');
+    assert.match(no.body.hint, /requests/);
+  });
+
   it('a helper has no pickup and a low cap unless it sets its own; the coordinator is told not to route to it', async () => {
     const list = (await s.api('GET', '/api/agents', undefined, USER)).body.agents;
     const by = Object.fromEntries(list.map((a) => [a.name, a]));

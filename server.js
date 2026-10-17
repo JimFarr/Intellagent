@@ -1061,6 +1061,8 @@ function guardBoard(ctx, actor) {
 }
 
 function claimMaster(ctx, d, actor) {
+  // a helper holding the board would make its caller read-only: the very thing it must never take
+  if (actor.kind === 'agent' && isHelper(actor.name)) fail(403, `${actor.name} is a helper: it doesn't hold the board`, { code: 'NOT_ROUTABLE', hint: 'Do the chore without the master lease, then reply on the request you were sent (POST …/requests/<id>/reply); the caller keeps the ticket and its lease' });
   return tx(ctx, (events) => {
     const cur = activeMaster(ctx);
     if (cur && cur.holder !== actor.name && !(d.force && actor.kind === 'user')) fail(409, `Board is already held by ${cur.holder}`, { master: cur });
@@ -5299,7 +5301,7 @@ function mayAssign(actor, to) {
   fail(403, `${to} is a helper: only the human assigns it a ticket`, { code: 'NOT_ROUTABLE', hint: `Keep the ticket and send ${to} a request for a chore on it: POST /api/boards/<board>/requests { "to": "${to}", "body": "what, where, and which card to report on" }` });
 }
 function helperOwns(actor, item, what) {
-  if (actor.kind !== 'agent' || !isHelper(actor.name) || item.assignee === actor.name) return;
+  if (actor.kind !== 'agent' || !isHelper(actor.name) || String(item.assignee || '').toLowerCase() === actor.name.toLowerCase()) return;
   fail(403, `${actor.name} is a helper: it doesn't ${what} on a ticket it wasn't assigned`, { code: 'NOT_ROUTABLE', hint: 'Do the chore, then reply on the request you were sent (POST …/requests/<id>/reply) and comment on the card it named; the caller keeps the ticket, its lease and its review' });
 }
 // A request to a helper needs "Call on the helpers" (call-helpers); the human can always send one. A helper never
