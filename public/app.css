@@ -2160,17 +2160,17 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .an-seg { min-width: 3px; }
 .an-key { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; }
 [data-st="running"] { --st: var(--ok); }
-[data-st="queued"], [data-st="retrying"] { --st: var(--accent); }
+[data-st="queued"], [data-st="retrying"] { --st: var(--accent-2); }
 [data-st="waiting"], [data-st="throttled"] { --st: var(--warn); }
 [data-st="failed"] { --st: var(--danger); }
-[data-st="idle"] { --st: color-mix(in oklab, var(--muted) 55%, transparent); }
+[data-st="idle"] { --st: color-mix(in oklab, var(--muted) 30%, transparent); }
 [data-st="paused"] { --st: color-mix(in oklab, var(--text) 40%, transparent); }
 .an-seg[data-st="unknown"], .an-key[data-st="unknown"] { background: repeating-linear-gradient(135deg, var(--hover) 0 3px, transparent 3px 6px); }
 .an-legend { display: flex; flex-wrap: wrap; gap: 3px 14px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
 .an-legend li { display: inline-flex; align-items: center; gap: 5px; }
-.an-queue { align-items: center; }
+.an-queue { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 4px 10px; }
 .an-spark { width: 160px; height: 28px; flex: none; }
-.an-spark path { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.an-spark path { fill: none; stroke: var(--accent-2); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .an-tickets { width: 100%; border-collapse: collapse; font-size: 12px; }
 .an-tickets th, .an-tickets td { padding: 6px 8px; text-align: left; border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent); font-weight: 400; }
 .an-tickets thead th { font: 600 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
