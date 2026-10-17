@@ -3309,6 +3309,8 @@ const POLICY = {
   'PUT /api/agents/:name/permissions/:key': { who: 'admin.permissions' },
   'POST /api/agents': { who: 'human', why: 'Only the human can control standing agents' },
   'DELETE /api/agents/:name': { who: 'human', why: 'Only the human can control standing agents' },
+  'POST /api/agents/:name/accept': { who: 'human', why: 'Only the human accepts a new agent: no grant delegates it', hint: 'Ask on a card' },
+  'POST /api/agents/:name/return': { who: 'human', why: 'Only the human sends a new agent back to introduce itself again', hint: 'Ask on a card' },
   'POST /api/agents/:name/commands/check': { who: ['self', 'agents.manage'], readOnly: true },
   // read-only takes these from an agent holding the grant too (INT-355)
   'PATCH /api/agents/:name': { who: 'agents.manage' },
