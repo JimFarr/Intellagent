@@ -401,6 +401,93 @@ describe('standing agents pick up work already on the board', () => {
       assert.deepEqual([off.on, off.wake], [false, ['lead']], 'switching off keeps who it wakes');
     } finally { await s.stop(); }
   });
+
+  // The planner's rails are unit tests below and the scheduler's timing in scheduler.test.js; these go through a board.
+  const LEAD = { agent: 'lead' };
+  const queued = async (s, title, to, by = LEAD) => {
+    const t = await s.ok('POST', `${B}/items`, { title, column: 'Ready' }, USER);
+    await s.ok('PATCH', `${B}/items/${t.id}`, { assignee: to }, by);
+    return t.id;
+  };
+  const item = (s, id) => s.ok('GET', `${B}/items/${id}`);
+
+  it('rebalancing (INT-234): a removed agent\'s queue moves at once, as the system, waking only each new owner; work it started stays', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      rocket: { run: run('ok'), worktree: true }, drax: { run: run('ok'), worktree: true }, leaving: { run: run('ok'), worktree: true },
+    } } });
+    try {
+      const a = await queued(s, 'first in its queue', 'leaving');
+      const b = await queued(s, 'second', 'leaving');
+      const byHand = await queued(s, 'the human gave it this', 'leaving', USER);
+      const begun = await queued(s, 'it started this one', 'leaving');
+      await s.ok('POST', `${B}/items/${begun}/lease`, { minutes: 5 }, { agent: 'leaving' });
+      await s.ok('DELETE', `${B}/items/${begun}/lease`, undefined, { agent: 'leaving' });
+      assert.deepEqual((await s.ok('GET', `${B}/rebalance`)).recent, [], 'nothing moves while the team is unchanged');
+
+      await s.ok('DELETE', '/api/agents/leaving', undefined, USER);
+      await until(async () => (await s.ok('GET', `${B}/rebalance`)).recent.length === 1, 8000, 'a pass after the removal');
+      const pass = (await s.ok('GET', `${B}/rebalance`)).recent[0];
+      assert.equal(pass.reason, 'agents.changed');
+      assert.deepEqual(pass.moves.map((m) => m.id).sort(), [a, b, byHand].sort(), 'all its unstarted tickets, even the human\'s: that agent is gone');
+      assert.equal((await item(s, begun)).assignee, 'leaving', 'started work is never moved');
+      for (const id of [a, b, byHand]) {
+        const t = await item(s, id);
+        assert.ok(['rocket', 'drax'].includes(t.assignee));
+        assert.deepEqual([t.assignedBy.kind, t.rebalanced.from, t.rebalanced.why], ['system', 'leaving', 'leaving was removed']);
+        const c = t.comments.at(-1);
+        assert.deepEqual([c.author.kind, c.body], ['system', `↔ Moved from leaving to ${t.assignee}: leaving was removed.`]);
+      }
+      const evs = (await s.ok('GET', `/api/events?itemId=${a}`)).events;
+      const moved = evs.find((e) => e.type === 'item.assigned' && e.actor.kind === 'system');
+      assert.deepEqual(moved.addressed, [(await item(s, a)).assignee], 'the assignment wakes the new owner and nobody else');
+      assert.equal(evs.find((e) => e.type === 'comment.added' && e.actor.kind === 'system').addressed, undefined, 'the ↔ comment wakes nobody');
+      const digest = (await s.ok('GET', `${B}/digest?days=1`))[0].entries.find((e) => e.author.name === 'rebalance');
+      assert.match(digest.summary, /^↔ Rebalanced 3 tickets: /);
+    } finally { await s.stop(); }
+  });
+
+  it('rebalancing (INT-234): a real imbalance moves work; undo puts it back and pins it; the switch, pins and undo are the human\'s', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      rocket: { run: run('ok'), worktree: true }, drax: { run: run('ok'), worktree: true },
+      spare: { run: run('ok'), enabled: false }, other: { run: run('ok'), enabled: false },
+    } } });
+    try {
+      const fresh = await s.ok('GET', `${B}/rebalance`);
+      assert.deepEqual([fresh.on, fresh.minGap, fresh.minWaitMinutes, fresh.maxMoves, fresh.onceEveryMinutes], [true, 3, 60, 3, 1440], 'a board without the setting: on, with the defaults');
+      assert.equal((await s.api('PUT', `${B}/rebalance`, { on: false }, LEAD)).status, 403, 'human only');
+      for (const bad of [{ on: 'no' }, { minGap: 1 }, { maxMoves: 2.5 }, { onceEveryMinutes: 10 }]) assert.equal((await s.api('PUT', `${B}/rebalance`, bad, USER)).status, 400, JSON.stringify(bad));
+      await s.ok('PUT', `${B}/rebalance`, { minWaitMinutes: 0, minGap: 2 }, USER);
+      const ids = [];
+      for (const n of [1, 2, 3, 4]) ids.push(await queued(s, `rocket's ${n}`, 'rocket'));
+      const pinned = await queued(s, 'pinned', 'rocket');
+      assert.equal((await s.api('POST', `${B}/items/${pinned}/pin`, undefined, LEAD)).status, 403, 'an agent cannot pin');
+      assert.equal((await s.api('PATCH', `${B}/items/${pinned}`, { pinned: { by: 'lead' } }, LEAD)).status, 400, 'nor through PATCH');
+      await s.ok('POST', `${B}/items/${pinned}/pin`, undefined, USER);
+      // Stop all and resume ask for nothing
+      await s.ok('POST', '/api/agents/stop-all', {}, USER);
+      await s.ok('POST', '/api/agents/resume-all', {}, USER);
+
+      await s.ok('DELETE', '/api/agents/spare', undefined, USER); // a change to the team: a pass now
+      await until(async () => (await s.ok('GET', `${B}/rebalance`)).recent.length === 1, 8000, 'a pass');
+      const { moves } = (await s.ok('GET', `${B}/rebalance`)).recent[0];
+      // 5 vs 0: the gap closes to 3 vs 2, and never so far that the next pass would move one back
+      assert.equal(moves.length, 2);
+      assert.ok(moves.every((m) => m.from === 'rocket' && m.to === 'drax' && ids.includes(m.id)), 'the pinned one stays');
+      assert.match(moves[0].why, /^rocket had 5 queued, drax 0$/);
+
+      const back = moves[0].id;
+      assert.equal((await s.api('POST', `${B}/items/${back}/rebalance/undo`, undefined, LEAD)).status, 403, 'an agent cannot undo');
+      const undone = await s.ok('POST', `${B}/items/${back}/rebalance/undo`, undefined, USER);
+      assert.deepEqual([undone.assignee, undone.pinned.by, undone.assignedBy.kind], ['rocket', 'James', 'user']);
+      assert.equal((await s.api('POST', `${B}/items/${back}/rebalance/undo`, undefined, USER)).status, 409, 'nothing left to undo');
+
+      // switched off: a change to the team moves nothing
+      await s.ok('PUT', `${B}/rebalance`, { on: false }, USER);
+      await s.ok('DELETE', '/api/agents/other', undefined, USER);
+      await new Promise((r) => setTimeout(r, 3500));
+      assert.equal((await s.ok('GET', `${B}/rebalance`)).recent.length, 1);
+    } finally { await s.stop(); }
+  });
 });
 
 describe('model tiers', () => {
