@@ -2332,11 +2332,20 @@ function pendingWork(name, pickup = false) {
     const b = ctx.board;
     const w = workFor(ctx, name);
     const waitingOnHuman = (it) => (it.questions || []).length > 0;
+    // A builder's queue (assigned, not started) is offered only while it holds no lease, and again each time it
+    // finishes a ticket (its newest review request is in the key): one finished means it is free for the next.
+    // A queue it looked at and left alone stays quiet until then, so it never loops.
+    const busy = w.leases.length > 0;
+    const freedAt = Math.max(0, ...Object.values(b.items).flatMap((it) => [
+      ...(it.questions || []).filter((q) => q.kind === 'review' && q.raisedBy === name).map((q) => Date.parse(q.raisedAt) || 0),
+      it.review?.requestedBy === name ? Date.parse(it.review.at) || 0 : 0,
+    ]));
     for (const n of w.next) {
       if (n.action === 'renew' || n.action === 'continue' || n.action === 'triage') continue; // housekeeping, mid-run, or pickup's job
       const it = n.id && b.items[n.id];
-      if (it && n.action === 'start' && (it.assignee !== name || waitingOnHuman(it))) continue; // "ready" suggestions are pickup's job
-      const tag = n.action === 'supervise' ? w.supervise?.find((x) => x.id === n.id)?.lastActivity
+      if (it && n.action === 'start' && (busy || it.assignee !== name || waitingOnHuman(it))) continue; // "ready" suggestions are pickup's job
+      const tag = n.action === 'start' ? freedAt.toString(36)
+        : n.action === 'supervise' ? w.supervise?.find((x) => x.id === n.id)?.lastActivity
         : n.action === 'resume' ? w.answered.find((x) => x.id === n.id)?.questionId
         : n.action === 'address_feedback' ? it?.review?.at
           : n.action === 'explain' ? w.explain.find((x) => x.id === n.id)?.commentId

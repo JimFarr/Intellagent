@@ -294,6 +294,38 @@ describe('standing agents pick up work already on the board', () => {
       assert.equal((await started('idle')).length, 0, 'agents with nothing waiting stay asleep');
     } finally { await s.stop(); }
   });
+
+  it('a builder\'s queue is offered after a run that started nothing, never loops, and comes back once it finishes a ticket', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { maker: { run: run('ok') } } } });
+    const MAKER = { agent: 'maker' };
+    try {
+      const runs = async () => (await s.ok('GET', '/api/events?types=agent.run.started')).events.filter((e) => e.agent === 'maker');
+      const settled = async (n, label) => {
+        await until(async () => (await runs()).length === n && (await agentState(s, 'maker')).status === 'idle', 8000, label);
+        await new Promise((r) => setTimeout(r, 1200));
+        assert.equal((await runs()).length, n, `${label}: nothing more wakes it`);
+      };
+      // The assignment wakes it; that run (a script, like one answering a comment) starts nothing. Before, its
+      // brief counted the queue as seen, and the ticket waited for good.
+      const queued = await s.ok('POST', `${B}/items`, { title: 'in the queue', column: 'Backlog', assignee: 'maker' }, USER);
+      await settled(2, 'queue offered after the assignment run');
+      const [, offer] = await runs();
+      assert.equal(offer.why, 'work.pending');
+      assert.deepEqual(offer.items, [queued.id]);
+      // A comment wakes it again; the queue it already saw and left alone stays quiet
+      await s.ok('POST', `${B}/items/${queued.id}/comments`, { body: '@maker a note' }, USER);
+      await settled(3, 'a comment run');
+      // It finishes another ticket: free again, so the queue is offered again, once
+      const other = await s.ok('POST', `${B}/items`, { title: 'its current work', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${other.id}/lease`, { minutes: 10 }, MAKER);
+      await s.ok('POST', `${B}/items/${other.id}/review`, { summary: 'done', evidence: 'tests pass' }, MAKER);
+      await s.ok('POST', `${B}/items/${other.id}/comments`, { body: '@maker thanks' }, USER);
+      await settled(5, 'queue offered again after a finished ticket');
+      const last = (await runs()).at(-1);
+      assert.equal(last.why, 'work.pending');
+      assert.deepEqual(last.items, [queued.id]);
+    } finally { await s.stop(); }
+  });
 });
 
 describe('model tiers', () => {
@@ -653,7 +685,7 @@ describe('the receptionist supervises other agents', () => {
     // superviseMinutes 0.02: a ticket counts as untouched after ~1.2 s; 'usage' runs end without a word on the card
     const s = await startServer({ agents: { defaults: fast, agents: {
       desk: { role: 'coordinator', run: run('usage'), superviseMinutes: 0.02 },
-      worker: { role: 'builder', run: run('usage') },
+      worker: { role: 'builder', run: run('usage'), throttleMinutes: 0 },
     } } });
     try {
       const sup = async () => ((await s.ok('GET', `${B}/work?agent=desk`)).supervise || []).map((x) => x.id);
@@ -661,8 +693,8 @@ describe('the receptionist supervises other agents', () => {
       const a = await s.ok('POST', `${B}/items`, { title: 'working on this', column: 'Ready', assignee: 'worker' }, USER);
       const b = await s.ok('POST', `${B}/items`, { title: 'next in its queue', column: 'Ready', assignee: 'worker' }, USER);
       const c = await s.ok('POST', `${B}/items`, { title: 'blocked by a', column: 'Ready', assignee: 'worker', blockedBy: [a.id] }, USER);
-      // the assignments wake it; a run that ends releases what it holds, so lease only once it has settled
-      await until(async () => { const w = await agentState(s, 'worker'); return w.lastRun && w.status === 'idle' && !w.queued; }, 8000, 'worker settled');
+      // the assignments wake it, then its queue is offered once; a run that ends releases what it holds, so lease only once both have run
+      await until(async () => { const w = await agentState(s, 'worker'); return w.lastRun?.why === 'work.pending' && w.status === 'idle' && !w.queued; }, 8000, 'worker settled');
       await sleep(500);
       // busy: it holds a lease on a, so b waits its turn however long it sits
       await s.ok('POST', `${B}/items/${a.id}/lease`, { minutes: 10 }, { agent: 'worker' });
