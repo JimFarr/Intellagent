@@ -148,4 +148,41 @@ describe('probation: a new agent may only introduce itself (INT-233)', () => {
       assert.ok(!/acceptEdits|npm run x|Edit|Write|git/.test(allowed), allowed);
     } finally { await s.stop(); }
   });
+
+  it('a hand-written run is replaced while on probation, and comes back when it is accepted', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      own: { enabled: false, probation: { since: '2026-10-17T10:00:00.000Z' }, run: 'my-adapter --do-anything', role: 'builder' },
+    } } });
+    try {
+      const a = await agentState(s, 'own');
+      assert.match(a.run, /^claude -p .*--tools "Bash,Read,Grep,Glob"/);
+      assert.ok(!a.run.includes('my-adapter'), 'not sandboxed on disk would mean it could do anything');
+      await s.ok('POST', '/api/agents/own/accept', {}, USER);
+      assert.equal((await agentState(s, 'own')).run, 'my-adapter --do-anything');
+    } finally { await s.stop(); }
+  });
+
+  it('the CLI: agents add says the new agent is on probation, agents accept lifts it, and the line changes', async () => {
+    const { spawnSync } = require('child_process');
+    const { cleanEnv } = require('./helpers');
+    const s = await startServer({ agents: { defaults: fast, agents: { vet: { run: run('ok') } } } });
+    try {
+      const cli = (...args) => spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'intellagent.js'), ...args], {
+        cwd: s.dir, env: cleanEnv({ INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base }), encoding: 'utf8', input: '', timeout: 60000 });
+      const add = cli('agents', 'add', 'fresh', '--role', 'reviewer');
+      assert.equal(add.status, 0, add.stderr);
+      assert.match(add.stdout, /"fresh" is on probation/);
+      assert.match(add.stdout, /intellagent agents accept fresh/);
+      assert.ok(agentsFile(s).fresh.probation, 'the file holds it');
+      assert.ok(!/is on probation/.test(cli('agents', 'add', 'fresh', '--description', 'again').stdout), 'an existing name keeps its record and says nothing');
+      await until(async () => (await agentState(s, 'fresh').catch(() => ({}))).probation, 8000, 'the board has read the file');
+      const acc = cli('agents', 'accept', 'fresh');
+      assert.equal(acc.status, 0, acc.stderr);
+      assert.match(acc.stdout, /^fresh: \w+$/m, 'no "(on probation)" any more');
+      assert.ok(!agentsFile(s).fresh.probation);
+      const again = cli('agents', 'accept', 'fresh');
+      assert.notEqual(again.status, 0, 'nothing left to accept');
+      assert.match(cli('help').stdout, /accept NAME/);
+    } finally { await s.stop(); }
+  });
 });

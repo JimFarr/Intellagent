@@ -662,7 +662,7 @@ async function agentsCmd() {
     return;
   }
   if (sub === 'add') {
-    if (!name) { console.error('Usage: intellagent agents add <name> [--listen addressed|inbox|human|new-tickets|"types=…"] [--run "<command>"] [--max-runs 20] [--model haiku|sonnet|opus] [--description "…"]'); process.exit(1); }
+    if (!name) { console.error('Usage: intellagent agents add <name> [--listen addressed|inbox|human|new-tickets|"types=…"] [--run "<command>"] [--max-runs 20] [--model haiku|sonnet|opus] [--description "…"]   (then: intellagent agents accept|return <name>)'); process.exit(1); }
     const doc = readAgents(file);
     doc.agents ||= {};
     const listen = !f.listen || ['addressed', 'inbox', 'human', 'new-tickets'].includes(f.listen) ? (f.listen || 'addressed') : Object.fromEntries(new URLSearchParams(String(f.listen)));
@@ -673,6 +673,7 @@ async function agentsCmd() {
     const perms = f.allow ? String(f.allow).split(',').map((x) => x.trim()).filter(Boolean) : null;
     const badPerms = (perms || []).filter((k) => !lib.holdable(k));
     if (badPerms.length) { console.error(`Unknown permission(s): ${badPerms.join(', ')}. Use: ${Object.keys(lib.labels()).join(', ')}`); process.exit(1); }
+    const isNew = !doc.agents[name];
     doc.agents[name] = {
       ...(doc.agents[name] || { probation: { since: new Date().toISOString() } }), // a new agent starts on probation (INT-233)
       ...(f.role ? { role: String(f.role) } : {}),
@@ -688,6 +689,7 @@ async function agentsCmd() {
     };
     writeAgentsFile(file, doc);
     console.log(`Saved "${name}" to ${file}. The running board picks it up within a few seconds.`);
+    if (isNew) console.log(`"${name}" is on probation: its first run only reads the board and introduces itself. Read the introduction, then:  intellagent agents accept ${name}   (or  intellagent agents return ${name} --note "…"  to send it back).`);
     // A missing command would only show up as failed runs: check it now.
     const exe = String(doc.agents[name].run || doc.defaults?.run || 'claude').trim().match(/^"([^"]+)"|^(\S+)/).slice(1).find(Boolean);
     const found = require('child_process').spawnSync(process.platform === 'win32' ? 'where' : 'which', [exe], { stdio: 'ignore' }).status === 0;
@@ -923,6 +925,9 @@ const HELP = `intellagent — a kanban for you and your agents
                    --listen addressed|inbox|human|new-tickets|"types=…"  --max-runs N|none  --throttle MIN  --run "<command>" (overrides role)
                    --model haiku|sonnet|opus  (junior / mid / senior; the receptionist routes by it)
                    --areas "public/app.css,public/themes/"  --concerns "accessibility,performance"  (its speciality)
+                   a new agent starts on probation (first run: introduce itself, read-only) until you accept it
+    accept NAME    lift probation: the agent works like any other from now on
+    return NAME    --note "…"  send it back to introduce itself again
     pause | resume | run | log | remove NAME
   autostart on|off start this board (and its agents) when you log in
 

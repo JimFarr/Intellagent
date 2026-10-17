@@ -90,7 +90,7 @@ intellagent agents add rocket --role builder --model opus --areas "server.js,lib
 intellagent agents add mid --role builder --model sonnet --areas "public/,cli.js"
 intellagent agents add nebula --role reviewer --model sonnet
 ```
-Each new agent introduces itself on its first run (name, look, what it does), so ask the user to expect that first message on the board.
+Each new agent starts on **probation**: its first run only reads the board and introduces itself (who it is, what it will and won't do, its permissions in its own words, what it needs), as the reply to a request. Until the user accepts it, every other write answers `409 PROBATION`. Tell the user to expect that introduction, read it with them, and give them the next command: `intellagent agents accept <name>` (or `intellagent agents return <name> --note "…"` to send it back). Accepting is theirs alone: you can't do it, and no grant delegates it.
 
 ## 9. Introduce yourself
 
