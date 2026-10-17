@@ -1328,8 +1328,10 @@ describe('a lander (work.land) gets approved work onto main', () => {
       git('add', '.');
       git('commit', '-q', '-m', `Landed by hand (${d.id})`);
       const none = merge(d.id, '--mark-landed');
-      assert.equal(none.status, 0, none.stderr);
-      assert.match(none.stdout, /Marked landed by hand/);
+      // The commit names the ticket, so the sweep (every 0.4 s here) may mark it first. Under a loaded full run
+      // it often does: then the CLI is told it's already landed. Either order ends landed by hand.
+      if (none.status === 0) assert.match(none.stdout, /Marked landed by hand/);
+      else assert.match(none.stderr, new RegExp(`${d.id}'s landing isn't marked failed \\(it is landed\\)`), none.stderr);
       assert.equal((await s.ok('GET', `${B}/items/${d.id}`)).landing.by, 'hand');
       const refused = merge(u.id, '--mark-landed');
       assert.equal(refused.status, 1);
