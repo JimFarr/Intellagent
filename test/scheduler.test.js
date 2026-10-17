@@ -405,6 +405,54 @@ describe('a run that is catching up its worktree (fake clock)', () => {
     assert.deepEqual(calls, ['bot', 'bot'], 'retried after the back-off');
   });
 
+  // INT-295: three failed catch-ups make the agent failed; the fourth call is its one probe
+  async function failTimes(r, n) {
+    for (let i = 0; i < n; i++) {
+      if (i) mock.timers.tick(10 * MIN); // past the back-off
+      else r.scheduler.dispatch('bot');
+      r.settle().rej(new Error('index.lock exists'));
+      await flush();
+    }
+  }
+
+  it('a failed agent gets one probe after failedRetryMinutes; a failed probe is final until the human resumes', async () => {
+    const r = live();
+    const { scheduler, agents, calls, emitted } = r;
+    await failTimes(r, 3);
+    assert.equal(agents.bot.status, 'failed');
+    const failedAt = Date.now();
+    assert.equal(agents.bot.probeAt, new Date(failedAt + 30 * MIN).toISOString(), 'the default cool-off is 30 minutes');
+    assert.equal(emitted.filter((e) => e.type === 'agent.failed').at(-1).probeAt, agents.bot.probeAt);
+    // new events during the cool-off don't start it early
+    scheduler.enqueue('bot', [{ seq: 7, type: 'comment.added' }]);
+    mock.timers.tick(29 * MIN);
+    assert.equal(calls.length, 3, 'no run before the cool-off ends');
+    mock.timers.tick(MIN + 100);
+    assert.equal(calls.length, 4, 'the probe');
+    assert.equal(agents.bot.probing, true);
+    r.settle().rej(new Error('index.lock exists'));
+    await flush();
+    assert.equal(agents.bot.status, 'failed');
+    assert.equal(agents.bot.probeAt, undefined, 'no second probe');
+    assert.equal(emitted.filter((e) => e.type === 'agent.failed').at(-1).probeAt, null);
+    for (let i = 0; i < 10; i++) { mock.timers.tick(60 * MIN); scheduler.dispatch('bot'); }
+    assert.equal(calls.length, 4, 'ten hours and every dispatch later: still waiting for the human (no loop)');
+    // the human resumes: a new streak, which gets its own probe
+    scheduler.api.resume('bot');
+    assert.equal(calls.length, 5);
+    assert.equal(agents.bot.probing, undefined);
+  });
+
+  it('failedRetryMinutes: 0 turns the probe off', async () => {
+    const r = live();
+    r.core.defs.bot.failedRetryMinutes = 0;
+    await failTimes(r, 3);
+    assert.equal(r.agents.bot.status, 'failed');
+    assert.equal(r.agents.bot.probeAt, undefined);
+    mock.timers.tick(24 * 60 * MIN);
+    assert.equal(r.calls.length, 3);
+  });
+
   it('pause during the catch-up: no process starts, and its events go back on the queue', async () => {
     const { scheduler, core, agents, settle } = live();
     scheduler.dispatch('bot');

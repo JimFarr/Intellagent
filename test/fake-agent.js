@@ -126,6 +126,8 @@ if (mode === 'commit') {
 let prompt = '';
 process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
   if (mode === 'fail') process.exit(1);
+  //   node fake-agent.js fail-until <marker>   fails until <marker> exists, then behaves like ok (INT-295: the cause passed)
+  if (mode === 'fail-until' && !require('fs').existsSync(arg)) process.exit(1);
   //   node fake-agent.js limited <marker> <secs>   the first run is refused like claude at its usage limit (a rejected
   //   rate_limit_event resetting in <secs>, exit 1); every later run behaves like ok (INT-293)
   if (mode === 'limited' && !require('fs').existsSync(arg)) {

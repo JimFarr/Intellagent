@@ -249,6 +249,29 @@ describe('standing agents retry safely', () => {
   });
 });
 
+describe('a failed agent gets one more try (INT-295)', () => {
+  it('after the cool-off its probe run succeeds, and it is back to normal with nothing from the human', async () => {
+    const marker = path.join(os.tmpdir(), `ia-probe-${Date.now()}`);
+    // failedRetryMinutes 0.05: the probe is due ~3 s after it failed, time enough to "fix the cause" first. The rules are in scheduler.test.js.
+    const s = await startServer({ agents: { defaults: { ...fast, maxFailures: 1 }, agents: { mender: { run: run('fail-until', `"${marker}"`), failedRetryMinutes: 0.05 } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'probe test', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@mender go' }, USER);
+      const failed = await until(async () => { const a = await agentState(s, 'mender'); return a.status === 'failed' ? a : null; }, 6000, 'failed');
+      assert.ok(Date.parse(failed.probeAt) > Date.now() - 1000, 'it says when it tries again');
+      const ev = (await s.ok('GET', '/api/events?types=agent.failed')).events;
+      assert.equal(ev.at(-1).probeAt, failed.probeAt, 'agent.failed carries probeAt');
+      fs.writeFileSync(marker, 'the cause passed');
+      await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('mender: handled')), 8000, 'the probe ran and handled the event');
+      const after = await until(async () => { const a = await agentState(s, 'mender'); return a.status === 'idle' ? a : null; }, 4000, 'idle');
+      assert.deepEqual([after.failures, after.probeAt, after.probing], [0, undefined, undefined]);
+    } finally {
+      await s.stop();
+      fs.rmSync(marker, { force: true });
+    }
+  });
+});
+
 describe('the usage limit', () => {
   it('a run refused for the usage limit is no failure: the agent and its account mates wait for the reset, then run (INT-293)', async () => {
     const marker = path.join(os.tmpdir(), `ia-limited-${Date.now()}`);
