@@ -750,6 +750,7 @@ const permsFor = (name) => {
    An agent never uses a grant on its own work: a ticket it worked on, or a review it requested.
    The powers are listed in the permission library (lib/permissions.js) beside the tool permissions. */
 const { POWERS, createLibrary: createPermLibrary } = require('./lib/permissions');
+const { createRoles } = require('./lib/agents/roles');
 // Standing agents the human lets land approved work (work.land): a landing that fails goes to them, not the human.
 const landers = () => { try { return standing.list().agents.filter((a) => a.enabled && grantsOf(a.name).some((g) => g.power === 'work.land')).map((a) => a.name); } catch { return []; } };
 function grantsOf(name) {
@@ -4360,9 +4361,23 @@ const controls = (actor, target) => {
   if (String(target).toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent cannot pause, resume or run itself', { code: 'OWN_WORK' });
 };
 route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run, now (what a live run is doing), history (last 10 runs). ?recent=N adds the N newest runs across all agents', ({ q }) => standing.list({ recent: Math.min(50, Math.max(0, Number(q.recent) || 0)) }));
-route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents', () => {
-  const { ROLES } = require('./lib/agents');
-  return { roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: permLibrary().labels() };
+route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {
+  return { roles: Object.fromEntries(roleLibrary().list().map((v) => [v.key, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: permLibrary().labels() };
+});
+/* Roles as data (INT-229): the templates agents are built from. The built-ins ship with the code; the human
+   adds their own under "roles" in agents.json. An agent names its role with "role", and its own keys win over
+   the role's (differsFromRole on each agent in GET /api/agents). Everyone reads them. */
+const roleLibrary = () => standing?.roleLibrary?.() || createRoles();
+const roleUsers = (key) => (standing ? standing.list().agents.filter((a) => a.role === key).map((a) => a.name) : []);
+route('GET', '/api/roles', 'Roles: the templates agents are built from (built-in, and the human\'s own from agents.json "roles"), each with the agents using it', () => {
+  const lib = roleLibrary();
+  return { roles: lib.list().map((r) => ({ ...r, agents: roleUsers(r.key) })), errors: lib.errors };
+});
+route('GET', '/api/roles/:key', 'One role in full, with the agents using it and how each differs from it', ({ p }) => {
+  const r = roleLibrary().view(p.key);
+  if (!r) fail(404, `No role "${p.key}"`, { code: 'NOT_FOUND', hint: `Roles: ${roleLibrary().keys().join(', ')}` });
+  const agents = standing ? standing.list().agents.filter((a) => a.role === r.key).map((a) => ({ name: a.name, differs: a.differsFromRole || {} })) : [];
+  return { ...r, agents };
 });
 /* The permission library (INT-228): every permission an agent can hold — built-in tools, board powers and
    the human's own (command, tool, folders, bundle, verbal), stored in agents.json under "perms". Everyone
@@ -4488,7 +4503,7 @@ function manageAgent(target, d, actor) {
   }
   const cfg = {};
   if ('role' in d) {
-    if (d.role != null && !require('./lib/agents').ROLES[d.role]) fail(400, `Unknown role "${d.role}". Roles: ${Object.keys(require('./lib/agents').ROLES).join(', ')}`);
+    if (d.role != null && !roleLibrary().has(d.role)) fail(400, `Unknown role "${d.role}"`, { code: 'BAD_REQUEST', hint: `Roles: ${roleLibrary().keys().join(', ')}` });
     if (agent && (d.role === 'coordinator' || a.role === 'coordinator') && d.role !== a.role) {
       fail(403, 'The coordinator role is the human\'s to give or take', { code: 'HUMAN_ONLY', hint: 'Ask the human on a card' });
     }
@@ -4505,19 +4520,18 @@ function manageAgent(target, d, actor) {
   if ('perms' in d) {
     // null: back to the role's tools (or the default run when it has no role)
     const next = d.perms == null ? null : [...new Set([].concat(d.perms).map(String))];
-    const { ROLES } = require('./lib/agents');
     const lib = permLibrary();
     const unknown = (next || []).filter((k) => !lib.holdable(k));
     if (unknown.length) fail(400, `Unknown permission(s): ${unknown.join(', ')}${unknown.some(lib.isPower) ? ' (powers are grants, which only the human sets)' : ''}`);
     const now = a.perms || [];
-    const tools = next || ROLES[('role' in cfg ? cfg.role : a.role) || '']?.perms || null;
+    const tools = next || roleLibrary().get(('role' in cfg ? cfg.role : a.role) || '')?.perms || null;
     // compared after bundles and needs are expanded: a bundle of what it has could still bring something new
     const have = lib.resolve(now).keys;
     if (agent && (tools ? lib.resolve(tools).keys.some((k) => !have.includes(k)) : a.perms != null)) fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}`, { code: 'WIDEN' });
     cfg.perms = next;
   } else if (agent && 'role' in cfg && a.permsFrom !== 'own') {
     // its tools come from its role, so a new role is a new set of tools: it may only narrow them
-    const tools = require('./lib/agents').ROLES[cfg.role || '']?.perms || null;
+    const tools = roleLibrary().get(cfg.role || '')?.perms || null;
     const now = a.perms || [];
     const have = permLibrary().resolve(now).keys;
     if (tools ? tools.some((k) => !have.includes(k)) : a.perms != null) {
