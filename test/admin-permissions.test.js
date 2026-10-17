@@ -19,6 +19,7 @@ describe('Can edit permissions (admin.permissions, INT-349)', () => {
     boss: { 'x-agent': 'boss', authorization: 'Bearer boss-secret' },
     plain: { 'x-agent': 'plain', authorization: 'Bearer plain-secret' },
     notok: { 'x-agent': 'notok' },
+    w: { 'x-agent': 'w' },
   };
   const call = async (who, method, p, body) => {
     const r = await fetch(s.base + p, { method, headers: { 'content-type': 'application/json', origin: s.base, ...as[who] }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -69,6 +70,35 @@ describe('Can edit permissions (admin.permissions, INT-349)', () => {
     assert.deepEqual(last.changes.perms, { from: ['read', 'web'], to: ['read', 'web', 'test'] });
     // guidance on a permission it holds counts as a change to that cell, and is allowed
     assert.equal((await cell('boss', 'w', 'test', { guidance: 'Unit tests only' })).status, 200);
+  });
+
+  it('words an agent writes are marked as its own, never the human\'s, in the grid and the brief', async () => {
+    const briefOfW = async () => JSON.stringify((await call('w', 'GET', `${B}/brief?format=json`)).body);
+    assert.equal((await cell('boss', 'w', 'test', { guidance: 'Unit tests only' })).status, 200);
+    assert.deepEqual(agentsFile().agents.w.guidanceBy, { test: 'boss' });
+    let c = (await s.ok('GET', '/api/agents/grid')).agents.find((a) => a.name === 'w').cells.test;
+    assert.equal(c.guidanceBy, 'boss');
+    assert.match(c.brief.join('\n'), /Guidance from boss, an agent acting for the human, \(not enforced\): Unit tests only/);
+    assert.match(await briefOfW(), /Guidance from boss, an agent acting for the human, \(not enforced\): Unit tests only/);
+    // the human's own words are the human's again
+    assert.equal((await cell('human', 'w', 'test', { guidance: 'Integration tests too' })).status, 200);
+    assert.equal(agentsFile().agents.w.guidanceBy, undefined);
+    c = (await s.ok('GET', '/api/agents/grid')).agents.find((a) => a.name === 'w').cells.test;
+    assert.equal(c.guidanceBy, null);
+    assert.match(await briefOfW(), /Guidance from the human \(not enforced\): Integration tests too/);
+    // a library permission's brief reaches every holder: an agent's words say whose they are, and "by" can't be sent
+    const made = await call('boss', 'POST', '/api/permissions', { key: 'tidy', kind: 'verbal', brief: 'Leave it tidy', needs: ['read'], by: 'James' });
+    assert.equal(made.status, 201, JSON.stringify(made.body));
+    assert.equal(made.body.by, 'boss');
+    assert.equal((await cell('human', 'w', 'tidy', { mode: 'on' })).status, 200);
+    assert.match(await briefOfW(), /Leave it tidy \(written by boss, an agent acting for the human\)/);
+    // narrowing or other edits that leave the words alone keep the author; the human rewriting them takes it off
+    assert.equal((await call('human', 'PATCH', '/api/permissions/tidy', { needs: ['read'] })).body.by, 'boss');
+    const mine = await call('human', 'PATCH', '/api/permissions/tidy', { brief: 'Leave it tidier' });
+    assert.equal(mine.body.by, undefined);
+    assert.equal(agentsFile().perms.tidy.by, undefined);
+    assert.doesNotMatch(await briefOfW(), /written by/);
+    assert.equal((await cell('human', 'w', 'tidy', { mode: 'off' })).status, 200);
   });
 
   it('never beyond what it holds: on, off and guidance alike', async () => {

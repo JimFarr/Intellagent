@@ -4557,6 +4557,10 @@ function noEscalation(refusals) {
 }
 // The escalation check for a library write, run by definePerm on exactly what it would store, before storing it.
 const libraryCheck = (admin, key) => (admin ? (before, after) => noEscalation(libraryEscalation(permLibrary(), admin.holder, String(key), before, after)) : null);
+// A permission's words reach every holder's brief, so whoever last wrote them is kept (INT-349): an agent's
+// name, or none for the human. Edits that leave the words alone keep the author they had; the body never sets it.
+const WORDS = ['name', 'description', 'brief'];
+const wordsBy = (actor, admin, body, create) => (create || WORDS.some((k) => k in (body || {})) ? { by: admin ? actor.name : null } : {});
 route('GET', '/api/permissions', 'The permission library: every permission an agent can hold (built-in tools, board powers, and the human\'s custom ones: command, tool, folders, bundle, verbal). Verbal ones carry enforced: false and a warning', () => {
   const lib = permLibrary();
   return { permissions: lib.list(), kinds: ['builtin', 'power', ...require('./lib/permissions').KINDS], errors: lib.errors, file: standing?.file ? path.basename(standing.file) : null };
@@ -4565,14 +4569,14 @@ route('POST', '/api/permissions', 'Human, or admin.permissions: add a custom per
   if (!standing) fail(404, 'No standing agents on this board');
   const admin = permissionAdmin(actor, 'change the permission library');
   if (permLibrary().get(String(body.key || ''))) fail(409, `"${body.key}" already exists`, { code: 'CONFLICT', hint: `Change it with PATCH /api/permissions/${body.key}` });
-  const r = standing.definePerm(body.key, permBody(body), { check: libraryCheck(admin, body.key) });
+  const r = standing.definePerm(body.key, { ...permBody(body), ...wordsBy(actor, admin, body, true) }, { check: libraryCheck(admin, body.key) });
   permChanged(actor, r.permission.key, null, r.permission, admin?.d);
   return created(r.permission);
 });
 route('PATCH', '/api/permissions/:key', 'Human, or admin.permissions: change a custom permission (merged; null removes a key). Built-ins can\'t change. An agent never changes one it holds; command, tool and folders permissions only narrow, and new includes and needs must be its own', ({ p, body, actor }) => {
   if (!standing) fail(404, 'No standing agents on this board');
   const admin = permissionAdmin(actor, 'change the permission library');
-  const r = standing.definePerm(p.key, permBody(body), { merge: true, check: libraryCheck(admin, p.key) });
+  const r = standing.definePerm(p.key, { ...permBody(body), ...wordsBy(actor, admin, body, false) }, { merge: true, check: libraryCheck(admin, p.key) });
   permChanged(actor, p.key, r.before, r.permission, admin?.d);
   return r.permission;
 });
@@ -4595,8 +4599,9 @@ function gridCell(ctx, a, entry) {
   const lib = permLibrary();
   const key = entry.key;
   const said = a.guidance || {};
+  const saidBy = a.guidanceBy || {};
   const role = a.role ? roleLibrary().view(a.role) : null;
-  const base = { key, enforced: entry.enforced, guidance: Object.hasOwn(said, key) ? said[key] : null };
+  const base = { key, enforced: entry.enforced, guidance: Object.hasOwn(said, key) ? said[key] : null, guidanceBy: Object.hasOwn(saidBy, key) ? saidBy[key] : null };
   if (entry.heldBy === 'grants') {
     const gs = grantsFor(a, key);
     const rules = gs.length ? ruleOf(gs[0]) : {};
@@ -4614,7 +4619,7 @@ function gridCell(ctx, a, entry) {
     // on without being listed: another permission it holds needs it, or bundles it
     ...(mode === 'on' && !own ? { implied: true, by: (a.perms || []).filter((k) => k !== key && lib.resolve([k]).keys.includes(key)) } : {}),
     differsFromRole: roleHeld == null ? false : roleHeld !== (mode === 'on'),
-    brief: mode === 'on' ? lib.linesFor(key, said) : [],
+    brief: mode === 'on' ? lib.linesFor(key, said, saidBy) : [],
   };
 }
 route('GET', '/api/agents/grid', 'The permissions grid: every standing agent against every permission in the library. A cell is { mode: off|on|rules, rules?, guidance, enforced, differsFromRole, implied?, by?, brief } — brief is the lines the agent reads in its brief (empty when off). Verbal permissions have enforced: false. ?board= picks the board whose brief wording is used', ({ q }) => {
@@ -4697,9 +4702,13 @@ route('PUT', '/api/agents/:name/permissions/:key', 'Human, signed in, or admin.p
   }
   if (guidance !== undefined) {
     const said = { ...(a.guidance || {}) };
+    const by = { ...(a.guidanceBy || {}) };
     const text = guidance === null ? '' : guidance.trim();
     if (text) said[p.key] = text.slice(0, 1000); else delete said[p.key];
+    // words an agent wrote say so in the brief: never in the human's name (INT-349)
+    if (text && admin) by[p.key] = actor.name; else delete by[p.key];
     patch.guidance = Object.keys(said).length ? said : null;
+    patch.guidanceBy = Object.keys(by).length ? by : null;
   }
   const { changes } = standing.manage(a.name, patch, { kind: actor.kind, name: actor.name });
   const fresh = standing.list().agents.find((x) => x.name === a.name);
