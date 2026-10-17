@@ -378,6 +378,19 @@ describe('a run that is catching up its worktree (fake clock)', () => {
     assert.deepEqual(calls, ['bot', 'bot'], 'retried after the back-off');
   });
 
+  it('pause during the catch-up: no process starts, and its events go back on the queue', async () => {
+    const { scheduler, core, agents, settle } = live();
+    scheduler.dispatch('bot');
+    scheduler.api.pause('bot');
+    settle().res({ path: os.tmpdir(), branch: 'agent/bot', main: 'main', note: null });
+    await flush();
+    assert.equal(core.running.has('bot'), false);
+    assert.equal(core.procs.size, 0, 'no process was started');
+    assert.deepEqual(agents.bot.queue.map((e) => e.seq), [1], 'the event it was woken for waits');
+    assert.equal(agents.bot.failures, 0);
+    assert.equal(agents.bot.status, 'paused');
+  });
+
   it('stop all during the catch-up: no process starts, the events wait, and it is not a failure', async () => {
     const { scheduler, core, agents, settle } = live();
     scheduler.dispatch('bot');
