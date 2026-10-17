@@ -4633,7 +4633,7 @@ route('GET', '/metrics', 'Prometheus metrics (text format 0.0.4): tickets per co
   reply(res, 200, prometheus({ boards: [...boards.values()], agents: standingAgents(), seq, version: VERSION, build: BUILD }), { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
   return HANDLED;
 });
-route('GET', '/api/agents/roles','Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {
+route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {
   return { roles: Object.fromEntries(roleLibrary().list().map((v) => [v.key, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: permLibrary().labels() };
 });
 // The base context (INT-251): one document every agent starts from. Before /api/agents/:name, so it isn't a name.
