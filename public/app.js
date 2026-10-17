@@ -4706,7 +4706,7 @@
   // The Agents drawer's top (INT-162): Now, one row per awake standing agent, and the last 10 runs across them.
   const WHY_WORDS = { 'comment.added': 'a comment', 'item.assigned': 'an assignment', 'item.created': 'a new ticket', 'work.pending': 'waiting work',
     'attention.resolved': 'an answer', 'review.approved': 'a verdict', 'review.changes_requested': 'a verdict', 'request.created': 'a request',
-    'lease.requested': 'a lease request', 'lease.handover': 'a handover', 'agent.poke': 'a nudge', 'item.unblocked': 'an unblock' };
+    'lease.requested': 'a lease request', 'lease.handed': 'a handover', 'agent.poke': 'a nudge', 'item.unblocked': 'an unblock' };
   const whyWords = (why) => [...new Set(String(why || '').split(/,\s*/).filter(Boolean).map((t) => WHY_WORDS[t] || t.replace(/[._]/g, ' ')))].join(', ');
   const secs = (ms) => (ms == null ? '' : ms < 60000 ? `${Math.max(1, Math.round(ms / 1000))}s` : ms < 3600000 ? `${Math.round(ms / 60000)}m` : `${(ms / 3600000).toFixed(1)}h`);
   const runResult = (code) => (code === 0 ? `<span class="rr ok" title="Finished">${icon('check', 'sm')}</span>` : code === 'stopped' ? '<span class="rr" title="Stopped by you">⏹</span>' : `<span class="rr bad" title="Failed|exit ${esc(String(code))}">${icon('x', 'sm')}</span>`);

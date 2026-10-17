@@ -941,6 +941,23 @@ describe('schema', () => {
       assert.deepEqual(missing, [], 'emitted but not in GET /api/schema event.type');
     } finally { await s.stop(); }
   });
+
+  it('keeps the Agents drawer\'s WHY_WORDS keys to real event types', async () => {
+    const fs = require('fs');
+    const path = require('path');
+    const s = await startServer();
+    try {
+      const r = await s.api('GET', '/api/schema');
+      const listed = new Set(r.body.event.type);
+      // The labels for a run's why live inside the browser app: evaluate just that table's keys.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+      const from = src.indexOf('const WHY_WORDS = {'), to = src.indexOf('const whyWords');
+      assert.ok(from > 0 && to > from, 'markers around WHY_WORDS in public/app.js');
+      const keys = [...src.slice(from, to).matchAll(/'([a-z]+\.[a-z_.]+)':/g)].map((m) => m[1]);
+      assert.ok(keys.length > 5, 'the table has its keys');
+      assert.deepEqual(keys.filter((k) => !listed.has(k)), [], 'WHY_WORDS keys that are not event types in GET /api/schema');
+    } finally { await s.stop(); }
+  });
 });
 
 describe('lib/jsonfile: the one JSON file reader and writer (INT-148)', () => {
