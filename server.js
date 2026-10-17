@@ -5111,6 +5111,14 @@ route('GET', '/api/agents/:name/context', "An agent's context page (markdown) an
   const a = standing.get(p.name);
   return { agent: a.name, file: a.contextFile, text: standing.contextOf(a.name) };
 });
+// Read-only, but it shows what an agent's tools are built from, so it is for whoever may change them.
+route('POST', '/api/agents/:name/commands/check', 'Human or agents.manage: what would become of a command in this agent\'s "commands": { command } → { kept, why, listed, allowedBy: [permissions that already allow it], denied: { needs, why } | null, applies }. The same rule the run builder applies; changes nothing', ({ p, body, actor }) => {
+  if (!standing) fail(404, 'No standing agents on this board');
+  if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.manage')) fail(403, 'Only the human, or an agent with the agents.manage grant, can check an agent\'s commands', { code: 'HUMAN_ONLY', hint: 'Ask the human on a card' });
+  if (typeof body?.command !== 'string' || !body.command.trim()) fail(400, 'command is required', { code: 'BAD_REQUEST', hint: 'POST { "command": "npm run measure:board" }' });
+  standing.get(p.name); // 404 if unknown
+  return standing.checkCommand(p.name, body.command);
+});
 route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? } } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself)', ({ p, body, actor }) => manageAgent(p.name, body, actor));
 route('POST', '/api/agents/stop-all', 'Human (or the agents.control grant): stop every agent now — kill runs, pause standing agents, release agent leases and the master lease, send their In Progress tickets back to Ready with a comment', ({ actor }) => {
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);

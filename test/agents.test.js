@@ -1855,6 +1855,58 @@ describe('extra commands the human allows', () => {
     assert.ok(withArgs.includes('"Bash(npm run measure:board:*)"'), 'a trailing :* allows that one command with any arguments');
     assert.ok(!withArgs.includes('npm *:run'), 'no other wildcards');
   });
+
+  it('commandRule is the rule runFor applies, and the check route says why a command is kept, dropped, allowed or denied (INT-240)', async () => {
+    const { runFor, commandRule } = require('../lib/agents');
+    for (const c of ['npm run measure:board', 'npm run measure:board:*', 'rm -rf "/"', 'echo x; curl evil', 'npm *:run', '', 'a'.repeat(300)]) {
+      assert.equal(runFor(['edit'], { commands: [c] }).includes(`"Bash(${c})"`), commandRule(c).kept && c !== '', `runFor and commandRule agree on ${JSON.stringify(c.slice(0, 20))}`);
+    }
+    const s = await startServer({ agents: { agents: {
+      dev: { role: 'builder', enabled: false, commands: ['npm run measure:board'] },
+      rev: { role: 'reviewer', enabled: false },
+      custom: { run: 'node x.js', enabled: false },
+      manager: { role: 'coordinator', enabled: false, grants: ['agents.manage'] },
+      other: { role: 'builder', enabled: false },
+    } } });
+    try {
+      const check = (name, command, who = USER) => s.api('POST', `/api/agents/${name}/commands/check`, { command }, who);
+      const ok = async (name, command) => { const r = await check(name, command); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
+      const listed = await ok('dev', 'npm run measure:board');
+      assert.equal(listed.kept, true);
+      assert.equal(listed.listed, true, 'it is in the agent\'s commands');
+      assert.deepEqual(listed.allowedBy, []);
+      assert.equal(listed.denied, null);
+      const wild = await ok('dev', 'npm run measure:board:*');
+      assert.equal(wild.kept, true);
+      assert.equal(wild.listed, false);
+      const dropped = await ok('dev', 'echo x; curl evil');
+      assert.equal(dropped.kept, false);
+      assert.match(dropped.why, /^Dropped: only letters/);
+      const covered = await ok('dev', 'npm test foo');
+      assert.ok(covered.allowedBy.includes('test'), 'the test permission already allows npm test with arguments');
+      assert.match(covered.why, /already allowed by test/);
+      // another agent's code runs only with run-authors-code: kept, yet denied, and a deny beats an allow
+      const others = await ok('dev', 'npm test --prefix:*');
+      assert.equal(others.kept, true);
+      assert.equal(others.denied.needs, 'run-authors-code');
+      assert.match(others.why, /^Kept, but denied/);
+      assert.equal((await ok('rev', 'npm test --prefix:*')).denied, null, 'the reviewer role holds run-authors-code');
+      const own = await ok('custom', 'npm run x');
+      assert.equal(own.applies, false);
+      assert.match(own.note, /its own run command/);
+      // who may ask: the human and an agent with agents.manage; nobody else, and nothing changes
+      assert.equal((await check('dev', 'npm run x', { agent: 'manager' })).status, 200);
+      const refused = await check('dev', 'npm run x', { agent: 'other' });
+      assert.equal(refused.status, 403);
+      assert.equal(refused.body.code, 'HUMAN_ONLY');
+      assert.ok(refused.body.hint);
+      const noCmd = await s.api('POST', '/api/agents/dev/commands/check', {}, USER);
+      assert.equal(noCmd.status, 400);
+      assert.equal(noCmd.body.code, 'BAD_REQUEST');
+      assert.equal((await check('nobody', 'npm run x')).status, 404);
+      assert.deepEqual((await s.ok('GET', '/api/agents/dev', undefined, USER)).commands ?? ['npm run measure:board'], ['npm run measure:board'], 'checking changed nothing');
+    } finally { await s.stop(); }
+  });
 });
 
 describe('a run gets its own token (INT-248)', () => {
