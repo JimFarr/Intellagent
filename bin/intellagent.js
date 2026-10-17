@@ -493,6 +493,7 @@ async function nextEvents({ agent, types, timeoutSec, quiet, listen = { scope: '
 }
 
 const { eventLine } = require('../lib/agents');
+const { promptFor } = require('../lib/agents/prompt');
 
 async function waitCmd() {
   const f = flags(rest);
@@ -532,15 +533,7 @@ async function watchCmd() {
     const evFile = path.join(evDir, `${agent.replace(/[^\w.-]+/g, '_')}-events.json`);
     fs.mkdirSync(evDir, { recursive: true });
     fs.writeFileSync(evFile, JSON.stringify(events, null, 2));
-    const prompt = [
-      listen.query
-        ? `You are "${agent}", coordinating this project's Intellagent board. New activity (${what}):`
-        : `You are "${agent}", working on this project's Intellagent board. These events are addressed to you:`,
-      ...events.map((e) => `- ${e.board && e.board !== 'main' ? `[board ${e.board}] ` : ''}${eventLine(e)}`),
-      '',
-      `Read each ticket for context (intellagent api GET /api/boards/<board>/items/<ID>; the board is ${[...new Set(events.map((e) => e.board).filter(Boolean))].join(', ') || 'main'}), act on it following the board's standing rules and the project's CLAUDE.md, and reply on the card.`,
-      `Use INTELLAGENT_AGENT=${agent} for API calls. Full event JSON: ${evFile}`,
-    ].join('\n');
+    const prompt = promptFor(agent, events, { listen: listen.query ? 'other' : 'inbox', evFile });
     console.log(`\n▶ ${events.length} event(s): ${events.map((e) => e.itemId || e.type).join(', ')}`);
     const args = cmd.slice(1).map((a) => a.replace('{events}', evFile));
     const win = process.platform === 'win32';

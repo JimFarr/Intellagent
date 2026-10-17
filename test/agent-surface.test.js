@@ -370,8 +370,10 @@ describe('watching from the CLI', () => {
       await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: '@watcher please look' }, USER);
       const w = cli(['watch', '--once', '--', 'node', '-e', 'process.stdin.pipe(process.stdout)'], { cwd: away, env });
       assert.equal(w.code, 0, w.err || w.out);
-      assert.match(w.out, /the board is main/);
-      assert.match(w.out, /intellagent api GET \/api\/boards\/<board>\/items\/<ID>/);
+      // The prompt is the standing agents' one (promptFor), not a copy of it.
+      assert.match(w.out, /Start with: intellagent brief/);
+      assert.match(w.out, /run commands bare/);
+      assert.ok(!/Use INTELLAGENT_AGENT=/.test(w.out), w.out);
       assert.ok(!/path\" argument/.test(w.err), w.err);
     } finally { await s.stop(); }
   });
