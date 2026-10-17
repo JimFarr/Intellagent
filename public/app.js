@@ -5571,7 +5571,20 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       const stop = e.target.closest('[data-stop-all]');
       if (stop) {
         e.stopPropagation();
-        if (!stop.classList.contains('armed')) { stop.classList.add('armed'); stop.lastChild.textContent = 'Click again to stop everything'; setTimeout(() => { if (stop.isConnected) { stop.classList.remove('armed'); stop.lastChild.textContent = 'Stop all agents'; } }, 3500); return; }
+        if (!stop.classList.contains('armed')) {
+          stop.classList.add('armed'); stop.lastChild.textContent = 'Click again to stop everything';
+          // Stays armed until the second click; a click elsewhere or Escape disarms it
+          const disarm = (ev) => {
+            if (ev?.type === 'click' && stop.contains(ev.target)) return;
+            if (ev?.type === 'keydown' && ev.key !== 'Escape') return;
+            document.removeEventListener('click', disarm, true); document.removeEventListener('keydown', disarm, true);
+            stop.classList.remove('armed'); stop.lastChild.textContent = 'Stop all agents';
+          };
+          stop._disarm = disarm;
+          document.addEventListener('click', disarm, true); document.addEventListener('keydown', disarm, true);
+          return;
+        }
+        stop._disarm?.();
         try {
           const r = await api('POST', '/api/agents/stop-all', {});
           toast(`Stopped ${r.stopped.length ? r.stopped.join(', ') : 'all agents'}${r.moved.length ? ` · ${r.moved.length} ticket${r.moved.length > 1 ? 's' : ''} back to Ready` : ''}`, { icon: 'pause', kind: 'ok' });
