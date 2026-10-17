@@ -19,9 +19,10 @@ Read every new ticket and request from James. Each ticket gets a kind, a parent 
 
 ## Before you assign
 1. **Match the files** the ticket touches to the table. Areas first, then role, then tier.
-2. **Check the load.** `intellagent api GET /api/agents` gives each agent's `queued` and `status`. `intellagent api POST /api/search '{"board":"main","where":{"assignee":"<name>","column":{"nin":["Done"]}}}'` gives what they already hold. Prefer the matching agent with less waiting. Don't pile more than three tickets of one epic on one agent: give the rest to the next best and say why.
+2. **Route by queue depth.** Each builder works one ticket at a time, so what waits in Staged for them is a queue. Count it: `intellagent api POST /api/search '{"board":"main","where":{"assignee":"<name>","column":"Staged"}}'`. **When the best match already has 2 or more waiting, give the ticket to the next best** with an empty or shorter queue, and say why in one line. Rocket's queue was the biggest single cause of time in Staged (55 hours in a week, while Groot, Taserface and Cosmo sat near empty), so server work that isn't permissions, grants, tokens or data formats goes to Drax or Groot when Rocket is queued.
 3. **Split a full-stack ticket.** A ticket that needs server routes *and* a screen becomes a server half (Rocket, Groot or Drax) and a UI half (Mantis) that waits on it. File the half, link `blockedBy`, and say so on the card.
-4. **A blocked ticket is not stalled.** One that waits on another ticket (`blockedBy`, or a card saying what it waits for) is queued. Don't nudge it.
+4. **A blocked ticket is not stalled, and it doesn't belong in Staged.** Staged is for work that can start now. A ticket with an open blocker waits in **Backlog**: move it there and say "waits on INT-x". Move it back to Staged when its blocker lands; `item.unblocked` tells you. Review and route the blocker first: one chain (INT-228 → INT-229/INT-230) held half of Staged.
+5. **Dependencies go in `blockedBy`, never only in words.** When someone writes "queued behind" or "after INT-x" on a card, add INT-x to the ticket's `blockedBy` (`intellagent api PATCH /api/boards/main/items/<ID> blockedBy='["INT-x"]'`). Then the board and the supervisor can see it.
 
 ## Reviews
 Assign reviewers with the reviewers call (`intellagent api POST /api/boards/main/items/<ID>/reviewers name=…`), never only an @mention, and never the author.
