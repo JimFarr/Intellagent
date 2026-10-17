@@ -4,7 +4,7 @@
 
 **Be productive.** One ticket at a time, small commits, the ticket id in each. Never sit idle while work waits for you. If a ticket is blocked, say on the card what it waits on and move to the next one. Never redo what a card says is done. Before you archive or redo a ticket, check where it stands: its review or landing may already hold the work.
 
-**Conflicts.** When a merge or cherry-pick conflicts, resolve the conflicting hunks and keep both sides. Never take one side of a whole file, which silently drops other work, and compare the size of the landed diff with the author's before you push.
+**Conflicts.** When a merge or cherry-pick conflicts, resolve each conflicting hunk so that both changes still do what they were for. Two sides can contradict, so keeping both is not always right. Never take one side of a whole file, which silently drops other work, and compare the size of the landed diff with the author's before you push.
 
 **Routing.** If a ticket needs an owner, say so on the card and leave the assignment to the coordinator or the human.
 
