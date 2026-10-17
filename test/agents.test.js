@@ -274,6 +274,20 @@ describe('a failed agent gets one more try (INT-295)', () => {
   });
 });
 
+describe('why a run failed (INT-346)', () => {
+  it('comes from the run\'s output only: not the prompt, not a JSON line', async () => {
+    const s = await startServer({ agents: { defaults: { ...fast, maxFailures: 5 }, agents: { quiet: { run: run('fail-json') } } } });
+    try {
+      // the title reaches the prompt, and it says "failed" and "error"
+      const it = await s.ok('POST', `${B}/items`, { title: 'the build failed with an error', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@quiet go' }, USER);
+      const a = await until(async () => { const x = await agentState(s, 'quiet'); return x.failures >= 1 && x.lastRun?.endedAt ? x : null; }, 6000, 'first failure');
+      assert.equal(a.lastRun.code, 1);
+      assert.equal(a.lastRun.error, undefined, 'a run with no plain output has no reason, and shows neither prompt nor tool output');
+    } finally { await s.stop(); }
+  });
+});
+
 describe('the usage limit', () => {
   it('a run refused for the usage limit is no failure: the agent and its account mates wait for the reset, then run (INT-293)', async () => {
     const marker = path.join(os.tmpdir(), `ia-limited-${Date.now()}`);

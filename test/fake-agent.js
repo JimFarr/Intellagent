@@ -125,6 +125,8 @@ if (mode === 'commit') {
 }
 let prompt = '';
 process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
+  //   node fake-agent.js fail-json   exits 1 after only a stream-json tool_result line (INT-346: not a reason to show)
+  if (mode === 'fail-json') { console.log('{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"SECRET file text"}]}}'); process.exit(1); }
   if (mode === 'fail') { console.error('noise\nInvalid MCP configuration: MCP config file not found: x/.mcp.json\nexiting'); process.exit(1); }
   //   node fake-agent.js fail-until <marker>   fails until <marker> exists, then behaves like ok (INT-295: the cause passed)
   if (mode === 'fail-until' && !require('fs').existsSync(arg)) process.exit(1);
