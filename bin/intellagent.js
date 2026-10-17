@@ -448,6 +448,40 @@ async function installTeam(p, t, dir) {
   return t.steps.length;
 }
 
+const grantList = (gs) => (gs.length ? gs.map((g) => (typeof g === 'string' ? g : g.power + (g.where ? ` where ${JSON.stringify(g.where)}` : ''))).join(', ') : 'none');
+
+// The team half of diff and update: reads the installed agents, their context notes and the base through the API.
+async function teamDiffLive(p, lock) {
+  const all = (await asHuman('GET', '/api/agents')).agents || [];
+  const agents = {}, contexts = {};
+  for (const name of Object.values(lock.agents || {})) {
+    const a = all.find((x) => x.name === name);
+    if (!a) continue;
+    agents[name] = a;
+    const items = (await asHuman('GET', `/api/agents/${encodeURIComponent(name)}/context`)).items || [];
+    contexts[name] = items.find((i) => i.kind === 'note' && i.title === 'Context')?.body ?? null;
+  }
+  const base = p.team?.base ? await asHuman('GET', '/api/agents/base-context') : null;
+  return presets.teamDiff(p, lock, { agents, contexts, base });
+}
+
+// Adds or updates one team piece through the API (never agents.json). A slot sends only what the preset says.
+async function applyTeamStep(s) {
+  if (s.id === 'base') return asHuman('PUT', '/api/agents/base-context', { text: s.value });
+  const at = `/api/agents/${encodeURIComponent(s.name)}`;
+  if (s.id.startsWith('context:')) {
+    const items = (await asHuman('GET', `${at}/context`)).items || [];
+    const note = { kind: 'note', title: 'Context', body: s.value };
+    const i = items.findIndex((x) => x.kind === 'note' && x.title === 'Context');
+    return asHuman('PATCH', at, { contextItems: i < 0 ? [...items, note] : items.map((x, n) => (n === i ? note : x)) });
+  }
+  const pick = (keys) => Object.fromEntries(keys.filter((k) => s.value[k] != null).map((k) => [k, s.value[k]]));
+  const define = pick(['role', 'model', 'provider', 'description', 'listen', 'pickup', 'keepAlive']);
+  if (Object.keys(define).length) await asHuman('POST', '/api/agents', { name: s.name, ...define }); // an agent that exists is updated, probation kept
+  const patch = pick(['areas', 'concerns', 'reviewer']);
+  if (Object.keys(patch).length) await asHuman('PATCH', at, patch);
+}
+
 const WORD = { new: 'add', same: 'already there', update: 'update', edited: 'yours, kept', dropped: 'you removed it, kept off', gone: 'no longer in the preset, kept' };
 function printPlan(steps) {
   for (const s of steps) console.log(`    ${s.state.padEnd(8)} ${s.id}  (${WORD[s.state]})`);
@@ -532,8 +566,13 @@ async function presetCmd() {
   }
   if (!lock) { console.error(`error 404 NOT_FOUND: ${p.name} is not installed on this board — hint: intellagent preset add ${p.name}`); process.exit(1); }
   console.log(`\n  ${p.name}: installed ${lock.version}, available ${p.version}`);
+  const td = p.team || lock.agents ? await teamDiffLive(p, lock) : { steps: [], notes: [], proposals: [] };
+  for (const s of td.steps) s.team = true;
+  steps.push(...td.steps);
   const differs = steps.filter((s) => s.state !== 'same');
   printPlan(differs);
+  for (const n of td.notes) console.log(`    note     ${n}`);
+  for (const x of td.proposals) console.log(`    proposal ${x.name} (slot ${x.slot}): the preset's proposed grants changed — was ${grantList(x.from)}, now ${grantList(x.to)}. Nothing is written; look, and grant by hand if you agree`);
   if (!differs.length) console.log('    up to date: every piece is as the preset has it.');
   if (sub === 'diff') return;
   const can = steps.filter((s) => s.state === 'new' || s.state === 'update');
@@ -541,7 +580,7 @@ async function presetCmd() {
   const want = f.accept === true || f.accept === 'all' ? can.map((s) => s.id) : String(f.accept).split(',').map((x) => x.trim());
   const bad = want.filter((id) => !can.some((s) => s.id === id));
   if (bad.length) { console.error(`error 400 BAD_REQUEST: cannot take ${bad.join(', ')}: not a new or updatable piece — hint: intellagent preset diff ${p.name}; edited pieces are yours and are never overwritten`); process.exit(1); }
-  for (const s of can.filter((x) => want.includes(x.id))) await applyStep(board, s);
+  for (const s of can.filter((x) => want.includes(x.id))) await (s.team ? applyTeamStep(s) : applyStep(board, s));
   if (p.dir) presets.addFolder(p, dir); // updating from a newer folder: the board keeps this copy
   presets.record(dir, p, [...steps.filter((s) => s.state === 'same').map((s) => s.id), ...want]);
   console.log(`  ✓ ${p.name}@${p.version}: ${want.length} piece${want.length === 1 ? '' : 's'} updated.`);

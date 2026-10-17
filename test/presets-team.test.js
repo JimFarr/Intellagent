@@ -159,6 +159,67 @@ describe('presets: installing the team (INT-302 step 2)', () => {
     } finally { await s.stop(); }
   });
 
+  it('teamDiff: same, update, edited, dropped and gone, with the never-overwrite-edited rule; a changed proposal is reported, not written', () => {
+    const p = loaded();
+    const wasP = presets.teamParts(p);
+    const lock = { parts: { ...wasP }, agents: { lead: 'boss' }, proposals: { lead: [] } };
+    const mine = { name: 'boss', ...wasP['slot:lead'], reviewer: undefined };
+    const live = (over = {}) => ({ agents: { boss: { ...mine, ...over } }, contexts: { boss: 'Route by areas.' }, base: { text: 'Be brief.', edited: true } });
+    const by = (d) => Object.fromEntries(d.steps.map((s) => [s.id, s.state]));
+    assert.deepEqual(by(presets.teamDiff(p, lock, live())), { 'slot:lead': 'same', 'context:lead': 'same', base: 'same' });
+    // the preset moves on (new model, new page), the board still has what was installed: both can update
+    const v2 = presets.load(folder({ ...team({ roles: undefined }), version: '2', team: { ...team({ roles: undefined }).team, slots: { lead: { ...team().team.slots.lead, model: 'opus' } } } }, { ...FILES, 'agent-context/lead.md': 'New page.' }), null);
+    const d2 = presets.teamDiff(v2, lock, live());
+    assert.deepEqual([by(d2)['slot:lead'], by(d2)['context:lead']], ['update', 'update']);
+    assert.deepEqual(d2.proposals, [{ slot: 'lead', name: 'boss', from: [], to: v2.team.slots.lead.grants }], 'the proposed grants differ from the ones the human saw');
+    // the human changed the model by hand: kept
+    assert.equal(by(presets.teamDiff(v2, lock, live({ model: 'haiku' })))['slot:lead'], 'edited');
+    // the agent was removed
+    assert.equal(by(presets.teamDiff(v2, lock, { agents: {}, contexts: {}, base: { edited: false } }))['slot:lead'], 'dropped');
+    // a slot installed under a name that the preset no longer has
+    const none = presets.load(folder({ ...team({ roles: undefined }), team: { slots: {} } }, {}), null);
+    assert.deepEqual(by(presets.teamDiff(none, lock, live())), { 'slot:lead': 'gone', 'context:lead': 'gone', base: 'gone' });
+  });
+
+  it('preset diff and update follow the team: an update changes only what the human has not edited, and says a proposal changed', async () => {
+    const { spawnSync } = require('child_process');
+    const { startServer, cleanEnv, USER } = require('./helpers');
+    const cli = (args, cwd) => { const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv({}), encoding: 'utf8', input: '', timeout: 60000 }); return { code: r.status, out: r.stdout, err: r.stderr }; };
+    const make = (version, areas, page, grants) => { const p = team({ roles: undefined }); delete p.team.base; p.version = version; Object.assign(p.team.slots.lead, { role: 'builder', pickup: 'ready', areas, grants }); return folder(p, { 'agent-context/lead.md': page }); };
+    const s = await startServer();
+    try {
+      assert.equal(cli(['preset', 'add', make('1', ['docs/'], 'Page one.', ['agents.control']), '--yes', '--agents', 'lead=rocket'], s.dir).code, 0);
+      const same = cli(['preset', 'diff', make('1', ['docs/'], 'Page one.', ['agents.control'])], s.dir);
+      assert.match(same.out, /up to date/, 'a fresh install reads as the preset has it: ' + same.out);
+      const v2 = make('2', ['lib/'], 'Page two.', ['agents.control', 'review.decide']);
+      const diff = cli(['preset', 'diff', v2], s.dir);
+      assert.match(diff.out, /update\s+slot:lead/);
+      assert.match(diff.out, /update\s+context:lead/);
+      assert.match(diff.out, /proposal rocket \(slot lead\): .*was agents\.control, now agents\.control, review\.decide/);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, 'agents.json'), 'utf8')).agents.rocket.grants, undefined, 'a proposal is never written');
+      const up = cli(['preset', 'update', v2, '--accept', 'all'], s.dir);
+      assert.equal(up.code, 0, up.err);
+      const a = JSON.parse(fs.readFileSync(path.join(s.dir, 'agents.json'), 'utf8')).agents.rocket;
+      assert.deepEqual(a.areas, ['lib/']);
+      assert.match(JSON.stringify(a.contextItems), /Page two\./);
+      assert.ok(a.probation, 'an update does not accept the agent');
+      // the human edits the areas; a v3 that changes them again is "edited" and kept
+      await s.ok('PATCH', '/api/agents/rocket', { areas: ['mine/'] }, USER);
+      const v3 = make('3', ['theirs/'], 'Page two.', ['agents.control', 'review.decide']);
+      assert.match(cli(['preset', 'diff', v3], s.dir).out, /edited\s+slot:lead\s+\(yours, kept\)/);
+      assert.equal(cli(['preset', 'update', v3, '--accept', 'slot:lead'], s.dir).code, 1, 'an edited piece cannot be taken');
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(s.dir, 'agents.json'), 'utf8')).agents.rocket.areas, ['mine/']);
+    } finally { await s.stop(); }
+  });
+
+  it('record keeps the agent names across later records', () => {
+    const dir = tmp('rec2');
+    const p = loaded();
+    presets.record(dir, p, ['slot:lead'], { lead: 'boss' });
+    presets.record(dir, p, []); // a board-only update
+    assert.deepEqual(presets.readLock(dir).presets.crew.agents, { lead: 'boss' });
+  });
+
   it('record keeps the team pieces and the agent names, and plan does not call them "gone"', () => {
     const dir = tmp('rec');
     const p = loaded();
