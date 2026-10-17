@@ -936,6 +936,7 @@
     scheduleListeners();
     scheduleLooks();
     renderCatch();
+    if (boardChanged) refreshIdleNotice();
     const dg = $('#digestDrawer .drawer-body');
     if (dg?._redraw && !dg.contains(document.activeElement)) dg._redraw();
     if (!catchupDone.has(state.boardId)) { catchupDone.add(state.boardId); catchUp(state.boardId); }
@@ -1108,6 +1109,7 @@
       <span class="grow"></span>
       <button class="pill-btn master-btn" id="masterBtn" hidden></button>
       <button class="pill-btn needs-btn" id="needsBtn" title="Needs you|Tickets where an agent is waiting for your answer" hidden>${icon('ask')}<span id="needsCount"></span></button>
+      <button class="pill-btn idle-btn" id="idleBtn" aria-haspopup="menu" hidden></button>
       <button class="pill-btn catch-btn" id="catchBtn" title="While you were away|Tickets agents changed since you last looked" hidden>${icon('sparkle')}<span id="catchCount"></span></button>
       <div class="awake" id="awake" role="group" aria-label="Awake agents"></div>
       <label class="search ask-field" id="askField" title="Ask an agent|Plan work, create tickets, explain a blocker — anything not tied to one ticket · A"><span class="ask-av" id="askAv"></span><input id="askIn" readonly autocomplete="off" aria-haspopup="dialog" aria-label="Ask an agent"><kbd>A</kbd><i class="ask-dot" hidden></i></label>
@@ -1119,6 +1121,7 @@
     $('#masterBtn').onclick = (e) => masterMenu(e.currentTarget);
     $('#needsBtn').onclick = () => { const ids = needsIds(); if (ids.length) openItem(ids[0], cardEls.get(ids[0]), { rail: true }); };
 
+    $('#idleBtn').onclick = (e) => idleMenu(e.currentTarget);
     $('#catchBtn').onclick = openCatchup;
     $('#awake').onclick = (e) => { const b = e.target.closest('[data-wake]'); if (b) openAgents(b.dataset.wake); };
     // keyboard focus shows the same tooltip as hover
@@ -1269,6 +1272,55 @@
     r.setProperty('--frame-r', `${Math.max(12, Math.round(innerWidth - last.right))}px`);
   }
 
+  // The idle-board alarm's human notice (INT-294/316): a header badge while it stands, with Resume for each agent
+  // it found down. The server decides when it stands; this only reads it, so nothing polls.
+  function idleSummary(n) {
+    const down = n.down || [];
+    const waits = `${n.waitingCount} ticket${n.waitingCount === 1 ? '' : 's'} waiting`;
+    const who = down.length ? `${down.map((d) => nameOf(d.name)).join(', ')} ${down.length === 1 ? 'is' : 'are'} ${[...new Set(down.map((d) => d.status))].join('/')}` : 'nobody is named to be woken';
+    return { waits, who };
+  }
+  function renderIdleBadge() {
+    const b = $('#idleBtn');
+    if (!b) return;
+    const n = state.idleNotice;
+    b.hidden = !n;
+    if (!n) { b.innerHTML = ''; return; }
+    const { waits, who } = idleSummary(n);
+    b.innerHTML = `${icon('bot')}<span class="idle-n">${n.waitingCount}</span>`;
+    b.dataset.tip = `Board idle|${waits}, ${who}. Click to resume`;
+    b.setAttribute('aria-label', `Board idle: ${waits}, ${who}. Open to resume`);
+  }
+  let idleReq = 0;
+  async function refreshIdleNotice() {
+    if (!state.boardId) return;
+    const mine = ++idleReq;
+    let v;
+    try { v = await api('GET', `/api/boards/${state.boardId}/idle-alarm`); } catch { return; }
+    if (mine !== idleReq) return;
+    const was = JSON.stringify(state.idleNotice || null);
+    state.idleNotice = v.notice || null;
+    if (JSON.stringify(state.idleNotice) !== was) renderIdleBadge();
+  }
+  function idleMenu(anchor) {
+    const n = state.idleNotice;
+    if (!n) return;
+    const { waits, who } = idleSummary(n);
+    const items = [{ label: waits[0].toUpperCase() + waits.slice(1), hint: (n.waiting || []).slice(0, 4).join(', '), disabled: true, icon: 'ask' }, '-'];
+    for (const d of n.down || []) {
+      const can = d.status !== 'disabled';
+      items.push({ label: can ? `Resume ${nameOf(d.name)}` : `${nameOf(d.name)} is switched off`, hint: d.status, avatar: { kind: 'agent', name: d.name }, disabled: !can,
+        run: async () => {
+          try { await api('POST', `/api/agents/${encodeURIComponent(d.name)}/resume`); toast(`${nameOf(d.name)} resumed`, { icon: 'check', kind: 'ok', timeout: 2200 }); }
+          catch (e) { toast(e.message, { kind: 'error' }); }
+          refreshIdleNotice();
+        } });
+    }
+    if (!(n.down || []).length) items.push({ label: who, disabled: true });
+    items.push({ label: 'Open the Agents page', icon: 'bot', run: () => openAgents() });
+    menu(anchor, items, { width: 300 });
+  }
+
   function renderHeader() {
     if (!state.board) return;
     $('#appName').textContent = state.app.name;
@@ -1290,6 +1342,7 @@
     $('#boardName').textContent = viewFocus() ? `${state.board.name} › ${viewFocus().name}` : state.board.name;
     document.title = `${viewFocus() ? `${viewFocus().name} · ` : ''}${state.board.name} · ${state.app.name}`;
     renderFocusBar();
+    renderIdleBadge();
     renderPresenceButton();
     renderAsk();
     $('#build').innerHTML = `<span class="live-dot ${state.live ? 'on' : ''}" title="${state.live ? 'Live' : 'Reconnecting'}"></span>
@@ -4125,6 +4178,9 @@
       else if (ev.board === state.boardId) seenFor(ev.board).seq = ev.seq;
     }
     if (forMe(ev) && !state.inbox.some((x) => x.seq === ev.seq)) { state.inbox.unshift(ev); state.inbox.length = Math.min(200, state.inbox.length); renderInboxBtn(); }
+    // the idle notice (INT-316) appears with the alarm and goes when a builder runs or a downed agent is back:
+    // only those events ask again, and only while a notice stands
+    if (ev.type === 'agent.idle_alarm' || (state.idleNotice && /^(agent\.(status|run\.started|failed|resumed|paused)|agents\.changed)$/.test(ev.type))) refreshIdleNotice();
     if (ev.type === 'app.renamed') { state.app.name = ev.to; renderHeader(); }
     if (ev.type === 'profile.updated') refreshProfiles();
     if (ev.type === 'board.created' || ev.type === 'board.updated' || ev.type?.startsWith('item.')) refreshBoards();

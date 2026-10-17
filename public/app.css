@@ -155,6 +155,8 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .search input:focus + kbd, .search input:not(:placeholder-shown) + kbd { opacity: 0; }
 
 .needs-btn { border-color: color-mix(in oklab, var(--accent-2) 60%, transparent); color: var(--accent-2); font-weight: 700; animation: needs-glow 2.2s ease-in-out infinite; }
+.idle-btn { border-color: color-mix(in oklab, var(--warn) 60%, transparent); color: var(--warn); font-weight: 700; }
+.idle-btn .idle-n { font-variant-numeric: tabular-nums; }
 @keyframes needs-glow { 50% { box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent-2) 18%, transparent), 0 0 22px color-mix(in oklab, var(--accent-2) 30%, transparent); } }
 .agents-btn .stack-av { display: inline-flex; }
 .agents-btn .stack-av .avatar { margin-left: -6px; box-shadow: 0 0 0 2px var(--surface); }
