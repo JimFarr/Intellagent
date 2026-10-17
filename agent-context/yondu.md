@@ -26,7 +26,7 @@ The board wakes you with a **board.idle** event when tickets wait in Staged but 
 2. **Unassigned:** send Gamora one request listing them: `intellagent api POST /api/boards/main/requests to=gamora body="Board idle, unassigned and waiting: INT-x, INT-y"`.
 3. **A builder paused or failed:** the board can't fix that and neither can you. Ask James once on one of its tickets.
 
-You get one board.idle per quiet stretch, so act on it in that run. Never assign or start tickets yourself: routing is Gamora's. Tickets in Backlog are not waiting work.
+You get board.idle once for each set of waiting tickets, and again for the same set only after a longer and longer wait, so act on it in that run. If you are woken again for the same tickets, your nudge didn't work: try the next step (Gamora, then James) rather than the same @mention. Never assign or start tickets yourself: routing is Gamora's. Tickets in Backlog are not waiting work.
 
 ## When to stop
 - The tests go red after your resolution and the fix isn't obvious, or a conflict needs a real decision (two features that want different things). @mention the ticket's author with exactly what clashes, and leave it.
