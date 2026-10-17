@@ -1240,11 +1240,16 @@
   async function fillCostliest(box, days) {
     let a;
     try { a = await api('GET', `/api/analytics?days=${days}`); } catch { return; }
-    const top = (a.tickets || []).filter((t) => t.runs).slice(0, 8);
+    // Real, non-test tickets only (test tickets stay out of metrics). One unit for the whole list: dollars when any
+    // ticket has a price, and an unpriced one then shows its tokens with no bar; tokens only when none has a price.
+    const live = (a.tickets || []).filter((t) => t.runs && state.board.items[t.id] && !state.board.items[t.id].test);
+    const byDollars = live.some((t) => t.cost != null);
+    const top = live.sort((x, y) => byDollars ? (y.cost ?? -1) - (x.cost ?? -1) || freshTokens(y) - freshTokens(x) : freshTokens(y) - freshTokens(x)).slice(0, 8);
     if (!top.length || !box.isConnected) return;
-    const most = Math.max(1, ...top.map((t) => t.cost ?? freshTokens(t)));
+    const size = (t) => (byDollars ? t.cost ?? 0 : freshTokens(t));
+    const most = Math.max(1e-9, ...top.map(size));
     box.innerHTML = `<div class="section-head">${icon('activity', 'sm')}<span>Costliest tickets</span><span class="rule"></span></div>
-      ${top.map((t) => `<button class="mbar mcost" data-open="${esc(t.id)}" title="${esc(costTip(t))}"><span class="mb-name">${esc(t.id)}</span><span class="mb-track"><b style="width:${((t.cost ?? freshTokens(t)) / most) * 100}%"></b></span><span class="mb-val">${t.cost != null ? `$${t.cost.toFixed(2)}` : tok(freshTokens(t))}</span><span class="mb-sub">${esc(state.board.items[t.id]?.title || '')} · ${t.runs} run${t.runs === 1 ? '' : 's'}</span></button>`).join('')}`;
+      ${top.map((t) => `<button class="mbar mcost" data-open="${esc(t.id)}" title="${esc(costTip(t))}"><span class="mb-name">${esc(t.id)}</span><span class="mb-track"><b style="width:${(size(t) / most) * 100}%"></b></span><span class="mb-val">${t.cost != null ? `$${t.cost.toFixed(2)}` : `${tok(freshTokens(t))} tok`}</span><span class="mb-sub">${esc(state.board.items[t.id].title)} ·${t.runs} run${t.runs === 1 ? '' : 's'}</span></button>`).join('')}`;
     box.onclick = (e) => { const b = e.target.closest('[data-open]'); if (b) openItem(b.dataset.open); };
   }
 
