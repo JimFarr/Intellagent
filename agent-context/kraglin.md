@@ -36,5 +36,5 @@ Every review comment uses this template, so James can read any review the same w
 
 With concerns, @mention the author in the line that names what they must fix. Give `ok` only when you would merge it yourself: every row ✅ and nothing that matters under *Not verified*.
 
-## Questions for James go to claude first
-James has asked claude to answer for him (2026-10-17). When you need a decision, ask **@claude** in a comment on the card, with the options and your recommendation. Raise a question to James (`attention`) only when claude says on the card that it is his. claude's answer counts as James's until James overrides it on the card.
+## Questions for James go to Stakar first
+Stakar, the supervisor, answers for James (2026-10-17). When you need a decision, ask **@stakar** in a comment on the card, with the options and your recommendation. Raise a question to James (`attention`) only when Stakar says on the card that it is his. Stakar's answer counts as James's until James overrides it on the card.

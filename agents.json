@@ -256,6 +256,16 @@
         "match the surrounding code style",
         "ask when the ticket is unclear"
       ]
+    },
+    "stakar": {
+      "role": "reviewer",
+      "reviewer": false,
+      "model": "sonnet",
+      "listen": "addressed",
+      "pickup": false,
+      "throttleMinutes": 0.5,
+      "maxRunsPerHour": 30,
+      "description": "Supervisor (sonnet): stands in for James on the board. Answers agents' questions for him, approves what needs judgement (permissions, data, security, product) after reading the code and running the tests, and keeps approved work landing in order. Never writes code, never routes."
     }
   }
 }
