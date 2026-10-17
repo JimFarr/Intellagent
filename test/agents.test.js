@@ -1263,15 +1263,14 @@ describe('per-agent git worktrees', () => {
       assert.ok(git('log', '-1', '--format=%s').includes(`(${a.id})`));
       assert.match((await comments(s, a.id)).at(-1), /Landed on main/);
       assert.ok(!fs.existsSync(path.join(dir, `work-${b.id}.txt`)), "bob's unapproved work stays off main");
-      // a dirty main checkout blocks landing, and the card says how to finish
+      // an uncommitted change the ticket's commits don't touch no longer blocks landing, and survives it
       fs.writeFileSync(path.join(dir, 'README.md'), 'edited by the human\n');
       await s.ok('POST', `${B}/items/${b.id}/review`, { summary: 'done' }, { agent: 'bob' });
       await s.ok('POST', `${B}/items/${b.id}/review/decision`, { verdict: 'approve' }, USER);
-      assert.match((await comments(s, b.id)).at(-1), /Not landed: the main checkout has uncommitted changes.*intellagent merge/);
-      git('checkout', 'README.md');
-      const land = await s.ok('POST', `${B}/items/${b.id}/land`, {}, USER);
-      assert.equal(land.landed.length, 1);
+      assert.match((await comments(s, b.id)).at(-1), /Landed on main/);
       assert.ok(fs.existsSync(path.join(dir, `work-${b.id}.txt`)));
+      assert.equal(fs.readFileSync(path.join(dir, 'README.md'), 'utf8'), 'edited by the human\n', "the human's uncommitted edit is kept");
+      git('checkout', 'README.md');
     } finally {
       await s.stop();
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
@@ -1439,7 +1438,7 @@ describe('a lander (work.land) gets approved work onto main', () => {
     fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
     git('add', '.');
     git('commit', '-q', '-m', 'init');
-    const s = await startServer({ dir, agents: { defaults: fast, agents: {
+    const s = await startServer({ dir, manifest: { staleSweepSeconds: 0.4 }, agents: { defaults: fast, agents: {
       bob: { run: run('commit'), worktree: true },
       yondu: { run: run('ok'), worktree: true, grants: ['work.land'] },
       eve: { run: run('ok'), worktree: true },
@@ -1455,11 +1454,14 @@ describe('a lander (work.land) gets approved work onto main', () => {
       const brief = (await s.api('GET', `${B}/brief`, undefined, { agent: 'yondu' })).body;
       assert.match(brief, /work\.land\*\* — .*\/items\/<ID>\/land.*NOT_APPROVED/);
       assert.doesNotMatch(brief, /work\.land\*\* — undefined/);
-      // approval with a dirty main checkout: the landing fails and goes to the lander
-      fs.writeFileSync(path.join(dir, 'README.md'), 'edited by the human\n');
+      // approval while the main checkout has uncommitted changes to a file the ticket changes: the landing
+      // fails, names the file and goes to the lander
+      fs.writeFileSync(path.join(dir, `work-${b.id}.txt`), "the human's own version\n");
+      git('add', `work-${b.id}.txt`);
       await s.ok('POST', `${B}/items/${b.id}/review/decision`, { verdict: 'approve' }, USER);
       const note = (await comments(s, b.id)).at(-1);
-      assert.match(note, /Not landed: the main checkout has uncommitted changes/);
+      assert.ok(note.includes(`Not landed: the main checkout has uncommitted changes to \`work-${b.id}.txt\``), note);
+      assert.equal((await s.ok('GET', `${B}/items/${b.id}`)).landing.code, 'DIRTY');
       assert.match(note, /@yondu will land it/);
       assert.doesNotMatch(note, /intellagent merge/, 'the human is not asked to run it');
       assert.equal((await s.ok('GET', `${B}/items/${b.id}`)).landing.state, 'failed');
@@ -1467,12 +1469,14 @@ describe('a lander (work.land) gets approved work onto main', () => {
       assert.equal(work.find((n) => n.id === b.id)?.action, 'land');
       // an agent without work.land may not land
       assert.equal((await s.api('POST', `${B}/items/${b.id}/land`, { agent: 'bob' }, { agent: 'eve' })).body.code, 'HUMAN_ONLY');
-      // the lander lands it once main is clean
-      git('checkout', 'README.md');
-      const landed = await s.ok('POST', `${B}/items/${b.id}/land`, { agent: 'bob' }, { agent: 'yondu' });
-      assert.equal(landed.landed.length, 1);
+      // still dirty: the sweep leaves it alone
+      await new Promise((r) => setTimeout(r, 1200));
+      assert.equal((await s.ok('GET', `${B}/items/${b.id}`)).landing.state, 'failed', 'no retry while the overlap is there');
+      // once main is clean the board's sweep lands it by itself; no lander run needed
+      git('rm', '-q', '--cached', `work-${b.id}.txt`);
+      fs.rmSync(path.join(dir, `work-${b.id}.txt`));
+      await until(async () => (await s.ok('GET', `${B}/items/${b.id}`)).landing.state === 'landed', 6000, 'landed by the sweep');
       assert.ok(fs.existsSync(path.join(dir, `work-${b.id}.txt`)), 'on main');
-      assert.equal((await s.ok('GET', `${B}/items/${b.id}`)).landing.state, 'landed');
     } finally {
       await s.stop();
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
@@ -1543,9 +1547,12 @@ describe('a lander (work.land) gets approved work onto main', () => {
       await until(async () => (await comments(s, t.id)).some((c) => c.startsWith(`${who}: committed`)), 10000, `${who} committed`);
       await until(async () => (await agentState(s, who)).status === 'idle', 6000, `${who} idle`);
       await s.ok('POST', `${B}/items/${t.id}/review`, { summary: 'done', evidence: 'e' }, { agent: who });
-      fs.writeFileSync(path.join(dir, 'README.md'), 'dirty\n'); // a dirty main checkout makes the landing fail
+      // main has its own version of the ticket's file, so the landing conflicts and fails for good (an uncommitted
+      // change would only hold it until main is clean: the sweep lands those again)
+      fs.writeFileSync(path.join(dir, `work-${t.id}.txt`), "main's own\n");
+      git('add', '.');
+      git('commit', '-q', '-m', 'A file in the way');
       await s.ok('POST', `${B}/items/${t.id}/review/decision`, { verdict: 'approve' }, USER);
-      git('checkout', 'README.md');
       assert.equal((await s.ok('GET', `${B}/items/${t.id}`)).landing.state, 'failed');
       return t;
     };

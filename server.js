@@ -2109,7 +2109,7 @@ function recordLanding(ctx, item, agent, actor, events, r) {
     : `⚠ Not landed: ${r.reason}.${waiting ? (lands.length ? ` ${lands.map((n) => `@${n}`).join(' ')} will land it.` : ` When that's sorted${r.hint ? ` (${r.hint})` : ''}, run \`${r.command}\`.`) : ''}`;
   item.comments.push({ id: rid('c'), author: SYSTEM, body, createdAt: now() });
   item.landing = r.landed.length ? { state: 'landed', commits: r.landed, from: agent, at: now() }
-    : waiting ? { state: 'failed', reason: r.reason, from: agent, at: now() } : { state: 'nothing', reason: r.reason, at: now() };
+    : waiting ? { state: 'failed', reason: r.reason, ...(r.code ? { code: r.code } : {}), from: agent, at: now() } : { state: 'nothing', reason: r.reason, at: now() };
   events.push(itemEvent(ctx, r.landed.length ? 'item.landed' : 'item.land_failed', item, actor, { agent, landed: r.landed, ...(r.via ? { via: r.via } : {}), ...(r.reason ? { reason: r.reason } : {}), ...(r.code ? { code: r.code } : {}), mentions: [agent, ...lands] }));
   return r;
 }
@@ -2129,8 +2129,21 @@ function markLandedByHand(ctx, id, shas, actor) {
   });
 }
 // Every sweep: an approved ticket whose landing failed, but whose id main mentions after the approval, was landed by hand.
+// And one that failed only because the main checkout had uncommitted changes lands again once it is clean, or once
+// at all if it failed under the old rule, which refused any uncommitted change (now only those its commits touch).
+const DIRTY_OLD = 'the main checkout has uncommitted changes';
 async function reconcileLandings() {
   if (!worktrees) return;
+  let clean = null;
+  for (const ctx of boards.values()) {
+    for (const item of Object.values(ctx.board.items)) {
+      const l = item.landing;
+      if (l?.state !== 'failed' || item.review?.verdict !== 'approve' || !l.from || landings.has(`${ctx.id}:${item.id}`)) continue;
+      if (l.reason !== DIRTY_OLD && l.code !== 'DIRTY') continue;
+      if (l.code === 'DIRTY') { clean ??= !(await worktrees.dirtyMain()).length; if (!clean) continue; }
+      await startLanding(ctx, item.id, l.from, SYSTEM);
+    }
+  }
   for (const ctx of boards.values()) {
     for (const item of Object.values(ctx.board.items)) {
       if (item.landing?.state !== 'failed' || item.review?.verdict !== 'approve') continue;
