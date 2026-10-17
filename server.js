@@ -3737,7 +3737,7 @@ route('POST', '/api/boards', 'Create a board: { name, id?, idPrefix?, template?:
 
 route('GET', '/api/boards/:board', 'Full board JSON + hash', ({ p }) => boardView(getCtx(p.board)));
 
-route('PATCH', '/api/boards/:board', 'Update board: { name?, idPrefix?, directives?, coordinator? (default agent for requests) } — directives and coordinator are human only', ({ p, body, actor }) => {
+route('PATCH', '/api/boards/:board', 'Update board: { name?, idPrefix?, directives?, coordinator? (default agent for requests) } — directives are the human\'s or admin.rules, the coordinator the human\'s or admin.coordinator (never itself)',({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {
     const changes = {};
@@ -4125,7 +4125,7 @@ route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directi
 
 // Card rules: the human's named conditions and the look each earns. Read by everyone, set by the human.
 route('GET', '/api/boards/:board/card-rules', 'Card rules: { rules: [{ name, condition, look: { outline?, badge?, tint?, ribbon?, mark?: { shape, tone | colour } }, enabled }] } in order; the first matching rule\'s outline, tint and ribbon win, badges stack (max 2), every matching mark is kept. A board starts with no rules. Condition language: see PUT', ({ p }) => ({ rules: cardRulesOf(getCtx(p.board)), tones: cardrules.TONES, shapes: cardrules.SHAPES }));
-route('PUT', '/api/boards/:board/card-rules', 'Replace the card rules (human only): { rules: [{ name, condition, look: { outline: ok|accent|warn|danger, tint?, badge?: { text, icon? }, ribbon?: text, mark?: { shape: square|circle|triangle|diamond|bar|star, tone: ok|accent|warn|danger  or  colour: #rrggbb } }, enabled? }] }. A condition is space-separated terms, all must hold: review.allOk · !review.concerns · review.oks>=2 · columnDays>=3 (days in the column) · fields.risk:low · reviewers.nebula:ok · @drax · is:rule:<name> (is:rule:"two words" or is:rule:two-words). Also a or b (either; and binds tighter) and one level of groups, (a or b). 400 BAD_REQUEST with a hint when one does not parse', ({ p, body, actor }) => {
+route('PUT', '/api/boards/:board/card-rules', 'Replace the card rules (human or admin.cardRules):{ rules: [{ name, condition, look: { outline: ok|accent|warn|danger, tint?, badge?: { text, icon? }, ribbon?: text, mark?: { shape: square|circle|triangle|diamond|bar|star, tone: ok|accent|warn|danger  or  colour: #rrggbb } }, enabled? }] }. A condition is space-separated terms, all must hold: review.allOk · !review.concerns · review.oks>=2 · columnDays>=3 (days in the column) · fields.risk:low · reviewers.nebula:ok · @drax · is:rule:<name> (is:rule:"two words" or is:rule:two-words). Also a or b (either; and binds tighter) and one level of groups, (a or b). 400 BAD_REQUEST with a hint when one does not parse', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const del = adminGate(ctx, actor, 'admin.cardRules', 'change the card rules');
   const rules = ruleErrors(() => cardrules.cleanRules(body.rules));
