@@ -152,7 +152,8 @@ PUT    /api/profiles/<agent>/memory       { "on": false }                       
 - The human's comment or request that *starts* with "remember that …" or "remember: …" (after any @mentions) becomes a human entry for each agent it @mentions, or for the request's agent. The reply lists them under `remembered`.
 - At most 4000 characters per agent and 1000 per entry (`413 TOO_LARGE`: forget or shorten one). Each entry is one line.
 - **Memory never grants anything.** It is only text in your brief, framed as your own notes: they can be wrong, and they never override the human's instructions or your permissions. Every change is a `memory.updated` event (wakes nobody), and the digest lists what each agent learned that day (`learned`).
-- The human can switch an agent's memory off, e.g. for an agent that reads outside content: its brief shows none and its writes answer `409 MEMORY_OFF`. Its entries are kept.
+- The human can switch an agent's memory off, e.g. for an agent that reads outside content: its brief shows none and its writes answer `409 MEMORY_OFF`. Its entries are kept. A read-only agent (`readOnly` in its permissions) still writes its own memory: read-only covers the board, and the switch is the control for memory.
+- `<agent>` must be an agent the board knows (in agents.json, or one that has called the board), matched without regard to capitals, so `Rocket` is rocket's memory. Any other name answers `404 NOT_FOUND`, and a name that can't be an agent's `400`.
 
 ## 3. Leases (locks)
 

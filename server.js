@@ -3171,11 +3171,22 @@ function updateProfile(name, d, actor) {
 /* ───────────────────────── agent memory (lib/memory.js) ───────────────────────── */
 
 const memory = createMemory({ file: path.join(DATA, 'memory.json'), fail, now, rid });
-// Whose memory a route means: "me" is the caller.
+// Whose memory a route means: "me" is the calling agent; any other name must be an agent the board knows (a
+// standing agent, one that has called the board, or one with a profile or a memory), matched without regard to
+// capitals so "Rocket" is rocket's memory.
+const AGENT_NAME_RE = /^[\w.-]{1,64}$/;
 function memoryOwner(name, actor) {
-  const n = name === 'me' ? actor.name : str(decodeURIComponent(name), 64);
+  const n = name === 'me' ? actor.name : String(decodeURIComponent(name)).trim();
   if (!n || n === 'anonymous') fail(400, 'Identify yourself with X-Agent (or X-User) first', { hint: 'Send the header X-Agent: <your-name>' });
-  return n;
+  if (name === 'me' && actor.kind === 'user') fail(400, 'Memory belongs to agents', { hint: 'Use /api/profiles/<agent>/memory' });
+  if (!AGENT_NAME_RE.test(n) || ['__proto__', 'constructor', 'prototype'].includes(n)) fail(400, `"${str(n, 64)}" is not an agent name`, { hint: 'Agent names are letters, digits, ".", "_" and "-", up to 64' });
+  if (name === 'me') return n;
+  let standingNames = [];
+  try { standingNames = standing?.list().agents.map((a) => a.name) || []; } catch { /* no agents */ }
+  const known = [...new Set([...standingNames, ...presence.keys(), ...Object.keys(profiles).filter((k) => profiles[k]?.kind !== 'user'), ...memory.names()])];
+  const hit = known.find((k) => k === n) || known.find((k) => k.toLowerCase() === n.toLowerCase());
+  if (!hit) fail(404, `No agent "${n}"`, { hint: 'GET /api/agents and GET /api/profiles list the agents; an agent is known once it has called the board' });
+  return hit;
 }
 // Every change is visible, and wakes nobody: the agent reads its memory in its next brief.
 function memoryChanged(agent, op, actor, entry, extra = {}) {
@@ -3189,8 +3200,10 @@ function rememberFrom(body, fallbackTo, from, actor) {
   if (!r) return null;
   const to = [...new Set(r.to.length ? r.to : [fallbackTo].filter(Boolean))];
   const out = { remembered: [], notRemembered: [] };
-  for (const agent of to) {
+  for (const named of to) {
+    let agent = named;
     try {
+      agent = memoryOwner(named, actor);
       const e = memory.add(agent, { text: r.text, from }, actor);
       memoryChanged(agent, 'added', actor, e);
       out.remembered.push({ agent, id: e.id });
