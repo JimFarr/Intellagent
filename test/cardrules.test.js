@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { startServer, USER } = require('./helpers');
-const { parseCondition, holds, reviewFacts, cleanRules, lookFor, RuleError } = require('../lib/cardrules');
+const { parseCondition, holds, reviewFacts, cleanRules, lookFor, RuleError, TYPE_RULES } = require('../lib/cardrules');
 
 describe('the condition language', () => {
   const view = { assignee: 'drax', claimant: null, priority: 'High', fields: { risk: 'low', area: ['cli', 'ui'] }, review: { oks: 2, pending: 0, concerns: 0, allOk: true, evidence: true }, reviewers: { nebula: 'ok' } };
@@ -73,7 +73,7 @@ describe('card rules on a board', () => {
       const low = await mk('low one', 'low');
       const high = await mk('high one', 'high');
       const seeded = (await s.ok('GET', '/api/boards/main/card-rules')).rules;
-      assert.deepEqual(seeded.map((r) => r.name), ['type task', 'type issue', 'type spike'], 'a board starts with the type marks');
+      assert.deepEqual(seeded, [], 'a board starts with no card rules');
 
       const rules = [
         { name: 'safe', condition: 'fields.risk:low', look: { outline: 'ok', badge: 'safe' } },
@@ -175,17 +175,16 @@ describe('rule marks (INT-290)', () => {
     assert.deepEqual(look.marks[0], { shape: 'circle', tone: 'ok', rule: 'm0' });
   });
 
-  it('a board starts with the three type marks once; a stored mark comes back; a bad one is refused; matches lists every mark; an old board gets the rules too', async () => {
+  it('a board starts with no rules; a stored mark comes back; a bad one is refused; matches lists every mark; an old board loses the seeded type rules, unchanged ones only', async () => {
     const s = await startServer({ agents: { agents: {} } });
     try {
       const task = await s.ok('POST', '/api/boards/main/items', { title: 'a task', column: 'Ready', type: 'task' }, USER);
       const spike = await s.ok('POST', '/api/boards/main/items', { title: 'a spike', column: 'Ready', type: 'spike' }, USER);
       const got = await s.ok('GET', '/api/boards/main/card-rules');
-      assert.deepEqual(got.rules.map((r) => [r.name, r.condition, r.look.mark.shape, r.look.mark.colour]), [['type task', 'type:task', 'square', '#6aa8ff'], ['type issue', 'type:issue', 'triangle', '#ff6b8b'], ['type spike', 'type:spike', 'diamond', '#ffc857']]);
+      assert.deepEqual(got.rules, []);
       assert.ok(got.shapes.includes('star'));
       let m = await s.ok('GET', '/api/boards/main/card-rules/matches');
-      assert.deepEqual(m[task.id].marks, [{ shape: 'square', colour: '#6aa8ff', rule: 'type task' }]);
-      assert.deepEqual(m[spike.id].marks, [{ shape: 'diamond', colour: '#ffc857', rule: 'type spike' }]);
+      assert.deepEqual(m, {}, 'no rules, no marks');
 
       // a bad shape or colour: 400, a hint, nothing changed
       const bad = await s.api('PUT', '/api/boards/main/card-rules', { rules: [{ name: 'x', condition: 'type:task', look: { mark: { shape: 'blob', tone: 'ok' } } }] }, USER);
@@ -194,28 +193,28 @@ describe('rule marks (INT-290)', () => {
       assert.match(bad.body.hint, /square\|circle/);
       assert.deepEqual((await s.ok('GET', '/api/boards/main/card-rules')).rules, got.rules);
 
-      // the human adds a mark of their own; every matching mark is listed, in rule order; a type rule can be switched off
+      // the human adds marks of their own; every matching mark is listed, in rule order; a rule can be switched off
       const mine = { name: 'big', condition: 'type:task', look: { mark: { shape: 'star', tone: 'danger' } } };
-      await s.ok('PUT', '/api/boards/main/card-rules', { rules: [mine, ...got.rules.map((r, i) => (i === 2 ? { ...r, enabled: false } : r))] }, USER);
+      const also = { name: 'also', condition: 'type:task', look: { mark: { shape: 'circle', colour: '#6aa8ff' } } };
+      const spikes = { name: 'spikes', condition: 'type:spike', look: { mark: { shape: 'diamond', tone: 'warn' } }, enabled: false };
+      await s.ok('PUT', '/api/boards/main/card-rules', { rules: [mine, also, spikes] }, USER);
       m = await s.ok('GET', '/api/boards/main/card-rules/matches');
-      assert.deepEqual(m[task.id].marks.map((x) => [x.rule, x.shape]), [['big', 'star'], ['type task', 'square']]);
+      assert.deepEqual(m[task.id].marks.map((x) => [x.rule, x.shape]), [['big', 'star'], ['also', 'circle']]);
       assert.equal(m[spike.id], undefined, 'a rule switched off gives no mark');
 
-      // deleting them sticks across a restart: they are added once, not on every start
-      await s.ok('PUT', '/api/boards/main/card-rules', { rules: [mine] }, USER);
+      // a board seeded earlier with the three type rules loses them once, but keeps one the human changed
+      const seeded = TYPE_RULES.map((r) => structuredClone(r));
+      seeded[1].look.mark.colour = '#000000';
+      await s.ok('PUT', '/api/boards/main/card-rules', { rules: [mine, ...seeded] }, USER);
       await s.stop({ keep: true });
-      const again = await startServer({ dir: s.dir });
-      assert.deepEqual((await again.ok('GET', '/api/boards/main/card-rules')).rules.map((r) => r.name), ['big']);
-      // a board from before marks (no flag) gets the type rules after its own
-      await again.stop({ keep: true });
       const file = path.join(s.dir, 'data', 'boards', 'main', 'board.json');
       fs.chmodSync(file, 0o666);
       const b = JSON.parse(fs.readFileSync(file, 'utf8'));
-      delete b.cardRulesSeeded;
+      b.cardRulesSeeded = true;
       fs.writeFileSync(file, JSON.stringify(b));
       const old = await startServer({ dir: s.dir });
       try {
-        assert.deepEqual((await old.ok('GET', '/api/boards/main/card-rules')).rules.map((r) => r.name), ['big', 'type task', 'type issue', 'type spike']);
+        assert.deepEqual((await old.ok('GET', '/api/boards/main/card-rules')).rules.map((r) => r.name), ['big', 'type issue']);
       } finally { await old.stop(); }
     } catch (e) { await s.stop().catch(() => {}); throw e; }
   });

@@ -352,12 +352,12 @@ function normalizeBoard(b) {
   b.items = isObj(b.items) ? b.items : {};
   b.directives = b.directives || '';
   b.cardRules = Array.isArray(b.cardRules) ? b.cardRules : [];
-  // The three type marks, added once to every board (new or old) after the human's own rules; the flag is why
-  // deleting or switching one off sticks
-  if (!b.cardRulesSeeded) {
-    const taken = new Set(b.cardRules.map((r) => String(r.name).toLowerCase()));
-    b.cardRules = [...b.cardRules, ...cardrules.TYPE_RULES.filter((r) => !taken.has(r.name)).map((r) => structuredClone(r))];
-    b.cardRulesSeeded = true;
+  // Boards no longer start with card rules. One that was seeded with the three type rules loses them once,
+  // but only while they are still exactly as seeded: a rule the human edited stays
+  if (b.cardRulesSeeded) {
+    const seeded = cardrules.TYPE_RULES.map((r) => JSON.stringify(r));
+    b.cardRules = b.cardRules.filter((r) => !seeded.includes(JSON.stringify(r)));
+    delete b.cardRulesSeeded;
   }
   b.digest = Array.isArray(b.digest) ? b.digest : [];
   b.master = isObj(b.master) ? b.master : null;
@@ -3663,7 +3663,7 @@ route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directi
 });
 
 // Card rules: the human's named conditions and the look each earns. Read by everyone, set by the human.
-route('GET', '/api/boards/:board/card-rules', 'Card rules: { rules: [{ name, condition, look: { outline?, badge?, tint?, ribbon?, mark?: { shape, tone | colour } }, enabled }] } in order; the first matching rule\'s outline, tint and ribbon win, badges stack (max 2), every matching mark is kept. Every board starts with three type rules (type task, type issue, type spike) that give each type a mark; the human can edit, switch off or delete them. Condition language: see PUT', ({ p }) => ({ rules: cardRulesOf(getCtx(p.board)), tones: cardrules.TONES, shapes: cardrules.SHAPES }));
+route('GET', '/api/boards/:board/card-rules', 'Card rules: { rules: [{ name, condition, look: { outline?, badge?, tint?, ribbon?, mark?: { shape, tone | colour } }, enabled }] } in order; the first matching rule\'s outline, tint and ribbon win, badges stack (max 2), every matching mark is kept. A board starts with no rules. Condition language: see PUT', ({ p }) => ({ rules: cardRulesOf(getCtx(p.board)), tones: cardrules.TONES, shapes: cardrules.SHAPES }));
 route('PUT', '/api/boards/:board/card-rules', 'Replace the card rules (human only): { rules: [{ name, condition, look: { outline: ok|accent|warn|danger, tint?, badge?: { text, icon? }, ribbon?: text, mark?: { shape: square|circle|triangle|diamond|bar|star, tone: ok|accent|warn|danger  or  colour: #rrggbb } }, enabled? }] }. A condition is space-separated terms, all must hold: review.allOk · !review.concerns · review.oks>=2 · fields.risk:low · reviewers.nebula:ok · @drax · is:rule:<name>. 400 BAD_REQUEST with a hint when one does not parse', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   humanConfig(actor, 'change the card rules');
