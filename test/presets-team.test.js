@@ -92,3 +92,80 @@ describe('presets: the team part (INT-302)', () => {
     assert.match(lines, /base context \(9 characters\): every agent on the board is taught it/);
   });
 });
+
+describe('presets: installing the team (INT-302 step 2)', () => {
+  const loaded = () => presets.load(folder(team({ roles: undefined })), null);
+  const ctx = { names: { lead: 'boss' }, agents: ['rocket'], roles: ['coordinator', 'builder'] };
+
+  it('names a slot, builds the POST and PATCH bodies, and never carries run, env or commands', () => {
+    const { steps, skipped, problems } = presets.teamInstall(loaded(), ctx);
+    assert.deepEqual([skipped, problems], [[], []]);
+    assert.deepEqual(steps[0].define, { name: 'boss', role: 'coordinator', model: 'sonnet', listen: 'addressed', pickup: 'all' });
+    assert.deepEqual(steps[0].patch, { areas: ['docs/'], contextItems: [{ kind: 'note', title: 'Context', body: 'Route by areas.' }] });
+    for (const k of ['run', 'env', 'inheritEnv', 'commands', 'grants']) assert.equal(k in steps[0].define || k in steps[0].patch, false, k);
+  });
+
+  it('an unnamed slot is skipped, not guessed', () => {
+    assert.deepEqual(presets.teamInstall(loaded(), { ...ctx, names: {} }).skipped, ['lead']);
+  });
+
+  it('a name that is taken, badly written or used twice, and a role the board lacks, stop it with a code and a hint', () => {
+    const two = team({ roles: undefined }); two.team.slots.second = { role: 'builder' };
+    const p = presets.load(folder(two), null);
+    const taken = presets.teamInstall(p, { ...ctx, names: { lead: 'rocket' }, agents: ['Rocket'] });
+    assert.equal(taken.problems[0].code, 'CONFLICT');
+    assert.match(taken.problems[0].hint, /pick another name/);
+    assert.equal(presets.teamInstall(p, { ...ctx, names: { lead: 'Bad Name' } }).problems[0].code, 'BAD_REQUEST');
+    assert.match(presets.teamInstall(p, { ...ctx, names: { lead: 'x', second: 'x' } }).problems[0].why, /names both lead and second/);
+    assert.match(presets.teamInstall(p, { ...ctx, roles: ['builder'], names: { lead: 'boss' } }).problems[0].why, /needs the role "coordinator"/);
+  });
+
+  it('proposed grants are written only for a slot whose grants were accepted', () => {
+    const p = loaded();
+    assert.equal(presets.teamInstall(p, ctx).steps[0].define.grants, undefined, 'none by default');
+    assert.match(presets.teamInstall(p, ctx).steps[0].notes.join(' '), /2 proposed grants not accepted/);
+    assert.deepEqual(presets.teamInstall(p, { ...ctx, grants: ['lead'] }).steps[0].define.grants, [{ power: 'agents.control' }, { power: 'review.decide', where: { 'reviewers.checker': 'ok' } }]);
+    assert.equal(presets.teamInstall(p, { ...ctx, grants: ['other'] }).steps[0].define.grants, undefined);
+  });
+
+  it('listen, pickup, the flags and the description are checked', () => {
+    for (const [k, v, re] of [['listen', 'x', /listen must be one of/], ['pickup', 'sometimes', /pickup must be/], ['reviewer', 'yes', /reviewer must be true or false/], ['keepAlive', 'stream-json', /keepAlive must be true or false/], ['description', 'x'.repeat(2001), /at most 2000/]]) {
+      const p = team(); p.team.slots.lead[k] = v;
+      assert.match(presets.validate(p), re, k);
+    }
+  });
+
+  it('preset add installs named slots as agents on probation through the API; --yes writes no grants, --yes --grants writes the listed ones', async () => {
+    const { spawnSync } = require('child_process');
+    const { startServer, cleanEnv } = require('./helpers');
+    const cli = (args, cwd) => { const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv({}), encoding: 'utf8', input: '', timeout: 60000 }); return { code: r.status, out: r.stdout, err: r.stderr }; };
+    const p = team({ roles: undefined }); delete p.team.base; p.team.slots.lead.role = 'builder'; p.team.slots.lead.pickup = 'ready';
+    const dir = folder(p, { 'agent-context/lead.md': 'Route by areas.' });
+    const s = await startServer();
+    try {
+      const no = cli(['preset', 'add', dir, '--yes', '--agents', 'lead=rocket'], s.dir); // rocket: a name we may take
+      assert.equal(no.code, 0, no.err);
+      const a = JSON.parse(fs.readFileSync(path.join(s.dir, 'agents.json'), 'utf8')).agents.rocket;
+      assert.equal(a.role, 'builder');
+      assert.ok(a.probation, 'a preset never hands out an agent nobody accepted');
+      assert.equal(a.grants, undefined, '--yes alone writes no grant');
+      for (const k of ['run', 'env', 'inheritEnv', 'commands']) assert.equal(k in a, false, k);
+      assert.deepEqual(a.areas, ['docs/']);
+      assert.match(JSON.stringify(a.contextItems), /Route by areas\./);
+      assert.deepEqual(presets.readLock(s.dir).presets.crew.agents, { lead: 'rocket' });
+      const again = cli(['preset', 'add', dir, '--yes', '--agents', 'lead=rocket'], s.dir);
+      assert.equal(again.code, 1, 'the preset is already installed');
+      assert.equal(cli(['preset', 'add', dir, '--yes', '--agents', 'nosuch=x'], s.dir).code, 1);
+    } finally { await s.stop(); }
+  });
+
+  it('record keeps the team pieces and the agent names, and plan does not call them "gone"', () => {
+    const dir = tmp('rec');
+    const p = loaded();
+    presets.record(dir, p, ['slot:lead', 'context:lead'], { lead: 'boss' });
+    const lock = presets.readLock(dir).presets.crew;
+    assert.deepEqual(lock.agents, { lead: 'boss' });
+    assert.ok(lock.parts['slot:lead'] && lock.parts['context:lead']);
+    assert.equal(presets.plan(p, lock.parts, { columns: [], schema: {} }).some((s) => s.state === 'gone'), false);
+  });
+});

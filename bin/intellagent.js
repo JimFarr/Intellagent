@@ -386,6 +386,68 @@ function printPowers(p) {
   console.log('  It brings no commands or tools yet (permissions and roles are not part of a preset).\n');
 }
 
+// --agents slot=name,slot=name: the names the human gives the preset's role slots
+function slotNames(f) {
+  const out = {};
+  for (const pair of String(f.agents === true ? '' : f.agents || '').split(',').filter(Boolean)) {
+    const i = pair.indexOf('=');
+    if (i < 1) { console.error(`error 400 BAD_REQUEST: "${pair}" is not slot=name — hint: --agents reviewer=drax,builder=groot`); process.exit(1); }
+    out[pair.slice(0, i).trim()] = pair.slice(i + 1).trim();
+  }
+  return out;
+}
+
+// What the team would install, checked against the live agents and roles. Exits on a problem, writing nothing.
+async function teamPlan(p, f) {
+  const names = slotNames(f);
+  for (const k of Object.keys(names)) if (!p.team.slots?.[k]) { console.error(`error 400 BAD_REQUEST: ${p.name} has no slot "${k}" — hint: its slots are ${Object.keys(p.team.slots || {}).join(', ') || '(none)'}`); process.exit(1); }
+  const agents = (await asHuman('GET', '/api/agents')).agents?.map((a) => a.name) || [];
+  const roles = Object.keys((await asHuman('GET', '/api/agents/roles')).roles || {});
+  const t = presets.teamInstall(p, { names, agents, roles });
+  if (t.problems.length) {
+    for (const x of t.problems) console.error(`error ${x.code === 'CONFLICT' ? 409 : 400} ${x.code}: ${x.why} — hint: ${x.hint}`);
+    process.exit(1);
+  }
+  return t;
+}
+
+function printTeam(t) {
+  for (const s of t.steps) {
+    console.log(`    agent    ${s.name}  (slot ${s.slot}: role ${s.define.role}${s.define.model ? `, model ${s.define.model}` : ''}; starts on probation)`);
+    for (const n of s.notes) console.log(`             note: ${n}`);
+  }
+  if (t.skipped.length) console.log(`    skipped  slots ${t.skipped.join(', ')}: no name given (--agents ${t.skipped[0]}=<name>)`);
+}
+
+async function acceptGrants(p, t, f) {
+  const asked = Object.entries(p.team.slots || {}).filter(([slot, s]) => (s.grants || []).length && t.steps.some((x) => x.slot === slot));
+  const accept = [];
+  for (const [slot, s] of asked) {
+    const listed = s.grants.map((g) => (typeof g === 'string' ? g : g.power)).join(', ');
+    if (f.yes ? f.grants : await confirm(`Grant ${t.steps.find((x) => x.slot === slot).name}: ${listed}?`, f)) accept.push(slot);
+  }
+  const again = presets.teamInstall(p, { names: Object.fromEntries(t.steps.map((x) => [x.slot, x.name])), agents: [], roles: [...new Set(t.steps.map((x) => x.define.role))], grants: accept });
+  t.steps = again.steps;
+}
+
+// Writes each agent through the API (POST /api/agents, then PATCH for areas, concerns and the context page), never to
+// agents.json; then the base, unless the human already edited their own. Records each piece as it succeeds.
+async function installTeam(p, t, dir) {
+  const agents = {};
+  for (const s of t.steps) {
+    await asHuman('POST', '/api/agents', s.define);
+    if (Object.keys(s.patch).length) await asHuman('PATCH', `/api/agents/${encodeURIComponent(s.name)}`, s.patch);
+    agents[s.slot] = s.name;
+    presets.record(dir, p, [`slot:${s.slot}`, ...(s.patch.contextItems ? [`context:${s.slot}`] : [])], agents);
+  }
+  if (p.team.files?.base) {
+    const cur = await asHuman('GET', '/api/agents/base-context');
+    if (cur.edited) console.log('    base context: yours is edited, kept (the preset\'s was not installed)');
+    else { await asHuman('PUT', '/api/agents/base-context', { text: p.team.files.base }); presets.record(dir, p, ['base']); }
+  }
+  return t.steps.length;
+}
+
 const WORD = { new: 'add', same: 'already there', update: 'update', edited: 'yours, kept', dropped: 'you removed it, kept off', gone: 'no longer in the preset, kept' };
 function printPlan(steps) {
   for (const s of steps) console.log(`    ${s.state.padEnd(8)} ${s.id}  (${WORD[s.state]})`);
@@ -452,14 +514,20 @@ async function presetCmd() {
   const steps = presets.plan(p, lock?.parts, live);
   if (sub === 'add') {
     if (lock) { console.error(`error 409 CONFLICT: ${p.name}@${lock.version} is already on this board — hint: intellagent preset diff ${p.name}, then preset update ${p.name} --accept all`); process.exit(1); }
+    const team = p.team ? await teamPlan(p, f) : null; // refuses before anything is written
     printPowers(p);
     printPlan(steps);
+    if (team) printTeam(team);
     const todo = steps.filter((s) => s.state === 'new');
-    if (!await confirm(`Add ${todo.length} piece${todo.length === 1 ? '' : 's'} to board "${board}"?`, f)) { console.log('Nothing written.'); return; }
+    const asked = todo.length + (team ? team.steps.length : 0);
+    if (!await confirm(`Add ${asked} piece${asked === 1 ? '' : 's'} to board "${board}"?`, f)) { console.log('Nothing written.'); return; }
+    // proposed grants: --yes alone accepts none; --grants (with --yes) accepts the listed ones; otherwise each is asked
+    if (team) await acceptGrants(p, team, f);
     if (p.dir) presets.addFolder(p, dir);
     for (const s of todo) await applyStep(board, s);
     presets.record(dir, p, steps.filter((s) => s.state === 'new' || s.state === 'same').map((s) => s.id));
-    console.log(`  ✓ ${p.name}@${p.version}: ${todo.length} added, ${steps.length - todo.length} left as they were.`);
+    const made = team ? await installTeam(p, team, dir) : 0;
+    console.log(`  ✓ ${p.name}@${p.version}: ${todo.length} added, ${steps.length - todo.length} left as they were${team ? `, ${made} agent${made === 1 ? '' : 's'} on probation` : ''}.`);
     return;
   }
   if (!lock) { console.error(`error 404 NOT_FOUND: ${p.name} is not installed on this board — hint: intellagent preset add ${p.name}`); process.exit(1); }
