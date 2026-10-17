@@ -136,6 +136,10 @@ describe('GET /metrics: the numbers', () => {
         const prev = before.find((y) => y.name === x.name && JSON.stringify(y.labels) === JSON.stringify(x.labels));
         if (prev) assert.ok(x.value >= prev.value, `${x.name} only goes up`);
       }
+      // worked out from the tickets as they stand, so they can step down: gauges, not counters
+      for (const n of ['intellagent_reviews_decided', 'intellagent_landings', 'intellagent_idle_alarms']) {
+        assert.ok(after.some((x) => x.name === n && x.type === 'gauge'), `${n} is a gauge`);
+      }
       const done = get(after, 'intellagent_tickets_done_total', { board: 'main' });
       assert.equal(done, 1, 'a ticket in the last column counts as done');
       assert.equal(get(after, 'intellagent_cycle_seconds_count', { board: 'main' }), 1);

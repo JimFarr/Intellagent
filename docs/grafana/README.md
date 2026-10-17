@@ -60,9 +60,9 @@ Every series per board carries `board`. No ticket title, comment or question tex
 | `intellagent_cycle_seconds` | histogram | `board` |
 | `intellagent_questions_open` | gauge | `board`, `kind` (`question`, `review`) |
 | `intellagent_question_oldest_seconds` | gauge | `board` |
-| `intellagent_reviews_decided_total` | counter | `board`, `verdict` (`approve`, `changes`), `delegated` |
-| `intellagent_landings_total` | counter | `board`, `result` (`landed`, `failed`, `hand`) |
-| `intellagent_idle_alarms_total` | counter | `board` |
+| `intellagent_reviews_decided` | gauge | `board`, `verdict` (`approve`, `changes`), `delegated` |
+| `intellagent_landings` | gauge | `board`, `result` (`landed`, `failed`, `hand`) |
+| `intellagent_idle_alarms` | gauge | `board` |
 | `intellagent_leases_active` | gauge | `board` |
 | `intellagent_agent_status` | gauge | `agent`, `model`, `provider`, `status` (1 for the current one) |
 | `intellagent_agent_queue` | gauge | `agent`, `model`, `provider` |
@@ -74,4 +74,4 @@ Every series per board carries `board`. No ticket title, comment or question tex
 | `intellagent_events_total` | counter | none |
 | `intellagent_up`, `intellagent_build_info` | gauge | none; `version`, `build` |
 
-Counters come from state the board keeps (the tickets, and the run records in `data/agent-stats.jsonl`), so they survive a restart. Three are worked out from the tickets as they stand: `reviews_decided_total` counts each ticket under its latest verdict, `landings_total` under its latest landing, and `idle_alarms_total` is the alarms kept on the board (the newest 500). A ticket decided again, or a failed landing that later succeeds, moves from one label to another, so the old one can step down by one: use `increase()` over a window rather than reading them as exact lifetime totals.
+Counters come from state the board keeps (the tickets, and the run records in `data/agent-stats.jsonl`), so they survive a restart. Three are **gauges**, not counters, because they are worked out from the tickets as they stand: `reviews_decided` counts each ticket under its latest verdict, `landings` under its latest landing, and `idle_alarms` is the alarms kept on the board (the newest 500). A ticket decided again, or a failed landing that later succeeds, moves from one label to another, so a value can step down. Read them as they are; do not use `rate()` or `increase()` on them.

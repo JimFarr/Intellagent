@@ -54,7 +54,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 12, "y": 9, "w": 12, "h": 8 },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (result) (intellagent_landings_total{board=\"$board\"})", "legendFormat": "{{result}}", "instant": true, "refId": "A" }]
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (result) (intellagent_landings{board=\"$board\"})", "legendFormat": "{{result}}", "instant": true, "refId": "A" }]
     },
 
     { "id": 6, "type": "row", "title": "Agents", "collapsed": false, "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 }, "panels": [] },
