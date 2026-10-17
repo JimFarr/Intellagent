@@ -4982,6 +4982,16 @@ const strList = (v, what) => {
   if (xs.length > 40) fail(400, `At most 40 ${what}`);
   return [...new Set(xs.map((x) => x.slice(0, 200)))];
 };
+// The human, or an agent whose agents.manage grant covers `name` (never itself unless `self` allows it). One rule for every route.
+function managerOf(actor, name, { self = false } = {}) {
+  if (actor.kind === 'user') return;
+  if (self && name.toLowerCase() === actor.name.toLowerCase()) return;
+  const mine = grantsOf(actor.name).filter((g) => g.power === 'agents.manage');
+  if (!mine.length) fail(403, 'Only the human, or an agent with the agents.manage grant', { code: 'HUMAN_ONLY', hint: 'The human can delegate this with "grants": ["agents.manage"] in agents.json' });
+  if (!mine.some((g) => !g.where?.agents || [].concat(g.where.agents).map((x) => String(x).toLowerCase()).includes(name.toLowerCase()))) {
+    fail(403, `${name} is outside your agents.manage grant`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
+  }
+}
 function manageAgent(target, d, actor) {
   if (!standing) fail(404, 'No standing agents on this board');
   const a = standing.get(target); // 404 if unknown
@@ -4991,12 +5001,8 @@ function manageAgent(target, d, actor) {
   if (bad.length) fail(403, `${bad.join(', ')} can't be changed through the API — the human edits agents.json for that`, { code: 'NOT_DELEGABLE', hint: `Changeable: ${MANAGE_KEYS.join(', ')}` });
   const agent = actor.kind !== 'user';
   if (agent) {
-    const mine = grantsOf(actor.name).filter((g) => g.power === 'agents.manage');
-    if (!mine.length) fail(403, 'Only the human can change other agents', { code: 'HUMAN_ONLY', hint: 'The human can delegate this with "grants": ["agents.manage"] in agents.json' });
-    if (name.toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent manager never edits its own record', { code: 'OWN_WORK', hint: 'Ask the human' });
-    if (!mine.some((g) => !g.where?.agents || [].concat(g.where.agents).map((x) => String(x).toLowerCase()).includes(name.toLowerCase()))) {
-      fail(403, `${name} is outside your agents.manage grant`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
-    }
+    if (grantsOf(actor.name).some((g) => g.power === 'agents.manage') && name.toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent manager never edits its own record', { code: 'OWN_WORK', hint: 'Ask the human' });
+    managerOf(actor, name);
   }
   const cfg = {};
   if ('role' in d) {
@@ -5118,14 +5124,14 @@ route('GET', '/api/files', 'Project files and folders matching ?q= (git-tracked;
   // shortest first: folders and near matches before deep files
   return hits.sort((a, b) => a.length - b.length || a.localeCompare(b)).slice(0, 40);
 });
-route('GET', '/api/agents/:name/context', "An agent's context as the text its prompt gets (items rendered: notes, files read now, links listed) and its items", ({ p }) => {
+route('GET', '/api/agents/:name/context', "An agent's context as the text its prompt gets (items rendered: notes, files read now, links listed) and its items. Human, the agent itself, or agents.manage over it", ({ p, actor }) => {
   const a = standing.get(p.name);
+  managerOf(actor, a.name, { self: true });
   return { agent: a.name, file: a.contextFile, items: a.contextItems, text: standing.contextOf(a.name) };
 });
-route('GET', '/api/agents/:name/preview', "Human or agents.manage: the first-turn prompt the board would send this agent now (role brief, speciality, personality, context items, rules), built by the code a real run uses → { agent, prompt }", ({ p, actor }) => {
-  if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.manage')) humanOnly(actor);
-  standing.get(p.name); // 404 if unknown
-  const a = standing.get(p.name);
+route('GET', '/api/agents/:name/preview', "Human or agents.manage: the first-turn prompt the board would send this agent now (role brief, speciality, personality, context items, rules), built by the code a real run uses → { agent, prompt, layers }", ({ p, actor }) => {
+  const a = standing.get(p.name); // 404 if unknown
+  managerOf(actor, a.name, { self: true });
   // The workspace the run would get (worktrees.ensure would reset it, so it is only looked up here)
   const wt = a.worktree && worktrees.isRepo() ? { ...a.worktree, main: worktrees.mainBranch() } : null;
   const { text, layers } = standing.previewOf(p.name, { workspace: wt });
@@ -5134,9 +5140,9 @@ route('GET', '/api/agents/:name/preview', "Human or agents.manage: the first-tur
 // Read-only, but it shows what an agent's tools are built from, so it is for whoever may change them.
 route('POST', '/api/agents/:name/commands/check', 'Human or agents.manage: what would become of a command in this agent\'s "commands": { command } → { kept, why, listed, allowedBy: [permissions that already allow it], denied: { needs, why } | null, applies }. The same rule the run builder applies; changes nothing', ({ p, body, actor }) => {
   if (!standing) fail(404, 'No standing agents on this board');
-  if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.manage')) fail(403, 'Only the human, or an agent with the agents.manage grant, can check an agent\'s commands', { code: 'HUMAN_ONLY', hint: 'Ask the human on a card' });
+  const a = standing.get(p.name); // 404 if unknown
+  managerOf(actor, a.name, { self: true });
   if (typeof body?.command !== 'string' || !body.command.trim()) fail(400, 'command is required', { code: 'BAD_REQUEST', hint: 'POST { "command": "npm run measure:board" }' });
-  standing.get(p.name); // 404 if unknown
   return standing.checkCommand(p.name, body.command);
 });
 route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), context? (sets the "Context" note) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));

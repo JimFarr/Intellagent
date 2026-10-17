@@ -1717,7 +1717,7 @@ describe('specialised agents', () => {
       assert.deepEqual(a.areas, ['public/app.css', 'public/themes/']);
       assert.deepEqual(a.contextItems.map((i) => [i.kind, i.title]), [['note', 'Context']], 'the page is one note item, kept in agents.json');
       assert.ok(!fs.existsSync(path.join(s.dir, 'agent-context', 'pixel.md')), 'no page file is written any more');
-      assert.match((await s.ok('GET', '/api/agents/pixel/context')).text, /STYLE tokens/);
+      assert.match((await s.ok('GET', '/api/agents/pixel/context', undefined, USER)).text, /STYLE tokens/);
       // the agent's own brief, and the receptionist's routing view
       const brief = (await s.api('GET', `${B}/brief`, undefined, { agent: 'pixel' })).body;
       assert.match(typeof brief === 'string' ? brief : brief.markdown, /Your speciality[\s\S]*public\/themes\/[\s\S]*calm motion[\s\S]*STYLE tokens/);
@@ -1922,7 +1922,7 @@ describe('personality and context items (INT-240)', () => {
       const r = await patch(s, 'dev', { personality: { explains: 0, speed: 4, text: 'Dry humour is fine.' } });
       assert.equal(r.status, 200, JSON.stringify(r.body));
       assert.ok(r.body.changes.personality);
-      assert.match(await s.ok('GET', '/api/agents/dev/context').then((c) => JSON.stringify(c)), /^\{"agent":"dev"/);
+      assert.match(await s.ok('GET', '/api/agents/dev/context', undefined, USER).then((c) => JSON.stringify(c)), /^\{"agent":"dev"/);
       assert.deepEqual((await agentState(s, 'dev')).personality, { explains: 0, speed: 4, text: 'Dry humour is fine.' });
       const { specialityText } = require('../lib/agents');
       const line = specialityText({ personality: { explains: 0, speed: 4, text: 'Dry humour is fine.' } }, () => '');
@@ -1950,7 +1950,7 @@ describe('personality and context items (INT-240)', () => {
       ];
       const r = await patch(s, 'dev', { contextItems: items });
       assert.equal(r.status, 200, JSON.stringify(r.body));
-      let ctx = await s.ok('GET', '/api/agents/dev/context');
+      let ctx = await s.ok('GET', '/api/agents/dev/context', undefined, USER);
       assert.match(ctx.text, /### House rules\nBe kind\./);
       assert.match(ctx.text, /### Style \(STYLE\.md\)\nUse tabs\./);
       assert.match(ctx.text, /Design doc: https:\/\/example\.com\/doc/);
@@ -1958,7 +1958,7 @@ describe('personality and context items (INT-240)', () => {
       assert.ok(ctx.items.every((i) => i.id), 'ids are assigned');
       // read fresh each run
       fs.writeFileSync(path.join(s.dir, 'STYLE.md'), 'Use spaces.');
-      assert.match((await s.ok('GET', '/api/agents/dev/context')).text, /Use spaces\./);
+      assert.match((await s.ok('GET', '/api/agents/dev/context', undefined, USER)).text, /Use spaces\./);
       // paths that must never be pinned
       for (const p of ['local.json', 'agents.json', 'agent-context/dev.md', 'data/board.json', '../outside.txt', path.join(os.tmpdir(), 'x.txt')]) {
         const bad = await patch(s, 'dev', { contextItems: [{ kind: 'file', title: 'x', path: p }] });
@@ -1975,8 +1975,8 @@ describe('personality and context items (INT-240)', () => {
       const raw = JSON.parse(fs.readFileSync(path.join(s.dir, 'agents.json'), 'utf8'));
       raw.agents.dev.contextItems.push({ id: 'sneak', kind: 'file', title: 'Token', path: 'local.json', on: true });
       fs.writeFileSync(path.join(s.dir, 'agents.json'), JSON.stringify(raw));
-      await until(async () => (await s.ok('GET', '/api/agents/dev/context')).text.includes('Token'), 8000, 'board re-read agents.json');
-      ctx = await s.ok('GET', '/api/agents/dev/context');
+      await until(async () => (await s.ok('GET', '/api/agents/dev/context', undefined, USER)).text.includes('Token'), 8000, 'board re-read agents.json');
+      ctx = await s.ok('GET', '/api/agents/dev/context', undefined, USER);
       assert.match(ctx.text, /### Token \(local\.json\)\n\(not read: it is one of the board's own files\)/);
       assert.ok(!ctx.text.includes('agentTokens') && !ctx.text.includes('"token"'), 'the token never reaches the prompt');
       assert.equal(ctx.items.find((i) => i.id === 'sneak').check.ok, false);
@@ -2003,7 +2003,7 @@ describe('personality and context items (INT-240)', () => {
       // a note beside them, echoing them back, is fine
       const ok = await patch(s, 'dev', { contextItems: [...cur, { kind: 'note', title: 'Tip', body: 'Run the tests.' }] }, m);
       assert.equal(ok.status, 200, JSON.stringify(ok.body));
-      assert.match((await s.ok('GET', '/api/agents/dev/context')).text, /### Tip\nRun the tests\./);
+      assert.match((await s.ok('GET', '/api/agents/dev/context', undefined, USER)).text, /### Tip\nRun the tests\./);
       // the history holds the full list as it was, so Revert can send it back
       const last = (await agentState(s, 'dev')).changes.at(-1);
       assert.equal(last.by.name, 'manager');
@@ -2011,7 +2011,7 @@ describe('personality and context items (INT-240)', () => {
       assert.deepEqual(last.changes.contextItems.to.map((i) => i.kind), ['file', 'link', 'note']);
       const back = await patch(s, 'dev', { contextItems: last.changes.contextItems.from });
       assert.equal(back.status, 200);
-      assert.ok(!(await s.ok('GET', '/api/agents/dev/context')).text.includes('Run the tests'));
+      assert.ok(!(await s.ok('GET', '/api/agents/dev/context', undefined, USER)).text.includes('Run the tests'));
     } finally { await s.stop(); }
   });
 
@@ -2024,7 +2024,7 @@ describe('personality and context items (INT-240)', () => {
     try {
       const px = await agentState(s, 'pixel');
       assert.deepEqual(px.contextItems.map((i) => [i.id, i.kind, i.title, i.body]), [['context', 'note', 'Context', '# Pixel\nThemes live in STYLE tokens.']]);
-      assert.match((await s.ok('GET', '/api/agents/pixel/context')).text, /Themes live in STYLE tokens\./);
+      assert.match((await s.ok('GET', '/api/agents/pixel/context', undefined, USER)).text, /Themes live in STYLE tokens\./);
       assert.deepEqual((await agentState(s, 'inline')).contextItems.map((i) => i.body), ['Inline words.']);
       assert.equal((await agentState(s, 'plain')).contextItems, null, 'an agent with no page is left alone');
       const raw = JSON.parse(fs.readFileSync(path.join(dir, 'agents.json'), 'utf8'));
@@ -2040,7 +2040,7 @@ describe('personality and context items (INT-240)', () => {
       const again = await agentState(s, 'pixel');
       assert.equal(again.contextItems.length, 1);
       assert.equal(again.contextItems[0].body, '# Pixel\nThemes live in STYLE tokens.');
-      assert.ok(!(await s.ok('GET', '/api/agents/pixel/context')).text.includes('Edited by hand'), 'the page is not read once the items exist');
+      assert.ok(!(await s.ok('GET', '/api/agents/pixel/context', undefined, USER)).text.includes('Edited by hand'), 'the page is not read once the items exist');
       const list = await s.ok('GET', '/api/agents');
       assert.match(list.error || '', /pixel\.md changed after it moved/);
       assert.equal(again.changes.filter((c) => c.changes.contextItems).length, 1, 'one move only');
@@ -2072,6 +2072,32 @@ describe('a run gets its own token (INT-248)', () => {
       const r = await s.api('GET', '/api/agents/dev/preview', undefined, { kind: 'agent', name: 'other' });
       assert.equal(r.status, 403);
       assert.equal((await s.api('GET', '/api/agents/nobody/preview', undefined, USER)).status, 404);
+    } finally { await s.stop(); }
+  });
+
+  it('preview, commands/check and context follow the agents.manage scope: the agent itself, or a grant that covers it (INT-240)', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      a: { role: 'builder', enabled: false }, b: { role: 'builder', enabled: false }, plain: { role: 'builder', enabled: false },
+      scoped: { role: 'coordinator', enabled: false, grants: [{ power: 'agents.manage', where: { agents: ['a'] } }] },
+    } } });
+    const as = (name) => ({ agent: name });
+    const get = (who, name, what) => s.api('GET', `/api/agents/${name}/${what}`, undefined, who).then((r) => r.status);
+    const check = (who, name) => s.api('POST', `/api/agents/${name}/commands/check`, { command: 'npm test' }, who).then((r) => r);
+    try {
+      for (const what of ['preview', 'context']) {
+        assert.equal(await get(as('scoped'), 'a', what), 200, `scoped manager reads a's ${what}`);
+        const out = await s.api('GET', `/api/agents/b/${what}`, undefined, as('scoped'));
+        assert.equal(out.status, 403); assert.equal(out.body.code, 'OUT_OF_SCOPE', `${what} of b is outside the grant`);
+        assert.equal(await get(as('plain'), 'plain', what), 200, `an agent reads its own ${what}`);
+        assert.equal(await get(as('plain'), 'b', what), 403, `no grant: not b's ${what}`);
+        assert.equal(await get(USER, 'b', what), 200);
+      }
+      assert.equal((await check(as('scoped'), 'a')).status, 200);
+      const nope = await check(as('scoped'), 'b');
+      assert.equal(nope.status, 403); assert.equal(nope.body.code, 'OUT_OF_SCOPE');
+      assert.equal((await check(as('plain'), 'b')).status, 403);
+      // case-insensitive, resolved name
+      assert.equal(await get(as('scoped'), 'A', 'context'), 200);
     } finally { await s.stop(); }
   });
 
