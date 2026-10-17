@@ -69,6 +69,8 @@ Show the user, in one message, the proposed fields (key, type, options), the boa
 
 From the answers in step 3, recommend a team **with the reason for each member**, and let the user accept it, edit it or start smaller. A second builder only adds conflicts until the first has more work than it can finish, so lean small.
 
+**If the preset carries a team** (`preset.json` has `team.slots`; `intellagent preset add <folder>` without `--yes` lists them): the slots are places, not people. Show the user each slot with its role, model and what it is for, and ask which to fill and what to call each (offer names from `GET /api/names/suggest`). Then install with `--agents slot=name,…`. Each agent starts on probation: tell the user to accept it (`intellagent agents accept <name>`) when its introduction reads right. Two things are never done for the user without their own yes: **proposed grants** (`--grants`, each listed with its power and scope) and the preset's **base context** (`--base`; it is taught to every agent, so show its opening lines first). A preset never brings a run command, env, commands or MCP config; set those by hand if an agent needs them.
+
 | Kind of work | Team | Why |
 |---|---|---|
 | Small project, one person | coordinator (haiku) and one builder (sonnet); the human approves everything | Cheap, and nothing to collide. |

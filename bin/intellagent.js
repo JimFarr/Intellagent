@@ -432,7 +432,7 @@ async function acceptGrants(p, t, f) {
 
 // Writes each agent through the API (POST /api/agents, then PATCH for areas, concerns and the context page), never to
 // agents.json; then the base, unless the human already edited their own. Records each piece as it succeeds.
-async function installTeam(p, t, dir) {
+async function installTeam(p, t, dir, withBase) {
   const agents = {};
   for (const s of t.steps) {
     await asHuman('POST', '/api/agents', s.define);
@@ -440,7 +440,7 @@ async function installTeam(p, t, dir) {
     agents[s.slot] = s.name;
     presets.record(dir, p, [`slot:${s.slot}`, ...(s.patch.contextItems ? [`context:${s.slot}`] : [])], agents);
   }
-  if (p.team.files?.base) {
+  if (p.team.files?.base && withBase) {
     const cur = await asHuman('GET', '/api/agents/base-context');
     if (cur.edited) console.log('    base context: yours is edited, kept (the preset\'s was not installed)');
     else { await asHuman('PUT', '/api/agents/base-context', { text: p.team.files.base }); presets.record(dir, p, ['base']); }
@@ -536,7 +536,7 @@ async function presetCmd() {
     return;
   }
   if (sub === 'export') return presetExport(spec, f);
-  if (!['add', 'diff', 'update'].includes(sub)) { console.error('Usage: intellagent preset list | add <name|folder> [--yes] [--agents slot=name,…] [--grants] | diff <name|folder> | update <name|folder> [--accept all|id,id] | export <folder> [--name N] [--force]'); process.exit(1); }
+  if (!['add', 'diff', 'update'].includes(sub)) { console.error('Usage: intellagent preset list | add <name|folder> [--yes] [--agents slot=name,…] [--grants] [--base] | diff <name|folder> | update <name|folder> [--accept all|id,id] | export <folder> [--name N] [--force]'); process.exit(1); }
   if (!spec) { console.error(`Usage: intellagent preset ${sub} <name|folder>`); process.exit(1); }
   humanOnly(`intellagent preset ${sub}`);
   const mp = requireManifest();
@@ -560,7 +560,9 @@ async function presetCmd() {
     if (p.dir) presets.addFolder(p, dir);
     for (const s of todo) await applyStep(board, s);
     presets.record(dir, p, steps.filter((s) => s.state === 'new' || s.state === 'same').map((s) => s.id));
-    const made = team ? await installTeam(p, team, dir) : 0;
+    // the base teaches every agent: --yes alone never installs it; --base does, or it is asked on its own
+    const withBase = !!(team && p.team.files?.base && (f.yes ? f.base : await confirm(`Install the preset's base context (${p.team.files.base.length} characters, taught to every agent)?`, f)));
+    const made = team ? await installTeam(p, team, dir, withBase) : 0;
     console.log(`  ✓ ${p.name}@${p.version}: ${todo.length} added, ${steps.length - todo.length} left as they were${team ? `, ${made} agent${made === 1 ? '' : 's'} on probation` : ''}.`);
     return;
   }
@@ -577,7 +579,8 @@ async function presetCmd() {
   if (sub === 'diff') return;
   const can = steps.filter((s) => s.state === 'new' || s.state === 'update');
   if (!f.accept) { console.log(can.length ? `\n  Accept them with: intellagent preset update ${p.name} --accept all   (or --accept id,id)` : '\n  Nothing to update.'); return; }
-  const want = f.accept === true || f.accept === 'all' ? can.map((s) => s.id) : String(f.accept).split(',').map((x) => x.trim());
+  // "all" leaves out the base context (it teaches every agent): name it (--accept base) or add --base
+  const want = f.accept === true || f.accept === 'all' ? can.filter((s) => s.id !== 'base' || f.base).map((s) => s.id) : String(f.accept).split(',').map((x) => x.trim());
   const bad = want.filter((id) => !can.some((s) => s.id === id));
   if (bad.length) { console.error(`error 400 BAD_REQUEST: cannot take ${bad.join(', ')}: not a new or updatable piece — hint: intellagent preset diff ${p.name}; edited pieces are yours and are never overwritten`); process.exit(1); }
   for (const s of can.filter((x) => want.includes(x.id))) await (s.team ? applyTeamStep(s) : applyStep(board, s));
@@ -989,7 +992,7 @@ const HELP = `intellagent — a kanban for you and your agents
                    --port N (default: the first free port from 7420)  --prefix XX (ticket ids)  --open-agents (agents need no token)
                    also adds the MCP tools (.mcp.json) and CLAUDE.md instructions; opt out: --no-mcp --no-claude --no-start --no-token
   templates        list board templates (software, research, ops, ...)
-  preset           packages of board: preset list | add NAME|FOLDER [--yes] [--agents slot=name,…] [--grants] | diff NAME|FOLDER | update NAME|FOLDER [--accept all|id,id] | export FOLDER [--name N] [--force]
+  preset           packages of board: preset list | add NAME|FOLDER [--yes] [--agents slot=name,…] [--grants] [--base] | diff NAME|FOLDER | update NAME|FOLDER [--accept all|id,id] | export FOLDER [--name N] [--force]
                    a preset with a team: --agents names its role slots (an unnamed slot is skipped); --yes alone accepts no proposed grant, --yes --grants all
                    init --preset NAME|FOLDER sets a board up from one; it lists the powers it brings and asks first (--yes agrees)
                    an update never overwrites what you edited: edited pieces are kept, the rest you accept one by one

@@ -88,8 +88,18 @@ describe('presets: the team part (INT-302)', () => {
     assert.match(lines, /agent slot "lead": role coordinator, model sonnet, listen "addressed", pickup "all"; you name it at install, it starts on probation and runs nothing until you accept it/);
     assert.match(lines, /PROPOSED grant for "lead": agents\.control \(not written unless you accept it; --yes alone writes none\)/);
     assert.match(lines, /PROPOSED grant for "lead": review\.decide where \{"reviewers\.checker":"ok"\}/);
-    assert.match(lines, /context page of 15 characters/);
-    assert.match(lines, /base context \(9 characters\): every agent on the board is taught it/);
+    assert.match(lines, /context page of 15 characters the agent is taught, starting: "Route by areas\."/);
+    assert.match(lines, /base context \(9 characters\): every agent on the board is taught it, so it is installed only if you ask \(--base\).*starts: "Be brief\."/);
+  });
+
+  it('a context page that is a directory (or far too large) is refused before it is read', () => {
+    const d = folder(team(), FILES);
+    fs.rmSync(path.join(d, 'agent-context', 'lead.md'));
+    fs.mkdirSync(path.join(d, 'agent-context', 'lead.md'));
+    assert.throws(() => presets.load(d, null), { code: 'BAD_PRESET', message: /not a regular file/ });
+    fs.rmSync(path.join(d, 'agent-context', 'lead.md'), { recursive: true });
+    fs.writeFileSync(path.join(d, 'agent-context', 'lead.md'), 'x'.repeat(40000));
+    assert.throws(() => presets.load(d, null), { code: 'BAD_PRESET', message: /longer than 8000/ });
   });
 });
 
@@ -157,6 +167,24 @@ describe('presets: installing the team (INT-302 step 2)', () => {
       assert.equal(again.code, 1, 'the preset is already installed');
       assert.equal(cli(['preset', 'add', dir, '--yes', '--agents', 'nosuch=x'], s.dir).code, 1);
     } finally { await s.stop(); }
+  });
+
+  it('the base context installs only with --base (or its own yes): --yes alone leaves every agent\'s teaching alone', async () => {
+    const { spawnSync } = require('child_process');
+    const { startServer, cleanEnv } = require('./helpers');
+    const cli = (args, cwd) => { const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv({}), encoding: 'utf8', input: '', timeout: 60000 }); return { code: r.status, out: r.stdout, err: r.stderr }; };
+    const baseOf = (s) => cli(['api', 'GET', '/api/agents/base-context'], s.dir).out;
+    for (const withFlag of [false, true]) {
+      const p = team({ roles: undefined }); p.team.slots.lead.role = 'builder'; p.team.slots.lead.pickup = 'ready';
+      const dir = folder(p, FILES);
+      const s = await startServer({ manifest: { auth: { userToken: 'test-human-token' } } }); // the base can be written only with a sign-in token
+      try {
+        const r = cli(['preset', 'add', dir, '--yes', ...(withFlag ? ['--base'] : []), '--agents', 'lead=rocket'], s.dir);
+        assert.equal(r.code, 0, r.err);
+        assert.equal(JSON.parse(baseOf(s)).edited, withFlag, withFlag ? '--base installs it' : '--yes alone does not');
+        assert.equal(Boolean(presets.readLock(s.dir).presets.crew.parts.base), withFlag);
+      } finally { await s.stop(); }
+    }
   });
 
   it('teamDiff: same, update, edited, dropped and gone, with the never-overwrite-edited rule; a changed proposal is reported, not written', () => {
