@@ -774,28 +774,77 @@ function grantsOf(name) {
 const badGrantsWarned = new Set();
 // Does a grant's scope cover this ticket? where: { column: name|id|[…], "<dotted path>": value|[values] }
 // The commits a ticket would land (its author's, not yet on main), as one string: a verdict records it, so a
-// later commit makes the verdict stale. Empty when the board has no worktrees or the ticket no commits.
-// Routes that record or check a verdict look the commits up async first (withCommits), so git never runs inside
-// their transaction; anywhere else (…/work for a reviewers.<name> grant, INT-212) still looks them up here.
+// later commit makes the verdict stale. '' when the board has no worktrees or the ticket no commits, and null
+// when they are not known (not looked up yet, or git failed): never the same as "none".
+// Git never runs synchronously here (INT-212). Routes that record or check a verdict look the commits up first
+// (withCommits); anywhere else (…/work for a reviewers.<name> grant) answers from a cache keyed on the tips of
+// the author's branch and of main, read from the ref files. A miss answers null and looks them up in the
+// background, so the next request knows.
 const knownCommits = new Map(); // "<board>:<id>" → the commits string, for the request that looked it up
+const commitsCache = new Map(); // "<author>\0<id>" → { tips, commits }
+const commitsLooking = new Set();
+const COMMITS_CACHE_MAX = 500;
 const commitsAuthor = (item) => (item.questions || []).find((q) => q.kind === 'review')?.raisedBy || item.review?.requestedBy || item.workedBy?.at(-1);
+// Looks the commits up and caches them under the tips read *before* git ran, so a commit made meanwhile reads
+// as a change next time. Resolves to the string, or null on a git error (cached for a minute, then tried again).
+const COMMITS_RETRY_MS = 60_000;
+async function lookUpCommits(author, id) {
+  const tips = worktrees.tips(author);
+  let commits = null;
+  try { commits = (await worktrees.commitsForAsync(author, id, { strict: true })).map((c) => c.sha).join(','); } catch { /* unknown */ }
+  if (tips) {
+    const key = `${author}\0${id}`;
+    commitsCache.delete(key); // re-inserted last, so the oldest go first when the cache is full
+    commitsCache.set(key, { tips, commits, at: Date.now() });
+    if (commitsCache.size > COMMITS_CACHE_MAX) commitsCache.delete(commitsCache.keys().next().value);
+  }
+  return commits;
+}
 function ticketCommits(item, ctx = null) {
   if (ctx && knownCommits.has(`${ctx.id}:${item.id}`)) return knownCommits.get(`${ctx.id}:${item.id}`);
   const author = commitsAuthor(item);
   if (!author || !worktrees || !agentBranch(author)) return '';
-  try { return worktrees.commitsFor(author, item.id).map((c) => c.sha).join(','); } catch { return ''; }
+  const tips = worktrees.tips(author);
+  const hit = commitsCache.get(`${author}\0${item.id}`);
+  if (tips && hit?.tips === tips && (hit.commits != null || Date.now() - hit.at < COMMITS_RETRY_MS)) return hit.commits;
+  const key = `${author}\0${item.id}`;
+  if (!commitsLooking.has(key)) {
+    commitsLooking.add(key);
+    lookUpCommits(author, item.id).finally(() => commitsLooking.delete(key));
+  }
+  return null;
 }
 async function withCommits(ctx, id, fn) {
   const item = getItem(ctx, id);
   const author = commitsAuthor(item);
   const key = `${ctx.id}:${item.id}`;
-  const commits = !author || !worktrees || !agentBranch(author) ? '' : (await worktrees.commitsForAsync(author, item.id).catch(() => [])).map((c) => c.sha).join(',');
+  const commits = !author || !worktrees || !agentBranch(author) ? '' : await lookUpCommits(author, item.id);
   knownCommits.set(key, commits);
   try { return await fn(); } finally { if (knownCommits.get(key) === commits) knownCommits.delete(key); }
 }
+// A move by an agent whose column.gate grant is scoped on a reviewer's verdict checks that verdict, so the
+// move routes look the commits of each ticket up first, as the review routes do. Anyone else: nothing to do.
+const gateOnVerdicts = (actor) => actor.kind === 'agent' && grantsOf(actor.name).some((g) => g.power === 'column.gate' && Object.keys(g.where || {}).some((k) => k.startsWith('reviewers.')));
+function withGateCommits(ctx, ids, actor, fn) {
+  if (!gateOnVerdicts(actor)) return fn();
+  const [id, ...rest] = ids.filter((x) => ctx.board.items[String(x).toUpperCase()]);
+  return id ? withCommits(ctx, id, () => withGateCommits(ctx, rest, actor, fn)) : fn();
+}
 // A reviewer's verdict can stand in for the human only when the board checked who gave it (the reviewer has
-// a token here) and nothing was committed on the ticket since.
-const verdictStands = (item, r, ctx = null) => !!r.verified && (r.commits ?? '') === ticketCommits(item, ctx);
+// a token here) and nothing was committed on the ticket since. Commits that aren't known (now, or when the
+// verdict was given: recorded as null) never stand.
+const verdictStands = (item, r, ctx = null) => {
+  if (!r.verified || r.commits === null) return false;
+  const now = ticketCommits(item, ctx);
+  return now != null && (r.commits ?? '') === now;
+};
+// Whether a ticket's commits can't be told yet because the lookup is under way: …/work then waits instead of
+// calling the verdict stale. A failed lookup is not pending: the verdict reads as stale, which never approves.
+const commitsPending = (item, ctx = null) => {
+  if (ticketCommits(item, ctx) != null) return false;
+  const author = commitsAuthor(item);
+  return !!author && commitsLooking.has(`${author}\0${item.id}`);
+};
 function inScope(ctx, item, where) {
   if (!where || !item) return true;
   return Object.entries(where).every(([k, want]) => {
@@ -2112,6 +2161,7 @@ function delegationGaps(ctx, it, q, grants) {
       for (const g of grants.slice(0, 1)) for (const [k, want] of Object.entries(g.where || {})) if (!inScope(ctx, it, { [k]: want })) gap(`scope:${k}`, `${k} to be ${[].concat(want).join(' or ')}`);
     } else if (!who.length) gap('reviewer:none', 'a reviewer your grant trusts, but every one of them worked on this ticket');
     else if (oks.some((r) => !r.verified)) gap(`unverified:${oks.map((r) => r.name).join(',')}`, `${oks.map((r) => r.name).join(' or ')}'s ok can't stand in for the human: this board doesn't check that reviewer's token (the human turns on agent tokens)`);
+    else if (oks.length && commitsPending(it, ctx)) early = true; // the commits are being looked up: tell next time
     else if (oks.length) gap(`stale:${oks.map((r) => r.name).join(',')}`, `a fresh verdict from ${oks.map((r) => r.name).join(' or ')}: there are commits on the ticket since the ok`);
     else if (!rs.length) gap(`assign:${who.join(',')}`, `${who.join(' or ')} assigned as reviewer`);
     else if (waiting.some((r) => Date.now() - Date.parse(r.at || 0) < 30 * 60_000)) early = true;
@@ -3921,11 +3971,13 @@ route('POST', '/api/boards/:board/items', 'Create item: { title, template?, desc
 
 route('POST', '/api/boards/:board/items/bulk', 'Patch many items: { ids: [], patch: {...} } → per-item results', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  const out = arr(body.ids).map((id) => {
-    try { return { id, ok: true, item: updateItem(ctx, id, body.patch || {}, actor) }; }
-    catch (e) { return { id, ok: false, status: e.status || 500, error: e.message }; }
+  return withGateCommits(ctx, arr(body.ids), actor, () => {
+    const out = arr(body.ids).map((id) => {
+      try { return { id, ok: true, item: updateItem(ctx, id, body.patch || {}, actor) }; }
+      catch (e) { return { id, ok: false, status: e.status || 500, error: e.message }; }
+    });
+    return Promise.all(out.map(async (x) => (x.ok ? { ...x, item: await afterLanding(ctx, x.item) } : x)));
   });
-  return Promise.all(out.map(async (x) => (x.ok ? { ...x, item: await afterLanding(ctx, x.item) } : x)));
 });
 
 route('GET', '/api/boards/:board/items/:id', 'Full item (also finds archived items)', ({ p }) => {
@@ -3937,12 +3989,12 @@ route('GET', '/api/boards/:board/items/:id', 'Full item (also finds archived ite
 });
 
 route('PATCH', '/api/boards/:board/items/:id', 'Change any field incl. column/position. properties merge (null deletes). Send version for safe writes.',
-  ({ p, body, actor }) => { const ctx = getCtx(p.board); return afterLanding(ctx, updateItem(ctx, p.id, body, actor)); });
+  ({ p, body, actor }) => { const ctx = getCtx(p.board); return withGateCommits(ctx, [p.id], actor, () => afterLanding(ctx, updateItem(ctx, p.id, body, actor))); });
 
 route('POST', '/api/boards/:board/items/:id/move', 'Move/reorder: { column?, position? | beforeId? | afterId? }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const { column, columnId, position, beforeId, afterId, version } = body;
-  return afterLanding(ctx, updateItem(ctx, p.id, { column: column ?? columnId, position, beforeId, afterId, version }, actor));
+  return withGateCommits(ctx, [p.id], actor, () => afterLanding(ctx, updateItem(ctx, p.id, { column: column ?? columnId, position, beforeId, afterId, version }, actor)));
 });
 
 route('GET', '/api/boards/:board/items/:id/history', 'Recent events for this item', ({ p }) => {

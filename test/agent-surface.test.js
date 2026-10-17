@@ -797,9 +797,17 @@ describe('a verdict records the commits it saw, looked up without blocking the b
     // Preloaded into the server: the sync lookup says so in the log and fails, so a route that still used it
     // would record no commits (and never match), and the log would show it
     const stub = path.join(dir, 'stub.js');
+    // A file named git-fails in the folder makes the async lookup fail too, as a broken git would (INT-212).
     fs.writeFileSync(stub, `const wt = require(${JSON.stringify(path.join(ROOT, 'lib', 'worktrees.js'))});
+const fs = require('fs');
 const real = wt.createWorktrees;
-wt.createWorktrees = (o) => { const w = real(o); w.commitsFor = (name, id) => { console.error('SYNC commitsFor ' + name + ' ' + id); throw new Error('sync git'); }; return w; };
+wt.createWorktrees = (o) => {
+  const w = real(o);
+  w.commitsFor = (name, id) => { console.error('SYNC commitsFor ' + name + ' ' + id); throw new Error('sync git'); };
+  const async = w.commitsForAsync;
+  w.commitsForAsync = (...a) => (fs.existsSync(${JSON.stringify(path.join(dir, 'git-fails'))}) ? Promise.reject(new Error('git broke')) : async(...a));
+  return w;
+};
 console.error('commitsFor stub loaded');
 `);
     const s = await startServer({ dir, env: { NODE_OPTIONS: `--require "${stub.replace(/\\/g, '/')}"` }, agents: { agents: {
@@ -823,13 +831,28 @@ console.error('commitsFor stub loaded');
       assert.ok((await verdict()).ok);
       const rv = () => s.ok('GET', `/api/boards/main/items/${it.id}`).then((x) => x.reviewers.find((r) => r.name === 'nebula'));
       assert.equal((await rv()).commits, first, 'the verdict records the commits it saw');
+      // …/work answers from the cache the verdict filled: everything is in, decide (INT-212)
+      const action = async () => (await s.ok('GET', '/api/boards/main/work', undefined, { agent: 'gamora' })).next.find((n) => n.id === it.id);
+      assert.equal((await action())?.action, 'decide');
       // dev commits again: Nebula's ok no longer covers what would land
       const second = commit(2);
+      // …/work sees the new tip at once, looks the commits up in the background, and says stale once it knows
+      assert.notEqual((await action())?.action, 'decide', 'a new commit is never read as the old answer');
+      await until(async () => (await action())?.tag === 'stale:nebula', 5000, 'the chase names the stale ok');
       const stale = await decide();
       assert.equal(stale.status, 403, `a stale ok is out of scope: ${JSON.stringify(stale.body)}`);
-      // a fresh ok covers both, and the decision goes through
+      // a fresh ok covers both, and the decision is in scope again
       assert.ok((await verdict()).ok);
       assert.equal((await rv()).commits, `${first},${second}`);
+      assert.equal((await action())?.action, 'decide');
+      // git breaks: a verdict given now records unknown commits, and never stands
+      fs.writeFileSync(path.join(dir, 'git-fails'), '');
+      assert.ok((await verdict()).ok);
+      assert.equal((await rv()).commits, null, 'unknown, not "no commits"');
+      assert.equal((await decide()).status, 403, 'a verdict on unknown commits is out of scope');
+      // git works again: a fresh verdict, and the decision goes through
+      fs.rmSync(path.join(dir, 'git-fails'));
+      assert.ok((await verdict()).ok);
       assert.equal((await decide()).status, 200);
       assert.doesNotMatch(s.log(), /SYNC commitsFor/, 'no route above ran git synchronously');
     } finally {
