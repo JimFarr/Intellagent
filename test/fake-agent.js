@@ -125,7 +125,7 @@ if (mode === 'commit') {
 }
 let prompt = '';
 process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
-  if (mode === 'fail') process.exit(1);
+  if (mode === 'fail') { console.error('noise\nInvalid MCP configuration: MCP config file not found: x/.mcp.json\nexiting'); process.exit(1); }
   //   node fake-agent.js fail-until <marker>   fails until <marker> exists, then behaves like ok (INT-295: the cause passed)
   if (mode === 'fail-until' && !require('fs').existsSync(arg)) process.exit(1);
   //   node fake-agent.js limited <marker> <secs>   the first run is refused like claude at its usage limit (a rejected

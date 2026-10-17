@@ -4638,7 +4638,9 @@
   }
   function standingControls(a) {
     const btn = (act, ic, label, tip) => `<button class="btn sm ghost" data-standing="${act}" data-name="${esc(a.name)}" title="${tip}">${icon(ic, 'sm')}<span>${label}</span></button>`;
-    return `${usageLine(a)}<div class="standing-ctl">
+    // why the last run failed, from the first failure on (INT-346)
+    const why = a.lastRun?.error && a.lastRun.code !== 0 && a.status !== 'running' ? `<div class="standing-usage" data-fail-reason title="${esc(a.lastRun.error)}"><span>${a.failures ? `failed ${a.failures}×: ` : ''}${esc(a.lastRun.error.slice(0, 160))}</span></div>` : '';
+    return `${usageLine(a)}${why}<div class="standing-ctl">
       <span class="run-state" data-run="${a.status}">${esc(RUN_LABEL[a.status] || a.status)}${a.queued ? ` · ${a.queued} waiting` : ''}</span>
       ${a.status === 'paused' || a.status === 'failed' ? btn('resume', 'play', 'Resume', 'Resume|Clear failures and run any waiting events') : btn('pause', 'pause', 'Pause', 'Pause|The current run finishes; new events wait')}
       ${btn('run', 'sparkle', 'Run now', 'Run now|Start a run with whatever is waiting, or just to check the board')}

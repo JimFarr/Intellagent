@@ -123,6 +123,8 @@ describe('standing agents', () => {
     const evs = (await s.ok('GET', `/api/events?since=${seq}&types=agent.run.started,agent.failed`)).events.filter((e) => e.agent === 'flaky');
     assert.deepEqual(evs.map((e) => e.type), ['agent.run.started', 'agent.run.started', 'agent.failed']);
     assert.equal((await agentState(s, 'flaky')).queued, 1, 'the event is kept for the next attempt');
+    // INT-346: the card can say why from the first failure; it is the log's telling line, not its last
+    assert.equal((await agentState(s, 'flaky')).lastRun.error, 'Invalid MCP configuration: MCP config file not found: x/.mcp.json');
 
     assert.equal((await s.api('POST', '/api/agents/flaky/resume', {})).status, 403, 'agents cannot resume agents');
     const r = await s.ok('POST', '/api/agents/flaky/resume', {}, USER);
