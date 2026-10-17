@@ -2314,7 +2314,9 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
    The shape is clipped from a square of --mc (a tone or the rule's own colour); the theme decides the finish:
    flat by default, lifted on paper (fold, sticky), outlined in --text where shadows are hard (Bauhaus). The room
    they take is reserved in the top row by count, never less than the theme's own --corner. */
-.c-marks { --mk: 10px; position: absolute; top: 6px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 3px; height: var(--mk); }
+:root { --mk: 10px; }
+.card { --mk-off: 0px; }
+.c-marks { position: absolute; top: 6px; right: calc(6px + var(--mk-off)); z-index: 2; display: flex; align-items: center; gap: 3px; height: var(--mk); }
 .mk { flex: none; display: block; width: var(--mk); height: var(--mk); background: var(--mc, var(--accent)); }
 .mk[data-shape="square"] { border-radius: 2px; }
 .mk[data-shape="circle"] { border-radius: 50%; }
@@ -2326,17 +2328,16 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 /* paper: the marks lie on the card with a soft shadow */
 :root[data-cards="sticky"] .c-marks { filter: drop-shadow(0 1px 1px rgb(0 0 0 / .22)); }
 /* Bauhaus and other hard-shadow themes: flat shapes with a hard 1px outline in the ink colour */
-:root[data-shadow="hard"] .c-marks { --mk: 11px; filter: drop-shadow(1px 0 0 var(--text)) drop-shadow(-1px 0 0 var(--text)) drop-shadow(0 1px 0 var(--text)) drop-shadow(0 -1px 0 var(--text)); }
+:root[data-shadow="hard"] { --mk: 11px; }
+:root[data-shadow="hard"] .c-marks { filter: drop-shadow(1px 0 0 var(--text)) drop-shadow(-1px 0 0 var(--text)) drop-shadow(0 1px 0 var(--text)) drop-shadow(0 -1px 0 var(--text)); }
 :root[data-shadow="hard"] .mk[data-shape="square"], :root[data-shadow="hard"] .mk[data-shape="bar"] { border-radius: 0; }
 /* clear of the ribbon and the needs-you marker, which share the corner */
-.card:has(.c-ribbon) .c-marks { right: 34px; }
-.card.needs .c-marks { right: calc(var(--corner, 0px) + 34px); }
-/* the top row keeps out from under them: n marks of 10px with 3px gaps, plus the margin */
-:root .c-marks[data-n="1"] ~ .c-top { padding-right: max(var(--corner, 0px), 22px); }
-:root .c-marks[data-n="2"] ~ .c-top { padding-right: max(var(--corner, 0px), 35px); }
-:root .c-marks[data-n="3"] ~ .c-top { padding-right: max(var(--corner, 0px), 48px); }
-:root .c-marks[data-n="4"] ~ .c-top { padding-right: max(var(--corner, 0px), 61px); }
-:root .c-marks[data-n="5"] ~ .c-top { padding-right: max(var(--corner, 0px), 74px); }
+.card:has(.c-ribbon), .card.needs { --mk-off: 28px; }
+/* the top row keeps out from under them (and from under what shifts them): n marks with 3px gaps, plus the margin */
+/* (:root repeated to outrank the needs-you and attention paddings above, which this one replaces) */
+:root:root:root:root .card .c-marks ~ .c-top { padding-right: calc(max(var(--corner, 0px), var(--mk-n) * (var(--mk) + 3px) + 9px) + var(--mk-off)); }
+.c-marks[data-n="1"] ~ .c-top { --mk-n: 1; } .c-marks[data-n="2"] ~ .c-top { --mk-n: 2; } .c-marks[data-n="3"] ~ .c-top { --mk-n: 3; }
+.c-marks[data-n="4"] ~ .c-top { --mk-n: 4; } .c-marks[data-n="5"] ~ .c-top { --mk-n: 5; } .c-marks[data-n="6"] ~ .c-top { --mk-n: 6; }
 /* the editor: the shape picker shows each shape in the rule's colour; the colour row offers the tones or a colour of its own */
 .shape-seg button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; }
 .shape-seg .mk { --mk: 11px; }

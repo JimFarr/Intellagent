@@ -5358,7 +5358,7 @@
   // The corner marks (INT-288): one per matching rule, in rule order; past MARKS_SHOWN a "+N" holds the rest.
   // Each mark and the "+N" name their rules in the tooltip; each theme draws the shapes in its own style (.c-marks in app.css).
   function marksHTML(marks) {
-    const shown = marks.length > MARKS_SHOWN ? marks.slice(0, MARKS_SHOWN - 1) : marks;
+    const shown = marks.slice(0, MARKS_SHOWN);
     const rest = marks.slice(shown.length);
     const one = (m) => `<i class="mk" data-shape="${esc(m.shape)}" style="--mc:${esc(markColour(m))}" title="${esc(m.rule)}|Card rule"></i>`;
     return `<span class="c-marks" data-n="${shown.length + (rest.length ? 1 : 0)}" aria-hidden="true">${shown.map(one).join('')}${rest.length ? `<b class="mk more" title="${rest.length} more rules|${esc(rest.map((m) => m.rule).join(', '))}">+${rest.length}</b>` : ''}</span>`;
