@@ -822,6 +822,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .menu button.mi { display: flex; align-items: center; gap: 9px; width: 100%; border: 0; background: none; padding: 8px 10px; border-radius: 9px; cursor: pointer; text-align: left; font-size: 13px; transition: background .12s; color: var(--text); }
 .menu button.mi > span:not(.sw):not(.avatar) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu button.mi:hover, .menu button.mi.act { background: color-mix(in oklab, var(--accent) 14%, transparent); }
+.menu button.mi:focus-visible { background: color-mix(in oklab, var(--accent) 14%, transparent); outline: 2px solid var(--accent); outline-offset: -2px; }
 .menu button.mi.on { color: var(--accent); font-weight: 600; }
 .menu button.mi.on::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
 .menu button.mi.danger { color: var(--danger); }

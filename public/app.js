@@ -978,7 +978,12 @@
         const lead = it.avatar ? avatar(it.avatar) : it.color ? `<span class="sw" style="--c:${esc(it.color)}"></span>` : it.icon ? icon(it.icon) : '';
         const need = it.need ? `<b class="mi-need" title="Needs you|${it.need} ticket${it.need === 1 ? '' : 's'} waiting for your answer">${icon('ask', 'sm')}${it.need}</b>` : '';
         const b = el(`<button class="mi ${it.cls || ''}" ${it.disabled ? 'disabled' : ''}>${lead}<span>${esc(it.label)}</span>${need}${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</button>`);
-        b.onclick = (e) => { if (!keepOpen) closeMenus(); it.run?.(e); if (keepOpen) draw(); };
+        b.onclick = (e) => {
+          // a pick made from the keyboard leaves focus on the anchor, not lost on <body>
+          if (!keepOpen) { const back = m.contains(document.activeElement); closeMenus(); if (back && anchor.isConnected) anchor.focus?.({ preventScroll: true }); }
+          it.run?.(e);
+          if (keepOpen) { const at = $$('button.mi', list).indexOf(b); draw(); if (!input) $$('button.mi', list)[at]?.focus({ preventScroll: true }); }
+        };
         list.append(b);
       }
       if (creatable && q && !items.some((it) => it !== '-' && String(it.label).toLowerCase() === q)) {
@@ -1017,6 +1022,17 @@
         if (e.key === 'Escape') { e.stopPropagation(); closeMenus(); }
       };
       setTimeout(() => input.focus(), 10);
+    } else {
+      // No search box: focus goes to the items, the arrows move between them, Esc and Tab hand focus back to the anchor (INT-268).
+      m.onkeydown = (e) => {
+        const btns = $$('button.mi:not(:disabled)', list);
+        const i = btns.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); btns[(i + (e.key === 'ArrowDown' ? 1 : btns.length - 1)) % btns.length]?.focus(); }
+        if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); btns[e.key === 'Home' ? 0 : btns.length - 1]?.focus(); }
+        if (e.key === 'Escape') { e.stopPropagation(); closeMenus(); anchor.focus?.({ preventScroll: true }); }
+        if (e.key === 'Tab') { closeMenus(); anchor.focus?.({ preventScroll: true }); } // then Tab moves on from the anchor
+      };
+      setTimeout(() => { if (m.isConnected) $('button.mi:not(:disabled)', list)?.focus({ preventScroll: true }); }, 10);
     }
     setTimeout(() => {
       const off = (e) => {
