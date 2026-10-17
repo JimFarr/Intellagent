@@ -6000,7 +6000,9 @@
     const live = a.keepAlive ? (a.session ? `session alive · turn ${a.session.turns}/${a.session.recycleAfter}${a.session.context != null ? ` · context ${Math.round(a.session.context / 1000)}k${a.session.recycleAboveTokens ? `/${Math.round(a.session.recycleAboveTokens / 1000)}k` : ''}` : ''} · ` : 'keep-alive (starts on next wake) · ') : '';
     const meta = `${live}${a.model ? `runs on <b>${esc(a.model)}</b>${a.tier ? ` (${a.tier})` : ''} · ` : ''}can ${esc((a.perms || []).concat('board').join(', '))} · wakes on ${esc(listen)}${a.pickup ? ` · picks up ${a.pickup === 'all' ? 'every unassigned ticket' : 'unassigned Ready tickets'}` : ''} · ${a.runsLastHour}/${a.maxRunsPerHour ?? '∞'} runs this hour${l ? ` · last run ${rel(l.endedAt || l.startedAt)}${why}${l.code != null && l.code !== 0 ? ` (exit ${esc(l.code)})` : ''}` : ''}`;
     // Who changed this agent (the human or an agent manager), newest first, each undoable.
-    const fmt = (v) => (v == null ? '—' : typeof v === 'object' ? (Array.isArray(v) ? v.join(', ') : Object.entries(v).map(([k, x]) => `${k}: ${Array.isArray(x) ? x.join('/') : x}`).join(', ')) : String(v));
+    // a list of objects (context items) reads as its titles, never [object Object]
+    const fmtOne = (x) => (x && typeof x === 'object' ? x.title || x.name || x.path || x.url || x.kind || JSON.stringify(x) : String(x));
+    const fmt = (v) => (v == null ? '—' : typeof v === 'object' ? (Array.isArray(v) ? (v.length ? v.map(fmtOne).join(', ') : '—') : Object.entries(v).map(([k, x]) => `${k}: ${Array.isArray(x) ? x.map(fmtOne).join('/') : x}`).join(', ')) : String(v));
     const changes = (a.changes || []).slice(-5).reverse().map((c) => `<div class="chg"><span class="who">${avatar(c.by)}${nameHTML(c.by?.name)}</span><span class="what">${Object.entries(c.changes).map(([k, v]) => `<b>${esc(k.replace(/^profile\./, ''))}</b> ${esc(fmt(v.from))} → ${esc(fmt(v.to))}`).join(' · ')}</span><time>${rel(c.at)}</time><button class="btn sm ghost" data-revert="${esc(c.id)}" data-agent="${esc(a.name)}" title="Revert|Put these values back">${icon('restore', 'sm')}</button></div>`).join('');
     return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div>${changes ? `<div class="chg-list"><div class="chg-head">Recent changes</div>${changes}</div>` : ''}</div>`;
   }
@@ -6063,6 +6065,7 @@
       if (lslot) { layers ||= layersSection(name); layers.dataset.keep = 'layers'; lslot.replaceWith(layers); }
     };
     draw();
+    body.addEventListener('agent-saved', () => draw());
     body.onclick = (e) => {
       const sb = e.target.closest('[data-standing]');
       if (sb) { standingAction(sb).then(() => draw()); return; }
@@ -6324,7 +6327,15 @@
       if (e.target.closest('[data-pv]')) { loadPreview(); return; }
       if (e.target.closest('[data-spec-save]')) {
         const body = {};
-        if (st.touched.has('identity')) for (const k of ['label', 'glyph', 'color', 'model', 'description']) body[k] = $(`[data-id="${k}"]`, root).value.trim() || null;
+        // only what the person changed: a colour never set stays unset instead of pinning the picker's grey
+        if (st.touched.has('identity')) {
+          const p = state.profiles[name] || {}; // read now: an earlier Save has moved what "unchanged" means
+          const was = { label: p.label, glyph: p.glyph, color: p.color, model: state.standing[name]?.model, description: p.description || state.standing[name]?.description };
+          for (const k of ['label', 'glyph', 'color', 'model', 'description']) {
+            const v = $(`[data-id="${k}"]`, root).value.trim();
+            if (v !== (was[k] || '') && !(k === 'color' && !was.color && v === hex)) body[k] = v || null;
+          }
+        }
         if (st.touched.has('personality')) {
           const per = {};
           for (const k of Object.keys(DIAL_ENDS)) if ($(`[data-dial-set="${k}"]`, root).checked) per[k] = Number($(`[data-dial="${k}"]`, root).value);
@@ -6342,6 +6353,7 @@
           await refreshPresence();
           await refreshProfiles();
           if (st.preview) loadPreview();
+          root.dispatchEvent(new CustomEvent('agent-saved', { bubbles: true })); // the page behind redraws: header, avatar, Recent changes
         } catch (err) { saveBtn.disabled = false; toast(hintOf(err), { kind: 'error', wrap: true }); }
       }
     });
