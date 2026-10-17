@@ -2322,3 +2322,45 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .idle-form { grid-column: 1 / -1; display: grid; gap: 10px; }
 .idle-form textarea { width: 100%; resize: vertical; min-height: 64px; }
 .idle-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* ═════════ rule marks (INT-288): the corner shows one mark per matching card rule, in rule order, "+N" past five ═════════
+   The shape is clipped from a square of --mc (a tone or the rule's own colour); the theme decides the finish:
+   flat by default, lifted on paper (fold, sticky), outlined in --text where shadows are hard (Bauhaus). The room
+   they take is reserved in the top row by count, never less than the theme's own --corner. */
+.c-marks { --mk: 10px; position: absolute; top: 6px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 3px; height: var(--mk); }
+.mk { flex: none; display: block; width: var(--mk); height: var(--mk); background: var(--mc, var(--accent)); }
+.mk[data-shape="square"] { border-radius: 2px; }
+.mk[data-shape="circle"] { border-radius: 50%; }
+.mk[data-shape="triangle"] { clip-path: polygon(50% 6%, 100% 94%, 0 94%); }
+.mk[data-shape="diamond"] { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.mk[data-shape="bar"] { height: 4px; border-radius: 1px; }
+.mk[data-shape="star"] { clip-path: polygon(50% 0, 62% 34%, 98% 36%, 70% 58%, 80% 94%, 50% 73%, 20% 94%, 30% 58%, 2% 36%, 38% 34%); }
+.mk.more { width: auto; min-width: var(--mk); height: auto; padding: 0 2px; background: none; font: 700 9.5px/1 var(--mono); color: var(--muted); }
+/* paper: the marks lie on the card with a soft shadow, and clear the dog-ear */
+:root:is([data-tape="corner"], [data-cards="sticky"]) .c-marks { filter: drop-shadow(0 1px 1px rgb(0 0 0 / .22)); }
+:root[data-tape="corner"] .c-marks { right: calc(max(var(--corner, 0px), 22px) + 10px); }
+/* Bauhaus and other hard-shadow themes: flat shapes with a hard 1px outline in the ink colour */
+:root[data-shadow="hard"] .c-marks { --mk: 11px; filter: drop-shadow(1px 0 0 var(--text)) drop-shadow(-1px 0 0 var(--text)) drop-shadow(0 1px 0 var(--text)) drop-shadow(0 -1px 0 var(--text)); }
+:root[data-shadow="hard"] .mk[data-shape="square"], :root[data-shadow="hard"] .mk[data-shape="bar"] { border-radius: 0; }
+/* clear of the ribbon and the needs-you marker, which share the corner */
+.card:has(.c-ribbon) .c-marks { right: 34px; }
+.card.needs .c-marks { right: calc(var(--corner, 0px) + 34px); }
+:root[data-tape="corner"] .card.needs .c-marks { right: calc(max(var(--corner, 0px), 22px) + 34px); }
+/* the top row keeps out from under them: n marks of 10px with 3px gaps, plus the margin */
+:root .c-marks[data-n="1"] ~ .c-top { padding-right: max(var(--corner, 0px), 22px); }
+:root .c-marks[data-n="2"] ~ .c-top { padding-right: max(var(--corner, 0px), 35px); }
+:root .c-marks[data-n="3"] ~ .c-top { padding-right: max(var(--corner, 0px), 48px); }
+:root .c-marks[data-n="4"] ~ .c-top { padding-right: max(var(--corner, 0px), 61px); }
+:root .c-marks[data-n="5"] ~ .c-top { padding-right: max(var(--corner, 0px), 74px); }
+:root[data-tape="corner"] .c-marks[data-n="1"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 22px); }
+:root[data-tape="corner"] .c-marks[data-n="2"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 35px); }
+:root[data-tape="corner"] .c-marks[data-n="3"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 48px); }
+:root[data-tape="corner"] .c-marks[data-n="4"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 61px); }
+:root[data-tape="corner"] .c-marks[data-n="5"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 74px); }
+/* the editor: the shape picker shows each shape in the rule's colour; the colour row offers the tones or a colour of its own */
+.shape-seg button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; }
+.shape-seg .mk { --mk: 11px; }
+.mk-colour { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mk-colour.off { opacity: .5; }
+.mk-pick { width: 28px; height: 24px; padding: 0; border: var(--bw) solid var(--border); border-radius: 7px; background: none; cursor: pointer; }
+.mk-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

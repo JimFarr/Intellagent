@@ -1991,10 +1991,11 @@
     const right = top.slice(top.indexOf('<span class="grow"></span>') + 1);
     const lead = !s.id && stub('type') ? `<span class="c-type inline" title="${TYPE_TIPS[it.type]}">${icon(it.type, 'sm')}</span>` : '';
     const head = s.id ? `<div class="c-top">${top.join('')}</div>` : right.length ? `<div class="c-top float">${right.join('')}</div>` : '';
+    const marks = look?.marks?.length ? marksHTML(look.marks) : '';
     const deco = look && (look.outline || look.tint || look.ribbon)
       ? `<span class="c-look" aria-hidden="true"${look.outline ? ` data-outline style="--ro:${toneVar(look.outline)}"` : ''}>${look.tint ? `<i class="c-tint" style="--rt:${toneVar(look.tint)}"></i>` : ''}${look.ribbon ? `<b class="c-ribbon" style="--rr:${toneVar(look.ribbonTone || toneOf('ribbon'))}"><span>${esc(look.ribbon)}</span></b>` : ''}</span>`
       : '';
-    return `${deco}${head}<h3 class="c-title ${lead ? 'has-lead' : ''}">${lead}${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(nameOf(lease.claimant))} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
+    return `${deco}${marks}${head}<h3 class="c-title ${lead ? 'has-lead' : ''}">${lead}${esc(it.title)}</h3>${s.status && lease?.status ? `<div class="c-status" title="Live status|Posted by ${esc(nameOf(lease.claimant))} while working"><i></i><span>${esc(lease.status)}</span></div>` : ''}${desc}${s.checklist && ck.total ? `<div class="c-prog ${ck.done === ck.total ? 'full' : ''}"><i style="width:${(ck.done / ck.total) * 100}%"></i></div>` : ''}${thumb}${hasMeta || s.author ? `<div class="c-meta">${meta.join('')}</div>` : ''}`;
   }
 
   function tickRings(root = document) {
@@ -5352,6 +5353,17 @@
     if (sig !== state.looksSig) { state.looks = l; state.looksSig = sig; render(); applyFilter(); }
   }
   const RULE_TONES = ['ok', 'accent', 'warn', 'danger'];
+  const RULE_SHAPES = ['square', 'circle', 'triangle', 'diamond', 'bar', 'star'];
+  const MARKS_SHOWN = 5;
+  const markColour = (m) => (m.colour ? m.colour : toneVar(m.tone || 'accent'));
+  // The corner marks (INT-288): one per matching rule, in rule order; past MARKS_SHOWN a "+N" holds the rest.
+  // Each mark and the "+N" name their rules in the tooltip; each theme draws the shapes in its own style (.c-marks in app.css).
+  function marksHTML(marks) {
+    const shown = marks.length > MARKS_SHOWN ? marks.slice(0, MARKS_SHOWN - 1) : marks;
+    const rest = marks.slice(shown.length);
+    const one = (m) => `<i class="mk" data-shape="${esc(m.shape)}" style="--mc:${esc(markColour(m))}" title="${esc(m.rule)}|Card rule"></i>`;
+    return `<span class="c-marks" data-n="${shown.length + (rest.length ? 1 : 0)}" aria-hidden="true">${shown.map(one).join('')}${rest.length ? `<b class="mk more" title="${rest.length} more rules|${esc(rest.map((m) => m.rule).join(', '))}">+${rest.length}</b>` : ''}</span>`;
+  }
   const toneVar = (t) => `var(--${t === 'accent' ? 'accent' : t})`;
   // A badge or ribbon takes its rule's tone: the outline's, else the tint's, else the accent.
   const ruleTone = (name) => { const r = (state.board?.cardRules || []).find((x) => x.name === name); return r?.look.outline || r?.look.tint || 'accent'; };
@@ -6153,6 +6165,8 @@
         <div class="rb-head"><span>When all of these hold</span><button class="link-btn" data-rtext aria-pressed="false">Show as text</button></div>
         ${rowHTML}<button class="btn ghost sm rb-add" data-rbadd>${icon('plus', 'sm')}Add a condition</button></div>`;
   }
+  const shapeSeg = (m) => `<div class="seg mini shape-seg" data-rshape role="group" aria-label="Mark shape">${['', ...RULE_SHAPES].map((sh) => `<button class="${(m?.shape || '') === sh ? 'on' : ''}" data-v="${sh}" title="${sh ? `Mark: ${sh}` : 'No mark'}" aria-label="${sh || 'No mark'}">${sh ? `<i class="mk" data-shape="${sh}" style="--mc:${m ? markColour(m) : 'var(--muted)'}"></i>` : '–'}</button>`).join('')}</div>`;
+  const markColourPick = (m) => `<div class="mk-colour ${m ? '' : 'off'}"><div class="seg mini tone-seg" data-rmtone>${['', ...RULE_TONES].map((t) => `<button class="${(m?.tone || '') === t && !m?.colour ? 'on' : ''}" data-v="${t}"${m ? '' : ' disabled'} title="${t ? `Mark colour: ${t}` : 'Pick your own colour'}">${t ? `<i style="--rc:${toneVar(t)}"></i>${t}` : '–'}</button>`).join('')}</div><input type="color" class="mk-pick" data-rmcolour value="${esc(m?.colour || '#6aa8ff')}" aria-label="Own mark colour"${m ? '' : ' disabled'}></div>`;
   function rulesPane() {
     const rules = state.board?.cardRules || [];
     const fields = rules.length ? ruleFields() : [];
@@ -6169,12 +6183,14 @@
           <span class="rl">Outline</span>${toneSeg('outline', r.look.outline)}
           <span class="rl">Tint</span>${toneSeg('tint', r.look.tint)}
           <span class="rl">Badge</span><span class="rbadge-in"><button class="ficon icon-pick" data-ricon title="Badge icon">${icon(ICONS[r.look.badge?.icon] ? r.look.badge.icon : 'tag')}</button><input class="inp" data-rf="badge" value="${esc(r.look.badge?.text || '')}" maxlength="24" placeholder="none"></span>
+          <span class="rl">Mark</span>${shapeSeg(r.look.mark)}
+          <span class="rl">Mark colour</span>${markColourPick(r.look.mark)}
           <span class="rl">Ribbon</span><input class="inp" data-rf="ribbon" value="${esc(r.look.ribbon || '')}" maxlength="16" placeholder="none">
         </div>
       </div>`;
     }).join('');
     return `<h3>${esc(state.board?.name || '')} · card rules</h3>
-      <p class="set-note">A card that meets a rule's condition takes its look. Rules are checked in order: the first outline, tint and ribbon win; badges stack, two at most. <code>is:rule:&lt;name&gt;</code> in the filter shows a rule's cards.</p>
+      <p class="set-note">A card that meets a rule's condition takes its look. Rules are checked in order: the first outline, tint and ribbon win; badges stack, two at most; every rule's mark shows in the corner, five at most, then a +N. <code>is:rule:&lt;name&gt;</code> in the filter shows a rule's cards.</p>
       ${cards || `<div class="empty-note">${icon('sparkle')}</div>`}
       <div class="fadd"><input class="inp" data-newrule placeholder="New rule, e.g. full approval"><button class="btn primary sm" data-ruleadd>${icon('plus', 'sm')}Add</button></div>`;
   }
@@ -6192,6 +6208,11 @@
       if (s && i >= 0) { save(i, (r) => { r.enabled = r.enabled === false; }); return; }
       const sb = e.target.closest('[data-rseg] button');
       if (sb && i >= 0) { const k = sb.parentElement.dataset.rseg; save(i, (r) => { if (sb.dataset.v) r.look[k] = sb.dataset.v; else delete r.look[k]; }); return; }
+      // A new mark starts in the accent tone; a colour of its own replaces the tone, and a tone replaces the colour
+      const sh = e.target.closest('[data-rshape] button');
+      if (sh && i >= 0) { save(i, (r) => { if (sh.dataset.v) r.look.mark = { ...(r.look.mark?.colour ? { colour: r.look.mark.colour } : { tone: r.look.mark?.tone || 'accent' }), shape: sh.dataset.v }; else delete r.look.mark; }); return; }
+      const mt = e.target.closest('[data-rmtone] button');
+      if (mt && i >= 0) { if (mt.dataset.v) save(i, (r) => { r.look.mark = { shape: r.look.mark.shape, tone: mt.dataset.v }; }); else $(`[data-ri="${i}"] [data-rmcolour]`, pane)?.click(); return; }
       const ic = e.target.closest('[data-ricon]');
       if (ic && i >= 0) {
         const cur = rules()[i];
@@ -6291,6 +6312,7 @@
         commit(i, all);
         return;
       }
+      if (e.target.matches('[data-rmcolour]')) { const i = idx(e.target); const c = e.target.value; save(i, (r) => { if (r.look.mark) r.look.mark = { shape: r.look.mark.shape, colour: c }; }); return; }
       const f = e.target.dataset.rf;
       const i = idx(e.target);
       if (!f || i < 0) return;
