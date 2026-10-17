@@ -715,6 +715,25 @@ const plainText = (md) => String(md || '').replace(/```[\s\S]*?```/g, ' ').repla
 function mentionsIn(text) {
   return [...new Set([...plainText(text).matchAll(/(?:^|[\s(])@([\w.-]+)/g)].map((m) => m[1].replace(/[.-]+$/, '')))];
 }
+// INT-343: a comment that @mentions an agent which saw it (its 👀 is on it) but has not answered by the end of its run:
+// no later comment from it on the card and no reaction on the comment other than 👀/⏳. Read-only and derived, so
+// it never wakes anyone; it clears by itself the moment the agent answers. An agent mid-run is still answering.
+const UNANSWERED_DAYS = 3;
+function unansweredIn(item) {
+  const out = [];
+  for (const c of item.comments || []) {
+    if (c.intent === 'explain' || !c.author || !c.reactions?.['👀']?.length) continue; // explain has its own action; no 👀 = still queued
+    if (Date.now() - Date.parse(c.createdAt) > UNANSWERED_DAYS * 86400000) continue;
+    const mentioned = new Set(mentionsIn(c.body).map((n) => n.toLowerCase()));
+    for (const who of c.reactions['👀']) {
+      if (who === c.author.name || !mentioned.has(who.toLowerCase())) continue;
+      const answered = (item.comments || []).some((x) => x.author?.name === who && x.createdAt > c.createdAt)
+        || Object.entries(c.reactions).some(([emoji, names]) => emoji !== '👀' && emoji !== '⏳' && names.includes(who));
+      if (!answered && !standing?.isRunning?.(who)) out.push({ commentId: c.id, agent: who, by: c.author.name, since: c.createdAt });
+    }
+  }
+  return out;
+}
 // Who an "explain" comment is for: its @mentions, else the agent it replies to, else whoever asked for the
 // review, else whoever worked the ticket last, else the assignee. The event and …/work both use this.
 function explainTargets(item, c) {
@@ -2399,6 +2418,9 @@ function workFor(ctx, name) {
       `PATCH /api/boards/${ctx.id}/items/${it.id} { "title": "…", "description": "…", …, "agentDraft": null }`);
   }
   for (const x of explain) add('explain', x, `Asked to explain (reply on the card only — change nothing): ${String(x.question).slice(0, 140)}`, `POST /api/boards/${ctx.id}/items/${x.id}/comments { "body": "…" }`);
+  // seen, not answered (INT-343): listed so the next run answers it; never a reason to wake (pendingWork skips it)
+  const unanswered = items.flatMap((it) => it.columnId === done ? [] : unansweredIn(it).filter((u) => u.agent === name).map((u) => ({ ...u, id: it.id, title: it.title })));
+  for (const u of unanswered) add('reply', u, `You saw ${u.by}'s comment (${u.commentId}) but did not answer it: reply on the card, or react if no words are needed`, `POST /api/boards/${ctx.id}/items/${u.id}/comments { "body": "…" }`);
   for (const x of leases.filter((l) => l.minutesLeft <= M.lease.warningMinutes)) add('renew', x, `Your lease ends in ${x.minutesLeft} min`, `${call(x.id, 'lease')} { "minutes": 30 }`);
   for (const x of feedback) add('address_feedback', x, `Review sent back: ${String(x.feedback || '').slice(0, 120)}`, call(x.id, 'start'));
   for (const x of answered) add('resume', x, `Your question was answered: ${String(x.answer || '').slice(0, 120)}`, call(x.id, 'start'));
@@ -2415,7 +2437,7 @@ function workFor(ctx, name) {
   }
   // A router (the coordinator) assigns Ready work; it never picks it up itself.
   const router = isCoordinator(ctx, name);
-  if (!router && !isHelper(name) && (!next.length || next.every((n) => n.action === 'renew'))) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
+  if (!router && !isHelper(name) && (!next.length || next.every((n) => n.action === 'renew' || n.action === 'reply'))) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
   // A router assigns reviewers to tickets waiting in review, when a reviewer other than the author exists.
   if (router) {
     const pool = reviewerPool();
@@ -2478,7 +2500,7 @@ function workFor(ctx, name) {
     ...(blockedByMaster ? { note: `${master.holder} holds the whole board — you can read, comment and ask, but not change tickets.` } : {}),
     next: blockedByMaster ? [] : next,
     ...(focus ? { focus: { id: focus.id, name: focus.name, items: [...focus.itemIds], note: `The human is focused on "${focus.name}" (${focus.itemIds.length} tickets): start and review only those. Work elsewhere waits until the focus board is retired${held.length ? ` (held back: ${held.join(', ')})` : ''}; an @mention, a request or an explain from the human still gets an answer (to start a ticket the human asked you for directly, pass "outsideFocus": true to …/start).` } } : {}),
-    requests, explain, leases, feedback, answered, waitingOnHuman: waiting, assigned, ready, ...(triage.length ? { triage } : {}), ...(supervise.length ? { supervise } : {}),
+    requests, explain, unanswered, leases, feedback, answered, waitingOnHuman: waiting, assigned, ready, ...(triage.length ? { triage } : {}), ...(supervise.length ? { supervise } : {}),
   };
 }
 
@@ -2558,7 +2580,7 @@ function pendingWork(name, pickup = false) {
       it.review?.requestedBy === name ? Date.parse(it.review.at) || 0 : 0,
     ]));
     for (const n of w.next) {
-      if (n.action === 'renew' || n.action === 'continue' || n.action === 'triage') continue; // housekeeping, mid-run, or pickup's job
+      if (n.action === 'renew' || n.action === 'continue' || n.action === 'triage' || n.action === 'reply') continue; // housekeeping, mid-run, pickup's job, or a reply owed (listed, never a wake: INT-343)
       const it = n.id && b.items[n.id];
       if (it && n.action === 'start' && (busy || it.assignee !== name || waitingOnHuman(it))) continue; // "ready" suggestions are pickup's job
       // a blocked ticket can't be started: its item.unblocked wakes the assignee, and its key coming back then offers it once more
@@ -2858,7 +2880,8 @@ function itemView(ctx, item, archived = false, blocksOf = null) {
   const col = ctx.board.columns.find((c) => c.id === (archived ? item.archivedFrom : item.columnId));
   const blocks = blocksOf ? [...(blocksOf.get(item.id) || [])] : Object.values(ctx.board.items).filter((x) => x.blockedBy?.includes(item.id)).map((x) => x.id);
   const focus = archived ? [] : focusNames(ctx, item.id);
-  return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived, ...(focus.length ? { focus } : {}) };
+  const unanswered = archived ? [] : unansweredIn(item);
+  return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived, ...(focus.length ? { focus } : {}), ...(unanswered.length ? { unanswered } : {}) };
 }
 
 function boardView(ctx) {
