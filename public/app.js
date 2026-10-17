@@ -162,6 +162,29 @@
     .filter((a) => a.status === 'running' && a.lastRun?.about?.[kind]?.includes(id) && !answered(a.name, a.lastRun.startedAt))
     .map((a) => a.name);
   const dotsHTML = '<i class="ai-dots"><b></b><b></b><b></b></i>';
+  // Who is writing a comment on a ticket (INT-286): agents on a run woken by a comment there (as the reply bubble),
+  // and people typing in its box (item.typing, lapsing TYPING_MS after the last one). Never yourself.
+  const TYPING_MS = 6000;
+  const typingNow = new Map(); // item id → Map(name → lapse timer)
+  const pipShown = new Set(); // item ids whose card has a pip now, so a presence refresh redraws just those
+  const writersOf = (it) => [...new Set([
+    ...thinkers('comments', it.id, (n, since) => it.comments.some((c) => c.author?.name === n && c.createdAt > since)),
+    ...(typingNow.get(it.id)?.keys() || []),
+  ])];
+  const pipHTML = (names) => {
+    const who = names.length > 2 ? `${names.length} people are` : `${names.map(nameOf).join(' and ')} ${names.length > 1 ? 'are' : 'is'}`;
+    return `<span class="c-pip" role="img" aria-label="${esc(who)} writing a comment" title="Writing|${esc(who)} writing a comment">${names.slice(0, 2).map((n) => avatar({ name: n })).join('')}${dotsHTML}</span>`;
+  };
+  function setTyping(id, name, on) {
+    let m = typingNow.get(id);
+    if (m?.has(name)) clearTimeout(m.get(name));
+    if (!on) { m?.delete(name); if (m && !m.size) typingNow.delete(id); }
+    else {
+      if (!m) typingNow.set(id, (m = new Map()));
+      m.set(name, setTimeout(() => setTyping(id, name, false), TYPING_MS));
+    }
+    updateCard(cardEls.get(id), state.board?.items[id]);
+  }
   // The bubble's age (INT-191): how long the run has gone, or that it has gone quiet (stalled: no board call and no output)
   const minsSince = (iso) => Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
   const standingOf = (n) => Object.values(state.standing || {}).find((a) => a.name === n) || {};
@@ -477,7 +500,7 @@
     v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme', drop: 'theme', groups: 'theme', toast: 'theme',
     density: 'cozy', colw: 300, ageDays: '7',
     motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full',
-    stub: { id: true, type: true, priority: true, parent: true, author: true, lease: true, comments: true, attachments: true, blocked: true, properties: false, description: false, thumbnail: true, fields: true, assignee: true, status: true, checklist: true, listeners: true },
+    stub: { id: true, type: true, priority: true, parent: true, author: true, lease: true, comments: true, attachments: true, blocked: true, properties: false, description: false, thumbnail: true, fields: true, assignee: true, status: true, checklist: true, listeners: true, writing: true },
     grouping: 'stack', saveMode: 'accept', userName: 'You', notify: false, notifyHidden: true, sound: false, toasts: true,
     metrics: true, metricsDays: 7,
   };
@@ -1294,6 +1317,9 @@
       state.thinkSig = think;
       $('#requestsDrawer .drawer-body')?._redraw?.();
       if (state.modal?.kind === 'item' && !state.modal.create) state.modal.refresh();
+      // the same runs drive the writing pip on cards (INT-286): redraw those that had one or now should
+      const woken = Object.values(state.standing).filter((a) => a.status === 'running').flatMap((a) => a.lastRun?.about?.comments || []);
+      for (const id of new Set([...pipShown, ...woken])) updateCard(cardEls.get(id), state.board?.items[id]);
     }
     // the minutes on a "writing a reply" bubble count up between redraws (INT-191)
     for (const t of $$('.think-age[data-run]')) t.textContent = runAgo(t.dataset.run);
@@ -1859,7 +1885,7 @@
     c.classList.toggle('review', it.needsHuman?.kind === 'review');
     c.classList.toggle('unseen', !!(state.boardId && seenFor(state.boardId).items[it.id]));
     markFresh(c, it.id);
-    const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), Math.floor(idleDays(it)), JSON.stringify(state.looks[it.id] || null), state.board.cardRules?.length && JSON.stringify(state.board.cardRules).length].join('|');
+    const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), settings.stub.writing && writersOf(it).join(','), Math.floor(idleDays(it)), JSON.stringify(state.looks[it.id] || null), state.board.cardRules?.length && JSON.stringify(state.board.cardRules).length].join('|');
     if (c._sig === sig) return;
     const changed = c._v != null && c._v !== it.version;
     c._sig = sig;
@@ -1953,6 +1979,8 @@
       top.push(`<span class="prio" data-p="${p}" title="Priority|${it.priority}">${icon('flag')}${p === 'high' || p === 'critical' ? it.priority : ''}</span>`);
     }
     if (s.lease && lease) top.push(ringHTML(lease));
+    const writers = s.writing ? writersOf(it).filter((n) => n !== settings.userName) : [];
+    if (writers.length) { top.push(pipHTML(writers)); pipShown.add(it.id); } else pipShown.delete(it.id);
     const meta = [];
     if (stub('parent') && it.parent && !inGroup) meta.push(`<span class="chip parent" title="Parent|Grouped with other #${esc(it.parent)} tickets" style="--tagc:${tagColor(it.parent)}">${esc(it.parent)}</span>`);
     if (stub('blockedBy') && blockers.length) meta.push(`<span class="chip blocked" title="Blocked|Waiting on ${esc(blockers.join(', '))}">${icon('lock', 'sm')}${blockers.length}</span>`);
@@ -3058,6 +3086,13 @@
       } catch (e) { toast(e.message, { kind: 'error' }); ta.value = body; m.staged = files; drawStaged(m); }
     };
     wireTbox(cbox, send);
+    // Tell the server someone is writing (INT-286), at most one small message per 3 s; it answers { sent: false } if sooner
+    let lastTyped = 0;
+    $('textarea', cbox).addEventListener('input', (e) => {
+      if (!e.target.value.trim() || Date.now() - lastTyped < 3000) return;
+      lastTyped = Date.now();
+      api('POST', I(m.id, '/typing')).catch(() => {});
+    });
     const fi = $('input[type="file"]', cbox);
     fi.onchange = () => { stageFiles(m, [...fi.files]); fi.value = ''; };
     $('.cmt-compose', main).hidden = m.archived;
@@ -3985,6 +4020,11 @@
   const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status', 'master.status', 'master.renewed', 'agent.status', 'agent.run.finished', 'reaction.added', 'reaction.removed']);
   function onEvent(ev) {
     if (ev.type === 'hello') return;
+    if (ev.type === 'item.typing') { // live only: no seq, no hash, nothing to refresh
+      if (ev.board === state.boardId && ev.actor?.name && ev.actor.name !== settings.userName) setTyping(ev.itemId, ev.actor.name, true);
+      return;
+    }
+    if (ev.type === 'comment.added' && ev.board === state.boardId && ev.actor?.name && typingNow.get(ev.itemId)?.has(ev.actor.name)) setTyping(ev.itemId, ev.actor.name, false);
     if (ev.type === 'presence.changed' || (ev.type?.startsWith('lease.') && ev.type !== 'lease.status')) refreshPresence();
     if (ev.type === 'presence.changed') scheduleListeners();
     if (ev.type === 'item.created' && ev.itemId) freshUntil.set(ev.itemId, Date.now() + FRESH_MS);
@@ -5812,12 +5852,14 @@
     blocked: 'Blockers that are not done yet', fields: 'Custom fields set to show on cards', properties: 'Count of free-form agent data',
     description: 'First lines of the description', thumbnail: 'The chosen card image', assignee: 'Who it is handed to',
     status: 'The live status line from the agent holding it', checklist: 'Progress of description checkboxes', listeners: 'Agents subscribed to this ticket',
+    writing: 'A pip while someone is writing a comment on it',
   };
   const STUB_FIELDS = [
     ['id', 'ID', 'hash'], ['type', 'Type', 'layers'], ['priority', 'Priority', 'flag'], ['parent', 'Parent', 'hash'],
     ['author', 'Author', 'user'], ['lease', 'Lease', 'clock'], ['comments', 'Comments', 'msg'], ['attachments', 'Files', 'clip'],
     ['blocked', 'Blocked', 'lock'], ['fields', 'Fields', 'layers'], ['properties', 'Properties', 'braces'], ['description', 'Description', 'text'], ['thumbnail', 'Image', 'image'],
     ['assignee', 'Assignee', 'user'], ['status', 'Status', 'activity'], ['checklist', 'Checklist', 'checks'], ['listeners', 'Listeners', 'radio'],
+    ['writing', 'Writing', 'pencil'],
   ];
 
   function openSettings(tab = 'look') {

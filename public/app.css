@@ -1877,6 +1877,11 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .ai-dots b:nth-child(3) { animation-delay: .4s; }
 @keyframes ai-dot { 0%, 100% { opacity: .25; } 40% { opacity: 1; } }
 .reduced .ai-dots b { animation: none; opacity: .7; }
+/* Writing pip on a card's top row (INT-286): who is writing, with the same three dots as the reply bubble */
+.c-pip { display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px 1px 2px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent); flex: none; }
+.c-pip .avatar { width: 16px; height: 16px; font-size: 9px; }
+.c-pip .avatar + .avatar { margin-left: -5px; }
+.c-pip .ai-dots { margin-left: 3px; }
 .ask-empty { display: grid; gap: 10px; padding: 4px 6px 2px; font-size: 12.5px; }
 .ask-ex { display: flex; flex-wrap: wrap; gap: 6px; }
 .ask-ex button { border: var(--bw) solid var(--border); background: none; border-radius: 99px; padding: 4px 10px; font: 12px var(--font); color: var(--muted); cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
