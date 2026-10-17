@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const fs = require('fs');
 const { startServer, USER } = require('./helpers');
-const { createLibrary, PERMS, POWERS, ADMIN, adminCovers, escalation } = require('../lib/permissions');
+const { createLibrary, PERMS, POWERS, ADMIN, adminCovers, escalation, libraryEscalation } = require('../lib/permissions');
 const { runFor, ROLES } = require('../lib/agents');
 
 const B = '/api/boards/main';
@@ -56,15 +56,37 @@ describe('the escalation rule for admin.permissions (INT-256)', () => {
     assert.deepEqual(codes(escalation(lib, ann, 'ann', ['web', 'admin.permissions'])).sort(), ['BEYOND_HELD', 'BOARD_POWER', 'OWN_ROW']);
   });
 
+  it('the library (INT-349): bundles and verbal ones of what it holds; tool kinds only narrow; never one it holds', () => {
+    const L = (before, after, key = 'x', who = ann) => codes(libraryEscalation(lib, who, key, before, after));
+    const cmd = (...commands) => ({ kind: 'command', name: 'X', commands });
+    // creating, removing or turning something into a kind that allows tools is the human's
+    assert.deepEqual(L(null, cmd('npm run x')), ['HUMAN_KIND']);
+    assert.deepEqual(L(cmd('npm run x'), null), ['HUMAN_KIND']);
+    assert.deepEqual(L({ kind: 'verbal', brief: 'b' }, { kind: 'tool', tools: ['WebFetch'] }), ['HUMAN_KIND']);
+    // narrowing is fine, adding is not
+    assert.deepEqual(L(cmd('npm run x', 'npm run y'), cmd('npm run x')), []);
+    const wider = libraryEscalation(lib, ann, 'x', cmd('npm run x'), cmd('npm run x', 'git push'));
+    assert.deepEqual(codes(wider), ['NARROW_ONLY']);
+    assert.deepEqual(wider[0].added, ['git push']);
+    // bundles and verbal ones: new includes and needs must be held (expanded); ones already there may stay
+    assert.deepEqual(L(null, { kind: 'bundle', includes: ['test', 'edit'] }), []);
+    assert.deepEqual(libraryEscalation(lib, ann, 'x', null, { kind: 'bundle', includes: ['ship'] })[0].missing, ['deploy', 'git', 'ship']);
+    assert.deepEqual(L({ kind: 'bundle', includes: ['git'] }, { kind: 'bundle', includes: ['git', 'test'] }), []);
+    assert.deepEqual(L({ kind: 'verbal', brief: 'b' }, { kind: 'verbal', brief: 'b', needs: ['web'] }), ['BEYOND_HELD']);
+    // never a permission it holds, directly or through a bundle
+    assert.deepEqual(L({ kind: 'bundle', includes: ['git'] }, { kind: 'bundle', includes: ['git'] }, 'ship', { ...ann, perms: ['ship'] }), ['HELD_ITSELF']);
+    assert.deepEqual(L(cmd('npm run deploy:staging'), cmd('npm run deploy:staging'), 'deploy', { ...ann, perms: ['ship'] }), ['HELD_ITSELF']);
+  });
+
   it('admin covers a frozen list: a power added later never joins it by itself', () => {
     const today = adminCovers();
+    // admin.permissions is a power now (INT-349), and still outside admin: it is granted by name only
+    assert.equal(POWERS['admin.permissions'], ADMIN['admin.permissions']);
     assert.ok(!today.includes('admin.permissions'));
-    POWERS['admin.permissions'] = ADMIN['admin.permissions'];
     POWERS['some.future'] = 'A power from a later version';
     try {
-      assert.deepEqual(adminCovers(), today, 'admin.permissions and a new power are granted by name only');
+      assert.deepEqual(adminCovers(), today, 'a new power is granted by name only');
     } finally {
-      delete POWERS['admin.permissions'];
       delete POWERS['some.future'];
     }
   });

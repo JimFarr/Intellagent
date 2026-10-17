@@ -111,11 +111,11 @@ describe('board admin powers (INT-256)', () => {
     const me = await s.ok('GET', '/api/permissions/me', undefined, { agent: 'ann' });
     const powers = me.grants.map((g) => g.power);
     for (const p of [...Object.keys(CALLS), 'review.decide', 'column.gate', 'work.land']) assert.ok(powers.includes(p), p);
-    assert.ok(!powers.includes('admin.permissions'), 'Can edit permissions is not checked by the server yet, so admin does not hand it out');
+    assert.ok(!powers.includes('admin.permissions'), 'admin covers a frozen list: Can edit permissions is granted by name only (INT-349)');
     assert.equal((await s.api('PUT', `${B}/directives`, { directives: 'By ann.' }, { agent: 'ann' })).status, 200);
     // and the library lists it with the Board admin group
     const lib = (await s.ok('GET', '/api/permissions')).permissions;
-    assert.deepEqual(lib.filter((e) => e.group === 'Board admin').map((e) => e.key).sort(), [...Object.keys(CALLS), 'admin'].sort());
+    assert.deepEqual(lib.filter((e) => e.group === 'Board admin').map((e) => e.key).sort(), [...Object.keys(CALLS), 'admin', 'admin.permissions'].sort());
   });
 
   it('every delegated change says so on its event, in the digest and in the metrics; the human\'s say nothing', async () => {

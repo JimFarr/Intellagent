@@ -787,7 +787,7 @@ const permsFor = (name) => {
    agents.control pause / resume / run other standing agents
    An agent never uses a grant on its own work: a ticket it worked on, or a review it requested.
    The powers are listed in the permission library (lib/permissions.js) beside the tool permissions. */
-const { POWERS, ADMIN, ADMIN_BUNDLE, adminCovers, createLibrary: createPermLibrary, guidanceLine } = require('./lib/permissions');
+const { POWERS, ADMIN, ADMIN_BUNDLE, adminCovers, createLibrary: createPermLibrary, guidanceLine, escalation, libraryEscalation } = require('./lib/permissions');
 const { createRoles } = require('./lib/agents/roles');
 const { BASE_MAX, shipped: shippedBase } = require('./lib/agents/base');
 const { layersFor } = require('./lib/agents/prompt');
@@ -2404,6 +2404,7 @@ function powerBriefLines(ctx, x, said = {}) {
     'admin.focus': `POST ${P}/focus · PATCH ${P}/focus/<id> · PUT ${P}/focus/active · DELETE ${P}/focus/<id>`,
     'admin.cardRules': `${cli('PUT', `${P}/card-rules`, '@rules.json')}`,
     'admin.rebalancing': `${cli('PUT', `${P}/rebalance`, 'on=false')}`,
+    'admin.permissions': `${cli('PUT', '/api/agents/<name>/permissions/<key>', 'mode=on')} · POST/PATCH/DELETE /api/permissions — only what you hold yourself, never your own row, never a board power, never a permission you hold; command, tool and folders permissions only narrow (403 NO_ESCALATION says why)`,
   };
   return [`- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
     ...(Object.hasOwn(said, x.power) ? [`  ${guidanceLine(said[x.power])}`] : [])];
@@ -3225,7 +3226,6 @@ function actorOf(req, q) {
    Field-level rules (which column flags are gated, which keys an agents.manage grant may set) stay in the handler.
    A write route missing here, or an entry with no route, stops the board at start. */
 const humanAsk = (what) => ({ why: `Only the human can ${what}`, hint: 'Ask the human on a card (POST …/items/<id>/attention) to change it' });
-const LIBRARY_HUMAN = { why: 'Only the human can change the permission library', hint: 'Ask on a card' };
 const B_ = '/api/boards/:board';
 const POLICY = {
   'POST /api/app/restart': { who: 'human', why: 'Only the human restarts the board', hint: 'Tell the human the board is behind main (GET /api/app → behind)' },
@@ -3301,10 +3301,11 @@ const POLICY = {
   'DELETE /api/subscriptions/:id': { who: 'self', readOnly: true },
   'POST /api/subscriptions/:id/ack': { who: 'self', readOnly: true },
   'PUT /api/agents/base-context': { who: 'human', why: 'Only the human changes the base context: every agent is taught it', hint: 'Suggest the change on a card instead' },
-  'POST /api/permissions': { who: 'human', ...LIBRARY_HUMAN },
-  'PATCH /api/permissions/:key': { who: 'human', ...LIBRARY_HUMAN },
-  'DELETE /api/permissions/:key': { who: 'human', ...LIBRARY_HUMAN },
-  'PUT /api/agents/:name/permissions/:key': { who: 'human', why: 'Only the human sets what an agent may do', hint: 'Ask on a card, and say which permission and which agent' },
+  // admin.permissions: the handlers apply the escalation rules (INT-349)
+  'POST /api/permissions': { who: 'admin.permissions' },
+  'PATCH /api/permissions/:key': { who: 'admin.permissions' },
+  'DELETE /api/permissions/:key': { who: 'admin.permissions' },
+  'PUT /api/agents/:name/permissions/:key': { who: 'admin.permissions' },
   'POST /api/agents': { who: 'human', why: 'Only the human can control standing agents' },
   'DELETE /api/agents/:name': { who: 'human', why: 'Only the human can control standing agents' },
   'POST /api/agents/:name/commands/check': { who: ['self', 'agents.manage'], readOnly: true },
@@ -4528,30 +4529,60 @@ route('GET', '/api/roles/:key', 'One role in full, with the agents using it and 
    reads it; only the human changes it, and only its custom entries. */
 const permLibrary = () => standing?.permissionLibrary?.() || createPermLibrary();
 const permBody = (body) => Object.fromEntries(['kind', 'name', 'description', 'brief', 'commands', 'command', 'tools', 'tool', 'folders', 'includes', 'needs'].filter((k) => k in (body || {})).map((k) => [k, body[k]]));
-function permChanged(actor, key, before, after) {
-  emit({ type: 'permissions.changed', actor, key, before: before ?? null, after: after ?? null });
+function permChanged(actor, key, before, after, d = null) {
+  emit({ type: 'permissions.changed', actor, key, before: before ?? null, after: after ?? null, ...delegatedTag(d) });
+  if (d) tx(getCtx(M.defaultBoard), (events) => adminTrail(getCtx(M.defaultBoard), events, actor, d, `${!before ? 'Added' : !after ? 'Removed' : 'Changed'} the permission **${key}**`));
 }
+/* Can edit permissions (INT-349): the grid and the library for an agent holding admin.permissions. Agents.json is
+   app-wide, so the default board's admin switch and scope apply. The board must have a sign-in token (as for the
+   human), and the agent its own token: a name alone proves nothing. → null for the human, else
+   { d: the delegation for the events, holder: what the escalation rules compare against }. */
+function permissionAdmin(actor, what) {
+  if (actor.kind === 'user') return null;
+  const d = adminGate(getCtx(M.defaultBoard), actor, 'admin.permissions', what);
+  if (!M.auth.userToken) fail(403, 'Permissions can be changed only on a board with a sign-in token', { code: 'NO_TOKEN', hint: 'The human runs "intellagent token" and restarts the board' });
+  if (!M.auth.agentTokens?.[actor.name]) fail(403, `${actor.name} has no token on this board, so the board can't tell it is really ${actor.name}`, { code: 'NO_TOKEN', hint: `The human issues one: intellagent token --agent ${actor.name}` });
+  const me = standing?.list().agents.find((x) => x.name.toLowerCase() === actor.name.toLowerCase());
+  return { d, holder: { name: actor.name, perms: me?.perms || [], grants: grantsOf(actor.name) } };
+}
+function noEscalation(refusals) {
+  if (!refusals.length) return;
+  const missing = [...new Set(refusals.flatMap((r) => r.missing || []))];
+  const powers = [...new Set(refusals.flatMap((r) => r.powers || []))];
+  fail(403, refusals.map((r) => r.reason).join('; '), {
+    code: 'NO_ESCALATION', reasons: refusals.map((r) => r.code),
+    ...(missing.length ? { missing } : {}), ...(powers.length ? { powers } : {}),
+    hint: 'You may give and take only what you hold yourself, on other agents, and never a board power. Ask the human on a card for the rest',
+  });
+}
+// The escalation check for a library write, run by definePerm on exactly what it would store, before storing it.
+const libraryCheck = (admin, key) => (admin ? (before, after) => noEscalation(libraryEscalation(permLibrary(), admin.holder, String(key), before, after)) : null);
 route('GET', '/api/permissions', 'The permission library: every permission an agent can hold (built-in tools, board powers, and the human\'s custom ones: command, tool, folders, bundle, verbal). Verbal ones carry enforced: false and a warning', () => {
   const lib = permLibrary();
   return { permissions: lib.list(), kinds: ['builtin', 'power', ...require('./lib/permissions').KINDS], errors: lib.errors, file: standing?.file ? path.basename(standing.file) : null };
 });
-route('POST', '/api/permissions', 'Human: add a custom permission { key, kind: command|tool|folders|bundle|verbal, name, description?, brief?, commands?|tools?|folders?|includes?, needs? } — stored in agents.json', ({ body, actor }) => {
+route('POST', '/api/permissions', 'Human, or admin.permissions: add a custom permission { key, kind: command|tool|folders|bundle|verbal, name, description?, brief?, commands?|tools?|folders?|includes?, needs? } — stored in agents.json. An agent adds only bundles and verbal ones, of what it holds itself', ({ body, actor }) => {
   if (!standing) fail(404, 'No standing agents on this board');
+  const admin = permissionAdmin(actor, 'change the permission library');
   if (permLibrary().get(String(body.key || ''))) fail(409, `"${body.key}" already exists`, { code: 'CONFLICT', hint: `Change it with PATCH /api/permissions/${body.key}` });
-  const r = standing.definePerm(body.key, permBody(body));
-  permChanged(actor, r.permission.key, null, r.permission);
+  const r = standing.definePerm(body.key, permBody(body), { check: libraryCheck(admin, body.key) });
+  permChanged(actor, r.permission.key, null, r.permission, admin?.d);
   return created(r.permission);
 });
-route('PATCH', '/api/permissions/:key', 'Human: change a custom permission (merged; null removes a key). Built-ins can\'t change', ({ p, body, actor }) => {
+route('PATCH', '/api/permissions/:key', 'Human, or admin.permissions: change a custom permission (merged; null removes a key). Built-ins can\'t change. An agent never changes one it holds; command, tool and folders permissions only narrow, and new includes and needs must be its own', ({ p, body, actor }) => {
   if (!standing) fail(404, 'No standing agents on this board');
-  const r = standing.definePerm(p.key, permBody(body), { merge: true });
-  permChanged(actor, p.key, r.before, r.permission);
+  const admin = permissionAdmin(actor, 'change the permission library');
+  const r = standing.definePerm(p.key, permBody(body), { merge: true, check: libraryCheck(admin, p.key) });
+  permChanged(actor, p.key, r.before, r.permission, admin?.d);
   return r.permission;
 });
-route('DELETE', '/api/permissions/:key', 'Human: remove a custom permission no agent or other permission uses (409 CONFLICT names them)', ({ p, actor }) => {
+route('DELETE', '/api/permissions/:key', 'Human, or admin.permissions (bundles and verbal ones only): remove a custom permission no agent or other permission uses (409 CONFLICT names them)', ({ p, actor }) => {
   if (!standing) fail(404, 'No standing agents on this board');
-  const r = standing.removePerm(p.key);
-  permChanged(actor, p.key, r.before, null);
+  const admin = permissionAdmin(actor, 'change the permission library');
+  // an entry that doesn't check out could be anything: the human's to remove
+  const check = admin ? (before) => noEscalation(libraryEscalation(permLibrary(), admin.holder, p.key, before || { kind: 'command' }, null)) : null;
+  const r = standing.removePerm(p.key, { check });
+  permChanged(actor, p.key, r.before, null, admin?.d);
   return { removed: r.removed };
 });
 /* The permissions grid (INT-239): every standing agent against every permission in the library. A cell is
@@ -4597,9 +4628,10 @@ route('GET', '/api/agents/grid', 'The permissions grid: every standing agent aga
     errors: lib.errors,
   };
 });
-route('PUT', '/api/agents/:name/permissions/:key', 'Human, signed in: set one cell of the grid { mode?: off|on|rules, rules?: { minOks?, from?, where? }, guidance?: text ("" removes it) } — writes agents.json. on also turns on what the permission needs; the reply lists what else changed. rules apply to board powers only (review.decide, column.gate take minOks/from; every power takes where)', ({ p, body, actor, q }) => {
+route('PUT', '/api/agents/:name/permissions/:key', 'Human, signed in, or admin.permissions: set one cell of the grid { mode?: off|on|rules, rules?: { minOks?, from?, where? }, guidance?: text ("" removes it) } — writes agents.json. on also turns on what the permission needs; the reply lists what else changed. rules apply to board powers only (review.decide, column.gate take minOks/from; every power takes where). An agent changes only other agents\' cells of permissions it holds itself, never a board power (403 NO_ESCALATION)', ({ p, body, actor, q }) => {
   // a grant bypasses the human's own approval, so this takes the same proof that this is the human
   if (!M.auth.userToken) fail(403, 'Permissions can be set only on a board with a sign-in token', { code: 'NO_TOKEN', hint: 'Run "intellagent token", restart the board and sign in with "intellagent open"; or edit agents.json' });
+  const admin = permissionAdmin(actor, 'set what an agent may do');
   if (!standing) fail(404, 'No standing agents on this board', { code: 'NOT_FOUND' });
   const a = standing.list().agents.find((x) => x.name.toLowerCase() === String(p.name).toLowerCase());
   if (!a) fail(404, `No standing agent "${p.name}"`, { code: 'NOT_FOUND', hint: `Agents: ${standing.list().agents.map((x) => x.name).join(', ') || 'none'}` });
@@ -4613,6 +4645,8 @@ route('PUT', '/api/agents/:name/permissions/:key', 'Human, signed in: set one ce
   const power = entry.heldBy === 'grants';
   if (mode === 'rules' && !power) fail(400, `${entry.name} is a tool permission: it is on or off, and has no rules`, { code: 'BAD_REQUEST', hint: 'Rules apply to board powers: review.decide and column.gate take minOks/from, every power takes where' });
   if (guidance !== undefined && guidance !== null && typeof guidance !== 'string') fail(400, 'Guidance must be text', { code: 'BAD_REQUEST', hint: 'Send "" to remove it' });
+  // turning a cell on or off, and the human's words beside it, are each a change to that cell (INT-349)
+  if (admin) noEscalation(escalation(lib, admin.holder, a.name, [p.key]));
   const patch = {};
   const also = [];
   const notes = [];
@@ -4670,6 +4704,12 @@ route('PUT', '/api/agents/:name/permissions/:key', 'Human, signed in: set one ce
   const { changes } = standing.manage(a.name, patch, { kind: actor.kind, name: actor.name });
   const fresh = standing.list().agents.find((x) => x.name === a.name);
   const ctx = getCtx(q.board || M.defaultBoard);
+  if (admin && Object.keys(changes).length) {
+    emit({ type: 'agent.managed', actor, agent: a.name, changes, ...delegatedTag(admin.d), recipients: [a.name] });
+    const lines = Object.entries(changes).map(([k, v]) => `${k}: ${JSON.stringify(v.from)} → ${JSON.stringify(v.to)}`).join('; ');
+    const home = getCtx(M.defaultBoard);
+    tx(home, (events) => adminTrail(home, events, actor, admin.d, `Changed **${a.name}**'s ${entry.name} permission: ${lines}`));
+  }
   return { agent: a.name, key: p.key, changed: Object.keys(changes).length > 0, cell: gridCell(ctx, fresh, entry), also, notes, changes };
 });
 // Grants as the UI sends them: [{ power, where? }]; where is { key: value | [values] } (strings only).
