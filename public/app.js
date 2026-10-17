@@ -1305,7 +1305,7 @@
     $('#agentCount').textContent = online.length > shown ? `+${online.length - shown}` : '';
     const btn = $('#hubBtn');
     const unread = state.inbox.filter(isUnread).length;
-    const bits = [online.length ? `${online.length} online: ${online.slice(0, 4).map((p) => p.name).join(', ')}${online.length > 4 ? '…' : ''}` : 'No agents online',
+    const bits = [online.length ? `${online.length} online: ${online.slice(0, 4).map((p) => p.name).join(', ')}${online.length > 4 ? '…' : ''}` : state.app.sandbox ? 'No agents online · agents do not run on a sandbox' : 'No agents online',
       unread ? `${unread} unread in your inbox` : '', !$('.dot', btn).hidden ? 'new digest entry' : ''].filter(Boolean);
     btn.dataset.tip = `Agents & inbox|${bits.join(' · ')}`;
     btn.setAttribute('aria-label', `Agents and inbox — ${bits.join(', ')}`);
@@ -4546,7 +4546,8 @@
       const fresh = r && r.at > seen;
       return `<div class="ask-item ${q.status} ${fresh ? 'fresh' : ''}" data-req="${esc(q.id)}" title="Open the thread|All replies, and mark it done">
         <div class="ai-q"><span class="ai-body">${q.attachments?.length ? icon('clip', 'sm') : ''}${esc(q.body.split('\n')[0])}</span><span class="ai-meta">${q.status === 'done' ? icon('check', 'sm') : ''}${esc(nameOf(q.to))} · ${rel(q.at)}</span></div>
-        ${waiting ? `<div class="ai-r wait">${avatar({ kind: 'agent', name: q.to })}<span>${r ? 'Following up' : 'On it'}<i class="ai-dots"><b></b><b></b><b></b></i></span></div>`
+        ${waiting && state.app.sandbox ? `<div class="ai-r">${avatar({ kind: 'agent', name: q.to })}<span>Agents do not run on a sandbox, so no reply will come.</span></div>`
+          : waiting ? `<div class="ai-r wait">${avatar({ kind: 'agent', name: q.to })}<span>${r ? 'Following up' : 'On it'}<i class="ai-dots"><b></b><b></b><b></b></i></span></div>`
           : r ? `<div class="ai-r">${avatar(r.author)}<div class="md">${md(r.body)}</div></div>` : ''}
       </div>`;
     }).join('')}`;

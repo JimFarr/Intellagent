@@ -324,7 +324,7 @@ let previewOk = null;
 const previewable = () => (previewOk ??= !M.sandbox && (() => { try { return jsonfile.read(path.join(PROJECT_ROOT, 'package.json')).name === 'intellagent' && fs.existsSync(path.join(PROJECT_ROOT, 'server.js')); } catch { return false; } })());
 const appInfo = () => ({
   name: app.name, version: VERSION, build: BUILD, defaultBoard: M.defaultBoard,
-  lease: M.lease, serverTime: now(), seq, preview: previewable(),
+  lease: M.lease, serverTime: now(), seq, preview: previewable(), sandbox: !!M.sandbox,
 });
 
 const boards = new Map(); // id -> ctx
