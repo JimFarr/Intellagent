@@ -257,6 +257,13 @@ POST   /api/boards/main/items                  { …, focus: "<id>" }           
 ```
 Events: `focus.created`, `focus.updated`, `focus.activated` (to every standing agent's inbox; wakes nobody), `focus.retired`. A ticket archived or deleted leaves every focus board.
 
+### Card rules and review facts
+The human names a **condition** and the **look** a ticket earns when it holds ("full agent approval" is `review.allOk review.oks>=2 review.evidence`). Everyone reads `GET …/card-rules`; only the human writes it (`PUT …/card-rules { rules: [{ name, condition, look, enabled? }] }`, `403 HUMAN_ONLY` for an agent). A look is `outline`/`tint` (`ok accent warn danger`), `badge` (`"text"` or `{ text, icon }`) and `ribbon` (short text). Rules are checked in list order: the first outline, tint and ribbon win and badges stack, two at most. `GET …/card-rules/matches` gives the look per ticket, `GET …/card-rules/check?condition=…` the count and first ids before saving.
+
+A condition is terms separated by spaces, all of which must hold: `review.allOk` (set) · `!review.concerns` (not) · `fields.risk:low` (equals; `a|b` either) · `review.oks>=2` (`> >= < <= =`) · `reviewers.nebula:ok` · `@drax` (assigned or leased) · `is:rule:<name>`. One that does not parse is `400 BAD_REQUEST` naming the term, with a hint.
+
+Every ticket in search carries **review facts**: `review.oks`, `review.pending`, `review.concerns`, `review.allOk`, `review.evidence`, and `reviewers.<name>`. They count only verdicts that stand (given with the reviewer's own token, about the commits the ticket has now), so a stale ok never shows as approval. Use them in `where` (`{ "review.oks": { "gte": 2 } }`) or as `filter` (`POST /api/search { filter: "review.allOk" }`, `GET /api/search?filter=…`).
+
 ## 4. Talk to the human
 
 ```
@@ -493,6 +500,7 @@ Schema       GET/PUT …/schema                    POST …/schema/fields       
 Focus        GET/POST …/focus                    GET/PATCH/DELETE …/focus/:id      PUT …/focus/active
 Idle alarm   GET/PUT …/idle-alarm (PUT human)
 Rules        GET/PUT …/directives                PATCH /api/boards/:board          POST /api/boards      PATCH /api/app
+Card rules   GET/PUT …/card-rules (PUT human)    GET …/card-rules/check  …/card-rules/matches
 Search       GET/POST /api/search
 Events       GET /api/events  /api/events/wait  /api/stream   POST /api/stream-ticket (the UI)
              GET/POST /api/subscriptions         DELETE /api/subscriptions/:id     GET …/:id/next   POST …/:id/ack

@@ -23,6 +23,7 @@ const PUBLIC = path.join(ROOT, 'public');
 const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join(ROOT, 'intellagent.manifest.json'));
 const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
 const { readLocal, updateLocal } = require('./lib/locate');
+const cardrules = require('./lib/cardrules');
 const jsonfile = require('./lib/jsonfile');
 const MANIFEST_DEFAULTS = {
   appName: 'Intellagent',
@@ -350,6 +351,7 @@ function normalizeBoard(b) {
   b.columns = Array.isArray(b.columns) ? b.columns : [];
   b.items = isObj(b.items) ? b.items : {};
   b.directives = b.directives || '';
+  b.cardRules = Array.isArray(b.cardRules) ? b.cardRules : [];
   b.digest = Array.isArray(b.digest) ? b.digest : [];
   b.master = isObj(b.master) ? b.master : null;
   b.ticketTemplates = Array.isArray(b.ticketTemplates) ? b.ticketTemplates : [];
@@ -2871,23 +2873,37 @@ function testCond(v, cond) {
   });
 }
 
-const SUMMARY_FIELDS = ['board', 'id', 'title', 'type', 'priority', 'column', 'columnId', 'parent', 'claimant', 'needsHuman', 'fields', 'properties', 'updatedAt', 'version', 'archived'];
+const SUMMARY_FIELDS = ['board', 'id', 'title', 'type', 'priority', 'column', 'columnId', 'parent', 'claimant', 'needsHuman', 'fields', 'properties', 'updatedAt', 'version', 'archived', 'review', 'look'];
+
+// Card rules (lib/cardrules.js): a condition is the filter language, and a rule is a condition with a look.
+// A condition that does not parse is a 400 saying which term and what to write instead.
+const ruleErrors = (fn) => { try { return fn(); } catch (e) { if (e instanceof cardrules.RuleError) fail(400, e.message, { code: 'BAD_REQUEST', hint: e.hint }); throw e; } };
+const cardRulesOf = (ctx) => ctx.board.cardRules || [];
+// A ticket as search sees it, with the review facts (only verdicts that still stand) and reviewers.<name>.
+function searchView(ctx, item, archived, blocksOf) {
+  const v = {
+    ...itemView(ctx, item, archived, blocksOf),
+    claimant: activeLease(item)?.claimant ?? null,
+    authorName: item.author?.name, authorKind: item.author?.kind,
+    ...cardrules.reviewFacts(item, (r) => verdictStands(item, r, ctx)),
+  };
+  if (!archived && cardRulesOf(ctx).length) { const look = cardrules.lookFor(v, cardRulesOf(ctx)); if (look) v.look = look; }
+  return v;
+}
 
 function search(d) {
   const ctxs = d.board ? [getCtx(d.board)] : [...boards.values()];
   const where = isObj(d.where) ? d.where : {};
   const terms = String(d.q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const filter = d.filter ? ruleErrors(() => cardrules.parseCondition(d.filter)) : null;
   const out = [];
   for (const ctx of ctxs) {
     const pools = [ctx.board.columns.flatMap((c) => c.itemIds.map((id) => [ctx.board.items[id], false]))];
     if (d.includeArchived === true || d.includeArchived === 'true') pools.push(Object.values(ctx.archive.items).map((x) => [x, true]));
     const blocksOf = blocksIndex(ctx);
     for (const [item, archived] of pools.flat()) {
-      const v = {
-        ...itemView(ctx, item, archived, blocksOf),
-        claimant: activeLease(item)?.claimant ?? null,
-        authorName: item.author?.name, authorKind: item.author?.kind,
-      };
+      const v = searchView(ctx, item, archived, blocksOf);
+      if (filter && !cardrules.holds(filter, v, cardRulesOf(ctx).filter((r) => r.enabled !== false))) continue;
       if (terms.length) {
         const hay = [v.id, v.title, v.description, v.parent, JSON.stringify(v.properties), ...v.comments.map((c) => c.body)].join(' ').toLowerCase();
         if (!terms.every((t) => hay.includes(t))) continue;
@@ -3813,6 +3829,35 @@ route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directi
   return { directives: ctx.board.directives };
 });
 
+// Card rules: the human's named conditions and the look each earns. Read by everyone, set by the human.
+route('GET', '/api/boards/:board/card-rules', 'Card rules: { rules: [{ name, condition, look: { outline?, badge?, tint?, ribbon? }, enabled }] } in order; the first matching rule\'s outline, tint and ribbon win, badges stack (max 2). Condition language: see PUT', ({ p }) => ({ rules: cardRulesOf(getCtx(p.board)), tones: cardrules.TONES }));
+route('PUT', '/api/boards/:board/card-rules', 'Replace the card rules (human only): { rules: [{ name, condition, look: { outline: ok|accent|warn|danger, tint?, badge?: { text, icon? }, ribbon?: text }, enabled? }] }. A condition is space-separated terms, all must hold: review.allOk · !review.concerns · review.oks>=2 · fields.risk:low · reviewers.nebula:ok · @drax · is:rule:<name>. 400 BAD_REQUEST with a hint when one does not parse', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  humanConfig(actor, 'change the card rules');
+  const rules = ruleErrors(() => cardrules.cleanRules(body.rules));
+  tx(ctx, (events) => {
+    if (JSON.stringify(rules) === JSON.stringify(cardRulesOf(ctx))) return;
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { cardRules: { from: cardRulesOf(ctx).map((r) => r.name), to: rules.map((r) => r.name) } } });
+    ctx.board.cardRules = rules;
+  });
+  return { rules: cardRulesOf(ctx) };
+});
+route('GET', '/api/boards/:board/card-rules/check', 'How many tickets a condition matches, before it is saved: ?condition=review.allOk → { count, ids (first 20) }; 400 BAD_REQUEST with a hint when it does not parse', ({ p, q }) => {
+  const r = search({ board: p.board, filter: q.condition, limit: 500, fields: ['id'] });
+  return { count: r.total, ids: r.items.slice(0, 20).map((x) => x.id) };
+});
+route('GET', '/api/boards/:board/card-rules/matches', 'The look each ticket earns from the enabled rules: { <id>: { rules: [names], outline?, tint?, ribbon?, badges? } }, only tickets that match', ({ p }) => {
+  const ctx = getCtx(p.board);
+  const blocksOf = blocksIndex(ctx);
+  const out = {};
+  if (!cardRulesOf(ctx).some((r) => r.enabled !== false)) return out;
+  for (const c of ctx.board.columns) for (const id of c.itemIds) {
+    const look = searchView(ctx, ctx.board.items[id], false, blocksOf).look;
+    if (look) out[id] = look;
+  }
+  return out;
+});
+
 const schemaView = (ctx) => ({ ...ctx.board.schema, fieldTypes: FIELD_TYPES, uiModes: UI_MODES, stubSlots: STUB_SLOTS });
 function schemaTx(ctx, actor, fn) {
   return tx(ctx, (events) => {
@@ -4244,8 +4289,8 @@ route('POST', '/api/boards/:board/archive/:id/restore', 'Restore from archive: {
   return itemView(ctx, restoreItem(ctx, p.id, body, actor));
 });
 
-route('GET', '/api/search', 'Search: ?board&q&type&priority&column&claimant&parent&author&prop.<key>=[op:]value&includeArchived&sort&order&limit&full', ({ q }) => search(searchFromQuery(q)));
-route('POST', '/api/search', 'Search: { board?, q?, where: { "properties.risk": "high", "priority": { "in": ["High","Critical"] } }, includeArchived?, sort?, order?, limit?, fields?, full? }', ({ body }) => search(body));
+route('GET', '/api/search', 'Search: ?board&q&filter (card-rules condition, e.g. review.allOk)&type&priority&column&claimant&parent&author&prop.<key>=[op:]value&includeArchived&sort&order&limit&full', ({ q }) => search(searchFromQuery(q)));
+route('POST', '/api/search', 'Search: { board?, q?, where: { "properties.risk": "high", "priority": { "in": ["High","Critical"] } }, filter?: "review.allOk review.oks>=2 fields.risk:low" (the card-rules condition language), includeArchived?, sort?, order?, limit?, fields?, full? }. Every ticket has review facts: review.oks / pending / concerns / allOk / evidence and reviewers.<name>, counting only verdicts that still stand', ({ body }) => search(body));
 
 route('GET', '/api/events', 'Events since a cursor: ?since=<seq>&<filter>&tail=true (newest N instead of oldest N)', ({ res, q }) =>
   longPoll(res, { filter: parseFilter(q), since: Number(q.since) || 0, timeout: 0, limit: clamp(Number(q.limit) || 100, 1, 1000), tail: q.tail === 'true' }));
