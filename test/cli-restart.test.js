@@ -51,15 +51,20 @@ describe('intellagent restart', () => {
 });
 
 describe('intellagent init in a folder that already has a board (INT-325)', () => {
-  it('names the board there, says it was left alone and what to do next; the exit code stays 0', () => {
+  it('names the board there, says it was left alone and what to do next; the exit code stays 0', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-init-'));
     const env = { INTELLAGENT_AGENT: 'ada' };
     try {
-      const first = cli(['init', dir, '--name', 'Docs Site', '--prefix', 'DOC', '--template', 'simple'], { cwd: dir, env });
+      // --no-start: without it init starts a real board, detached, that nothing stops (INT-374)
+      const quiet = ['--no-start', '--no-open', '--no-mcp', '--no-claude'];
+      const first = cli(['init', dir, '--name', 'Docs Site', '--prefix', 'DOC', '--template', 'simple', ...quiet], { cwd: dir, env });
       assert.equal(first.code, 0, first.err);
       const manifest = path.join(dir, '.intellagent', 'intellagent.manifest.json');
       const before = fs.readFileSync(manifest, 'utf8');
-      const again = cli(['init', dir, '--name', 'Other', '--prefix', 'OTH'], { cwd: dir, env });
+      const port = JSON.parse(before).port;
+      assert.equal(await fetch(`http://127.0.0.1:${port}/api/app`).then(() => true, () => false), false, 'init left no board running on its port');
+      assert.ok(!fs.existsSync(path.join(dir, '.intellagent', 'data', 'server.pid')), 'and no server.pid');
+      const again = cli(['init', dir, '--name', 'Other', '--prefix', 'OTH', ...quiet], { cwd: dir, env });
       assert.equal(again.code, 0);
       assert.match(again.out, /Already initialised: /);
       assert.match(again.out, /That board is "Docs Site" \(prefix DOC, port \d+\)\. init leaves it alone/);
