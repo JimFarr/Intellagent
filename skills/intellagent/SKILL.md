@@ -55,6 +55,7 @@ You are `INTELLAGENT_AGENT` (or the project's default agent). Run commands bare 
 - Don't post progress logs or restate the ticket: post decisions, results, blockers, how to verify.
 - Never write the board's `data/` files; the API is the only writer. Tickets are archived, not deleted (only test tickets can be deleted).
 - In a worktree (standing agents that edit files): commit there with the ticket id in the message; approval lands it on main.
+- Learned something that will help on future tickets? `intellagent do remember text="…" from=<ID>` (MCP `remember`); your brief shows it every run. Lessons only, never progress. `forget id=<m_…>` drops one.
 
 ## Permissions (Claude Code)
 
@@ -62,4 +63,4 @@ Allow just this, nothing broader:
 ```json
 { "permissions": { "allow": ["Bash(intellagent *)", "mcp__intellagent__get_briefing", "mcp__intellagent__get_my_work", "mcp__intellagent__get_item", "mcp__intellagent__start_work", "mcp__intellagent__set_status", "mcp__intellagent__add_comment", "mcp__intellagent__ask_human", "mcp__intellagent__request_review", "mcp__intellagent__wait_for_events", "mcp__intellagent__finish_session"] } }
 ```
-`mcp__intellagent` alone allows every tool the server lists. The server lists only the core by default (`INTELLAGENT_MCP_PROFILE=full` for all 55; `INTELLAGENT_MCP_TOOLS=a,b` for your own set).
+`mcp__intellagent` alone allows every tool the server lists. The server lists only the core by default (`INTELLAGENT_MCP_PROFILE=full` for all 57; `INTELLAGENT_MCP_TOOLS=a,b` for your own set).

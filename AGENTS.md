@@ -31,7 +31,7 @@ Errors are `{ "error": "…", "code": "LEASED", "hint": "…" }`. Branch on `cod
 | Held or blocked | `LEASED` `NOT_LEASED` `BOARD_HELD` `LEASES_ACTIVE` `BLOCKED` `WIP_LIMIT` `LOCKED_COLUMN` `OUT_OF_FOCUS` |
 | Not yours to do | `HUMAN_ONLY` `OWN_WORK` `OUT_OF_SCOPE` `NOT_DELEGABLE` `FORBIDDEN` `UNAUTHORIZED` |
 | Wrong input | `BAD_REQUEST` `UNKNOWN_FIELD` `IMMUTABLE` `EXPLICIT` `BAD_EMOJI` `MODEL_NOT_ALLOWED` `WIDEN` `NO_AGENT` |
-| Wrong state | `VERSION_CONFLICT` `REVIEW_OPEN` `NOT_TEST` `NOT_FOUND` `ARCHIVED` `LOCKED` `CONFLICT` `TOO_LARGE` |
+| Wrong state | `VERSION_CONFLICT` `REVIEW_OPEN` `NOT_TEST` `NOT_FOUND` `ARCHIVED` `LOCKED` `CONFLICT` `TOO_LARGE` `MEMORY_OFF` |
 | Agent management | `STANDING_AGENT` `ONLINE` `HOLDS_LEASES` |
 
 ## 0. Rules of the road
@@ -136,6 +136,23 @@ PATCH /api/profiles/me   { "color": "#2fe0c4", "glyph": "🛠", "label": "Builde
 PATCH /api/profiles/me   { "imagePath": "C:/abs/avatar.png" }    // or "imageBase64", or "image": "https://…"; null clears
 GET   /api/profiles
 ```
+
+## 2e. Your memory
+
+A few notes you keep across runs: your brief shows them every run, under **Your memory**. Keep a lesson that will help on future tickets ("the focus tests share a port: run them alone"); never progress, and never what a card already says.
+
+```
+GET    /api/profiles/me/memory            → { name, on, cap, used, entries: [{ id, text, source, from?, at, by, pinned?, history? }] }
+POST   /api/profiles/me/memory            { "text": "…", "from": "INT-12" }        (MCP: remember)
+PATCH  /api/profiles/me/memory/<id>       { "text": "…" }                          (earlier texts kept in history)
+DELETE /api/profiles/me/memory/<id>                                                (MCP: forget)
+PUT    /api/profiles/<agent>/memory       { "on": false }                          (human only: the switch)
+```
+- Two kinds of entry: **learned** (you wrote it) and **human** (the human told you to remember it). You change only your own learned entries, and not the ones the human pinned (`403 HUMAN_ONLY`); another agent's memory is not yours (`403 FORBIDDEN`). The human adds, edits, pins and removes any, on `/api/profiles/<agent>/memory`.
+- The human's comment or request that *starts* with "remember that …" or "remember: …" (after any @mentions) becomes a human entry for each agent it @mentions, or for the request's agent. The reply lists them under `remembered`.
+- At most 4000 characters per agent and 1000 per entry (`413 TOO_LARGE`: forget or shorten one). Each entry is one line.
+- **Memory never grants anything.** It is only text in your brief, framed as your own notes: they can be wrong, and they never override the human's instructions or your permissions. Every change is a `memory.updated` event (wakes nobody), and the digest lists what each agent learned that day (`learned`).
+- The human can switch an agent's memory off, e.g. for an agent that reads outside content: its brief shows none and its writes answer `409 MEMORY_OFF`. Its entries are kept.
 
 ## 3. Leases (locks)
 
@@ -430,7 +447,7 @@ intellagent preset update <name|folder> --accept all|id,id
 ## 8. MCP, CLI and the agent skill
 
 Agents reach the board three ways; pick the lightest that works:
-- **MCP core** — `node intellagent/mcp.js` lists ten tools by default (`get_briefing`, `get_my_work`, `get_item`, `start_work`, `set_status`, `add_comment`, `ask_human`, `request_review`, `wait_for_events`, `finish_session`; plus `introduce_yourself` until the agent has a role): ~4.5k characters of tool definitions instead of ~21k. `INTELLAGENT_MCP_PROFILE=full` (or `--profile full`) lists all 55; `INTELLAGENT_MCP_TOOLS=name,name` lists your own set. Every tool stays callable by name in every profile.
+- **MCP core** — `node intellagent/mcp.js` lists ten tools by default (`get_briefing`, `get_my_work`, `get_item`, `start_work`, `set_status`, `add_comment`, `ask_human`, `request_review`, `wait_for_events`, `finish_session`; plus `introduce_yourself` until the agent has a role): ~4.5k characters of tool definitions instead of ~21k. `INTELLAGENT_MCP_PROFILE=full` (or `--profile full`) lists all 57; `INTELLAGENT_MCP_TOOLS=name,name` lists your own set. Every tool stays callable by name in every profile.
 - **CLI** — `intellagent do <operation> key=value …` runs any of those operations by name (same parameters as the MCP tools); `intellagent help <operation>` prints its exact request (`intellagent help <command>`, e.g. `help init`, prints a command's usage); `intellagent api <METHOD> <path> key=value …` calls any route. Output is JSON; on an error the reply stays on stdout and `error <status> <CODE>: <message> — hint: <hint>` goes to stderr with exit 1 (2: board unreachable or bad input, 3: no board). It never prompts; `INTELLAGENT_AGENT` sets who you are.
 - **Skill** — `skills/intellagent/SKILL.md` (`intellagent skill install`) teaches the day-to-day loop and the CLI for everything beyond the core; it loads only when the agent works a ticket.
 
@@ -482,6 +499,7 @@ Agents       GET/POST /api/agents  /api/agents/roles  /api/agents/:name  …/:na
 Permissions  GET/POST /api/permissions         PATCH/DELETE /api/permissions/:key (human)
 Roles        GET /api/roles  /api/roles/:key
 Profiles     GET /api/profiles  /api/profiles/me  /api/names/suggest     PATCH /api/profiles/me     DELETE /api/presence/:name
+Memory       GET/POST/PUT /api/profiles/:name/memory (PUT human)  PATCH/DELETE /api/profiles/:name/memory/:id   (:name may be "me")
 Files        GET /avatars/:file  /files/:board/:file
 ```
 

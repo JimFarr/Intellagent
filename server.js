@@ -751,6 +751,7 @@ const permsFor = (name) => {
    The powers are listed in the permission library (lib/permissions.js) beside the tool permissions. */
 const { POWERS, createLibrary: createPermLibrary } = require('./lib/permissions');
 const { createRoles } = require('./lib/agents/roles');
+const { createMemory, rememberText } = require('./lib/memory');
 // Standing agents the human lets land approved work (work.land): a landing that fails goes to them, not the human.
 const landers = () => { try { return standing.list().agents.filter((a) => a.enabled && grantsOf(a.name).some((g) => g.power === 'work.land')).map((a) => a.name); } catch { return []; } };
 function grantsOf(name) {
@@ -2450,6 +2451,11 @@ function briefing(ctx, name, base, via = 'cli') {
       try { sp = standing?.specialityOf(name) || ''; } catch { /* not a standing agent */ }
       return sp ? ['', sp] : [];
     })(),
+    '',
+    ...memory.briefLines(name, {
+      remember: via === 'mcp' ? '`remember { text, from? }`' : via === 'http' ? '`POST /api/profiles/me/memory { text, from? }`' : '`intellagent api POST /api/profiles/me/memory text="…" from=<ID>`',
+      forget: via === 'mcp' ? '`forget { id }`' : via === 'http' ? '`DELETE /api/profiles/me/memory/<id>`' : '`intellagent api DELETE /api/profiles/me/memory/<id>`',
+    }),
     ...(() => {
       // The receptionist routes work: show it the team with role, model tier and what each does.
       const team = isCoordinator(ctx, name) && standing ? standing.list().agents.filter((a) => a.name !== name) : [];
@@ -3162,6 +3168,39 @@ function updateProfile(name, d, actor) {
   return { name, ...next };
 }
 
+/* ───────────────────────── agent memory (lib/memory.js) ───────────────────────── */
+
+const memory = createMemory({ file: path.join(DATA, 'memory.json'), fail, now, rid });
+// Whose memory a route means: "me" is the caller.
+function memoryOwner(name, actor) {
+  const n = name === 'me' ? actor.name : str(decodeURIComponent(name), 64);
+  if (!n || n === 'anonymous') fail(400, 'Identify yourself with X-Agent (or X-User) first', { hint: 'Send the header X-Agent: <your-name>' });
+  return n;
+}
+// Every change is visible, and wakes nobody: the agent reads its memory in its next brief.
+function memoryChanged(agent, op, actor, entry, extra = {}) {
+  emit({ type: 'memory.updated', actor, agent, op, ...(entry ? { entry: { id: entry.id, text: trimChange(entry.text), source: entry.source, from: entry.from || null, pinned: !!entry.pinned } } : {}), ...extra, recipients: [] });
+}
+// A human's "@agent remember that …" (a comment or a request) becomes a human entry for each agent it names.
+// Returns what was stored and what wasn't, for the reply; never fails the comment or request itself.
+function rememberFrom(body, fallbackTo, from, actor) {
+  if (actor.kind !== 'user') return null;
+  const r = rememberText(body);
+  if (!r) return null;
+  const to = [...new Set(r.to.length ? r.to : [fallbackTo].filter(Boolean))];
+  const out = { remembered: [], notRemembered: [] };
+  for (const agent of to) {
+    try {
+      const e = memory.add(agent, { text: r.text, from }, actor);
+      memoryChanged(agent, 'added', actor, e);
+      out.remembered.push({ agent, id: e.id });
+    } catch (err) {
+      out.notRemembered.push({ agent, error: err.message, code: err.code });
+    }
+  }
+  return out.remembered.length || out.notRemembered.length ? out : null;
+}
+
 /* ───────────────────────── presence ───────────────────────── */
 
 const PRESENCE_FILE = path.join(DATA, 'presence.json');
@@ -3375,7 +3414,7 @@ const SCHEMA = {
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.managed', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
-      'focus.created', 'focus.updated', 'focus.activated', 'focus.retired'],
+      'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
     changes: '{ [field | "properties.<key>"]: { from, to } }?', item: 'snapshot { id,title,type,priority,columnId,column,parent,claimant,needsHuman }?',
     recipients: 'string[] — agents/users this event concerns (leaseholder and past leaseholders, asker, agent author, assignee, commenters, master-lease holder, @mentions)',
@@ -3971,8 +4010,11 @@ route('GET', '/api/boards/:board/items/:id/history', 'Recent events for this ite
   return recent.filter((e) => e.board === p.board && e.itemId === key).slice(-200);
 });
 
-route('POST', '/api/boards/:board/items/:id/comments', 'Add comment: { body } (markdown, @mentions notify); the reply has a "warning" when an agent was named without @ or the whole body is a file path (the board does not read it)', ({ p, body, actor }) =>
-  created(addComment(getCtx(p.board), p.id, body, actor)));
+route('POST', '/api/boards/:board/items/:id/comments', 'Add comment: { body } (markdown, @mentions notify); the reply has a "warning" when an agent was named without @ or the whole body is a file path (the board does not read it). The human\'s "@agent remember that …" also goes into that agent\'s memory', ({ p, body, actor }) => {
+  const c = addComment(getCtx(p.board), p.id, body, actor);
+  const r = rememberFrom(c.body, null, getItem(getCtx(p.board), p.id).id, actor);
+  return created(r ? { ...c, ...r } : c);
+});
 
 route('POST', '/api/boards/:board/items/:id/attachments', 'Attach: { name?, mime?, dataBase64 | path (absolute) | url }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
@@ -4065,13 +4107,18 @@ async function workWarnings(ctx, item) {
   return out;
 }
 
-route('GET', '/api/boards/:board/digest', 'Daily digest: end-of-session summaries, newest first. ?days=7', ({ p, q }) => {
+route('GET', '/api/boards/:board/digest', 'Daily digest: end-of-session summaries, newest first, and what each agent learned that day (learned: [{ agent, id, text, from, at }]). ?days=7', ({ p, q }) => {
   const ctx = getCtx(p.board);
   const days = clamp(Number(q.days) || 7, 1, 90);
-  const since = new Date(Date.now() - days * 86_400_000).toLocaleDateString('en-CA');
+  const sinceMs = Date.now() - days * 86_400_000;
+  const since = new Date(sinceMs).toLocaleDateString('en-CA');
   const byDay = {};
-  for (const e of ctx.board.digest) if (e.date >= since) (byDay[e.date] ||= []).push(e);
-  return Object.entries(byDay).sort(([a], [b]) => b.localeCompare(a)).map(([date, entries]) => ({ date, entries: entries.sort((a, b) => b.ts.localeCompare(a.ts)) }));
+  for (const e of ctx.board.digest) if (e.date >= since) (byDay[e.date] ||= { entries: [] }).entries.push(e);
+  for (const l of memory.learnedSince(sinceMs)) {
+    const date = new Date(l.at).toLocaleDateString('en-CA');
+    if (date >= since) ((byDay[date] ||= { entries: [] }).learned ||= []).push(l);
+  }
+  return Object.entries(byDay).sort(([a], [b]) => b.localeCompare(a)).map(([date, d]) => ({ date, entries: d.entries.sort((a, b) => b.ts.localeCompare(a.ts)), ...(d.learned ? { learned: d.learned } : {}) }));
 });
 route('POST', '/api/boards/:board/digest', 'Append to today\'s digest: { summary (markdown), items?: [ids] }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
@@ -4095,8 +4142,11 @@ route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=7|30: done, 
   metrics(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90)));
 route('GET', '/api/boards/:board/requests', 'Requests from the human to agents: ?status=open|done&to=<agent>', ({ p, q }) =>
   (getCtx(p.board).board.requests || []).filter((x) => (!q.status || x.status === q.status) && (!q.to || x.to === q.to)).slice().reverse());
-route('POST', '/api/boards/:board/requests', 'Ask an agent something not tied to a ticket: { body, to? } (to defaults to the board coordinator)', ({ p, body, actor }) =>
-  created(createRequest(getCtx(p.board), body, actor)));
+route('POST', '/api/boards/:board/requests', 'Ask an agent something not tied to a ticket: { body, to? } (to defaults to the board coordinator). The human\'s "remember that …" also goes into that agent\'s memory', ({ p, body, actor }) => {
+  const req = createRequest(getCtx(p.board), body, actor);
+  const r = rememberFrom(req.body, req.to, req.id, actor);
+  return created(r ? { ...req, ...r } : req);
+});
 route('POST', '/api/boards/:board/requests/:id/reply', 'Reply to a request: { body?, done? } — agents: say what you did and pass "done": true', ({ p, body, actor }) =>
   replyRequest(getCtx(p.board), p.id, body, actor));
 route('POST', '/api/boards/:board/requests/:id/withdraw', 'Take back a request you sent, once it is met or no longer relevant: { reason } — the sender, the coordinator or the human', ({ p, body, actor }) =>
@@ -4692,6 +4742,36 @@ route('GET', '/api/names/suggest', 'A free, friendly agent name (e.g. "plucky-ot
 
 route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 chars/emoji), label?, description? (markdown: what you were designed to do), role?, alignment? (how you behave), image? (https URL) | imageBase64 | imagePath } — null clears',
   ({ body, actor }) => updateProfile(actor.name, body, actor));
+
+// Agent memory (INT-243). :name is an agent, or "me".
+route('GET', '/api/profiles/:name/memory', 'An agent\'s memory ("me": yours): { name, on, cap, used, entries: [{ id, text, source: learned|human, from?, at, by, pinned?, history? }] }', ({ p, actor }) =>
+  memory.list(memoryOwner(p.name, actor)));
+route('POST', '/api/profiles/:name/memory', 'Remember something: { text, from? (ticket id) } — an agent adds a learned entry to its own memory; the human adds a human entry to any agent\'s ({ pinned? } too). Capped per agent; wakes nobody', ({ p, body, actor }) => {
+  const name = memoryOwner(p.name, actor);
+  const e = memory.add(name, body, actor);
+  memoryChanged(name, 'added', actor, e);
+  return created(e);
+});
+route('PATCH', '/api/profiles/:name/memory/:id', 'Change a memory entry: { text?, pinned? (human) } — an agent only its own unpinned learned entries; the human any. Earlier texts are kept in history', ({ p, body, actor }) => {
+  const name = memoryOwner(p.name, actor);
+  const was = memory.list(name).entries.find((x) => x.id === p.id)?.text;
+  const e = memory.edit(name, p.id, body, actor);
+  const op = 'pinned' in body && e.text === was ? (e.pinned ? 'pinned' : 'unpinned') : 'edited';
+  memoryChanged(name, op, actor, e);
+  return e;
+});
+route('DELETE', '/api/profiles/:name/memory/:id', 'Forget a memory entry — an agent only its own unpinned learned entries; the human any', ({ p, actor }) => {
+  const name = memoryOwner(p.name, actor);
+  const e = memory.remove(name, p.id, actor);
+  memoryChanged(name, 'removed', actor, e);
+  return { forgot: e.id };
+});
+route('PUT', '/api/profiles/:name/memory', 'Human only: switch an agent\'s memory on or off: { on } — off, its brief shows none and it can\'t write (409 MEMORY_OFF); entries are kept', ({ p, body, actor }) => {
+  const name = memoryOwner(p.name, actor);
+  const r = memory.setOn(name, body.on, actor);
+  memoryChanged(name, 'switched', actor, null, { on: r.on });
+  return r;
+});
 
 route('GET', '/avatars/:file', null, ({ res, p }) => {
   const name = path.basename(decodeURIComponent(p.file));
