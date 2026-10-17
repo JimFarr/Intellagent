@@ -759,6 +759,25 @@ describe('delegated approval on a reviewer\'s ok', () => {
       await s.ok('POST', `/api/boards/main/items/${d1.id}/reviewers`, { name: 'drax' }, USER);
       await verdict(d1.id, 'drax', 'ok');
       assert.equal((await decide(d1.id)).status, 200, "Drax's ok is in scope");
+
+      // an open blocker: chase, not decide, and a delegated approve is refused; the human's goes through (INT-297)
+      const blocker = await s.ok('POST', '/api/boards/main/items', { title: 'the other half', column: 'Ready' }, USER);
+      const f = await s.ok('POST', '/api/boards/main/items', { title: 'half done', column: 'Ready', blockedBy: [blocker.id] }, USER);
+      await s.ok('POST', `/api/boards/main/items/${f.id}/start`, { force: true }, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${f.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${f.id}/reviewers`, { name: 'nebula' }, USER);
+      await verdict(f.id, 'nebula', 'ok');
+      const wait = (await work()).find((n) => n.id === f.id);
+      assert.equal(wait?.action, 'chase', 'blocked: chase, not decide');
+      assert.match(wait.why, new RegExp(`waits on ${blocker.id}`));
+      assert.equal(wait.tag, `blocked:${blocker.id}`);
+      const refused = await decide(f.id);
+      assert.equal(refused.status, 409);
+      assert.equal(refused.body.code, 'BLOCKED');
+      assert.ok(refused.body.hint);
+      assert.deepEqual(refused.body.blockedBy, [blocker.id]);
+      const human = await s.api('POST', `/api/boards/main/items/${f.id}/review/decision`, { verdict: 'approve', comment: 'ship the half' }, USER);
+      assert.equal(human.status, 200, 'the human approves over a blocker');
     } finally { await s.stop(); }
   });
 });

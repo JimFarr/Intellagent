@@ -1937,6 +1937,9 @@ function decideReview(ctx, id, d, actor) {
     const evidence = String((item.questions || []).find((x) => x.kind === 'review')?.notes?.evidence || '').trim();
     if (grant && verdict === 'approve' && !evidence) fail(409, `${item.id}'s review has no evidence: only the human approves without it`, { code: 'NO_EVIDENCE', hint: 'Ask the author for evidence (screenshots, outputs, what to look at in the Preview) and to request review again' });
     if (grant && verdict === 'approve' && worried.length) fail(409, `${item.id} has concerns from ${worried.join(', ')}: only the human approves over a reviewer's concerns`, { code: 'CONCERNS_OPEN', hint: 'Leave it for the human, or @mention the author to address the concerns' });
+    // Nor does it carry a ticket past work it waits on: approving moves it on, and only the human can undo that.
+    const open = openBlockersOf(ctx, item);
+    if (grant && verdict === 'approve' && open.length) fail(409, `${item.id} is blocked by ${open.join(', ')}: only the human approves it before they are done`, { code: 'BLOCKED', hint: `Leave it for the human, or approve it once ${open.join(', ')} ${open.length > 1 ? 'are' : 'is'} done`, blockedBy: open });
     const comment = str(d.comment || '', 20_000).trim();
     if (verdict === 'changes' && !comment) fail(400, 'Say what needs to change in "comment"');
     // Where it goes: approve → through the next gate; changes → back to the working column.
@@ -2150,6 +2153,8 @@ function delegationGaps(ctx, it, q, grants) {
   if (!String(q.notes?.evidence || '').trim()) gap('evidence', `evidence from ${q.raisedBy} (the review has none: screenshots, outputs, what to look at in the Preview)`);
   const worried = (it.reviewers || []).filter((r) => r.verdict === 'concerns').map((r) => r.name);
   if (worried.length) gap(`concerns:${worried.join(',')}`, `${worried.join(', ')}'s concerns resolved (the author fixes them and asks for review again)`);
+  const open = openBlockersOf(ctx, it);
+  if (open.length) gap(`blocked:${open.join(',')}`, `its blockers done first: it waits on ${open.join(', ')}`);
   if (!grants.some((g) => inScope(ctx, it, g.where))) {
     // Several grants can each name a reviewer (reviewers.nebula, reviewers.drax): any one of them passing is
     // enough. Only reviewers who could review this ticket count (never one of its authors).
