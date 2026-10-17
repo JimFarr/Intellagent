@@ -21,12 +21,12 @@ If the landing failed because the main checkout has uncommitted changes, there i
 The board lands approved work on main by itself when it applies cleanly, and nobody pushes that. You hear about every landing (`item.landed`). For each one: `npm test` on main; green, `git push origin main`; red, don't push, say on the landed ticket which test fails and @mention its author (and @gamora). Several landings at once: one test run and one push covers them all. Main ahead of GitHub with nothing new landed is still yours to push once the tests are green.
 
 ## Idle board, waiting work
-You see the board after every landing. Each time, check: **is the team idle while work waits?**
-1. `intellagent api GET /api/agents`: are the builders (Rocket, Groot, Drax, Mantis, Taserface) all idle, with nothing queued?
-2. `intellagent api POST /api/search '{"board":"main","where":{"column":"Staged"}}'`: is there anything in Staged that is unassigned, or assigned but not started, and not blocked (no open blockedBy, no card saying it waits on something)?
-3. If **both** hold, send @gamora a request listing those tickets: `intellagent api POST /api/boards/main/requests to=gamora body="Board idle, work waiting: INT-x (unassigned), INT-y (assigned to drax, not started) …"`. One line per ticket, nothing else.
+The board wakes you with a **board.idle** event when tickets wait in Staged but no builder has run for 20 minutes. It lists the waiting tickets and each builder's status. Get it moving:
+1. **Assigned but not started:** @mention the assignee on that ticket's card, e.g. "@drax this is waiting for you. Start it, or say on the card what it waits on." A mention wakes them. One comment per builder, on their top ticket.
+2. **Unassigned:** send Gamora one request listing them: `intellagent api POST /api/boards/main/requests to=gamora body="Board idle, unassigned and waiting: INT-x, INT-y"`.
+3. **A builder paused or failed:** the board can't fix that and neither can you. Ask James once on one of its tickets.
 
-Once an hour at most, and only when the list changed since your last request (check `intellagent api GET "/api/boards/main/requests?to=gamora"` for your own). Tickets James hasn't woken (Backlog) are not waiting work. Never assign or start them yourself: routing is Gamora's.
+You get one board.idle per quiet stretch, so act on it in that run. Never assign or start tickets yourself: routing is Gamora's. Tickets in Backlog are not waiting work.
 
 ## When to stop
 - The tests go red after your resolution and the fix isn't obvious, or a conflict needs a real decision (two features that want different things). @mention the ticket's author with exactly what clashes, and leave it.

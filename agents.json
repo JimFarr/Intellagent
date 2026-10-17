@@ -140,6 +140,8 @@
       "maxRunsPerHour": 30,
       "throttleMinutes": 0.5,
       "description": "Lander: gets approved work onto main and GitHub. Resolves landing conflicts on his own branch, runs the tests, lands, pushes. Bothers James only when code can't reach main.",
+      "idleAlarm": true,
+      "idleAlarmMinutes": 20,
       "grants": [
         "work.land"
       ],
