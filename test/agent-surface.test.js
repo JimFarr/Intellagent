@@ -960,3 +960,32 @@ describe("the human's switch for approvals", () => {
     } finally { await s.stop(); }
   });
 });
+
+describe('an @mention of a reviewer warns the author until it is assigned (INT-314)', () => {
+  it('the review reply names a reviewer-pool agent that is not on the ticket; assigning it clears the warning', async () => {
+    const s = await startServer({ agents: { agents: { kraglin: { role: 'reviewer', enabled: false } } } });
+    try {
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'mentioned, not assigned', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+      const ask = (summary) => s.api('POST', `/api/boards/main/items/${it.id}/review`, { summary, evidence: 'e' }, { agent: 'dev' });
+      const first = await ask('@kraglin, this is ready for you');
+      assert.equal(first.status, 200);
+      assert.ok(first.body.warnings?.some((w) => /^@kraglin is not a reviewer on /.test(w)), 'warns the author');
+      assert.deepEqual((await s.ok('GET', `/api/boards/main/items/${it.id}`)).reviewers || [], [], 'the mention does not assign');
+      await s.ok('POST', `/api/boards/main/items/${it.id}/reviewers`, { name: 'kraglin' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+      const again = await ask('@kraglin, changed as asked');
+      assert.ok(!again.body.warnings?.some((w) => /kraglin/.test(w)), 'no warning once he is a reviewer');
+    } finally { await s.stop(); }
+  });
+
+  it('no warning for a mention that is not a reviewer, or one inside code', async () => {
+    const s = await startServer({ agents: { agents: { kraglin: { role: 'reviewer', enabled: false } } } });
+    try {
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'plain mentions', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+      const r = await s.api('POST', `/api/boards/main/items/${it.id}/review`, { summary: '@dev and `@kraglin` in code', evidence: 'e' }, { agent: 'dev' });
+      assert.ok(!r.body.warnings?.some((w) => /kraglin/.test(w)), 'code is not a mention');
+    } finally { await s.stop(); }
+  });
+});

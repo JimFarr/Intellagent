@@ -4152,6 +4152,12 @@ route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call
     actor.kind === 'agent' && worktrees && agentBranch(actor.name) ? worktrees.commitsForAsync(actor.name, before.id).catch(() => []) : null,
   ]);
   if (actor.kind === 'agent' && !String(body.evidence || '').trim()) warnings.push(`No evidence: the human approves what they can see working. Add "evidence" — screenshots (attach them to the ticket and name them), the command you ran and its output, the test results — and for anything visible, what to look at in the Preview (${previewable() ? "the review card's Preview button runs your branch" : 'a link to where it runs'}). Request review again with evidence.`);
+  // An @mention doesn't make a reviewer (INT-314): the review is asked, but the named reviewer's verdict won't count until it is added
+  const named = mentionsIn([body.summary, ...REVIEW_PARTS.map(([k]) => body[k])].filter(Boolean).join('\n')).map((n) => n.toLowerCase());
+  const seated = new Set([...(before.reviewers || []).map((r) => r.name), ...authorsOf(before), actor.name].map((n) => String(n).toLowerCase()));
+  for (const { name } of reviewerPool()) {
+    if (named.includes(name.toLowerCase()) && !seated.has(name.toLowerCase())) warnings.push(`@${name} is not a reviewer on ${before.id}, so its review won't count. The receptionist assigns one, or the human can add it.`);
+  }
   const item = itemView(ctx, requestReview(ctx, p.id, body, actor, commits));
   return warnings.length ? { ...item, warnings } : item;
 });
