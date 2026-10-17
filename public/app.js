@@ -1155,6 +1155,37 @@
       renderMetrics();
     }, wait);
   }
+  /* ─── what a ticket cost: runs and tokens per ticket, from /api/analytics (INT-300) ─── */
+
+  const COST_DAYS = 90; // the longest window analytics reads; one fetch serves the drawer line and the list
+  const COST_KEEP_MS = 60000;
+  let costs = null; // { at, by: Map id → ticket, list }
+  let costsLoading = null;
+  const tok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+  const freshTokens = (t) => (t.tokens?.input || 0) + (t.tokens?.output || 0);
+  const costText = (t) => `${t.runs} run${t.runs === 1 ? '' : 's'} · ${tok(freshTokens(t))} tokens${t.cost != null ? ` · $${t.cost.toFixed(2)}` : ''}`;
+  const costTip = (t) => `Cost so far|Last ${COST_DAYS} days: ${t.runs} agent runs, ${freshTokens(t).toLocaleString()} tokens in and out (${((t.tokens?.cacheRead || 0) + (t.tokens?.cacheWrite || 0)).toLocaleString()} more from the cache)${t.unpriced ? `; ${t.unpriced} run${t.unpriced === 1 ? '' : 's'} reported no price` : ''}${t.shared ? `; ${t.shared} shared with other tickets, split evenly` : ''}`;
+  function loadCosts() {
+    if (costs && Date.now() - costs.at < COST_KEEP_MS) return Promise.resolve(costs);
+    costsLoading ||= api('GET', `/api/analytics?days=${COST_DAYS}`)
+      .then((a) => (costs = { at: Date.now(), list: a.tickets || [], by: new Map((a.tickets || []).map((t) => [t.id, t])) }))
+      .catch(() => costs)
+      .finally(() => { costsLoading = null; });
+    return costsLoading;
+  }
+  // The "cost so far" chip beside the ticket's author line; empty for a ticket no agent has run for.
+  function costChip(id) {
+    const t = costs?.by.get(id);
+    return t ? `<span>·</span><span class="chip m-cost" title="${esc(costTip(t))}">${icon('activity', 'sm')}${esc(costText(t))}</span>` : '';
+  }
+  function showCost(m) {
+    // asked at most once a minute per ticket, answered or not, so a failed fetch can't refill the modal in a loop
+    if (m.create || (m.costFor === m.id && Date.now() - m.costAt < COST_KEEP_MS)) return;
+    m.costFor = m.id;
+    m.costAt = Date.now();
+    const id = m.id;
+    loadCosts().then(() => { if (state.modal === m && m.id === id && !m.create) fillModal(m); });
+  }
   function sparkline(xs) {
     const w = 56; const h = 16; const max = Math.max(1, ...xs);
     const pts = xs.map((v, i) => `${(i / Math.max(1, xs.length - 1)) * w},${h - (v / max) * (h - 2) - 1}`).join(' ');
@@ -1200,8 +1231,21 @@
         ${m.columns.map((c) => `<div class="mbar"><span class="mb-name"><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span class="mb-track"><b style="width:${((c.medianStayHours || 0) / maxStay) * 100}%;background:${esc(c.color)}"></b></span><span class="mb-val">${dur(c.medianStayHours)}</span><span class="mb-sub">${c.count} now${c.oldestHours != null ? ` · oldest ${dur(c.oldestHours)}` : ''}</span></div>`).join('')}</div>
       <div class="section"><div class="section-head">${icon('check', 'sm')}<span>Done per day</span><span class="rule"></span></div><div class="mdays">${m.perDay.map((v) => `<i style="height:${(v / Math.max(1, ...m.perDay)) * 100}%" title="${v}"></i>`).join('')}</div></div>
       ${agents.length ? `<div class="section"><div class="section-head">${icon('bot', 'sm')}<span>Finished, by who worked on it</span><span class="rule"></span></div>${agents.map(([n, v]) => `<div class="magent">${avatar({ kind: 'agent', name: n })}<span>${esc(n)}</span><b>${v}</b></div>`).join('')}</div>` : ''}
+      <div class="section costly"></div>
       ${m.idle ? `<div class="section"><div class="section-head">${icon('pause', 'sm')}<span>Idle board</span><span class="rule"></span></div>
         <div class="mbar"><span class="mb-name">Idle alarms</span><span class="mb-val">${m.idle.alarms}</span><span class="mb-sub">${m.idle.prev} the ${m.days} days before${m.idle.longestMinutes != null ? ` · longest ${dur(m.idle.longestMinutes / 60)}` : ''}${m.idle.lastAt ? ` · last ${esc(rel(m.idle.lastAt))}` : ''}</span></div></div>` : ''}`;
+    fillCostliest($('.costly', body), m.days);
+  }
+  // The tickets the agents' runs spent most on in the window; a ticket shared by several runs is split evenly.
+  async function fillCostliest(box, days) {
+    let a;
+    try { a = await api('GET', `/api/analytics?days=${days}`); } catch { return; }
+    const top = (a.tickets || []).filter((t) => t.runs).slice(0, 8);
+    if (!top.length || !box.isConnected) return;
+    const most = Math.max(1, ...top.map((t) => t.cost ?? freshTokens(t)));
+    box.innerHTML = `<div class="section-head">${icon('activity', 'sm')}<span>Costliest tickets</span><span class="rule"></span></div>
+      ${top.map((t) => `<button class="mbar mcost" data-open="${esc(t.id)}" title="${esc(costTip(t))}"><span class="mb-name">${esc(t.id)}</span><span class="mb-track"><b style="width:${((t.cost ?? freshTokens(t)) / most) * 100}%"></b></span><span class="mb-val">${t.cost != null ? `$${t.cost.toFixed(2)}` : tok(freshTokens(t))}</span><span class="mb-sub">${esc(state.board.items[t.id]?.title || '')} · ${t.runs} run${t.runs === 1 ? '' : 's'}</span></button>`).join('')}`;
+    box.onclick = (e) => { const b = e.target.closest('[data-open]'); if (b) openItem(b.dataset.open); };
   }
 
   function updateOverflow() {
@@ -3214,7 +3258,8 @@
     const col = colById(it.columnId);
     const rx = $('.m-reacts', main) || (() => { const d = el('<div class="m-reacts"></div>'); $('.m-sub', main).after(d); wireReactions(d, m.id); return d; })();
     rx.innerHTML = reactionsHTML(it.reactions, { add: !m.archived, notes: it.reactionNotes });
-    $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${nameHTML(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}`;
+    $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${nameHTML(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}${m.create ? '' : costChip(it.id)}`;
+    showCost(m);
 
     // needs-you banner
     const slot = $('.ask-slot', main);

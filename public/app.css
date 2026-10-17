@@ -1438,6 +1438,11 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .mb-track b { display: block; height: 100%; border-radius: 99px; opacity: .85; transition: width .6s var(--spring); }
 .mb-val { font: 600 12px var(--mono); text-align: right; }
 .mb-sub { grid-column: 2 / 4; font: 11px var(--mono); color: var(--muted); }
+.mcost { width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 6px; }
+.mcost:hover .mb-name, .mcost:focus-visible .mb-name { color: var(--accent); }
+.mcost:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mcost .mb-track b { background: var(--accent); }
+.m-cost { gap: 5px; }
 .mdays { display: flex; align-items: flex-end; gap: 3px; height: 70px; padding: 4px 0; }
 .mdays i { flex: 1; min-height: 2px; border-radius: 3px 3px 0 0; background: color-mix(in oklab, var(--accent) 70%, transparent); }
 .magent { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
