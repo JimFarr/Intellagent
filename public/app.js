@@ -4931,6 +4931,8 @@
 
   // What an agent is taught on its first turn, layer by layer (INT-277, from GET /api/agents/<name>/layers: the
   // same layers the runner joins). Fetched once when the page opens; a redraw leaves it alone (data-keep).
+  // The speciality layer has no label of its own (its text brings its heading into the prompt), so the page names it
+  const LAYER_NAMES = { agent: 'Speciality: areas, concerns and context page' };
   function layersSection(name) {
     const root = el(`<div class="section layers"><div class="section-head">${icon('layers', 'sm')}<span>Context layers</span><span class="rule"></span></div>
       <p class="perm-intro ly-intro">What it is taught on its first turn, in this order.</p><div class="ly-list">${'<div class="act sk" aria-hidden="true"><i></i><span></span><time></time></div>'.repeat(3)}</div></div>`);
@@ -4939,7 +4941,7 @@
       const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
       $('.ly-intro', root).textContent = `What it is taught on its first turn, in this order: ${total.toLocaleString()} characters in all.${r.standing ? '' : ' Not a standing agent: it reads the base in its brief.'}`;
       $('.ly-list', root).innerHTML = r.layers.length ? r.layers.map((l, i) => `<details class="ly" data-layer="${esc(l.layer)}"><summary>
-          <span class="ly-n">${i + 1}</span><b class="ly-label">${esc(l.label)}</b><code class="ly-kind">${esc(l.layer)}</code><span class="grow"></span>
+          <span class="ly-n">${i + 1}</span><b class="ly-label">${esc(l.label || LAYER_NAMES[l.layer] || l.layer)}</b><span class="grow"></span>
           <span class="mini-chip ly-size">${l.chars.toLocaleString()} chars · ${pct(l.chars)}%</span>${icon('chev', 'ly-chev')}<span class="ly-bar" aria-hidden="true"><i style="width:${Math.max(2, pct(l.chars))}%"></i></span></summary>
           <pre class="ly-text">${esc(l.text)}</pre></details>`).join('') : '<div class="empty-note">Nothing yet</div>';
     }, (e) => { $('.ly-list', root).innerHTML = `<div class="empty-note">${esc(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message)}</div>`; });
