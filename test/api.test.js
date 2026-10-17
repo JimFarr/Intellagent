@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
-const { startServer, USER } = require('./helpers');
+const { startServer, USER, until } = require('./helpers');
 
 let s;
 
@@ -850,5 +850,55 @@ describe('base context, server half (INT-276)', () => {
     assert.equal((await asHuman('GET', '/api/agents/me/layers')).status, 400);
     assert.equal((await asHuman('GET', '/api/agents/nobody/layers')).status, 404);
     assert.equal((await asHuman('GET', '/api/agents/__proto__/layers')).status, 400);
+  });
+});
+
+describe('typing signal (INT-287)', () => {
+  // opens the live stream and collects what it sends
+  async function listen(base) {
+    const ac = new AbortController();
+    const r = await fetch(`${base}/api/stream`, { signal: ac.signal });
+    const reader = r.body.getReader();
+    const state = { text: '', stop: () => ac.abort() };
+    (async () => { try { for (;;) { const { value, done } = await reader.read(); if (done) return; state.text += new TextDecoder().decode(value); } } catch { /* aborted */ } })();
+    await until(() => state.text.includes('hello'), 5000, 'the stream to open');
+    return state;
+  }
+
+  test('a person typing is shared live, once per few seconds, and leaves no trace', async () => {
+    const t = await startServer();
+    try {
+      const it = await t.ok('POST', `${B}/items`, { title: 'x', column: 'Backlog' }, USER);
+      const watcher = await listen(t.base);
+      const version = (await t.ok('GET', `${B}/items/${it.id}`)).version;
+      const seq0 = (await t.ok('GET', '/api/app')).seq;
+      assert.deepEqual(await t.ok('POST', `${B}/items/${it.id}/typing`, {}, USER), { sent: true });
+      await until(() => watcher.text.includes('item.typing'), 5000, 'the typing event');
+      const line = watcher.text.split('\n').find((l) => l.includes('item.typing'));
+      const ev = JSON.parse(line.slice(line.indexOf('{')));
+      assert.equal(ev.itemId, it.id);
+      assert.equal(ev.actor.kind, 'user');
+      assert.deepEqual(ev.recipients, [], 'it wakes nobody');
+      assert.equal(ev.seq, undefined, 'it has no place in the log');
+      // a second one inside the gap is not sent
+      assert.deepEqual(await t.ok('POST', `${B}/items/${it.id}/typing`, {}, USER), { sent: false });
+      // nothing stored: no new seq, same version, no event in the log
+      assert.equal((await t.ok('GET', '/api/app')).seq, seq0);
+      assert.equal((await t.ok('GET', `${B}/items/${it.id}`)).version, version);
+      assert.equal((await t.ok('GET', '/api/events?since=0&types=item.typing')).events.length, 0);
+      watcher.stop();
+    } finally { await t.stop(); }
+  });
+
+  test('agents are refused with a code and a hint; an unknown ticket is 404', async () => {
+    const t = await startServer();
+    try {
+      const it = await t.ok('POST', `${B}/items`, { title: 'x', column: 'Backlog' }, USER);
+      const r = await t.api('POST', `${B}/items/${it.id}/typing`, {}, { agent: 'ada' });
+      assert.equal(r.status, 403);
+      assert.equal(r.body.code, 'HUMAN_ONLY');
+      assert.match(r.body.hint, /status/);
+      assert.equal((await t.api('POST', `${B}/items/NOPE-1/typing`, {}, USER)).status, 404);
+    } finally { await t.stop(); }
   });
 });

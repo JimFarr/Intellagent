@@ -3073,7 +3073,7 @@ function emit(ev, sync = null) {
   return e;
 }
 
-function sseSend(res, e) { res.write(`id: ${e.seq}\ndata: ${JSON.stringify(e)}\n\n`); }
+function sseSend(res, e) { res.write(`${e.seq != null ? `id: ${e.seq}\n` : ''}data: ${JSON.stringify(e)}\n\n`); }
 // The board page's copy of a write's first event, with the changed tickets as they are now: exactly the write's
 // result, since tx() emits right after saving (null = the ticket left the board). An event replayed later has
 // no sync, so the page fetches the board instead.
@@ -3468,7 +3468,7 @@ const SCHEMA = {
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.managed', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
-      'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated', 'agent.base_updated'],
+      'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated', 'agent.base_updated', 'item.typing'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
     changes: '{ [field | "properties.<key>"]: { from, to } }?', item: 'snapshot { id,title,type,priority,columnId,column,parent,claimant,needsHuman }?',
     recipients: 'string[] — agents/users this event concerns (leaseholder and past leaseholders, asker, agent author, assignee, commenters, master-lease holder, @mentions)',
@@ -4285,6 +4285,26 @@ route('POST', '/api/boards/:board/items/:id/reactions', 'React with an emoji: { 
   ({ reactions: react(getCtx(p.board), p.id, body, actor, body.toggle ? 'toggle' : true) }));
 route('DELETE', '/api/boards/:board/items/:id/reactions', 'Remove your reaction: { emoji, commentId? }', ({ p, body, q, actor }) =>
   ({ reactions: react(getCtx(p.board), p.id, { ...q, ...body }, actor, false) }));
+
+/* Typing: "someone is writing a comment on this ticket", for the pip on the card. Live only: sent to the open streams,
+   never given a seq, logged, stored or replayed, so it changes no version, history or digest and wakes nobody
+   (recipients: []). The client lets it lapse after a few seconds without a new one. One per person and ticket
+   per TYPING_GAP_MS; the rest are answered { sent: false }. */
+const typing = new Map(); // board/ID/name → time of the last one sent
+const TYPING_GAP_MS = 3000;
+route('POST', '/api/boards/:board/items/:id/typing', 'Someone is writing a comment on this ticket (people only): shared live over the stream as item.typing { itemId, actor } to everyone watching, never stored, logged or replayed, and it wakes nobody. At most one per person and ticket every 3 s: { sent: true } or { sent: false }', ({ p, actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Typing is a human signal: agents show what they do with a status line', { code: 'HUMAN_ONLY', hint: 'PUT …/items/<ID>/status { status } shows it on the card' });
+  const ctx = getCtx(p.board);
+  const item = getItem(ctx, p.id);
+  const t = Date.now();
+  for (const [k, at] of typing) if (t - at >= TYPING_GAP_MS) typing.delete(k);
+  const key = `${ctx.id}/${item.id}/${String(actor.name).toLowerCase()}`;
+  if (typing.has(key)) return { sent: false };
+  typing.set(key, t);
+  const e = { type: 'item.typing', ts: now(), board: ctx.id, itemId: item.id, actor, recipients: [] };
+  for (const c of sseClients) if (matchesFilter(e, c.filter)) sseSend(c.res, e);
+  return { sent: true };
+});
 
 route('POST', '/api/boards/:board/items/:id/lease/request', 'Ask the holder for a ticket\'s lease: { reason }', ({ p, body, actor }) => requestLease(getCtx(p.board), p.id, body, actor));
 route('POST', '/api/boards/:board/items/:id/lease/handover', 'Holder (or human): hand the lease to { to? (default: first requester), note?, status? }', ({ p, body, actor }) => handOverLease(getCtx(p.board), p.id, body, actor));

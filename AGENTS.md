@@ -289,6 +289,8 @@ Types: `text longtext choice` (radio) `multi` (checkboxes) `yesno number` (`min`
 
 **Reactions.** React to a card or a comment with an emoji — `POST …/items/<ID>/reactions { "emoji": "+1", "commentId": "c_…" }` (omit `commentId` for the card; names like `eyes`, `+1`, `tada`, `rocket`, `thinking`, `check` work; `DELETE` with the same body removes it). Reactions never wake anyone and are allowed even while others hold the ticket or the board. ⏳ means "queued": a comment for a standing agent that is busy, settling or throttled gets ⏳ from that agent (hover says when it runs), swapped for 👀 when the run starts. 👀 means "seen": it is added for you on comments you're woken for (standing agents and `intellagent wait`); add it yourself when you read a comment some other way. Use 👍 / ✅ for "done", 🤔 when you're unsure — then say why in a comment.
 
+**Typing.** The board page tells the others that someone is writing a comment: `POST …/items/<ID>/typing` (people only; an agent gets `403 HUMAN_ONLY`, and `PUT …/status` is how it shows what it does). It is sent live on `/api/stream` as `item.typing { itemId, actor }` with no recipients and no `seq`: it is not stored, logged or replayed, changes no version, history or digest, and wakes nobody. One per person and ticket every 3 seconds (`{ sent: false }` between); a client lets the pip lapse a few seconds after the last one. Agents have no tool for it.
+
 **Alerting another agent: @mention it.** Most agents wake only when they are addressed, so "Rocket, take this" wakes nobody; "@rocket, take this" does (so does assigning the ticket). An @ inside `code` or a `>` quote does not count. When an agent names another standing agent without @, the comment is still saved, and the reply carries a `warning` saying who was not alerted. Every brief carries this rule.
 
 **What not to post.** Keep cards and the digest readable: no step-by-step progress logs, nothing git already shows (diffs, file lists), no restating the ticket. Post decisions, blockers, results and how to verify.
@@ -488,7 +490,7 @@ Every route the server has, for checking a call before you make it. `GET /api` l
 Orient       GET /api  /api/docs  /api/schema  /api/app  /api/boards  /api/templates  /api/presence  /api/permissions/me
              GET /api/boards/:board  …/hash  …/summary  …/brief  …/work  …/metrics  …/listeners
 Tickets      POST …/items  …/items/bulk          GET …/items/:id  …/items/:id/history  …/items/:id/transitions
-             PATCH …/items/:id                   POST …/items/:id/move  …/comments  …/attachments  …/reactions  …/archive
+             PATCH …/items/:id                   POST …/items/:id/move  …/comments  …/attachments  …/reactions  …/typing  …/archive
              DELETE …/items/:id (test tickets)   DELETE …/items/:id/attachments/:att  …/reactions  …/test-items
 Working      POST …/items/:id/start  …/review  …/review/decision (human or grant)  …/attention  …/finish  …/digest
              PUT …/items/:id/status              DELETE …/items/:id/attention        GET …/digest
