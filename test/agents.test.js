@@ -2033,7 +2033,7 @@ describe('personality and context items (INT-240)', () => {
       const moved = (await agentState(s, 'pixel')).changes.at(-1);
       assert.equal(moved.by.name, 'intellagent');
       assert.ok(moved.changes.contextItems, 'the move is in the history');
-      await s.stop();
+      await s.stop({ keep: true });
       // restart: nothing moves twice, even if the page changed in between
       fs.writeFileSync(path.join(dir, 'agent-context', 'pixel.md'), 'Edited by hand.');
       s = await startServer({ dir });

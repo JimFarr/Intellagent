@@ -5125,7 +5125,11 @@ route('GET', '/api/agents/:name/context', "An agent's context as the text its pr
 route('GET', '/api/agents/:name/preview', "Human or agents.manage: the first-turn prompt the board would send this agent now (role brief, speciality, personality, context items, rules), built by the code a real run uses → { agent, prompt }", ({ p, actor }) => {
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.manage')) humanOnly(actor);
   standing.get(p.name); // 404 if unknown
-  return { agent: p.name, prompt: standing.preview(p.name) };
+  const a = standing.get(p.name);
+  // The workspace the run would get (worktrees.ensure would reset it, so it is only looked up here)
+  const wt = a.worktree && worktrees.isRepo() ? { ...a.worktree, main: worktrees.mainBranch() } : null;
+  const { text, layers } = standing.previewOf(p.name, { workspace: wt });
+  return { agent: p.name, prompt: text, layers };
 });
 // Read-only, but it shows what an agent's tools are built from, so it is for whoever may change them.
 route('POST', '/api/agents/:name/commands/check', 'Human or agents.manage: what would become of a command in this agent\'s "commands": { command } → { kept, why, listed, allowedBy: [permissions that already allow it], denied: { needs, why } | null, applies }. The same rule the run builder applies; changes nothing', ({ p, body, actor }) => {
