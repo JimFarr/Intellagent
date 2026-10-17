@@ -475,7 +475,7 @@ A board may require every agent to send a token (`auth.requireAgentTokens` in th
 
 ## 9. Setting up a board in a project
 
-Asked to "set up Intellagent here"? Use the **intellagent-setup** skill (`skills/intellagent-setup/SKILL.md`). It stops and asks the human at three points (template and prefix, the proposed fields and rules, the seed tickets) and only touches `.intellagent/`, `.mcp.json`, `CLAUDE.md` and `.git/hooks/`, and only the ones the human agreed to. The commands it uses: `intellagent init --template <t> --name "…" --prefix XX` (or `--preset <name|folder>` instead, after showing the human the powers it lists), `intellagent preset list`, `intellagent templates`, `intellagent status`, `intellagent hook install`, `intellagent autostart on`.
+Asked to "set up Intellagent here"? Use the **intellagent-setup** skill (`skills/intellagent-setup/SKILL.md`). It first asks what the board is for (kind of work, team size, how hands-off), then stops and asks the human at each checkpoint (template and prefix, the proposed fields and rules, a recommended team with reasons, the seed tickets, and the features as choices with a recommended setting each; nothing is switched on without a yes) and only touches `.intellagent/`, `.mcp.json`, `CLAUDE.md` and `.git/hooks/`, and only the ones the human agreed to. The commands it uses: `intellagent init --template <t> --name "…" --prefix XX` (or `--preset <name|folder>` instead, after showing the human the powers it lists), `intellagent preset list`, `intellagent templates`, `intellagent status`, `intellagent hook install`, `intellagent autostart on`.
 
 ## 10. Route index
 

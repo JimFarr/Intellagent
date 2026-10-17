@@ -362,7 +362,9 @@ describe('waiting from the CLI', () => {
     const s = await startServer({ agents: { agents: {} } });
     const away = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-away-')); // no board folder here
     try {
-      const env = { INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'asker' };
+      // a name no earlier run used: wait keeps its cursor in the temp folder per URL and agent, and a port that
+      // an older run had would hand this one that run's (higher) cursor
+      const env = { INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: `asker-${process.pid}-${Date.now()}` };
       const b = cli(['brief'], { cwd: away, env });
       assert.equal(b.code, 0, b.err);
       const it = await s.ok('POST', '/api/boards/main/items', { title: 'sso?', column: 'Ready' }, USER);

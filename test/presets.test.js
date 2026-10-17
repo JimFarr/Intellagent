@@ -210,6 +210,25 @@ describe('presets: preset add, diff and update on a board that exists', () => {
     assert.match(guide, /`--preset <name\|folder>` instead/);
     assert.match(guide, /speed bump, not a wall: the CLI trusts `INTELLAGENT_AGENT`/);
   });
+  it('the setup skill asks what the board is for first, recommends a team, walks the features, and its step references hold (INT-254)', () => {
+    const skill = fs.readFileSync(path.join(ROOT, 'skills', 'intellagent-setup', 'SKILL.md'), 'utf8');
+    const steps = [...skill.matchAll(/^## (\d+)\. (.*)$/gm)].map((m) => [Number(m[1]), m[2]]);
+    assert.deepEqual(steps.map(([n]) => n), steps.map((_, i) => i + 1), 'steps are numbered in order');
+    const at = (re) => steps.find(([, t]) => re.test(t))?.[0];
+    assert.ok(at(/what the board is for/) < at(/setup details/), 'purpose before details');
+    assert.ok(at(/Recommend a team/) < at(/Seed tickets/) && at(/Walk the features/), 'team and feature steps exist');
+    assert.match(skill, /Kind of work.*Team size.*How hands-off/s);
+    // the roles it names exist, and what it says is the human's is told to the human
+    const { ROLES } = require('../lib/agents');
+    for (const [, role] of skill.matchAll(/agents add \w+ --role (\w+)/g)) assert.ok(ROLES[role], `${role} is a role`);
+    assert.match(skill, /Agents are the human's to add/);
+    // references to steps point at the right heading
+    assert.match(skill, new RegExp(`skip to step ${at(/Draft the tailoring/)} and`));
+    assert.match(skill, new RegExp(`the user agreed to in step ${at(/setup details/)}\\.`));
+    assert.match(skill, new RegExp(`see step ${at(/Scaffold/)}\\.`));
+    const guide = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8');
+    assert.match(guide, /first asks what the board is for/);
+  });
   it('init --preset and init then preset add give the same built-in fields; diff of an installed preset says it is up to date', async () => {
     const s = await startServer();
     const t = await startServer({ manifest: { template: 'stories' } });
