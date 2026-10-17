@@ -111,3 +111,64 @@ describe('a branch per ticket (INT-321)', () => {
     } finally { clean(); }
   });
 });
+
+describe('start gives the ticket its branch (INT-321)', () => {
+  it('two tickets started through the board land on their own in either order; uncommitted work refuses start and changes nothing', async () => {
+    const { startServer, until, USER } = require('./helpers');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-tbs-'));
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 'test@example.com');
+    git(dir, 'config', 'user.name', 'Test');
+    git(dir, 'config', 'core.autocrlf', 'false');
+    write(dir, '.gitignore', 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'init');
+    const s = await startServer({ dir, agents: { agents: { dev: { enabled: false, worktree: true } } } });
+    const p = path.join(dir, '.worktrees', 'dev');
+    const B = '/api/boards/main';
+    const say = async (id) => (await s.ok('GET', `${B}/items/${id}`)).comments.map((c) => c.body).at(-1) || '';
+    try {
+      const brief = (await s.api('GET', `${B}/brief`, undefined, { agent: 'dev' })).body;
+      assert.match(typeof brief === 'string' ? brief : brief.markdown, /## Your branches[\s\S]*ticket\/dev\/<ID>/);
+      const one = await s.ok('POST', `${B}/items`, { title: 'one', column: 'Ready' }, USER);
+      const two = await s.ok('POST', `${B}/items`, { title: 'two', column: 'Ready' }, USER);
+      const a = await s.ok('POST', `${B}/items/${one.id}/start`, {}, { agent: 'dev' });
+      assert.deepEqual([a.branch.name, a.branch.base, a.branch.resumed], [`ticket/dev/${one.id}`, 'main', false]);
+      assert.equal(git(p, 'branch', '--show-current'), `ticket/dev/${one.id}`, 'the worktree is on the ticket branch');
+      commit(p, 'one.txt', one.id);
+
+      // uncommitted work: start answers 409 DIRTY with a hint, and the ticket stays where it was
+      write(p, 'one.txt', 'half done\n');
+      const dirty = await s.api('POST', `${B}/items/${two.id}/start`, {}, { agent: 'dev' });
+      assert.equal(dirty.status, 409);
+      assert.equal(dirty.body.code, 'DIRTY');
+      assert.ok(dirty.body.hint);
+      const still = await s.ok('GET', `${B}/items/${two.id}`);
+      assert.deepEqual([still.column, still.lease, still.assignee], ['Ready', null, null], 'nothing changed on the board');
+      assert.equal(git(p, 'branch', '--show-current'), `ticket/dev/${one.id}`, 'nor in the worktree');
+      git(p, 'checkout', '--', 'one.txt');
+
+      const b = await s.ok('POST', `${B}/items/${two.id}/start`, {}, { agent: 'dev' });
+      assert.deepEqual([b.branch.name, b.branch.base], [`ticket/dev/${two.id}`, 'main'], 'the second ticket starts from main, not from the first');
+      commit(p, 'two.txt', two.id);
+      for (const it of [one, two]) await s.ok('POST', `${B}/items/${it.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+
+      // the second one lands first, alone
+      await s.ok('POST', `${B}/items/${two.id}/review/decision`, { verdict: 'approve' }, USER);
+      await until(async () => /Landed on main/.test(await say(two.id)), 10000, `${two.id} landed`);
+      assert.ok(fs.existsSync(path.join(dir, 'two.txt')) && !fs.existsSync(path.join(dir, 'one.txt')), `only ${two.id}'s work is on main`);
+      // feedback on the first: start again resumes its branch
+      await s.ok('POST', `${B}/items/${one.id}/review/decision`, { verdict: 'changes', comment: 'one more thing' }, USER);
+      const again = await s.ok('POST', `${B}/items/${one.id}/start`, {}, { agent: 'dev' });
+      assert.deepEqual([again.branch.name, again.branch.resumed], [`ticket/dev/${one.id}`, true]);
+      assert.ok(fs.existsSync(path.join(p, 'two.txt')), 'resuming merged main in');
+      await s.ok('POST', `${B}/items/${one.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+      await s.ok('POST', `${B}/items/${one.id}/review/decision`, { verdict: 'approve' }, USER);
+      await until(async () => /Landed on main/.test(await say(one.id)), 10000, `${one.id} landed`);
+      assert.ok(fs.existsSync(path.join(dir, 'one.txt')));
+    } finally {
+      await s.stop();
+      try { git(dir, 'worktree', 'prune'); fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+});

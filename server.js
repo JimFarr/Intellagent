@@ -1983,23 +1983,43 @@ function makeLease(item, claimant, minutes, status, cur) {
 
 // Start (or resume) work in one step: checks, lease, move to the working column, status, assignee.
 // Either everything happens or nothing does.
-function startWork(ctx, id, d, actor) {
+// What start refuses, before it changes anything. Read-only, so the start route can run it before it switches the
+// agent's worktree to the ticket's branch, and startWork runs it again inside its tx().
+function startChecks(ctx, item, d, actor) {
+  guardBoard(ctx, actor);
+  checkColumnPerm(ctx, actor, [item.columnId]);
+  if (actor.kind === 'agent' && asleep(ctx, item)) {
+    fail(409, `${item.id} is in ${findColumnById(ctx.board, item.columnId).name}, which is asleep: it starts once it is moved to ${pickupColumns(ctx)[0]?.name || 'the pickup column'}`, { code: 'SLEEPING', hint: 'Pick another ticket (GET …/work), or ask on the card' });
+  }
+  const cur = activeLease(item);
+  if (cur && cur.claimant !== actor.name) fail(423, `${item.id} is leased by ${cur.claimant} until ${cur.expiresAt}`, { code: 'LEASED', hint: 'Pick another ticket (GET …/work)', lease: cur });
+  // While a focus board is active, agents start only its tickets — unless the human asked for this one
+  // directly (an @mention or a request), which the agent says with "outsideFocus": true.
+  if (actor.kind === 'agent' && !inActiveFocus(ctx, item) && d.outsideFocus !== true) {
+    fail(409, `${item.id} is not on the focus board "${activeFocus(ctx).name}", which the agents work on now`, { code: 'OUT_OF_FOCUS', hint: 'Start a ticket from GET …/work instead. If the human asked you for this one directly (an @mention or a request), pass "outsideFocus": true' });
+  }
+  const open = openBlockersOf(ctx, item);
+  if (open.length && !d.force) fail(409, `${item.id} is blocked by ${open.join(', ')}`, { code: 'BLOCKED', hint: 'Work on a blocker first, or pass "force": true', blockedBy: open });
+  return cur;
+}
+
+// An agent with its own worktree works each ticket on its own branch, ticket/<name>/<ID> (INT-321): start switches
+// the worktree to it (made from main, or from an unlanded blocker's branch; resumed if it exists) before the
+// ticket is started, so a refusal (uncommitted work) changes nothing on the board either.
+async function startTicketBranch(ctx, id, d, actor) {
+  if (actor.kind !== 'agent' || !worktrees || !agentBranch(actor.name)) return null;
+  const item = getItem(ctx, id);
+  startChecks(ctx, item, d, actor);
+  const r = await worktrees.startTicket(actor.name, item.id, { blockedBy: item.blockedBy || [] });
+  if (r.code === 'NOT_GIT') return null;
+  if (!r.ok) fail(409, `${item.id} was not started: ${r.reason}`, { code: r.code, hint: r.hint });
+  return { name: r.branch, base: r.base, resumed: r.resumed, ...(r.note ? { note: r.note } : {}) };
+}
+
+function startWork(ctx, id, d, actor, branch = null) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
-    guardBoard(ctx, actor);
-    checkColumnPerm(ctx, actor, [item.columnId]);
-    if (actor.kind === 'agent' && asleep(ctx, item)) {
-      fail(409, `${item.id} is in ${findColumnById(ctx.board, item.columnId).name}, which is asleep: it starts once it is moved to ${pickupColumns(ctx)[0]?.name || 'the pickup column'}`, { code: 'SLEEPING', hint: 'Pick another ticket (GET …/work), or ask on the card' });
-    }
-    const cur = activeLease(item);
-    if (cur && cur.claimant !== actor.name) fail(423, `${item.id} is leased by ${cur.claimant} until ${cur.expiresAt}`, { code: 'LEASED', hint: 'Pick another ticket (GET …/work)', lease: cur });
-    // While a focus board is active, agents start only its tickets — unless the human asked for this one
-    // directly (an @mention or a request), which the agent says with "outsideFocus": true.
-    if (actor.kind === 'agent' && !inActiveFocus(ctx, item) && d.outsideFocus !== true) {
-      fail(409, `${item.id} is not on the focus board "${activeFocus(ctx).name}", which the agents work on now`, { code: 'OUT_OF_FOCUS', hint: 'Start a ticket from GET …/work instead. If the human asked you for this one directly (an @mention or a request), pass "outsideFocus": true' });
-    }
-    const open = openBlockersOf(ctx, item);
-    if (open.length && !d.force) fail(409, `${item.id} is blocked by ${open.join(', ')}`, { code: 'BLOCKED', hint: 'Work on a blocker first, or pass "force": true', blockedBy: open });
+    const cur = startChecks(ctx, item, d, actor);
     const cols = ctx.board.columns;
     const work = workingColumn(ctx);
     const target = d.column ? findColumn(ctx.board, d.column)
@@ -2024,6 +2044,7 @@ function startWork(ctx, id, d, actor) {
     const lastWait = (item.waits || []).filter((w) => w.raisedBy === actor.name).at(-1);
     return {
       item: itemView(ctx, item), movedTo: moved, lease: item.lease, holdsBoard: !!holdsBoard,
+      ...(branch ? { branch } : {}),
       ...(item.review?.verdict === 'changes' ? { feedback: item.review.comment || null } : {}),
       ...(lastWait ? { lastAnswer: replyAfter(item, lastWait) } : {}),
       next: `Work, then POST /api/boards/${ctx.id}/items/${item.id}/review { "summary": "what changed and how to verify" }. Renew with POST …/lease if it takes longer than ${item.lease?.minutes || 'the lease'} minutes.`,
@@ -2373,7 +2394,7 @@ function workFor(ctx, name) {
     for (const it of items) {
       if (it.landing?.state !== 'failed' || it.review?.verdict !== 'approve') continue;
       const from = it.landing.from;
-      add('land', brief(it), `Approved, but landing failed: ${it.landing.reason}. In your worktree, catch up with main, cherry-pick ${from}'s commits for ${it.id} (git log main..agent/${from} --grep ${it.id}), resolve any conflicts keeping both sides' intent, run the tests, then land from your branch`,
+      add('land', brief(it), `Approved, but landing failed: ${it.landing.reason}. In your worktree, catch up with main, cherry-pick ${from}'s commits for ${it.id} (git log main..ticket/${from}/${it.id}, or main..agent/${from} --grep ${it.id} when it has no ticket branch), resolve any conflicts keeping both sides' intent, run the tests, then land from your branch`,
         `POST /api/boards/${ctx.id}/items/${it.id}/land { "agent": "${name}" }`);
       const last = next.at(-1);
       if (last?.id === it.id && last.action === 'land') last.tag = it.landing.at;
@@ -2646,6 +2667,9 @@ function briefing(ctx, name, base, via = 'cli') {
     '## Alerting other agents',
     '- To get another agent to act or read something now (a handoff, a question, a review finding, "your turn"), **@mention it**: `@rocket, this one is yours`. Most agents wake only when they are addressed, so a bare name ("Rocket, take this") wakes nobody. Assigning a ticket (assignee) also wakes its new owner. Only standing agents (GET /api/agents) wake on an @mention; any other name hears it only when it next reads the board (or if it is waiting on the board right now), and the reply warns you.',
     '- An @mention inside `code` or a `>` quote does not count, so quoting someone never wakes them. Use @ only when they need to act; to talk *about* an agent, write its name plainly.',
+    ...(worktrees && agentBranch(name) ? ['', '## Your branches',
+      `- Each ticket gets its own branch: \`start\` switches your worktree to \`ticket/${name}/<ID>\`, made from main (or from an unlanded blocker's branch, when the ticket has blockedBy), and resumes it when you start the ticket again. Commit everything before you start another ticket: uncommitted changes answer 409 DIRTY and nothing starts.`,
+      '- A ticket that needs another unlanded ticket\'s code says so with blockedBy before you start it; it lands after that one.'] : []),
     '',
     '## The calls you need',
     `- Your work, any time: ${c('work')}`,
@@ -4344,8 +4368,11 @@ route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move thi
   const ctx = getCtx(p.board);
   return transitions(ctx, getItem(ctx, p.id), actor);
 });
-route('POST', '/api/boards/:board/items/:id/start', 'Start or resume work in one step: lease + move to the working column + status + assign. { status?, minutes?, column?, force? }', ({ p, body, actor }) =>
-  startWork(getCtx(p.board), p.id, body, actor));
+route('POST', '/api/boards/:board/items/:id/start', 'Start or resume work in one step: lease + move to the working column + status + assign. { status?, minutes?, column?, force? }. An agent with its own worktree is switched to the ticket\'s branch ticket/<name>/<ID> first (reply: branch); uncommitted work there answers 409 DIRTY and changes nothing', async ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  const branch = await startTicketBranch(ctx, p.id, body, actor);
+  return startWork(ctx, p.id, body, actor, branch);
+});
 route('POST', '/api/boards/:board/items/:id/land', 'Human, or an agent with work.land: put this approved ticket\'s commits from a worktree branch on main (when landing was blocked) { agent? } — agent: whose branch (a lander passes its own after resolving conflicts there)', async ({ p, body, actor }) => {
   if (!worktrees) fail(400, 'No worktrees on this board');
   const ctx = getCtx(p.board);
