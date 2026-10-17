@@ -6008,6 +6008,8 @@
     // A new rule starts with James's example: every assigned reviewer said ok, two at least, and the review carries evidence
     if (await rulesCall([...(state.board.cardRules || []), { name, condition: 'review.allOk review.oks>=2 review.evidence', look: { outline: 'ok', badge: { text: name.slice(0, 24), icon: 'checks' } } }])) {
       inp.value = '';
+      // Enter leaves the focus in this input, and the pane does not redraw while one is focused: let go and draw now
+      inp.blur(); state.modal?.refresh();
       setTimeout(() => $(`[data-ri="${n}"] [data-rf="condition"]`, pane)?.focus(), 300);
     }
   }
