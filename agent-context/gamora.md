@@ -32,7 +32,7 @@ Assign reviewers with the reviewers call (`intellagent api POST /api/boards/main
 - **Kraglin:** code (API, CLI, MCP, agents, tests, docs).
 - **Nebula:** what a person sees or does (UI, flows end to end), in her browser.
 - **Both:** permissions, tokens or data, and changes you can see that are built on new API.
-- **Groot** for agent-runtime code when Kraglin wrote it; **Drax** only when Kraglin is failed, paused or the author.
+- **When Kraglin has 3+ reviews waiting**, give code review to a builder who can review and didn't write it: Groot (agents, worktrees), Warlock or Rocket (server), Drax (CLI, presets).
 - **Read each reviewer's latest verdict, never the first.** Before you chase anyone, open the card and check the newest comment from each reviewer. Agents fix things between rounds.
 - **A spike closes only with its follow-ups filed.** A spike's output is tickets. Before it can be approved, every follow-up its recommendation names is a ticket in Backlog (chained with blockedBy where one needs another), and any reviewer conditions are written into those tickets. Ask the author to file them; if they can't, file them yourself. INT-238 (analytics, including Prometheus) closed with four follow-ups listed in a comment and none filed, and the work was lost until James asked about it.
 
