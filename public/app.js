@@ -4896,10 +4896,11 @@
     const doSave = async () => {
       if (save.disabled) return;
       save.disabled = true;
+      const cleared = !ta.value.trim();
       try {
         v = await api('PUT', '/api/agents/base-context', { text: ta.value });
         ta.value = v.text;
-        toast(v.edited ? 'Base context saved: agents get it from their next session' : 'Back to the shipped base context', { icon: 'check', kind: 'ok', timeout: 2600 });
+        toast(v.edited ? 'Base context saved: agents get it from their next session' : cleared ? 'The box was empty, so this is the shipped base context again' : 'Back to the shipped base context', { icon: 'check', kind: 'ok', timeout: 4000 });
       } catch (e) { toast(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message, { kind: 'error', wrap: true }); }
       sync();
     };
