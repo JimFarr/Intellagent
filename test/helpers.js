@@ -43,7 +43,8 @@ async function startOnce({ manifest = {}, agents, dir, env = {} } = {}) {
   fs.writeFileSync(mp, JSON.stringify({ port, dataDir: './data', seed: 'empty', template: 'default', idPrefix: 'T', ...manifest }));
   if (agents) fs.writeFileSync(path.join(dir, 'agents.json'), JSON.stringify(agents, null, 2));
   const proc = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-    env: cleanEnv({ ...env, INTELLAGENT_MANIFEST: mp, INTELLAGENT_PORT: String(port) }),
+    // every test board shares one run-guard helper (INT-262), so it is built once per machine, not once per board
+    env: cleanEnv({ INTELLAGENT_RUN_GUARD_BIN: path.join(os.tmpdir(), 'ia-test-guard-bin'), ...env, INTELLAGENT_MANIFEST: mp, INTELLAGENT_PORT: String(port) }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';

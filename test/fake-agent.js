@@ -56,6 +56,16 @@ if (mode === 'linger' || mode === 'stream-linger') {
   }
   return;
 }
+//   node fake-agent.js family <file> <ms>   start a child, write "<own pid>\n<child pid>\n" to <file>, and both sleep
+//   <ms> (a run whose board dies under it: INT-262)
+if (mode === 'family') {
+  const fs = require('fs');
+  const ms = Number(process.argv[4]) || 30000;
+  const kid = require('child_process').spawn(process.execPath, ['-e', `setTimeout(() => {}, ${ms})`], { stdio: 'ignore', windowsHide: true });
+  fs.writeFileSync(arg, `${process.pid}\n${kid.pid}\n`);
+  setTimeout(() => {}, ms);
+  return;
+}
 //   node fake-agent.js stream [crash-marker]   keep-alive: one process, a turn per stream-json user line; each turn
 //   comments "turn <n> in pid <pid>" on the batch's tickets and answers with a result line. With a marker file
 //   path, the first turn ever crashes the process (to test restart and retry).

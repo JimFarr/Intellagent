@@ -528,7 +528,9 @@ describe('one agent, one process', () => {
   it('a board restart stops the run that outlived it before starting the retry (INT-196)', async () => {
     const f = path.join(os.tmpdir(), `ia-restart-${Date.now()}`);
     const agents = { defaults: fast, agents: { survivor: { run: run('linger', `"${f}"`, 8000) } } };
-    let s = await startServer({ agents });
+    // the backstop for a run the guard missed (INT-262): without the guard, a run outlives a board that dies
+    const env = { INTELLAGENT_RUN_GUARD: 'off' };
+    let s = await startServer({ agents, env });
     try {
       const it = await s.ok('POST', `${B}/items`, { title: 'restart', column: 'Backlog' }, USER);
       await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@survivor go' }, USER);
@@ -536,7 +538,8 @@ describe('one agent, one process', () => {
       const first = Number(pids(f)[0]);
       const dir = s.dir;
       await s.stop({ keep: true, hard: true }); // a crash: no clean stop, so nothing kills the run
-      assert.ok(alive(first), 'the run outlived its board');      s = await startServer({ dir, agents });
+      assert.ok(alive(first), 'the run outlived its board');
+      s = await startServer({ dir, agents, env });
       await until(() => pids(f).length >= 2, 15000, 'retried run');
       const lines = pids(f);
       assert.ok(!lines.some((l) => l.startsWith('overlap')), `two runs at once: ${lines}\n${s.log()}`);
@@ -546,6 +549,72 @@ describe('one agent, one process', () => {
       await s.stop();
       fs.rmSync(f, { force: true });
     }
+  });
+
+  it('a board that dies takes its runs and their children with it, keep-alive sessions too, and the helper is built once (INT-262)', async () => {
+    const one = path.join(os.tmpdir(), `ia-family-${Date.now()}`);
+    const live = `${one}-live`;
+    const agents = { defaults: fast, agents: {
+      orphan: { run: run('family', `"${one}"`, 60000) },
+      lifer: { run: run('family', `"${live}"`, 60000), keepAlive: 'stream-json' },
+    } };
+    // this board builds its own helper, in its data folder
+    const env = { INTELLAGENT_RUN_GUARD_BIN: '' };
+    let s = await startServer({ agents, env });
+    const all = [];
+    try {
+      await until(() => /run guard: on/.test(s.log()), 120000, `guard up:\n${s.log()}`); // the first build may take a while
+      if (process.platform === 'win32') assert.match(s.log(), /run guard: built/);
+      const it = await s.ok('POST', `${B}/items`, { title: 'family', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@orphan @lifer go' }, USER);
+      for (const f of [one, live]) await until(() => fs.existsSync(f) && pids(f).length === 2, 15000, `run and child started (${f})`);
+      all.push(...pids(one).map(Number), ...pids(live).map(Number));
+      assert.ok(all.every(alive), 'all four are running');
+      const dir = s.dir;
+      await s.stop({ keep: true, hard: true }); // TerminateProcess on Windows: no clean stop, no new board
+      await until(() => !all.some(alive), 10000, `the runs and their children ended with the board: ${all.filter(alive)}`);
+      // the same board started again reuses the helper it built
+      s = await startServer({ dir, agents: { defaults: fast, agents: {} }, env });
+      await until(() => /run guard: on/.test(s.log()), 30000, `guard up again:\n${s.log()}`);
+      assert.doesNotMatch(s.log(), /run guard: built/);
+    } finally {
+      await s.stop().catch(() => {});
+      for (const p of all) try { process.kill(p); } catch { /* gone */ }
+      for (const f of [one, live]) fs.rmSync(f, { force: true });
+    }
+  });
+});
+
+describe('the run guard falls back (INT-262)', () => {
+  const { createGuard } = require('../lib/agents/guard');
+  const win = process.platform === 'win32';
+
+  it('without csc.exe, or when the build fails, runs start unchanged and the log says why once', { skip: !win && 'the helper is built on Windows only' }, async () => {
+    for (const [csc, why] of [[path.join(os.tmpdir(), 'no-such', 'csc.exe'), /no csc\.exe/], [process.execPath, /building the helper .* failed/]]) {
+      const lines = [];
+      const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-guard-'));
+      const g = createGuard({ log: (l) => lines.push(l), binDir, csc });
+      try {
+        g.start();
+        await until(() => lines.length > 0, 60000, 'a log line');
+        assert.equal(lines.length, 1, lines.join('\n'));
+        assert.match(lines[0], why);
+        assert.match(lines[0], /Runs start as before/);
+        assert.equal(g.wrap('claude -p go'), 'claude -p go', 'the command is untouched');
+        g.add({ pid: process.pid }); // no helper: a no-op, never a throw
+        assert.equal(g.status().on, false);
+        assert.match(g.status().why, why);
+      } finally { g.stop(); fs.rmSync(binDir, { recursive: true, force: true }); }
+    }
+  });
+
+  it('off (a sandbox, or INTELLAGENT_RUN_GUARD=off) starts nothing and leaves commands alone', () => {
+    const lines = [];
+    const g = createGuard({ log: (l) => lines.push(l), off: true });
+    g.start();
+    assert.equal(g.wrap('claude -p go'), 'claude -p go');
+    assert.deepEqual(lines, []);
+    assert.deepEqual(g.status(), { on: false, why: null });
   });
 });
 
