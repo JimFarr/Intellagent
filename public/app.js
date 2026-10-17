@@ -67,6 +67,7 @@
 
   const ICONS = {
     plus: '<path d="M12 5v14M5 12h14"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
     x: '<path d="M18 6 6 18M6 6l12 12"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
     flask: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3M7.5 15h9"/>',
@@ -4423,9 +4424,13 @@
     const pair = (u) => `${k(u.input)} in / ${k(u.output)} out`;
     const last = a.lastRun?.usage;
     const day = a.usageToday;
-    const model = a.model ? `${a.tier ? `${esc(a.tier)} · ` : ''}${esc(a.model)}` : 'default model';
-    const tip = (u) => (u ? `cache read ${u.cacheRead || 0}, cache written ${u.cacheCreated || 0}` : 'This run reported no token usage');
-    return `<div class="standing-usage"><span>${model}</span><span title="${tip(last)}">last run ${last ? pair(last) : 'n/a'}</span><span>today ${day ? `${pair(day)} (${day.runs} run${day.runs === 1 ? '' : 's'})` : 'n/a'}</span></div>`;
+    // only what says something: the model when it isn't the default, usage when there is a number (INT-268)
+    const parts = [
+      a.model && `<span>${a.tier ? `${esc(a.tier)} · ` : ''}${esc(a.model)}</span>`,
+      last && `<span title="cache read ${last.cacheRead || 0}, cache written ${last.cacheCreated || 0}">last run ${pair(last)}</span>`,
+      day && `<span>today ${pair(day)} (${day.runs} run${day.runs === 1 ? '' : 's'})</span>`,
+    ].filter(Boolean);
+    return parts.length ? `<div class="standing-usage">${parts.join('')}</div>` : '';
   }
   function standingControls(a) {
     const btn = (act, ic, label, tip) => `<button class="btn sm ghost" data-standing="${act}" data-name="${esc(a.name)}" title="${tip}">${icon(ic, 'sm')}<span>${label}</span></button>`;
@@ -4854,11 +4859,35 @@
     setTimeout(() => $(edit ? '[data-pf="name"]' : '[data-pf="key"]', f).focus(), 50);
   }
 
+  // An agent's last call to the board, in words: "POST …/items/INT-232/lease" reads "claimed INT-232" (INT-268).
+  // The raw call stays in the row's tooltip.
+  const CALL_WORDS = [
+    [/^POST .*\/items\/([^/]+)\/lease$/, 'claimed $1'], [/^DELETE .*\/items\/([^/]+)\/lease$/, 'released $1'],
+    [/^POST .*\/items\/([^/]+)\/start$/, 'started $1'], [/^POST .*\/items\/([^/]+)\/review$/, 'asked for review on $1'],
+    [/^POST .*\/items\/([^/]+)\/comments$/, 'commented on $1'], [/^POST .*\/items\/([^/]+)\/attention$/, 'asked about $1'],
+    [/^POST .*\/items\/([^/]+)\/move$/, 'moved $1'], [/^PUT .*\/items\/([^/]+)\/status$/, 'working on $1'],
+    [/^POST .*\/items\/([^/]+)\/attachments$/, 'attached a file to $1'], [/^(POST|DELETE) .*\/items\/([^/]+)\/reactions$/, 'reacted on $2'],
+    [/^POST .*\/items\/([^/]+)\/reviewers\/[^/]+\/verdict$/, 'reviewed $1'], [/^POST .*\/items\/([^/]+)\/land$/, 'landed $1'],
+    [/^PATCH .*\/items\/([^/]+)$/, 'edited $1'], [/^GET .*\/items\/([^/]+)$/, 'read $1'], [/^POST .*\/items$/, 'filed a ticket'],
+    [/^GET .*\/(work|brief)$/, 'checked its work'], [/^GET \/api\/boards\/[^/]+(\/summary|\/hash)?$/, 'looked at the board'],
+    [/^POST .*\/finish$/, 'finished its session'], [/^GET .*\/digest$/, 'read the digest'], [/^POST .*\/digest$/, 'wrote to the digest'],
+    [/^POST .*\/requests\/[^/]+\/reply$/, 'answered a request'], [/\/(events\/wait|stream|subscriptions\/[^/]+\/next)$/, 'waiting for events'],
+    [/^subscribe$/, 'subscribed to events'], [/^GET /, 'looked around'],
+  ];
+  const callWords = (call) => {
+    for (const [re, words] of CALL_WORDS) {
+      const m = call.match(re);
+      if (m) return words.replace(/\$(\d)/g, (_, n) => decodeURIComponent(m[n]).toUpperCase());
+    }
+    return 'used the board';
+  };
+
   function fillAgents(body) {
     const seen = new Set(state.presence.map((p) => p.name));
     const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
       .sort((a, b) => Number(!!state.standing[b.name]) - Number(!!state.standing[a.name]));
     const coord = state.board?.coordinator || null;
+    const forgettable = (p) => !p.online && !state.standing[p.name] && !p.leases.length;
     const coordRow = `<div class="coord-row"><div class="cr-label"><span>Coordinator</span><span class="sr-auto">gets “Ask an agent” requests by default</span></div><button class="dd" data-coord>${coord ? `${avatar({ name: coord })}${nameHTML(coord)}` : '<span class="v ph">None</span>'}${icon('chev', 'sm')}</button></div>`;
     const addBtn = '<button class="add-agent-btn" data-add-agent>＋ Add standing agent</button>';
     // One control to halt everything; once everyone is paused it offers to bring them back.
@@ -4872,9 +4901,11 @@
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
       const subs = p.subscriptions.map((s) => `<span class="mini-chip" title="${esc(JSON.stringify(s.filter))}">${icon('bell', 'sm')}${esc(s.label || Object.entries(s.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join('');
+      // the row's rarer actions live in its ⋯ menu, so they take no room in the row (INT-268)
+      const more = [p.name !== coord && 'Make coordinator', forgettable(p) && 'Forget'].filter(Boolean);
       return `<div class="agent-row ${p.online || sa ? '' : 'off'}" data-agent="${esc(p.name)}" style="animation-delay:${i * 40}ms">${avatar({ kind: 'agent', name: p.name }, 'lg')}
-        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(nameOf(p.name))}${nameOf(p.name) !== p.name ? `<span class="nm-id">@${esc(p.name)}</span>` : ''}${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from the Ask field go to this agent unless you pick another">takes requests</span>' : ''}${!p.online && !sa && !p.leases.length ? `<button class="forget" data-forget="${esc(p.name)}" title="Forget|Remove from this list — it reappears if it connects again">${icon('x', 'sm')}Forget</button>` : ''}</div><div class="sub" title="${esc(p.lastAction || '')}">${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(p.lastAction)}` : ''}</div></div>
-        ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}${p.name !== coord ? `<button class="make-coord" data-make-coord="${esc(p.name)}" title="Make coordinator|Requests go to this agent by default">${icon('send', 'sm')}Make coordinator</button>` : ''}</div>`;
+        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(nameOf(p.name))}${nameOf(p.name) !== p.name ? `<span class="nm-id">@${esc(p.name)}</span>` : ''}${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from the Ask field go to this agent unless you pick another">takes requests</span>' : ''}${more.length ? `<button class="row-more" data-row-more="${esc(p.name)}" aria-label="More for ${esc(nameOf(p.name))}" title="More|${more.join(', ')}${more.includes('Forget') ? ' (it comes back if it connects again)' : ''}">${icon('more', 'sm')}</button>` : ''}</div><div class="sub"${p.lastAction ? ` title="${esc(p.lastAction)}"` : ''}>${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}${p.lastAction ? ` · ${esc(callWords(p.lastAction))}` : ''}</div></div>
+        ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}</div>`;
     }).join('') : `<div class="empty-note">${icon('bot')}</div>`);
     fillApprovals($('[data-appr]', body));
     fillIdleAlarm($('[data-idle]', body));
@@ -4906,18 +4937,24 @@
         return;
       }
       if (e.target.closest('.add-agent')) return;
-      const mk = e.target.closest('[data-make-coord]');
-      if (mk) { e.stopPropagation(); setCoordinator(mk.dataset.makeCoord); return; }
       const sb = e.target.closest('[data-standing]');
       if (sb) { e.stopPropagation(); standingAction(sb); return; }
-      const fg = e.target.closest('[data-forget]');
-      if (fg) {
+      const more = e.target.closest('[data-row-more]');
+      if (more) {
         e.stopPropagation();
-        const row = fg.closest('.agent-row');
-        try {
-          await api('DELETE', `/api/presence/${encodeURIComponent(fg.dataset.forget)}`);
-          row.animate([{ opacity: 1, translate: '0 0' }, { opacity: 0, translate: '12px 0' }], { duration: 220, easing: 'ease-in', fill: 'forwards' }).onfinish = () => refreshPresence();
-        } catch (err) { toast(err.message, { kind: 'error' }); }
+        const name = more.dataset.rowMore, row = more.closest('.agent-row'), p = rows.find((r) => r.name === name);
+        const forget = async () => {
+          try {
+            await api('DELETE', `/api/presence/${encodeURIComponent(name)}`);
+            const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+            row.animate([{ opacity: 1, translate: '0 0' }, { opacity: 0, translate: '12px 0' }], { duration: calm ? 1 : 220, easing: 'ease-in', fill: 'forwards' }).onfinish = () => refreshPresence();
+          } catch (err) { toast(err.message, { kind: 'error' }); }
+        };
+        const opened = menu(more, [
+          ...(name !== coord ? [{ label: 'Make coordinator', icon: 'send', run: () => setCoordinator(name) }] : []),
+          ...(p && forgettable(p) ? [{ label: 'Forget', icon: 'x', run: forget }] : []),
+        ], { onClose: () => more.removeAttribute('aria-expanded') });
+        if (opened) more.setAttribute('aria-expanded', 'true');
         return;
       }
       const o = e.target.closest('[data-open]');

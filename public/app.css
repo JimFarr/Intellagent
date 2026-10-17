@@ -1861,18 +1861,17 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 /* headroom for lifted drop targets and focus rings: the board clips vertically (it scrolls sideways) */
 .board { padding-top: 14px; margin-top: -8px; }
 
-/* agents: forget an offline agent */
-.agent-row .forget { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px 2px 5px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
-.agent-row:hover .forget, .agent-row .forget:focus-visible { opacity: 1; }
-.agent-row .forget:hover { background: color-mix(in oklab, var(--danger) 12%, transparent); color: var(--danger); }
+/* agents: a row's rarer actions (make coordinator, forget) sit in its ⋯ menu, in the name line, taking no height (INT-268) */
+.agent-row .row-more { margin-left: auto; flex-shrink: 0; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 99px; background: none; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .15s var(--ease), background .15s var(--ease), color .15s var(--ease); }
+.agent-row:hover .row-more, .agent-row:focus-within .row-more, .agent-row .row-more[aria-expanded="true"] { opacity: 1; }
+.agent-row .row-more:hover { background: color-mix(in oklab, var(--text) 8%, transparent); color: var(--text); }
+.agent-row .row-more:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (hover: none) { .agent-row .row-more { opacity: 1; } }
 
 /* agents page: coordinator */
 .coord-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 220px); align-items: center; gap: 14px; padding: 4px 2px 14px; margin-bottom: 12px; border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent); }
 @media (max-width: 520px) { .coord-row { grid-template-columns: minmax(0, 1fr); gap: 10px; } }
 .coord-chip { font-size: 10px; padding: 1px 7px; color: var(--accent); background: color-mix(in oklab, var(--accent) 14%, transparent); }
-.make-coord { grid-column: 1 / -1; justify-self: start; display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 2px 8px 2px 6px; border: 0; border-radius: 99px; background: none; color: var(--muted); font: 500 11.5px var(--font); cursor: pointer; opacity: 0; transition: opacity .15s, background .15s, color .15s; }
-.agent-row:hover .make-coord, .make-coord:focus-visible { opacity: 1; }
-.make-coord:hover { background: color-mix(in oklab, var(--accent) 12%, transparent); color: var(--accent); }
 
 /* agents page: add a standing agent */
 .add-agent-btn { width: 100%; margin: 0 0 12px; padding: 10px; border-radius: calc(var(--r-ctl) + 4px); border: 1.5px dashed color-mix(in oklab, var(--text) 18%, transparent); background: none; color: var(--muted); font: 600 13px var(--font); cursor: pointer; transition: border-color .15s, color .15s, background .15s; }
