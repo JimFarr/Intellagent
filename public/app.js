@@ -4097,10 +4097,11 @@
       case 'lease.expired': return `${nb(ev.claimant)}'s lease on ${b(id)} expired`;
       case 'attention.raised': return `${who} needs you on ${b(id)}`;
       case 'attention.resolved': return `${who} answered ${b(id)}`;
-      case 'column.created': return `${who} added column ${b(ev.column?.name || '')}`;
-      case 'column.updated': return `${who} updated column ${b(ev.column?.name || '')}`;
-      case 'schema.updated': return `${who} changed the ticket schema`;
-      case 'board.updated': return `${who} updated the board`;
+      case 'column.created': return `${who} added column ${b(ev.column?.name || '')}${ev.delegated ? ' for you' : ''}`;
+      case 'column.updated': return `${who} updated column ${b(ev.column?.name || '')}${ev.delegated ? ' for you' : ''}`;
+      case 'column.deleted': return `${who} deleted column ${b(ev.columnId || '')}${ev.delegated ? ' for you' : ''}`;
+      case 'schema.updated': return `${who} changed the ticket schema${ev.delegated ? ' for you' : ''}`;
+      case 'board.updated': return `${who} updated the board${ev.delegated ? ' for you' : ''}`;
       case 'board.external-edit': return 'Board file changed on disk';
       case 'lease.status': return `${nb(ev.claimant)} on ${b(id)}: ${html ? esc(ev.status || '—') : ev.status || '—'}`;
       case 'item.assigned': return `${who} assigned ${b(id)} to ${b(ev.assignee || 'nobody')}`;
