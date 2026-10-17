@@ -6080,7 +6080,7 @@
     // a list of objects (context items) reads as its titles, never [object Object]
     const fmtOne = (x) => (x && typeof x === 'object' ? x.title || x.name || x.path || x.url || x.kind || JSON.stringify(x) : String(x));
     const fmt = (v) => (v == null ? '—' : typeof v === 'object' ? (Array.isArray(v) ? (v.length ? v.map(fmtOne).join(', ') : '—') : Object.entries(v).map(([k, x]) => `${k}: ${Array.isArray(x) ? x.map(fmtOne).join('/') : x}`).join(', ')) : String(v));
-    const changes = (a.changes || []).slice(-5).reverse().map((c) => `<div class="chg"><span class="who">${avatar(c.by)}${nameHTML(c.by?.name)}</span><span class="what">${Object.entries(c.changes).map(([k, v]) => `<b>${esc(k.replace(/^profile\./, ''))}</b> ${esc(fmt(v.from))} → ${esc(fmt(v.to))}`).join(' · ')}</span><time>${rel(c.at)}</time><button class="btn sm ghost" data-revert="${esc(c.id)}" data-agent="${esc(a.name)}" title="Revert|Put these values back">${icon('restore', 'sm')}</button></div>`).join('');
+    const changes = (a.changes || []).slice(-5).reverse().map((c) => `<div class="chg"><span class="who">${avatar(c.by)}${nameHTML(c.by?.name)}</span><span class="what">${c.admin ? `<b>${esc(c.admin.power)}</b> ${esc(c.admin.text)}${c.reverted ? ' (reverted)' : ''}` : Object.entries(c.changes).map(([k, v]) => `<b>${esc(k.replace(/^profile\./, ''))}</b> ${esc(fmt(v.from))} → ${esc(fmt(v.to))}`).join(' · ')}</span><time>${rel(c.at)}</time>${c.reverted ? '' : `<button class="btn sm ghost" data-revert="${esc(c.id)}" data-agent="${esc(a.name)}" title="Revert|Put these values back">${icon('restore', 'sm')}</button>`}</div>`).join('');
     return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div>${changes ? `<div class="chg-list"><div class="chg-head">Recent changes</div>${changes}</div>` : ''}</div>`;
   }
   // Undo one change: send the old values back (as the human).
@@ -6088,6 +6088,10 @@
     const a = state.standing[btn.dataset.agent];
     const c = (a?.changes || []).find((x) => x.id === btn.dataset.revert);
     if (!c) return;
+    if (c.admin) { // a board setting changed on the human's behalf: the board checks nothing changed since
+      try { await api('POST', `/api/agents/${encodeURIComponent(a.name)}/changes/${encodeURIComponent(c.id)}/revert`, {}); toast(`Reverted ${c.admin.power}`, { icon: 'restore', kind: 'ok' }); await refreshPresence(); } catch (e) { toast(e.message, { kind: 'error' }); }
+      return;
+    }
     const body = {};
     for (const [k, v] of Object.entries(c.changes)) {
       if (k.startsWith('profile.')) body[k.slice(8)] = v.from;

@@ -756,6 +756,7 @@ function tx(ctx, fn, { archive = false } = {}) {
   // page skips them.
   const sync = after !== before && events[0]?.board === ctx.id ? (archived ? { from, full: true } : syncOf(from, parts, afterParts, ctx.board)) : null;
   events.forEach((e, i) => emit(e, i === 0 ? sync : null));
+  if (events.admin) recordAdmin(ctx, before, events.admin);
   for (const h of hooks) h();
   return result;
 }
@@ -1020,7 +1021,59 @@ function keepDone(ctx, actor, del, doneBefore) {
 // What a delegated admin change leaves behind: the delegation on its event, and one digest line.
 const delegatedTag = (d) => (d ? { delegated: d } : {});
 function adminTrail(ctx, events, actor, d, text) {
-  if (d) digest.add(ctx, events, actor, `${text} (${d.power}, on the human's behalf)`, []);
+  if (!d) return;
+  digest.add(ctx, events, actor, `${text} (${d.power}, on the human's behalf)`, []);
+  // tx() reads this once the change is made (some callers trail before they change the board) and keeps the values
+  // on both sides in the agent's history (INT-353)
+  (events.admin ||= []).push({ actor, power: d.power, text });
+}
+// Where each admin power's setting sits on the board: what an agent's history keeps and a revert puts back.
+const ADMIN_SETTINGS = {
+  'admin.rules': { directives: ['directives'] },
+  'admin.coordinator': { coordinator: ['coordinator'] },
+  'admin.columns': { columns: ['columns'] },
+  'admin.fields': { builtins: ['schema', 'builtins'] },
+  'admin.cardRules': { cardRules: ['cardRules'] },
+  'admin.rebalancing': { rebalance: ['rebalance'] },
+  'admin.focus': { focusBoards: ['focusBoards'], activeFocus: ['activeFocus'] },
+};
+// The columns are kept without their tickets (itemIds: which ticket sits where is not a setting), and put back
+// beside the tickets as they are now.
+const settingAt = (board, path) => {
+  const v = path.reduce((o, k) => (o == null ? o : o[k]), board) ?? null;
+  return path[0] === 'columns' && Array.isArray(v) ? v.map(({ itemIds, ...c }) => c) : v;
+};
+const clone = (v) => (v == null ? null : JSON.parse(JSON.stringify(v)));
+function setSetting(board, path, value) {
+  if (path[0] === 'columns') {
+    const have = new Map(board.columns.map((c) => [c.id, c.itemIds]));
+    board.columns = clone(value).map((c) => ({ ...c, itemIds: have.get(c.id) || [] }));
+    return;
+  }
+  const parent = path.slice(0, -1).reduce((o, k) => o[k], board);
+  if (value == null) delete parent[path[path.length - 1]]; else parent[path[path.length - 1]] = clone(value);
+}
+// Called by tx() after a write that trailed one or more delegated admin changes: one history entry per agent and
+// power, with the setting before (from the board as tx() found it) and after. A change that left a setting as it
+// was leaves no entry.
+function recordAdmin(ctx, beforeText, calls) {
+  if (!standing) return;
+  const before = JSON.parse(beforeText);
+  const seen = new Map();
+  for (const c of calls) {
+    const key = `${c.actor.name}|${c.power}`;
+    if (seen.has(key)) { seen.get(key).text += `; ${c.text}`; continue; }
+    seen.set(key, { ...c });
+  }
+  for (const c of seen.values()) {
+    const changes = {};
+    for (const [label, path] of Object.entries(ADMIN_SETTINGS[c.power] || {})) {
+      const from = settingAt(before, path);
+      const to = clone(settingAt(ctx.board, path));
+      if (JSON.stringify(from) !== JSON.stringify(to)) changes[label] = { from, to };
+    }
+    if (Object.keys(changes).length) standing.recordAdmin(c.actor.name, { kind: c.actor.kind, name: c.actor.name }, changes, { board: ctx.id, power: c.power, text: c.text });
+  }
 }
 
 // Per-agent column limits from the manifest (humans are never limited).
@@ -2794,7 +2847,7 @@ const SCHEMA = {
       'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
-      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.managed', 'agent.role_changed', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
+      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.managed', 'agent.role_changed', 'admin.reverted', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
       'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated', 'agent.base_updated', 'item.typing'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
@@ -3059,6 +3112,7 @@ const POLICY = {
   'PUT /api/agents/:name/permissions/:key': { who: 'admin.permissions' },
   'PUT /api/roles/:key': { who: 'human', why: 'Only the human defines roles: a role sets the tools and wake-ups of every agent that takes it', hint: 'Suggest the role on a card instead' },
   'POST /api/agents': { who: 'human', why: 'Only the human can control standing agents' },
+  'POST /api/agents/:name/changes/:id/revert': { who: 'human', why: 'Only the human puts back a board setting an agent changed on their behalf', hint: 'Ask on a card, and say which change' },
   'DELETE /api/agents/:name': { who: 'human', why: 'Only the human can control standing agents' },
   'POST /api/agents/:name/accept': { who: 'human', why: 'Only the human accepts a new agent: no grant delegates it', hint: 'Ask on a card' },
   'POST /api/agents/:name/return': { who: 'human', why: 'Only the human sends a new agent back to introduce itself again', hint: 'Ask on a card' },
@@ -4829,6 +4883,35 @@ route('POST', '/api/agents/:name/return', 'Human only: send a new agent back to 
   const a = standing.returnProbation(p.name, note, { kind: actor.kind, name: actor.name });
   askForIntroduction(a.name, actor, note, true);
   return a;
+});
+route('POST', '/api/agents/:name/changes/:id/revert', "Human: put back the board setting an agent changed on the human's behalf (an admin.* grant), from the Recent changes on its Agents page. Refused with 409 CONFLICT when the setting has changed again since, or the change was already reverted → { reverted, board, power, changes }", ({ p, actor }) => {
+  humanOnly(actor);
+  if (!standing) fail(404, 'No standing agents on this board', { code: 'NOT_FOUND' });
+  const c = standing.changeOf(p.name, p.id);
+  if (!c) fail(404, `${p.name} has no recorded change ${p.id}`, { code: 'NOT_FOUND', hint: `GET /api/agents/${p.name} lists its recent changes` });
+  if (!c.admin) fail(400, 'This change was made with agents.manage, not as board admin', { code: 'BAD_REQUEST', hint: `Put the old values back with PATCH /api/agents/${p.name}` });
+  if (c.reverted) fail(409, `${p.id} was already reverted`, { code: 'CONFLICT', hint: 'Nothing to do' });
+  const ctx = boards.get(c.admin.board);
+  if (!ctx) fail(404, `Board "${c.admin.board}" no longer exists`, { code: 'NOT_FOUND' });
+  const paths = ADMIN_SETTINGS[c.admin.power] || {};
+  tx(ctx, (events) => {
+    // check every setting before putting any back: all or nothing
+    for (const [label, v] of Object.entries(c.changes)) {
+      if (!paths[label]) fail(400, `Unknown setting "${label}"`, { code: 'BAD_REQUEST' });
+      if (JSON.stringify(settingAt(ctx.board, paths[label])) !== JSON.stringify(v.to)) {
+        fail(409, `${label} on board "${ctx.id}" has changed again since ${c.by?.name || 'the agent'} changed it`, { code: 'CONFLICT', hint: `Change it by hand where it is set, or revert the later change first` });
+      }
+    }
+    events.push({ board: ctx.id, type: 'admin.reverted', actor, agent: p.name, change: p.id, power: c.admin.power, changes: c.changes });
+    for (const [label, v] of Object.entries(c.changes)) setSetting(ctx.board, paths[label], v.from);
+    // a column that tickets sit in cannot be taken away by a revert
+    const cols = new Set(ctx.board.columns.map((x) => x.id));
+    const stuck = Object.values(ctx.board.items).find((it) => !cols.has(it.columnId));
+    if (stuck) fail(409, `${stuck.id} sits in a column this revert would remove`, { code: 'CONFLICT', hint: 'Move the tickets out of that column first, then revert' });
+    digest.add(ctx, events, actor, `Reverted ${p.name}'s change (${c.admin.power}): ${c.admin.text}`, []);
+  });
+  standing.markReverted(p.name, p.id, { kind: actor.kind, name: actor.name });
+  return { reverted: true, board: ctx.id, power: c.admin.power, changes: c.changes };
 });
 route('POST', '/api/agents/:name/pause', 'Human: pause (current run finishes; events keep queueing)', ({ p, actor }) => { controls(actor, p.name); return standing.pause(p.name); });
 route('POST', '/api/agents/:name/resume', 'Human: resume a paused or failed agent', ({ p, actor }) => { controls(actor, p.name); return standing.unpause(p.name); });
