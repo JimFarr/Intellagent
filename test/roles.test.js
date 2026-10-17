@@ -60,12 +60,14 @@ describe('roles as data: on the board', () => {
         roles: {
           triager: { label: 'Triager', description: 'Sorts new tickets', brief: 'Your role: triager.', perms: ['read'], model: 'haiku', commands: ['npm run lint'], throttleMinutes: 2 },
           builder: { label: 'Not the builder' },
+          boosted: { label: 'Boosted', perms: ['read'], grants: ['review.decide'] },
         },
         agents: {
           plain: { role: 'builder', enabled: false },
           sorter: { role: 'triager', enabled: false },
           mine: { role: 'builder', perms: ['read'], description: 'my own words', enabled: false },
           ghost: { role: 'nope', enabled: false },
+          boss: { enabled: false, grants: ['agents.manage'] },
         },
       },
     });
@@ -106,6 +108,8 @@ describe('roles as data: on the board', () => {
     assert.deepEqual([by.triager.builtin, by.triager.model, by.triager.commands, by.triager.agents], [false, 'haiku', ['npm run lint'], ['sorter']]);
     assert.equal(by.reviewer.reviewer, true);
     assert.ok(r.errors.some((m) => m.includes('"builder" is built in')));
+    assert.ok(!by.boosted, 'a role that carries grants is refused');
+    assert.ok(r.errors.some((m) => m.includes('Role "boosted": a role never carries grants')));
     // the short form the Agents page reads keeps its shape and gains the custom role
     const short = await s.ok('GET', '/api/agents/roles');
     assert.deepEqual(Object.keys(short.roles.triager), ['label', 'icon', 'description', 'perms', 'listen']);
@@ -137,5 +141,21 @@ describe('roles as data: on the board', () => {
     await s.ok('PATCH', '/api/agents/sorter2', { role: 'builder' }, USER);
     assert.equal((await agent('sorter2')).role, 'builder');
     await s.ok('DELETE', '/api/agents/sorter2', undefined, USER);
+  });
+
+  it("an agent manager gives only built-in roles: the human's own can bring commands and a model it could not", async () => {
+    const boss = { agent: 'boss' };
+    const r = await s.api('PATCH', '/api/agents/mine', { role: 'triager', perms: ['read'] }, boss);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.code, 'HUMAN_ONLY');
+    assert.match(r.body.hint, /builder/);
+    const a = await agent('mine');
+    assert.deepEqual([a.role, a.model, a.commands ?? null], ['builder', null, null], 'nothing changed: no npm run lint, no haiku');
+    // a built-in role still works within the narrowing rules, as before
+    await s.ok('PATCH', '/api/agents/mine', { role: 'researcher', perms: ['read'] }, boss);
+    assert.equal((await agent('mine')).role, 'researcher');
+    // and the human may give any role
+    await s.ok('PATCH', '/api/agents/mine', { role: 'triager' }, USER);
+    assert.equal((await agent('mine')).role, 'triager');
   });
 });

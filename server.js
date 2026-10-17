@@ -4507,6 +4507,11 @@ function manageAgent(target, d, actor) {
     if (agent && (d.role === 'coordinator' || a.role === 'coordinator') && d.role !== a.role) {
       fail(403, 'The coordinator role is the human\'s to give or take', { code: 'HUMAN_ONLY', hint: 'Ask the human on a card' });
     }
+    // A role the human defined can bring commands, a model and wake-ups that the narrowing checks below don't
+    // cover, so a manager gives only the built-ins (which bring none of those), as before roles were data.
+    if (agent && d.role != null && d.role !== a.role && !roleLibrary().view(d.role)?.builtin) {
+      fail(403, `"${d.role}" is the human's own role: only the human gives it`, { code: 'HUMAN_ONLY', hint: `Ask the human on a card, or pick a built-in role (${roleLibrary().list().filter((r) => r.builtin).map((r) => r.key).join(', ')})` });
+    }
     cfg.role = d.role || null;
   }
   if ('description' in d) cfg.description = d.description ? str(d.description, 2000) : null;
@@ -4534,7 +4539,8 @@ function manageAgent(target, d, actor) {
     const tools = roleLibrary().get(cfg.role || '')?.perms || null;
     const now = a.perms || [];
     const have = permLibrary().resolve(now).keys;
-    if (tools ? tools.some((k) => !have.includes(k)) : a.perms != null) {
+    // compared after bundles and needs are expanded, as for "perms" above: what a role's bundle brings counts too
+    if (tools ? permLibrary().resolve(tools).keys.some((k) => !have.includes(k)) : a.perms != null) {
       fail(403, `Tool permissions can only narrow: ${name} has ${now.join(', ') || 'none'}, and that role brings ${(tools || []).join(', ') || 'the default run'}`, { code: 'WIDEN', hint: 'Send "perms" with the role to pin its tools to what it has now, or leave it to the human' });
     }
   }
