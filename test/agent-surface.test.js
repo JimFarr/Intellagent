@@ -164,6 +164,7 @@ describe('the CLI for agents', () => {
       const i = cli(['init', dir, '--name', 'Own', '--prefix', 'OWN', '--template', 'simple', '--no-start'], { cwd: dir, env });
       assert.equal(i.code, 0, i.err);
       assert.match(i.out, /Whoever owns the board signs in by running "intellagent open"/);
+      assert.doesNotMatch(i.out, /agent name set/, 'the refusal says who acts, not how to stop being refused');
       assert.match(i.out, /tell whoever started this run/);
       for (const args of [['open'], ['start', '--open']]) {
         const r = cli(args, { cwd: dir, env });

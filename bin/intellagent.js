@@ -70,7 +70,7 @@ function agentPrompt(url, agent, board = 'main') {
 
 async function init() {
   const f = flags(rest);
-  if (asAgent() && !f['no-open']) { f['no-open'] = true; console.log(`(Running as ${asAgent()}: the board won't be opened signed in. Whoever owns the board signs in by running "intellagent open" in the project folder from their own terminal, with no agent name set; tell whoever started this run.)`); }
+  if (asAgent() && !f['no-open']) { f['no-open'] = true; console.log(`(Running as ${asAgent()}: the board won't be opened signed in. Whoever owns the board signs in by running "intellagent open" in the project folder from their own terminal; tell whoever started this run.)`); }
   const dir = path.resolve(f._[0] || '.');
   const folder = path.join(dir, '.intellagent');
   const manifestPath = path.join(folder, 'intellagent.manifest.json');
@@ -616,7 +616,7 @@ function asAgent() {
 // Commands that act as the human (with the user token from local.json) or write the human's files refuse to
 // run as an agent: a standing agent's shell may run "intellagent …", and it must not merge, steer other agents
 // or change grants that way.
-const OPEN_HINT = 'an agent cannot sign in to a board. Whoever owns the board runs "intellagent open" in the project folder in their own terminal (no agent name set); tell whoever started this run. If a card exists, ask there (intellagent do ask_human id=<ID> reason="…")';
+const OPEN_HINT = 'an agent cannot sign in to a board. Whoever owns the board runs "intellagent open" in the project folder in their own terminal; tell whoever started this run. If a card exists, ask there (intellagent do ask_human id=<ID> reason="…")';
 function humanOnly(what, hint = 'ask the human on the card (intellagent do ask_human id=<ID> reason="…")') {
   const agent = asAgent();
   if (!agent) return;
