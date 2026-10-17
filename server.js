@@ -2484,6 +2484,22 @@ function briefProjectLine() {
   return `Project (the code these tickets are about): \`${slash(PROJECT_ROOT)}\`${M.projectRoot ? ' — outside the board\'s folder: work there' : ''}`;
 }
 
+// A delegated power as the agent reads it in its brief: the line, then the human's guidance if there is any.
+// The permissions grid shows the same lines (INT-239), so both come from here.
+function powerBriefLines(ctx, x, said = {}) {
+  const P = `/api/boards/${ctx.id}`;
+  const cli = (m, path, args = '') => `intellagent api ${m} ${path}${args ? ` ${args}` : ''}`;
+  const how = {
+    'review.decide': `decide: ${cli('POST', `${P}/items/<ID>/review/decision`, 'verdict=approve comment="why"')} (or verdict=changes with what to change)`,
+    'column.gate': 'move tickets through human-only columns with a normal move (tickets with an open review: decide the review instead)',
+    'work.land': `${cli('POST', `${P}/items/<ID>/land`, 'agent=<yourself>')} — only approved work (NOT_APPROVED otherwise); resolve conflicts on your own branch first (cherry-pick the author's commits, keep both sides, run the tests), then land with agent=<yourself>; push main afterwards only if your agents.json allows it`,
+    'agents.control': `${cli('POST', '/api/agents/<name>/pause')} · …/resume · …/run`,
+    'agents.manage': `${cli('PATCH', '/api/agents/<name>', 'label="…" model=haiku alignment="…"')} — models: ${MANAGER_MODELS.join(', ')}; perms and permissions can only narrow; never your own record`,
+  };
+  return [`- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
+    ...(Object.hasOwn(said, x.power) ? [`  ${guidanceLine(said[x.power])}`] : [])];
+}
+
 // One page an agent reads first: who it is, what to do next, how this board works, and the exact calls.
 // via: cli (intellagent api …) | mcp (tool names) | http (raw requests).
 function briefing(ctx, name, base, via = 'cli') {
@@ -2560,18 +2576,10 @@ function briefing(ctx, name, base, via = 'cli') {
     ...(() => {
       const g = grantsOf(name);
       if (!g.length) return [];
-      const how = {
-        'review.decide': `decide: ${cli('POST', `${P}/items/<ID>/review/decision`, 'verdict=approve comment="why"')} (or verdict=changes with what to change)`,
-        'column.gate': 'move tickets through human-only columns with a normal move (tickets with an open review: decide the review instead)',
-        'work.land': `${cli('POST', `${P}/items/<ID>/land`, 'agent=<yourself>')} — only approved work (NOT_APPROVED otherwise); resolve conflicts on your own branch first (cherry-pick the author's commits, keep both sides, run the tests), then land with agent=<yourself>; push main afterwards only if your agents.json allows it`,
-        'agents.control': `${cli('POST', '/api/agents/<name>/pause')} · …/resume · …/run`,
-        'agents.manage': `${cli('PATCH', '/api/agents/<name>', 'label="…" model=haiku alignment="…"')} — models: ${MANAGER_MODELS.join(', ')}; perms and permissions can only narrow; never your own record`,
-      };
       let said = {};
       try { said = standing?.guidanceOf?.(name) || {}; } catch { /* not a standing agent */ }
       return ['', '## Powers the human delegated to you',
-        ...g.flatMap((x) => [`- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
-          ...(Object.hasOwn(said, x.power) ? [`  ${guidanceLine(said[x.power])}`] : [])]),
+        ...g.flatMap((x) => powerBriefLines(ctx, x, said)),
         'Your verdicts and moves are final and recorded as made on the human\'s behalf; the human can still override them. Never use a power on your own work (a ticket you worked on or asked to have reviewed) — the board refuses it. Explain each decision in its comment.',
         ...(approvalsOff(ctx) && g.some((x) => APPROVAL_POWERS.has(x.power)) ? ['**Approvals are switched off on this board right now:** the human paused them, so review.decide and column.gate are suspended (403 APPROVALS_OFF). Leave reviews for the human until they switch approvals back on.'] : [])];
     })(),
@@ -4488,6 +4496,125 @@ route('DELETE', '/api/permissions/:key', 'Human: remove a custom permission no a
   permChanged(actor, p.key, r.before, null);
   return { removed: r.removed };
 });
+/* The permissions grid (INT-239): every standing agent against every permission in the library. A cell is
+   off, on, or on with rules (a board power with a required-reviewers rule and/or a scope). Tools and custom
+   permissions live in the agent's "perms", powers in its "grants", the human's words in its "guidance": all in
+   agents.json, which only the human writes. */
+const ruleOf = (g) => (isObj(g) ? Object.fromEntries(['minOks', 'from', 'where'].filter((k) => g[k] != null).map((k) => [k, g[k]])) : {});
+const grantsFor = (a, key) => (a.grants || []).filter((g) => (typeof g === 'string' ? g : g?.power) === key);
+function gridCell(ctx, a, entry) {
+  const lib = permLibrary();
+  const key = entry.key;
+  const said = a.guidance || {};
+  const role = a.role ? roleLibrary().view(a.role) : null;
+  const base = { key, enforced: entry.enforced, guidance: Object.hasOwn(said, key) ? said[key] : null };
+  if (entry.heldBy === 'grants') {
+    const gs = grantsFor(a, key);
+    const rules = gs.length ? ruleOf(gs[0]) : {};
+    const mode = !gs.length ? 'off' : Object.keys(rules).length ? 'rules' : 'on';
+    const x = gs.length ? (typeof gs[0] === 'string' ? { power: key } : gs[0]) : null;
+    // a role carries no powers, so any grant is the agent's own
+    return { ...base, mode, rules: mode === 'rules' ? rules : null, differsFromRole: !!role && mode !== 'off', brief: x ? powerBriefLines(ctx, x, said) : [] };
+  }
+  const own = (a.perms || []).includes(key);
+  const held = lib.resolve(a.perms || []).keys;
+  const mode = held.includes(key) ? 'on' : 'off';
+  const roleHeld = role ? lib.resolve(role.perms).keys.includes(key) : null;
+  return {
+    ...base, mode, rules: null,
+    // on without being listed: another permission it holds needs it, or bundles it
+    ...(mode === 'on' && !own ? { implied: true, by: (a.perms || []).filter((k) => k !== key && lib.resolve([k]).keys.includes(key)) } : {}),
+    differsFromRole: roleHeld == null ? false : roleHeld !== (mode === 'on'),
+    brief: mode === 'on' ? lib.linesFor(key, said) : [],
+  };
+}
+route('GET', '/api/agents/grid', 'The permissions grid: every standing agent against every permission in the library. A cell is { mode: off|on|rules, rules?, guidance, enforced, differsFromRole, implied?, by?, brief } — brief is the lines the agent reads in its brief (empty when off). Verbal permissions have enforced: false. ?board= picks the board whose brief wording is used', ({ q }) => {
+  const ctx = getCtx(q.board || M.defaultBoard);
+  const lib = permLibrary();
+  const entries = lib.list();
+  const agents = standing ? standing.list().agents : [];
+  return {
+    permissions: entries.map((e) => ({ key: e.key, name: e.name, kind: e.kind, enforced: e.enforced, heldBy: e.heldBy, needs: e.needs, ...(e.warning ? { warning: e.warning } : {}) })),
+    agents: agents.map((a) => ({ name: a.name, role: a.role, permsFrom: a.permsFrom, cells: Object.fromEntries(entries.map((e) => [e.key, gridCell(ctx, a, e)])) })),
+    errors: lib.errors,
+  };
+});
+route('PUT', '/api/agents/:name/permissions/:key', 'Human, signed in: set one cell of the grid { mode?: off|on|rules, rules?: { minOks?, from?, where? }, guidance?: text ("" removes it) } — writes agents.json. on also turns on what the permission needs; the reply lists what else changed. rules apply to board powers only (review.decide, column.gate take minOks/from; every power takes where)', ({ p, body, actor, q }) => {
+  if (actor.kind !== 'user') fail(403, 'Only the human sets what an agent may do', { code: 'HUMAN_ONLY', hint: 'Ask on a card, and say which permission and which agent' });
+  // a grant bypasses the human's own approval, so this takes the same proof that this is the human
+  if (!M.auth.userToken) fail(403, 'Permissions can be set only on a board with a sign-in token', { code: 'NO_TOKEN', hint: 'Run "intellagent token", restart the board and sign in with "intellagent open"; or edit agents.json' });
+  if (!standing) fail(404, 'No standing agents on this board', { code: 'NOT_FOUND' });
+  const a = standing.list().agents.find((x) => x.name.toLowerCase() === String(p.name).toLowerCase());
+  if (!a) fail(404, `No standing agent "${p.name}"`, { code: 'NOT_FOUND', hint: `Agents: ${standing.list().agents.map((x) => x.name).join(', ') || 'none'}` });
+  const lib = permLibrary();
+  const entry = lib.list().find((e) => e.key === p.key);
+  if (!entry) fail(404, `No permission "${p.key}" in the library`, { code: 'NOT_FOUND', hint: 'GET /api/permissions lists them' });
+  const { mode, rules, guidance } = body;
+  if (mode === undefined && guidance === undefined) fail(400, 'Send a mode, guidance, or both', { code: 'BAD_REQUEST', hint: '{ "mode": "off" | "on" | "rules", "rules"?: {…}, "guidance"?: "text" }' });
+  if (mode !== undefined && !['off', 'on', 'rules'].includes(mode)) fail(400, `Unknown mode "${mode}"`, { code: 'BAD_REQUEST', hint: 'Modes: off, on, rules' });
+  if (rules !== undefined && mode !== 'rules') fail(400, 'Rules go with mode "rules"', { code: 'BAD_REQUEST', hint: 'Send { "mode": "rules", "rules": { … } }' });
+  const power = entry.heldBy === 'grants';
+  if (mode === 'rules' && !power) fail(400, `${entry.name} is a tool permission: it is on or off, and has no rules`, { code: 'BAD_REQUEST', hint: 'Rules apply to board powers: review.decide and column.gate take minOks/from, every power takes where' });
+  if (guidance !== undefined && guidance !== null && typeof guidance !== 'string') fail(400, 'Guidance must be text', { code: 'BAD_REQUEST', hint: 'Send "" to remove it' });
+  const patch = {};
+  const also = [];
+  const notes = [];
+  if (mode !== undefined && power) {
+    const others = (a.grants || []).filter((g) => (typeof g === 'string' ? g : g?.power) !== p.key);
+    const had = grantsFor(a, p.key);
+    if (had.length > 1) notes.push(`${p.key} was granted ${had.length} times with different scopes; it is now one grant`);
+    let next = others;
+    if (mode === 'on') next = [...others, p.key];
+    if (mode === 'rules') {
+      if (!isObj(rules) || !Object.keys(rules).length) fail(400, 'Mode "rules" needs rules', { code: 'BAD_REQUEST', hint: '{ "minOks": 2, "from": ["nebula", "kraglin"] } and/or { "where": { "fields.risk": "low" } }; for no rules at all use mode "on"' });
+      const bad = Object.keys(rules).filter((k) => !['minOks', 'from', 'where'].includes(k));
+      if (bad.length) fail(400, `Unknown rule key(s): ${bad.join(', ')}`, { code: 'BAD_REQUEST', hint: 'Rules: minOks, from, where' });
+      next = [...others, ...cleanGrants([{ power: p.key, ...rules }])];
+    }
+    patch.grants = next.length ? next : null;
+  }
+  if (mode !== undefined && !power) {
+    const held = a.perms || [];
+    let next = held;
+    if (mode === 'on' && !held.includes(p.key)) {
+      // what it needs comes on with it: follow the needs of the permission and of what it bundles
+      const add = [p.key];
+      const seen = new Set();
+      const walk = (k) => {
+        if (seen.has(k)) return;
+        seen.add(k);
+        const e = lib.get(k);
+        for (const n of e?.needs || []) { if (!held.includes(n) && !add.includes(n)) add.push(n); walk(n); }
+        for (const n of e?.allows?.includes || []) walk(n); // a bundle's parts come with it, but what they need must be on
+      };
+      walk(p.key);
+      next = [...held, ...add];
+      for (const k of add.slice(1)) also.push({ key: k, mode: 'on', why: `${entry.name} needs it` });
+    }
+    if (mode === 'off') next = held.filter((k) => k !== p.key);
+    if (mode === 'rules') next = held;
+    if (JSON.stringify(next) !== JSON.stringify(held)) {
+      patch.perms = next;
+      if (a.permsFrom === 'role') notes.push(`${a.name} took its permissions from its role ${a.role}; it now has its own list, so the role no longer changes its tools`);
+      if (a.perms == null) notes.push(`${a.name} had no permission list: a run built from permissions now limits it to what it holds (an agent with its own run command is not limited by this list)`);
+    }
+    if (mode === 'off' && lib.resolve(next).keys.includes(p.key)) {
+      const by = next.filter((k) => lib.resolve([k]).keys.includes(p.key));
+      notes.push(`${entry.name} stays on: ${by.join(', ')} ${by.length > 1 ? 'need' : 'needs'} it. Turn those off too`);
+    }
+    if (mode === 'on' && entry.enforced === false) notes.push(`${entry.name} is verbal: it adds no tool, the agent only reads it in its brief`);
+  }
+  if (guidance !== undefined) {
+    const said = { ...(a.guidance || {}) };
+    const text = guidance === null ? '' : guidance.trim();
+    if (text) said[p.key] = text.slice(0, 1000); else delete said[p.key];
+    patch.guidance = Object.keys(said).length ? said : null;
+  }
+  const { changes } = standing.manage(a.name, patch, { kind: actor.kind, name: actor.name });
+  const fresh = standing.list().agents.find((x) => x.name === a.name);
+  const ctx = getCtx(q.board || M.defaultBoard);
+  return { agent: a.name, key: p.key, changed: Object.keys(changes).length > 0, cell: gridCell(ctx, fresh, entry), also, notes, changes };
+});
 // Grants as the UI sends them: [{ power, where? }]; where is { key: value | [values] } (strings only).
 function cleanGrants(list) {
   if (list == null) return null;
@@ -4502,7 +4629,7 @@ function cleanGrants(list) {
     let rule = {};
     if (g?.minOks != null || g?.from != null) {
       rule = okRule(g);
-      if (typeof rule === 'string') fail(400, `The rule of ${power}: ${rule}`, { code: 'BAD_REQUEST' });
+      if (typeof rule === 'string') fail(400, `The rule of ${power}: ${rule}`, { code: 'BAD_REQUEST', hint: 'minOks is a whole number from 1 up to the number of names in "from"; "from" lists reviewer names' });
       if (!APPROVAL_POWERS.has(power)) fail(400, `"minOks" and "from" only apply to review.decide and column.gate, not ${power}`, { code: 'BAD_REQUEST' });
     }
     if (g?.where == null) return Object.keys(rule).length ? { power, ...rule } : power;

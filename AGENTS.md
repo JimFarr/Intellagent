@@ -232,6 +232,8 @@ DELETE /api/permissions/<key>    (409 CONFLICT while an agent or another permiss
 - Each permission's `brief` line goes into the brief of every agent holding it, under *Permissions the human gave you* (agents holding only built-ins see no change). Changing a permission rebuilds its holders' runs at once.
 - Only the human changes the library (`403 HUMAN_ONLY`, also for `agents.manage`); built-ins answer `409 CONFLICT`. An agent manager's narrowing check expands bundles and needs first. An entry in agents.json that doesn't check out is skipped and reported in `GET /api/agents` (`error`). Emits `permissions.changed`, which wakes nobody.
 
+**The permissions grid** (the human's view of who holds what): `GET /api/agents/grid` lists every standing agent against every library permission. A cell is `{ mode: off|on|rules, rules?, guidance, enforced, differsFromRole, implied?, by?, brief }`; `brief` is the lines the agent reads in its own brief (empty when off), `enforced: false` marks a verbal permission, `implied` an `on` that only another permission's `needs` keeps. `PUT /api/agents/<name>/permissions/<key> { mode?, rules?, guidance? }` sets one cell in agents.json, for the signed-in human only (`403 HUMAN_ONLY`; `403 NO_TOKEN` on a board with no sign-in token). `on` also turns on what the permission needs; `rules` (board powers only: `minOks`/`from`, `where`) writes a grant with rules; `guidance: ""` removes the human's words. The reply has `cell`, `also` (what else came on), `notes` (e.g. the agent left its role's list for its own) and `changes`.
+
 ### Handoffs
 `PATCH … { "assignee": "other-agent" }` hands a ticket over; the assignee receives its events (`for=<name>` / `assignee=<name>`).
 When a ticket's last open blocker reaches the final column (or is archived), its watchers get `item.unblocked`.
@@ -516,6 +518,7 @@ Agents       GET/POST /api/agents  /api/agents/roles  /api/agents/:name  …/:na
              GET/PUT /api/agents/base-context (PUT human)    GET /api/analytics
              POST /api/agents/stop-all  /api/agents/resume-all  /api/agents/:name/pause  …/resume  …/run
 Permissions  GET/POST /api/permissions         PATCH/DELETE /api/permissions/:key (human)
+             GET /api/agents/grid                PUT /api/agents/:name/permissions/:key (human)
 Roles        GET /api/roles  /api/roles/:key
 Profiles     GET /api/profiles  /api/profiles/me  /api/names/suggest     PATCH /api/profiles/me     DELETE /api/presence/:name
 Memory       GET/POST/PUT /api/profiles/:name/memory (PUT human)  PATCH/DELETE /api/profiles/:name/memory/:id   (:name may be "me")
