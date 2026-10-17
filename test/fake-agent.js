@@ -174,6 +174,20 @@ process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
     });
     return;
   }
+  //   node fake-agent.js model [escalate]   comment "ran on <INTELLAGENT_MODEL>"; with escalate, a run on haiku asks for
+  //   building by ending its result with [[needs-build]] (INT-308)
+  if (mode === 'model') {
+    const evs = JSON.parse(require('fs').readFileSync(process.env.INTELLAGENT_EVENTS, 'utf8'));
+    for (const id of new Set(evs.map((e) => e.itemId).filter(Boolean))) {
+      await fetch(`${process.env.INTELLAGENT_URL}/api/boards/main/items/${id}/comments`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT },
+        body: JSON.stringify({ body: `ran on ${process.env.INTELLAGENT_MODEL}${/cheaper model/.test(prompt) ? ' (triage prompt)' : ''}` }),
+      });
+    }
+    const ask = arg === 'escalate' && process.env.INTELLAGENT_MODEL === 'haiku';
+    process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: ask ? 'needs real work\n[[needs-build]]' : 'ok', usage: { input_tokens: 1, output_tokens: 1 } })}\n`);
+    return;
+  }
   if (mode === 'slow') await new Promise((r) => setTimeout(r, Number(arg) || 1000));
   const events = JSON.parse(require('fs').readFileSync(process.env.INTELLAGENT_EVENTS, 'utf8'));
   //   node fake-agent.js env A,B   comment "env A=<value or -> B=…" (what the run's environment holds)
