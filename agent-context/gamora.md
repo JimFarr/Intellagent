@@ -13,7 +13,8 @@ Read every new ticket and request from James. Each ticket gets a kind, a parent 
 | **Warlock** (opus) | `server.js` features: routes, the brief and work lists, metrics, focus, requests, reviews, landing; refactors | server features and bugs, and big server work that isn't permissions |
 | **Groot** (opus) | `lib/agents/`, `lib/agents.js`, `lib/worktrees.js` | the scheduler, the runner, worktrees, wake and sleep, the brief and prompt |
 | **Drax** (sonnet) | CLI (`bin/`, `cli.js`), MCP, presets, API features | everyday features and bugs, with tests |
-| **Mantis** (opus) | `public/` look and feel | themes, CSS, layout, motion, UI screens |
+| **Mantis** (opus) | `public/` look and feel | themes, CSS, layout, motion; a new visual pattern |
+| **Phyla** (opus) | `public/` screen features | editors, pages, builders, live indicators: UI features built on the existing look |
 | **Taserface** (haiku) | nothing in particular | the smallest, best-specified tickets: wording, a docs row, a missing test, a one-line fix |
 | **Yondu** (sonnet) | landing | a failed landing, a branch that won't merge, anyone asking James to run `intellagent merge` |
 | **Cosmo** | the team's **helper** | **never.** Not assigned, not triaged, not rebalanced. Others call on him by request. |

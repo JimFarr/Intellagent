@@ -110,7 +110,7 @@
     },
     "mantis": {
       "role": "designer",
-      "description": "Designer: Intellagent's look and feel — themes, CSS, layout and motion — checked in her own sandbox and browser.",
+      "description": "Designer: Intellagent's look and feel (themes, CSS, layout and motion), checked in her own sandbox and browser. Screen features are Phyla's.",
       "throttleMinutes": 1,
       "areas": [
         "public/app.js",
@@ -126,6 +126,26 @@
       "reviewer": true,
       "model": "opus",
       "run": "claude -p \"Handle the Intellagent events described on stdin.\" --permission-mode acceptEdits --tools \"Bash,Read,Grep,Glob,Edit,Write\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-mantis.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Edit\" \"Write\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"Bash(git merge main)\" \"Bash(git merge --abort)\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
+      "maxRunsPerHour": 30
+    },
+    "phyla": {
+      "role": "builder",
+      "description": "Front-end developer (opus): screen features in public/ (editors, pages, builders, live indicators) built on Mantis's look and checked in her own sandbox and browser. Themes, CSS and motion are Mantis's.",
+      "throttleMinutes": 1,
+      "areas": [
+        "public/app.js",
+        "public/app.css",
+        "public/index.html"
+      ],
+      "concerns": [
+        "keyboard and screen-reader use",
+        "no work at rest: no polling, patch in place",
+        "phone width (375px), light and dark",
+        "follows Mantis's look; asks her before a new visual pattern"
+      ],
+      "reviewer": true,
+      "model": "opus",
+      "run": "claude -p \"Handle the Intellagent events described on stdin.\" --permission-mode acceptEdits --tools \"Bash,Read,Grep,Glob,Edit,Write\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-phyla.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Edit\" \"Write\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"Bash(git merge main)\" \"Bash(git merge --abort)\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
       "maxRunsPerHour": 30
     },
     "nebula": {
