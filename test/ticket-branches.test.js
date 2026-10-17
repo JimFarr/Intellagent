@@ -110,6 +110,33 @@ describe('a branch per ticket (INT-321)', () => {
       assert.ok(fs.existsSync(path.join(dir, 'old.txt')));
     } finally { clean(); }
   });
+
+  it('a ticket begun on agent/<name> stays there when started again, so both rounds land (Rocket, INT-321)', async () => {
+    const { dir, wt, clean } = repo();
+    try {
+      const { path: p } = await wt.ensure('ann');
+      write(p, 'r1.txt', 'round 1\n'); git(p, 'add', '.'); git(p, 'commit', '-q', '-m', 'round 1 (T-1)');
+      write(p, 'ten.txt', 'ten\n'); git(p, 'add', '.'); git(p, 'commit', '-q', '-m', 'other work (T-10)');
+      const again = await wt.startTicket('ann', 'T-1');
+      assert.deepEqual([again.ok, again.branch, again.base], [true, 'agent/ann', null], JSON.stringify(again));
+      assert.match(again.note, /already has commits on agent\/ann/);
+      write(p, 'r2.txt', 'round 2\n'); git(p, 'add', '.'); git(p, 'commit', '-q', '-m', 'round 2 (T-1)');
+      const r = await wt.land('ann', 'T-1');
+      assert.equal(r.landed.length, 2, JSON.stringify(r));
+      assert.ok(fs.existsSync(path.join(dir, 'r1.txt')) && fs.existsSync(path.join(dir, 'r2.txt')), 'both rounds are on main');
+      assert.ok(!fs.existsSync(path.join(dir, 'ten.txt')), "T-10's commit is not T-1's");
+      // a ticket with nothing unlanded on agent/ann gets its own branch from main: T-2, and T-1 now that it has
+      // landed, although T-10's commit (whose id starts with T-1) is still waiting there
+      for (const id of ['T-2', 'T-1']) {
+        const fresh = await wt.startTicket('ann', id);
+        assert.deepEqual([fresh.branch, fresh.base], [`ticket/ann/${id}`, 'main'], id);
+        assert.ok(!fs.existsSync(path.join(p, 'ten.txt')), `${id} starts from main, without agent/ann's other work`);
+      }
+      // and T-10, begun on agent/ann, goes back there from a ticket branch
+      assert.equal((await wt.startTicket('ann', 'T-10')).branch, 'agent/ann');
+      assert.equal(git(p, 'branch', '--show-current'), 'agent/ann');
+    } finally { clean(); }
+  });
 });
 
 describe('start gives the ticket its branch (INT-321)', () => {
@@ -138,8 +165,17 @@ describe('start gives the ticket its branch (INT-321)', () => {
       commit(p, 'one.txt', one.id);
 
       // uncommitted work: start answers 409 DIRTY with a hint, and the ticket stays where it was
+      // a full working column refuses start before git: the worktree stays where it was (Kraglin, INT-321)
+      await s.ok('PATCH', `${B}/columns/in-progress`, { flags: { wipLimit: 1 } }, USER);
+      const full = await s.api('POST', `${B}/items/${two.id}/start`, {}, { agent: 'dev' });
+      assert.deepEqual([full.status, full.body.code], [409, 'WIP_LIMIT']);
+      assert.ok(full.body.hint);
+      assert.equal(git(p, 'branch', '--show-current'), `ticket/dev/${one.id}`, 'the worktree was not switched');
+      assert.ok(!git(dir, 'branch', '--list', `ticket/dev/${two.id}`), 'and no branch was made');
+      await s.ok('PATCH', `${B}/columns/in-progress`, { flags: { wipLimit: 0 } }, USER);
+
       write(p, 'one.txt', 'half done\n');
-      const dirty = await s.api('POST', `${B}/items/${two.id}/start`, {}, { agent: 'dev' });
+      const dirty =await s.api('POST', `${B}/items/${two.id}/start`, {}, { agent: 'dev' });
       assert.equal(dirty.status, 409);
       assert.equal(dirty.body.code, 'DIRTY');
       assert.ok(dirty.body.hint);

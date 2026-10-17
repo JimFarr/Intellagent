@@ -847,7 +847,7 @@ function ticketCommits(item, ctx = null) {
   const author = commitsAuthor(item);
   if (!author || !worktrees || !agentBranch(author)) return '';
   const tips = worktrees.tips(author, item.id);
-  const hit =commitsCache.get(`${author}\0${item.id}`);
+  const hit = commitsCache.get(`${author}\0${item.id}`);
   if (tips && hit?.tips === tips && (hit.commits != null || Date.now() - hit.at < COMMITS_RETRY_MS)) return hit.commits;
   const key = `${author}\0${item.id}`;
   if (!commitsLooking.has(key)) {
@@ -2000,16 +2000,29 @@ function startChecks(ctx, item, d, actor) {
   }
   const open = openBlockersOf(ctx, item);
   if (open.length && !d.force) fail(409, `${item.id} is blocked by ${open.join(', ')}`, { code: 'BLOCKED', hint: 'Work on a blocker first, or pass "force": true', blockedBy: open });
-  return cur;
+  // where start moves it: the column asked for, else the working column when the ticket is before it (or was sent back)
+  const cols = ctx.board.columns;
+  const work = workingColumn(ctx);
+  const target = d.column ? findColumn(ctx.board, d.column)
+    : work && cols.indexOf(work) > cols.findIndex((c) => c.id === item.columnId) ? work
+      : item.review?.verdict === 'changes' && work ? work : null;
+  return { cur, target };
 }
 
 // An agent with its own worktree works each ticket on its own branch, ticket/<name>/<ID> (INT-321): start switches
 // the worktree to it (made from main, or from an unlanded blocker's branch; resumed if it exists) before the
-// ticket is started, so a refusal (uncommitted work) changes nothing on the board either.
+// ticket is started, so a refusal (uncommitted work) changes nothing on the board either. A refusal that only the
+// tx() can see after the switch (a lease taken meanwhile) leaves the worktree on the ticket's branch, which is
+// harmless: ensure() keeps it, and the next start switches as usual.
 async function startTicketBranch(ctx, id, d, actor) {
   if (actor.kind !== 'agent' || !worktrees || !agentBranch(actor.name)) return null;
   const item = getItem(ctx, id);
-  startChecks(ctx, item, d, actor);
+  const { target } = startChecks(ctx, item, d, actor);
+  // the move's own refusals, before git: a full or locked working column must not leave the worktree switched.
+  // (The gates, which grants can open, stay with moveInto in startWork.)
+  const blocked = target ? moveBlocker(ctx, item, target, actor) : null;
+  if (blocked?.code === 'WIP_LIMIT') fail(409, `${item.id} was not started: ${blocked.reason}`, { code: 'WIP_LIMIT', hint: `Finish or move on a ticket in "${target.name}" first, or start one already there` });
+  if (blocked?.code === 'LOCKED_COLUMN') fail(403, `${item.id} was not started: ${blocked.reason}`, { code: 'LOCKED_COLUMN', hint: 'Ask on the card; the human sets the column flags' });
   const r = await worktrees.startTicket(actor.name, item.id, { blockedBy: item.blockedBy || [] });
   if (r.code === 'NOT_GIT') return null;
   if (!r.ok) fail(409, `${item.id} was not started: ${r.reason}`, { code: r.code, hint: r.hint });
@@ -2019,12 +2032,7 @@ async function startTicketBranch(ctx, id, d, actor) {
 function startWork(ctx, id, d, actor, branch = null) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
-    const cur = startChecks(ctx, item, d, actor);
-    const cols = ctx.board.columns;
-    const work = workingColumn(ctx);
-    const target = d.column ? findColumn(ctx.board, d.column)
-      : work && cols.indexOf(work) > cols.findIndex((c) => c.id === item.columnId) ? work
-        : item.review?.verdict === 'changes' && work ? work : null;
+    const { cur, target } = startChecks(ctx, item, d, actor);
     let moved = null;
     if (target && target.id !== item.columnId) { moveInto(ctx, item, target.id, 'top', actor, events); moved = target.name; }
     const master = activeMaster(ctx);
@@ -2668,7 +2676,7 @@ function briefing(ctx, name, base, via = 'cli') {
     '- To get another agent to act or read something now (a handoff, a question, a review finding, "your turn"), **@mention it**: `@rocket, this one is yours`. Most agents wake only when they are addressed, so a bare name ("Rocket, take this") wakes nobody. Assigning a ticket (assignee) also wakes its new owner. Only standing agents (GET /api/agents) wake on an @mention; any other name hears it only when it next reads the board (or if it is waiting on the board right now), and the reply warns you.',
     '- An @mention inside `code` or a `>` quote does not count, so quoting someone never wakes them. Use @ only when they need to act; to talk *about* an agent, write its name plainly.',
     ...(worktrees && agentBranch(name) ? ['', '## Your branches',
-      `- Each ticket gets its own branch: \`start\` switches your worktree to \`ticket/${name}/<ID>\`, made from main (or from an unlanded blocker's branch, when the ticket has blockedBy), and resumes it when you start the ticket again. Commit everything before you start another ticket: uncommitted changes answer 409 DIRTY and nothing starts.`,
+      `- Each ticket gets its own branch: \`start\` switches your worktree to \`ticket/${name}/<ID>\`, made from main (or from an unlanded blocker's branch, when the ticket has blockedBy), and resumes it when you start the ticket again. A ticket you began on \`agent/${name}\` before this stays there until it lands. Commit everything before you start another ticket: uncommitted changes answer 409 DIRTY and nothing starts.`,
       '- A ticket that needs another unlanded ticket\'s code says so with blockedBy before you start it; it lands after that one.'] : []),
     '',
     '## The calls you need',
@@ -4368,7 +4376,7 @@ route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move thi
   const ctx = getCtx(p.board);
   return transitions(ctx, getItem(ctx, p.id), actor);
 });
-route('POST', '/api/boards/:board/items/:id/start', 'Start or resume work in one step: lease + move to the working column + status + assign. { status?, minutes?, column?, force? }. An agent with its own worktree is switched to the ticket\'s branch ticket/<name>/<ID> first (reply: branch); uncommitted work there answers 409 DIRTY and changes nothing', async ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/items/:id/start', 'Start or resume work in one step: lease + move to the working column + status + assign. { status?, minutes?, column?, force? }. An agent with its own worktree is switched to the ticket\'s branch ticket/<name>/<ID> first (reply: branch; a ticket with unlanded commits on agent/<name> stays there); uncommitted work there answers 409 DIRTY, a full or locked working column WIP_LIMIT / LOCKED_COLUMN, and nothing changes', async ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const branch = await startTicketBranch(ctx, p.id, body, actor);
   return startWork(ctx, p.id, body, actor, branch);
