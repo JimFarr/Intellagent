@@ -1652,12 +1652,34 @@ function addComment(ctx, id, d, actor) {
     // An agent that names another agent without @ has alerted nobody: say so in the reply (not stored), so it
     // can comment again with the @mention if it meant to.
     const bare = actor.kind === 'agent' ? bareAgentNames(c.body, mentions, actor.name) : [];
+    // …and one that @mentions a name nothing runs for (not a standing agent, not a person, not listening now)
+    // has woken nobody either.
+    const unheard = actor.kind === 'agent' ? unheardMentions(ctx, mentionsIn(c.body), actor.name) : [];
     const warnings = [
       ...(bare.length ? [`You named ${bare.join(', ')} without @, so ${bare.length > 1 ? 'they were' : 'it was'} not alerted. If ${bare.length > 1 ? 'they' : 'it'} should act or read this now, comment again with ${bare.map((n) => `@${n}`).join(' ')}.`] : []),
+      ...(unheard.length ? [`${unheard.map((n) => `@${n}`).join(', ')} ${unheard.length > 1 ? 'are not standing agents' : 'is not a standing agent'} and nobody by that name is listening now: nobody is woken. ${unheard.length > 1 ? 'They see' : 'It sees'} this only on ${unheard.length > 1 ? 'their' : 'its'} next read of the board; to get an answer now, @mention a standing agent (GET /api/agents) or ask the human (POST …/items/${item.id}/attention).`] : []),
       ...[pathOnlyWarning(c.body)].filter(Boolean),
     ];
     return warnings.length ? { ...c, warning: warnings.join(' ') } : c;
   });
+}
+
+// @mentions that reach nobody: not the author, not a standing agent, not a name that has acted as a person on
+// this board, and not a name with a stream or a wait open right now (intellagent wait does wake on a mention).
+function unheardMentions(ctx, mentions, self) {
+  if (!mentions.length) return [];
+  let agents = [];
+  try { agents = standing?.list().agents.map((a) => a.name) || []; } catch { /* no agents */ }
+  const known = new Set([String(self), ...agents].map((n) => n.toLowerCase()));
+  const left = mentions.filter((m) => !known.has(m.toLowerCase()));
+  if (!left.length) return [];
+  const people = new Set();
+  for (const it of Object.values(ctx.board.items)) {
+    if (it.author?.kind === 'user') people.add(String(it.author.name).toLowerCase());
+    for (const c of it.comments || []) if (c.author?.kind === 'user') people.add(String(c.author.name).toLowerCase());
+  }
+  const listening = (n) => [...presence.values()].some((p) => p.name.toLowerCase() === n.toLowerCase() && (p.sse > 0 || p.waiting > 0));
+  return left.filter((m) => !people.has(m.toLowerCase()) && !listening(m));
 }
 
 // Standing agents named in a comment without @ (outside code and quotes), other than the author.
@@ -2621,7 +2643,7 @@ function briefing(ctx, name, base, via = 'cli') {
     ...(rules.length ? ['', `Project conventions are in ${rules.map((x) => `\`${x.file}\``).join(', ')} — follow them; the board rules only cover how to use the board.`] : []),
     '',
     '## Alerting other agents',
-    '- To get another agent to act or read something now (a handoff, a question, a review finding, "your turn"), **@mention it**: `@rocket, this one is yours`. Most agents wake only when they are addressed, so a bare name ("Rocket, take this") wakes nobody. Assigning a ticket (assignee) also wakes its new owner.',
+    '- To get another agent to act or read something now (a handoff, a question, a review finding, "your turn"), **@mention it**: `@rocket, this one is yours`. Most agents wake only when they are addressed, so a bare name ("Rocket, take this") wakes nobody. Assigning a ticket (assignee) also wakes its new owner. Only standing agents (GET /api/agents) wake on an @mention; any other name hears it only when it next reads the board (or if it is waiting on the board right now), and the reply warns you.',
     '- An @mention inside `code` or a `>` quote does not count, so quoting someone never wakes them. Use @ only when they need to act; to talk *about* an agent, write its name plainly.',
     '',
     '## The calls you need',
@@ -4181,7 +4203,7 @@ route('GET', '/api/boards/:board/items/:id/history', 'Recent events for this ite
   return recent.filter((e) => e.board === p.board && e.itemId === key).slice(-200);
 });
 
-route('POST', '/api/boards/:board/items/:id/comments', 'Add comment: { body } (markdown, @mentions notify); the reply has a "warning" when an agent was named without @ or the whole body is a file path (the board does not read it). The human\'s "@agent remember that …" also goes into that agent\'s memory', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/items/:id/comments', 'Add comment: { body } (markdown, @mentions notify); the reply has a "warning" when an agent was named without @, an @mentioned name wakes nobody (not a standing agent, a person or a listener), or the whole body is a file path (the board does not read it). The human\'s "@agent remember that …" also goes into that agent\'s memory', ({ p, body, actor }) => {
   const c = addComment(getCtx(p.board), p.id, body, actor);
   const r = rememberFrom(c.body, null, getItem(getCtx(p.board), p.id).id, actor);
   return created(r ? { ...c, ...r } : c);

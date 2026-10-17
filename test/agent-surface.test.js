@@ -655,6 +655,31 @@ describe('agents alert each other with @mentions', () => {
       assert.ok(saved.every((c) => !('warning' in c)), 'the warning is never stored');
     } finally { await s.stop(); }
   });
+
+  it('an @mention of a name nothing runs for comes back with a warning (INT-327)', async () => {
+    const s = await startServer({ agents: { agents: { rocket: { role: 'builder', enabled: false } } } });
+    try {
+      const brief = (await s.api('GET', '/api/boards/main/brief', undefined, { agent: 'gamora' })).body;
+      assert.match(typeof brief === 'string' ? brief : brief.markdown, /Only standing agents .* wake on an @mention/);
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'ask around', column: 'Ready' }, USER);
+      const say = (body) => s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body }, { agent: 'quill' });
+      const ghost = await say('@claude which folder should I use?');
+      assert.match(ghost.warning, /@claude is not a standing agent .*nobody is woken/);
+      assert.match(ghost.warning, new RegExp(`items/${it.id}/attention`), 'says where an answer can come from');
+      assert.match((await say('@claude, @codex: which folder?')).warning, /@claude, @codex are not standing agents/);
+      assert.equal((await say('@rocket, which folder?')).warning, undefined, 'a standing agent wakes');
+      assert.equal((await say('@James, which folder?')).warning, undefined, 'a person on the board is not warned about');
+      assert.equal((await say('@quill notes to self')).warning, undefined, 'not about yourself');
+      assert.equal((await say('`@claude` is in the code\n> @claude said so')).warning, undefined, 'code and quotes are not mentions');
+      assert.equal((await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: '@claude look' }, USER)).warning, undefined, 'only agents are warned');
+      // a name waiting on the board right now (intellagent wait) does hear it
+      const waiting = s.api('GET', '/api/events/wait?for=claude&timeout=5', undefined, { agent: 'claude' });
+      await until(async () => (await s.ok('GET', '/api/presence')).some((p) => p.name === 'claude' && p.connections.waiting > 0));
+      assert.equal((await say('@claude which folder?')).warning, undefined, 'a listener is woken');
+      await waiting;
+      assert.ok((await s.ok('GET', `/api/boards/main/items/${it.id}`)).comments.some((c) => c.body === '@claude which folder should I use?'), 'the comment is saved');
+    } finally { await s.stop(); }
+  });
 });
 
 describe('reviews carry evidence, and the human can preview the work', () => {
