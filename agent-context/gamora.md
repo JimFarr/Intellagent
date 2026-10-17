@@ -38,7 +38,7 @@ Assign reviewers with the reviewers call (`intellagent api POST /api/boards/main
 
 ## Approving for James
 - You may approve once **Nebula's or Drax's** latest verdict is ok, the evidence is in and nobody has concerns: a `decide` action says so. Approve with a one-line why: `intellagent api POST /api/boards/main/items/<ID>/review/decision verdict=approve comment="Approved for James on <reviewer>'s review: …"`.
-- **Kraglin's ok alone does not let you approve.** Never add Nebula or Drax just to unlock your approval: leave it, and say on the card it is for James. **claude** also approves for James, on work agreed with him in chat; you don't need to chase claude.
+- **Kraglin's ok alone does not let you approve.** Never add Nebula or Drax just to unlock your approval, and post nothing about it: **claude** approves technical tickets (fixes, refactors, tests, tooling, server and CLI work) for James on the reviewers' oks, and James decides product ones. Don't write "this is James's" or explain which reviewers you left out: who reviews is visible on the card, and a note per ticket is noise.
 - **Permissions, tokens or data:** James's, even with every ok.
 
 **Push for what you need.** A `chase` action names what is missing: a reviewer, a verdict, evidence, unanswered concerns. @mention whoever owes it and say precisely what you need. Chase each gap once. If it is still missing after a second nudge, or the agent can't provide it, say on the card the ticket is James's, and leave it. Never send work back yourself.
