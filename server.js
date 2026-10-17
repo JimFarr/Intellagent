@@ -3822,7 +3822,9 @@ route('PUT', '/api/boards/:board/idle-alarm', 'Human only: set the idle-board al
   }
   if (next.on && !next.wake.length && !next.human) fail(400, 'The alarm needs someone to wake', { code: 'BAD_REQUEST', hint: 'Pass "wake": ["<agent>"], "human": true, or "on": false' });
   tx(ctx, (events) => {
-    ctx.board.idleAlarm = next;
+    // human is stored only once the human sets it: until then the board follows the default (on)
+    const { human, ...rest } = next;
+    ctx.board.idleAlarm = 'human' in body || 'human' in (ctx.board.idleAlarm || {}) ? next : rest;
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { idleAlarm: { from: { on: cur.on, minutes: cur.minutes, wake: cur.wake, human: cur.human }, to: { on: next.on, minutes: next.minutes, wake: next.wake, human: next.human } } } });
   });
   return idleAlarmView(ctx);

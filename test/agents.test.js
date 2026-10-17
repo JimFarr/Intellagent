@@ -493,6 +493,11 @@ describe('standing agents pick up work already on the board', () => {
       // INT-294: nobody named is fine while the human hears it
       const none = await s.ok('PUT', `${B}/idle-alarm`, { on: true, wake: [] }, USER);
       assert.deepEqual([none.on, none.wake, none.human], [true, [], true]);
+      const stored = () => JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).idleAlarm || {};
+      assert.equal('human' in stored(), false, 'not sent, not stored: it follows the default');
+      assert.equal((await s.ok('PUT', `${B}/idle-alarm`, { human: false, wake: ['lead'] }, USER)).human, false);
+      assert.equal((await s.ok('PUT', `${B}/idle-alarm`, { minutes: 40 }, USER)).human, false, 'once set, it stays');
+      await s.ok('PUT', `${B}/idle-alarm`, { human: true }, USER);
       const set = await s.ok('PUT', `${B}/idle-alarm`, { wake: ['lead'], minutes: 45, note: 'Nudge the assignees first; ask Gamora for anything unassigned.' }, USER);
       assert.deepEqual([set.on, set.minutes, set.wake, set.from], [true, 45, ['lead'], 'settings']);
       assert.equal(set.note, 'Nudge the assignees first; ask Gamora for anything unassigned.');
