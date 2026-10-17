@@ -7,10 +7,50 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const fs = require('fs');
 const { startServer, USER } = require('./helpers');
-const { createLibrary, PERMS, POWERS } = require('../lib/permissions');
+const { createLibrary, PERMS, POWERS, escalation } = require('../lib/permissions');
 const { runFor, ROLES } = require('../lib/agents');
 
 const B = '/api/boards/main';
+
+describe('the escalation rule for admin.permissions (INT-256)', () => {
+  const lib = createLibrary({
+    deploy: { kind: 'command', name: 'Deploy', commands: ['npm run deploy:staging'], needs: ['test'] },
+    ship: { kind: 'bundle', name: 'Ship', includes: ['deploy', 'git'] },
+  });
+  const ann = { name: 'ann', perms: ['edit', 'test'], grants: ['admin.permissions', { power: 'review.decide', where: { 'fields.risk': 'low' } }] };
+  const codes = (r) => r.map((x) => x.code);
+
+  it('allows what the holder holds, on another agent', () => {
+    assert.deepEqual(escalation(lib, ann, 'bob', ['test']), []);
+    // edit has the same file tools as read, but read is its own key, and ann doesn't hold it
+    assert.deepEqual(escalation(lib, ann, 'bob', ['read'])[0].missing, ['read']);
+  });
+
+  it('never its own row, whatever the case of the name', () => {
+    assert.deepEqual(codes(escalation(lib, ann, 'Ann', ['test'])), ['OWN_ROW']);
+  });
+
+  it('never beyond what it holds, with bundles and needs expanded, and names what is missing', () => {
+    const web = escalation(lib, ann, 'bob', ['web']);
+    assert.deepEqual(codes(web), ['BEYOND_HELD']);
+    assert.deepEqual(web[0].missing, ['web']);
+    // a bundle brings its parts and what they need: ann holds test, not ship, deploy or git
+    assert.deepEqual(escalation(lib, ann, 'bob', ['ship'])[0].missing, ['deploy', 'git', 'ship']);
+    // holding the bundle covers its parts
+    assert.deepEqual(escalation(lib, { ...ann, perms: ['ship'] }, 'bob', ['deploy']), []);
+    // powers too: a power it holds, scoped or not, is within the rule; one it doesn't is not
+    assert.deepEqual(escalation(lib, ann, 'bob', ['review.decide']), []);
+    assert.deepEqual(escalation(lib, ann, 'bob', ['work.land'])[0].missing, ['work.land']);
+  });
+
+  it('never hands out admin.permissions, even though it holds it', () => {
+    assert.deepEqual(codes(escalation(lib, ann, 'bob', ['admin.permissions'])), ['ADMIN_PERMISSIONS']);
+  });
+
+  it('reports every refusal at once', () => {
+    assert.deepEqual(codes(escalation(lib, ann, 'ann', ['web', 'admin.permissions'])).sort(), ['ADMIN_PERMISSIONS', 'BEYOND_HELD', 'OWN_ROW']);
+  });
+});
 
 describe('permission library', () => {
   it('seeds the built-ins from PERMS and POWERS', () => {
