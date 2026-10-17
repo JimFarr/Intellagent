@@ -2881,12 +2881,15 @@ const ruleErrors = (fn) => { try { return fn(); } catch (e) { if (e instanceof c
 const cardRulesOf = (ctx) => ctx.board.cardRules || [];
 // A ticket as search sees it, with the review facts (only verdicts that still stand) and reviewers.<name>.
 function searchView(ctx, item, archived, blocksOf) {
+  const facts = cardrules.reviewFacts(item, (r) => verdictStands(item, r, ctx));
   const v = {
     ...itemView(ctx, item, archived, blocksOf),
     claimant: activeLease(item)?.claimant ?? null,
     authorName: item.author?.name, authorKind: item.author?.kind,
-    ...cardrules.reviewFacts(item, (r) => verdictStands(item, r, ctx)),
+    reviewers: facts.reviewers,
   };
+  // item.review is the decision record (verdict, by, at…): the facts join it, they do not replace it
+  v.review = { ...item.review, ...facts.review };
   if (!archived && cardRulesOf(ctx).length) { const look = cardrules.lookFor(v, cardRulesOf(ctx)); if (look) v.look = look; }
   return v;
 }

@@ -141,4 +141,19 @@ describe('card rules on a board', () => {
       assert.equal((await check('review.allOk')).count, 0);
     } finally { await s.stop(); }
   });
+
+  it('the review facts join the decision record in search instead of replacing it', async () => {
+    const s = await startServer({});
+    try {
+      const it = await s.ok('POST', '/api/boards/main/items', { title: 'decided', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'shots' }, { agent: 'dev' });
+      await s.ok('POST', `/api/boards/main/items/${it.id}/review/decision`, { verdict: 'approve', comment: 'fine' }, USER);
+      const full = (await s.ok('POST', '/api/search', { board: 'main', where: { id: it.id }, full: true }, USER)).items[0];
+      assert.equal(full.review.verdict, 'approved', 'the decision is still there');
+      assert.equal(full.review.oks, 0, 'and so are the facts');
+      const byVerdict = await s.ok('POST', '/api/search', { board: 'main', where: { 'review.verdict': 'approved' } }, USER);
+      assert.ok(byVerdict.items.some((x) => x.id === it.id), 'review.verdict still works in where');
+    } finally { await s.stop(); }
+  });
 });

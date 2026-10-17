@@ -262,7 +262,7 @@ The human names a **condition** and the **look** a ticket earns when it holds ("
 
 A condition is terms separated by spaces, all of which must hold: `review.allOk` (set) · `!review.concerns` (not) · `fields.risk:low` (equals; `a|b` either) · `review.oks>=2` (`> >= < <= =`) · `reviewers.nebula:ok` · `@drax` (assigned or leased) · `is:rule:<name>`. One that does not parse is `400 BAD_REQUEST` naming the term, with a hint.
 
-Every ticket in search carries **review facts**: `review.oks`, `review.pending`, `review.concerns`, `review.allOk`, `review.evidence`, and `reviewers.<name>`. They count only verdicts that stand (given with the reviewer's own token, about the commits the ticket has now), so a stale ok never shows as approval. Use them in `where` (`{ "review.oks": { "gte": 2 } }`) or as `filter` (`POST /api/search { filter: "review.allOk" }`, `GET /api/search?filter=…`).
+Every ticket in search carries **review facts**: `review.oks`, `review.pending`, `review.concerns`, `review.allOk`, `review.evidence`, and `reviewers.<name>`. They count only verdicts that stand (given with the reviewer's own token, about the commits the ticket has now), so a stale ok never shows as approval. `review.evidence` is true only while a review is open (the evidence lives on the open review). The facts sit beside the decision record (`review.verdict`, `review.by`…) in the same `review` object. Use them in `where` (`{ "review.oks": { "gte": 2 } }`) or as `filter` (`POST /api/search { filter: "review.allOk" }`, `GET /api/search?filter=…`).
 
 ## 4. Talk to the human
 
