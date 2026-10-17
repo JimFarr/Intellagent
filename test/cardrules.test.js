@@ -219,3 +219,63 @@ describe('rule marks (INT-290)', () => {
     } catch (e) { await s.stop().catch(() => {}); throw e; }
   });
 });
+
+describe('any-of, groups, the age fact and rule names with spaces (INT-292)', () => {
+  const view = { assignee: 'drax', claimant: null, priority: 'High', columnDays: 5, fields: { risk: 'low' }, review: { oks: 2, allOk: true, concerns: 0 }, reviewers: {} };
+  const ok = (text, rules) => holds(parseCondition(text), view, rules);
+  it('or: either side; and binds tighter; a group is one unit; old conditions answer the same', () => {
+    assert.ok(ok('@groot or @drax'));
+    assert.ok(!ok('@groot or @nebula'));
+    assert.ok(ok('@groot review.allOk or @drax'), 'and binds tighter: (@groot and allOk) or @drax');
+    assert.ok(!ok('@groot or @nebula review.allOk'));
+    assert.ok(ok('review.allOk (@groot or @drax)'));
+    assert.ok(!ok('!review.allOk (@groot or @drax)'));
+    assert.ok(ok('(@groot or @nebula) or fields.risk:low'));
+    assert.ok(ok('fields.risk:low|high review.oks>=2'), 'a|b inside one term still works');
+    assert.ok(ok('@drax OR @groot'), 'or in any case');
+  });
+  it('a group inside a group, an unclosed or stray bracket and a dangling or are 400s with a hint', () => {
+    for (const bad of ['(@a or (@b @c))', '(@a or @b', '@a or @b)', 'or @a', '@a or', '()', '(@a or)', '@a or or @b']) {
+      assert.throws(() => parseCondition(bad), (e) => e instanceof RuleError && !!e.message && !!e.hint, bad);
+    }
+    assert.match(assertThrowsHint('(@a or (@b))'), /one level/i);
+  });
+  it('columnDays compares like review.oks', () => {
+    assert.ok(ok('columnDays>=3'));
+    assert.ok(ok('columnDays>4 columnDays<6'));
+    assert.ok(!ok('columnDays>5'));
+    assert.ok(ok('columnDays=5'));
+    assert.ok(ok('columnDays>=9 or columnDays<=5'));
+  });
+  it('is:rule: finds a rule named with a space, by quotes or by a dash, in any case', () => {
+    const rules = [{ name: 'full approval', condition: 'review.allOk review.oks>=2' }, { name: 'cold', condition: 'columnDays>=9' }];
+    assert.ok(ok('is:rule:"full approval"', rules));
+    assert.ok(ok('is:rule:full-approval', rules));
+    assert.ok(ok('is:rule:Full-Approval', rules));
+    assert.ok(!ok('is:rule:cold', rules));
+    assert.ok(ok('is:rule:cold or is:rule:"full approval"', rules));
+    assert.throws(() => parseCondition('is:rule:"full approval'), (e) => e instanceof RuleError && !!e.hint, 'an open quote');
+  });
+  it('on a board: columnDays is a search fact and filter term, and the check route takes the new syntax', async () => {
+    const s = await startServer({ agents: { agents: {} } });
+    try {
+      const it1 = await s.ok('POST', '/api/boards/main/items', { title: 'fresh', column: 'Ready', type: 'task' }, USER);
+      const q = (c) => s.ok('GET', `/api/boards/main/card-rules/check?condition=${encodeURIComponent(c)}`);
+      assert.equal((await q('columnDays<1')).count, 1);
+      assert.equal((await q('columnDays>=1')).count, 0);
+      assert.deepEqual((await q('columnDays>=1 or (type:task columnDays=0)')).ids, [it1.id]);
+      const found = await s.ok('POST', '/api/search', { board: 'main', where: { columnDays: { lt: 1 } }, fields: ['id', 'columnDays'] });
+      assert.deepEqual(found.items.map((x) => [x.id, x.columnDays]), [[it1.id, 0]]);
+      assert.equal((await s.api('GET', `/api/boards/main/card-rules/check?condition=${encodeURIComponent('(a or (b))')}`)).status, 400);
+      // a rule with the new syntax is stored and earns its look
+      await s.ok('PUT', '/api/boards/main/card-rules', { rules: [{ name: 'fresh work', condition: 'columnDays<1 (type:task or type:spike)', look: { badge: 'new' } }, { name: 'also', condition: 'is:rule:"fresh work"', look: { ribbon: 'fresh' } }] }, USER);
+      const m = await s.ok('GET', '/api/boards/main/card-rules/matches');
+      assert.deepEqual(m[it1.id].rules, ['fresh work', 'also']);
+    } finally { await s.stop(); }
+  });
+});
+
+function assertThrowsHint(text) {
+  try { parseCondition(text); } catch (e) { return `${e.message} ${e.hint}`; }
+  return '';
+}
