@@ -1939,6 +1939,12 @@ function decideReview(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
     const grant = grantFor(ctx, actor, 'review.decide', item, 'decide reviews');
+    // No open review: say whether it was already decided (and by whom), before the evidence check reads the review.
+    const decided = item.review?.verdict && !reviewWithdrawnUndecided(item) ? item.review : null;
+    if (grant && !(item.questions || []).some((x) => x.kind === 'review')) {
+      if (decided) fail(409, `${item.id} was already decided: ${decided.by} ${decided.verdict === 'approve' ? 'approved' : 'sent it back'} it at ${decided.at}`, { code: 'ALREADY_DECIDED', hint: 'Leave it: that decision stands, and the human can override it', decidedBy: decided.by, decidedAt: decided.at });
+      fail(409, `${item.id} has no open review to decide`, { code: 'NO_REVIEW', hint: 'Ask the author to request review first' });
+    }
     // A delegated approval never overrules a reviewer: with any concerns open, only the human approves.
     const worried = (item.reviewers || []).filter((r) => r.verdict === 'concerns').map((r) => r.name);
     const evidence = String((item.questions || []).find((x) => x.kind === 'review')?.notes?.evidence || '').trim();

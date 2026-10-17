@@ -746,6 +746,13 @@ describe('delegated approval on a reviewer\'s ok', () => {
       assert.equal((await decide(e.id)).body.code, 'NO_EVIDENCE');
       assert.match((await work()).find((n) => n.id === e.id)?.why || '', /evidence from dev/);
 
+      // a decision once made says so (who and when), instead of NO_EVIDENCE (INT-315)
+      const again = await decide(a.id);
+      assert.equal(again.status, 409);
+      assert.equal(again.body.code, 'ALREADY_DECIDED');
+      assert.match(again.body.error, /was already decided: .* approved it at /);
+      assert.ok(again.body.decidedBy && again.body.decidedAt, 'names who decided it and when');
+
       const c = await inReview('QA has concerns');
       await verdict(c.id, 'nebula', 'concerns');
       assert.equal((await decide(c.id)).status, 403, "Nebula's concerns are out of scope");
@@ -778,6 +785,31 @@ describe('delegated approval on a reviewer\'s ok', () => {
       assert.deepEqual(refused.body.blockedBy, [blocker.id]);
       const human = await s.api('POST', `/api/boards/main/items/${f.id}/review/decision`, { verdict: 'approve', comment: 'ship the half' }, USER);
       assert.equal(human.status, 200, 'the human approves over a blocker');
+    } finally { await s.stop(); }
+  });
+});
+
+describe('a decision with no open review says so (INT-315)', () => {
+  it('NO_REVIEW for a ticket never reviewed; the permission and own-work checks come first', async () => {
+    const s = await startServer({ agents: { agents: {
+      gamora: { role: 'coordinator', enabled: false, grants: [{ power: 'review.decide' }] },
+      dev: { role: 'builder', enabled: false },
+    } } });
+    try {
+      const decide = (id) => s.api('POST', `/api/boards/main/items/${id}/review/decision`, { verdict: 'approve', comment: 'ok' }, { agent: 'gamora' });
+      const never = await s.ok('POST', '/api/boards/main/items', { title: 'never reviewed', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${never.id}/start`, {}, { agent: 'dev' });
+      const none = await decide(never.id);
+      assert.equal(none.status, 409);
+      assert.equal(none.body.code, 'NO_REVIEW');
+      assert.ok(none.body.hint);
+      // gamora's own ticket is refused as her own work, before the review check
+      const mine = await s.ok('POST', '/api/boards/main/items', { title: 'gamora own', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${mine.id}/start`, {}, { agent: 'gamora' });
+      assert.equal((await decide(mine.id)).body.code, 'OWN_WORK');
+      // and a builder without the grant is refused before either
+      const dev = await s.api('POST', `/api/boards/main/items/${never.id}/review/decision`, { verdict: 'approve' }, { agent: 'dev' });
+      assert.equal(dev.body.code, 'HUMAN_ONLY');
     } finally { await s.stop(); }
   });
 });
