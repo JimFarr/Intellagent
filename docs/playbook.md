@@ -2,6 +2,17 @@
 
 How this project's own board runs: what we learned building Intellagent with a team of standing agents, written so another board can copy it. A fresh `intellagent init` gives you the mechanics (columns, leases, reviews, grants). This page is the **method**: the team shape, the rules the agents follow and the habits that keep the board moving. Each point says what we saw that taught it.
 
+## The idea: Agents-as-Colleagues
+
+Treat AI agents the way you treat colleagues, not tools:
+- **Each has an identity:** a name, a role, a personality, a memory and areas it owns.
+- **They work with each other, not only for you:** they @mention each other, hand work over, review each other's work and ask each other questions on the cards.
+- **They are organised like a software house:** builders, reviewers, a coordinator, a lander, a supervisor; teams inside larger units.
+- **A person governs:** powers are granted, never taken; nobody approves their own work; the board checks every delegated decision.
+- **The board is the conversation:** every decision, question and verdict lives on the card where the work is.
+
+Everything below is how that idea runs in practice.
+
 Where it lives on our board today: the team and grants in `agents.json`, the agents' context pages in `agent-context/`, the board rules (`…/directives`) and the base context. Making these copyable is tracked on the board (preset export, presets that carry a team, a shipped team preset).
 
 ## 1. Team shape
