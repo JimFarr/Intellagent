@@ -765,6 +765,7 @@ const { POWERS, createLibrary: createPermLibrary, guidanceLine } = require('./li
 const { createRoles } = require('./lib/agents/roles');
 const { BASE_MAX, shipped: shippedBase } = require('./lib/agents/base');
 const { layersFor } = require('./lib/agents/prompt');
+const { cleanPersonality, cleanContextItems } = require('./lib/agents/config');
 const { createMemory, rememberText } = require('./lib/memory');
 const { createMetrics } = require('./lib/metrics');
 const { createAnalytics, waitingOnHuman } = require('./lib/analytics');
@@ -4973,7 +4974,7 @@ route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=2
    agent. What it may change is a fixed list; the run command, grants, enabled, env and cwd stay with the
    human's file. Models come from an allowlist, and tool perms and board permissions only ever narrow. */
 const MANAGER_MODELS = Array.isArray(M.managerModels) && M.managerModels.length ? M.managerModels.map(String) : ['haiku', 'sonnet', 'opus'];
-const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context', 'reviewer'];
+const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context', 'contextItems', 'personality', 'reviewer'];
 // a list of short strings (areas: paths or globs; concerns: phrases)
 const strList = (v, what) => {
   if (v == null) return null;
@@ -5064,14 +5065,24 @@ function manageAgent(target, d, actor) {
   if ('areas' in d) cfg.areas = strList(d.areas, 'areas');
   if ('concerns' in d) cfg.concerns = strList(d.concerns, 'concerns');
   if ('reviewer' in d) cfg.reviewer = d.reviewer ? true : null;
+  if ('personality' in d) cfg.personality = cleanPersonality(d.personality);
+  if ('context' in d && 'contextItems' in d) fail(400, 'Send either context (the one "Context" note) or contextItems, not both', { code: 'BAD_REQUEST', hint: 'contextItems is the whole list; context only sets its "Context" note' });
+  if ('context' in d || 'contextItems' in d) {
+    // The whole list goes through manage, so the history holds it in full and Revert puts the old list back.
+    const items = 'contextItems' in d
+      ? cleanContextItems(d.contextItems, standing.checkContextPath) || []
+      : cleanContextItems(standing.itemsWithNote(name, d.context == null ? '' : str(d.context, 20_000)), standing.checkContextPath);
+    // A file is read into this agent's prompt on every run and a link is shown in it: an agent manager sets
+    // notes only, and leaves the human's files and links exactly as they are.
+    const pinned = (xs) => JSON.stringify((xs || []).filter((i) => i.kind !== 'note'));
+    if (agent && pinned(items) !== pinned(standing.contextItemsOf(name))) {
+      fail(403, 'File and link context items are the human\'s: a file is read into the prompt on every run', { code: 'HUMAN_ONLY', hint: 'Change notes only, and send the existing file and link items back unchanged' });
+    }
+    cfg.contextItems = items;
+    cfg.context = null; // the old inline page: the items replace it
+  }
   const by = { kind: actor.kind, name: actor.name };
   const res = Object.keys(cfg).length ? standing.manage(name, cfg, by) : { changes: {} };
-  if ('context' in d) {
-    const text = d.context == null ? '' : str(d.context, 20_000);
-    const before = standing.setContext(name, text);
-    const short = (t) => (t ? `${t.trim().split('\n')[0].slice(0, 80)}… (${t.length} chars)` : null);
-    if (before !== text) res.changes.context = { from: short(before), to: short(text) };
-  }
   // display: label, glyph, colour and personality live on the profile
   const prof = Object.fromEntries(['label', 'glyph', 'color', 'alignment'].filter((k) => k in d).map((k) => [k, d[k]]));
   if ('description' in d) prof.description = d.description;
@@ -5107,9 +5118,14 @@ route('GET', '/api/files', 'Project files and folders matching ?q= (git-tracked;
   // shortest first: folders and near matches before deep files
   return hits.sort((a, b) => a.length - b.length || a.localeCompare(b)).slice(0, 40);
 });
-route('GET', '/api/agents/:name/context', "An agent's context page (markdown) and where it lives", ({ p }) => {
+route('GET', '/api/agents/:name/context', "An agent's context as the text its prompt gets (items rendered: notes, files read now, links listed) and its items", ({ p }) => {
   const a = standing.get(p.name);
-  return { agent: a.name, file: a.contextFile, text: standing.contextOf(a.name) };
+  return { agent: a.name, file: a.contextFile, items: a.contextItems, text: standing.contextOf(a.name) };
+});
+route('GET', '/api/agents/:name/preview', "Human or agents.manage: the first-turn prompt the board would send this agent now (role brief, speciality, personality, context items, rules), built by the code a real run uses → { agent, prompt }", ({ p, actor }) => {
+  if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.manage')) humanOnly(actor);
+  standing.get(p.name); // 404 if unknown
+  return { agent: p.name, prompt: standing.preview(p.name) };
 });
 // Read-only, but it shows what an agent's tools are built from, so it is for whoever may change them.
 route('POST', '/api/agents/:name/commands/check', 'Human or agents.manage: what would become of a command in this agent\'s "commands": { command } → { kept, why, listed, allowedBy: [permissions that already allow it], denied: { needs, why } | null, applies }. The same rule the run builder applies; changes nothing', ({ p, body, actor }) => {
@@ -5119,7 +5135,7 @@ route('POST', '/api/agents/:name/commands/check', 'Human or agents.manage: what 
   standing.get(p.name); // 404 if unknown
   return standing.checkCommand(p.name, body.command);
 });
-route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? } } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself)', ({ p, body, actor }) => manageAgent(p.name, body, actor));
+route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), context? (sets the "Context" note) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));
 route('POST', '/api/agents/stop-all', 'Human (or the agents.control grant): stop every agent now — kill runs, pause standing agents, release agent leases and the master lease, send their In Progress tickets back to Ready with a comment', ({ actor }) => {
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
   return stopAllAgents(actor);

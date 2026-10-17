@@ -1712,11 +1712,11 @@ describe('specialised agents', () => {
     try {
       // edit from the UI's API: add an area and write the context page
       const r = await s.ok('PATCH', '/api/agents/pixel', { areas: ['public/app.css', 'public/themes/'], concerns: ['dark/light parity', 'calm motion'], context: '# Pixel\nThemes live in STYLE tokens.' }, USER);
-      assert.ok(r.changes.areas && r.changes.context, JSON.stringify(r.changes));
+      assert.ok(r.changes.areas && r.changes.contextItems, JSON.stringify(r.changes));
       const a = await s.ok('GET', '/api/agents/pixel');
       assert.deepEqual(a.areas, ['public/app.css', 'public/themes/']);
-      assert.equal(a.contextFile, 'agent-context/pixel.md');
-      assert.ok(fs.existsSync(path.join(s.dir, 'agent-context', 'pixel.md')), 'the context page is a file beside agents.json');
+      assert.deepEqual(a.contextItems.map((i) => [i.kind, i.title]), [['note', 'Context']], 'the page is one note item, kept in agents.json');
+      assert.ok(!fs.existsSync(path.join(s.dir, 'agent-context', 'pixel.md')), 'no page file is written any more');
       assert.match((await s.ok('GET', '/api/agents/pixel/context')).text, /STYLE tokens/);
       // the agent's own brief, and the receptionist's routing view
       const brief = (await s.api('GET', `${B}/brief`, undefined, { agent: 'pixel' })).body;
@@ -1909,7 +1909,172 @@ describe('extra commands the human allows', () => {
   });
 });
 
+describe('personality and context items (INT-240)', () => {
+  const patch = (s, name, body, who = USER) => s.api('PATCH', `/api/agents/${name}`, body, who);
+  it('a personality is one plain line in the brief; the dials are checked; it reverts', async () => {
+    const s = await startServer({ agents: { agents: { dev: { role: 'builder', enabled: false }, manager: { role: 'coordinator', enabled: false, grants: ['agents.manage'] } } } });
+    try {
+      const bad = await patch(s, 'dev', { personality: { explains: 7 } });
+      assert.equal(bad.status, 400);
+      assert.equal(bad.body.code, 'BAD_REQUEST');
+      assert.ok(bad.body.hint);
+      assert.equal((await patch(s, 'dev', { personality: { mood: 1 } })).status, 400);
+      const r = await patch(s, 'dev', { personality: { explains: 0, speed: 4, text: 'Dry humour is fine.' } });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(r.body.changes.personality);
+      assert.match(await s.ok('GET', '/api/agents/dev/context').then((c) => JSON.stringify(c)), /^\{"agent":"dev"/);
+      assert.deepEqual((await agentState(s, 'dev')).personality, { explains: 0, speed: 4, text: 'Dry humour is fine.' });
+      const { specialityText } = require('../lib/agents');
+      const line = specialityText({ personality: { explains: 0, speed: 4, text: 'Dry humour is fine.' } }, () => '');
+      assert.match(line, /How to work: Say as little as you can\. Move fast and fix as you go\. Dry humour is fine\./);
+      // an agent manager may set it too, and it is recorded
+      assert.equal((await patch(s, 'dev', { personality: { autonomy: 0 } }, { agent: 'manager' })).status, 200);
+      const hist = (await agentState(s, 'dev')).changes;
+      const first = hist.find((c) => c.changes.personality && c.by.kind === 'user');
+      assert.deepEqual(first.changes.personality.to, { explains: 0, speed: 4, text: 'Dry humour is fine.' }, 'the history holds the whole value, so Revert can put it back');
+      // null clears
+      await patch(s, 'dev', { personality: null });
+      assert.equal((await agentState(s, 'dev')).personality, null);
+    } finally { await s.stop(); }
+  });
+
+  it('context items: note, file, link; a file is read fresh, link is only listed; checked on save and on every read', async () => {
+    const s = await startServer({ agents: { agents: { dev: { role: 'builder', enabled: false } } } });
+    try {
+      fs.writeFileSync(path.join(s.dir, 'STYLE.md'), 'Use tabs.');
+      const items = [
+        { kind: 'note', title: 'House rules', body: 'Be kind.' },
+        { kind: 'file', title: 'Style', path: 'STYLE.md' },
+        { kind: 'link', title: 'Design doc', url: 'https://example.com/doc' },
+        { kind: 'note', title: 'Off', body: 'hidden text', on: false },
+      ];
+      const r = await patch(s, 'dev', { contextItems: items });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      let ctx = await s.ok('GET', '/api/agents/dev/context');
+      assert.match(ctx.text, /### House rules\nBe kind\./);
+      assert.match(ctx.text, /### Style \(STYLE\.md\)\nUse tabs\./);
+      assert.match(ctx.text, /Design doc: https:\/\/example\.com\/doc/);
+      assert.ok(!ctx.text.includes('hidden text'), 'a switched-off item is not in the prompt');
+      assert.ok(ctx.items.every((i) => i.id), 'ids are assigned');
+      // read fresh each run
+      fs.writeFileSync(path.join(s.dir, 'STYLE.md'), 'Use spaces.');
+      assert.match((await s.ok('GET', '/api/agents/dev/context')).text, /Use spaces\./);
+      // paths that must never be pinned
+      for (const p of ['local.json', 'agents.json', 'agent-context/dev.md', 'data/board.json', '../outside.txt', path.join(os.tmpdir(), 'x.txt')]) {
+        const bad = await patch(s, 'dev', { contextItems: [{ kind: 'file', title: 'x', path: p }] });
+        assert.equal(bad.status, 403, `${p}: ${JSON.stringify(bad.body)}`);
+        assert.equal(bad.body.code, 'FORBIDDEN');
+        assert.ok(bad.body.hint);
+      }
+      // other input is checked
+      for (const body of [[{ kind: 'x', title: 't', body: 'b' }], [{ kind: 'note', title: '', body: 'b' }], [{ kind: 'note', title: 't' }], [{ kind: 'link', title: 't', url: 'file:///etc/passwd' }], 'nope']) {
+        assert.equal((await patch(s, 'dev', { contextItems: body })).status, 400, JSON.stringify(body));
+      }
+      assert.equal((await patch(s, 'dev', { context: 'x', contextItems: [] })).status, 400);
+      // a pinned file that became a protected one is not read: the check runs on every read
+      const raw = JSON.parse(fs.readFileSync(path.join(s.dir, 'agents.json'), 'utf8'));
+      raw.agents.dev.contextItems.push({ id: 'sneak', kind: 'file', title: 'Token', path: 'local.json', on: true });
+      fs.writeFileSync(path.join(s.dir, 'agents.json'), JSON.stringify(raw));
+      await until(async () => (await s.ok('GET', '/api/agents/dev/context')).text.includes('Token'), 8000, 'board re-read agents.json');
+      ctx = await s.ok('GET', '/api/agents/dev/context');
+      assert.match(ctx.text, /### Token \(local\.json\)\n\(not read: it is one of the board's own files\)/);
+      assert.ok(!ctx.text.includes('agentTokens') && !ctx.text.includes('"token"'), 'the token never reaches the prompt');
+      assert.equal(ctx.items.find((i) => i.id === 'sneak').check.ok, false);
+    } finally { await s.stop(); }
+  });
+
+  it('an agent manager sets notes only; files and links stay the human\'s; all of it is in the history and reverts', async () => {
+    const s = await startServer({ agents: { agents: {
+      dev: { role: 'builder', enabled: false },
+      manager: { role: 'coordinator', enabled: false, grants: ['agents.manage'] },
+    } } });
+    try {
+      fs.writeFileSync(path.join(s.dir, 'STYLE.md'), 'Use tabs.');
+      await patch(s, 'dev', { contextItems: [{ kind: 'file', title: 'Style', path: 'STYLE.md' }, { kind: 'link', title: 'Doc', url: 'https://example.com' }] });
+      const cur = (await agentState(s, 'dev')).contextItems.map(({ check, ...i }) => i);
+      const m = { agent: 'manager' };
+      // adding a file or a link, changing one, or dropping one: human only
+      for (const items of [[...cur, { kind: 'file', title: 'Other', path: 'STYLE.md' }], cur.slice(1), [{ ...cur[0], path: 'server.js' }, cur[1]], [...cur, { kind: 'link', title: 'More', url: 'https://example.org' }]]) {
+        const r = await patch(s, 'dev', { contextItems: items }, m);
+        assert.equal(r.status, 403, JSON.stringify(r.body));
+        assert.equal(r.body.code, 'HUMAN_ONLY');
+        assert.ok(r.body.hint);
+      }
+      // a note beside them, echoing them back, is fine
+      const ok = await patch(s, 'dev', { contextItems: [...cur, { kind: 'note', title: 'Tip', body: 'Run the tests.' }] }, m);
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+      assert.match((await s.ok('GET', '/api/agents/dev/context')).text, /### Tip\nRun the tests\./);
+      // the history holds the full list as it was, so Revert can send it back
+      const last = (await agentState(s, 'dev')).changes.at(-1);
+      assert.equal(last.by.name, 'manager');
+      assert.deepEqual(last.changes.contextItems.from.map((i) => i.kind), ['file', 'link']);
+      assert.deepEqual(last.changes.contextItems.to.map((i) => i.kind), ['file', 'link', 'note']);
+      const back = await patch(s, 'dev', { contextItems: last.changes.contextItems.from });
+      assert.equal(back.status, 200);
+      assert.ok(!(await s.ok('GET', '/api/agents/dev/context')).text.includes('Run the tests'));
+    } finally { await s.stop(); }
+  });
+
+  it('the old context page moves into one note item once; the file stays as a backup; a later edit of it is reported, not read', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-ctx-'));
+    fs.mkdirSync(path.join(dir, 'agent-context'));
+    fs.writeFileSync(path.join(dir, 'agent-context', 'pixel.md'), '# Pixel\nThemes live in STYLE tokens.');
+    const agents = { agents: { pixel: { role: 'builder', enabled: false }, inline: { role: 'builder', enabled: false, context: 'Inline words.' }, plain: { role: 'builder', enabled: false } } };
+    let s = await startServer({ dir, agents });
+    try {
+      const px = await agentState(s, 'pixel');
+      assert.deepEqual(px.contextItems.map((i) => [i.id, i.kind, i.title, i.body]), [['context', 'note', 'Context', '# Pixel\nThemes live in STYLE tokens.']]);
+      assert.match((await s.ok('GET', '/api/agents/pixel/context')).text, /Themes live in STYLE tokens\./);
+      assert.deepEqual((await agentState(s, 'inline')).contextItems.map((i) => i.body), ['Inline words.']);
+      assert.equal((await agentState(s, 'plain')).contextItems, null, 'an agent with no page is left alone');
+      const raw = JSON.parse(fs.readFileSync(path.join(dir, 'agents.json'), 'utf8'));
+      assert.equal(raw.agents.inline.context, undefined, 'the inline text moved, it is not kept twice');
+      assert.ok(fs.existsSync(path.join(dir, 'agent-context', 'pixel.md')), 'the page stays on disk');
+      const moved = (await agentState(s, 'pixel')).changes.at(-1);
+      assert.equal(moved.by.name, 'intellagent');
+      assert.ok(moved.changes.contextItems, 'the move is in the history');
+      await s.stop();
+      // restart: nothing moves twice, even if the page changed in between
+      fs.writeFileSync(path.join(dir, 'agent-context', 'pixel.md'), 'Edited by hand.');
+      s = await startServer({ dir });
+      const again = await agentState(s, 'pixel');
+      assert.equal(again.contextItems.length, 1);
+      assert.equal(again.contextItems[0].body, '# Pixel\nThemes live in STYLE tokens.');
+      assert.ok(!(await s.ok('GET', '/api/agents/pixel/context')).text.includes('Edited by hand'), 'the page is not read once the items exist');
+      const list = await s.ok('GET', '/api/agents');
+      assert.match(list.error || '', /pixel\.md changed after it moved/);
+      assert.equal(again.changes.filter((c) => c.changes.contextItems).length, 1, 'one move only');
+    } finally { await s.stop(); }
+  });
+
+  it('what the run prompts with is the items text; a note item is in the speciality', () => {
+    const { specialityText } = require('../lib/agents');
+    const text = specialityText({ areas: ['a.js'] }, () => '### Rules\nBe kind.');
+    assert.match(text, /## Your speciality[\s\S]*a\.js[\s\S]*### Rules\nBe kind\./);
+  });
+});
+
 describe('a run gets its own token (INT-248)', () => {
+  it('the preview is the first-turn prompt of a real run: same text around the events; human or agents.manage only', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { dev: { run: run('ok'), role: 'builder', personality: { speed: 4, text: 'Say little.' }, contextItems: [{ kind: 'note', title: 'House rules', body: 'Be kind.' }] }, other: { run: run('ok'), enabled: false } } } });
+    try {
+      const pv = await s.ok('GET', '/api/agents/dev/preview', undefined, USER);
+      assert.match(pv.prompt, /Be kind\./);
+      assert.match(pv.prompt, /Say little\./);
+      assert.match(pv.prompt, /Start with: intellagent brief/);
+      await s.ok('POST', '/api/agents/dev/run', {}, USER);
+      await until(async () => (await s.ok('GET', '/api/agents/dev/log', undefined, USER)).log.includes('--- output ---'), 8000, 'run logged');
+      const log = (await s.ok('GET', '/api/agents/dev/log', undefined, USER)).log;
+      const real = log.slice(log.indexOf('--- prompt ---\n') + 15, log.indexOf('\n--- output ---'));
+      const around = (t) => ({ head: t.slice(0, t.indexOf('You are "dev"')), tail: t.slice(t.indexOf('Start with: intellagent brief')).replace(/Full event JSON: .*$/, '') });
+      assert.deepEqual(around(real), around(pv.prompt));
+      // not for another agent without the grant
+      const r = await s.api('GET', '/api/agents/dev/preview', undefined, { kind: 'agent', name: 'other' });
+      assert.equal(r.status, 403);
+      assert.equal((await s.api('GET', '/api/agents/nobody/preview', undefined, USER)).status, 404);
+    } finally { await s.stop(); }
+  });
+
   it('in INTELLAGENT_TOKEN, never one inherited from the board', async () => {
     // the board itself was started with someone else's token in its environment
     const s = await startServer({ env: { INTELLAGENT_TOKEN: 'inherited-token' }, manifest: { auth: { requireAgentTokens: true } }, agents: { defaults: fast, agents: { adapter: { run: run('token') } } } });
