@@ -755,6 +755,7 @@ const { POWERS, createLibrary: createPermLibrary } = require('./lib/permissions'
 const { createRoles } = require('./lib/agents/roles');
 const { createMemory, rememberText } = require('./lib/memory');
 const { createMetrics } = require('./lib/metrics');
+const { createDigest } = require('./lib/digest');
 // Standing agents the human lets land approved work (work.land): a landing that fails goes to them, not the human.
 const landers = () => { try { return standing.list().agents.filter((a) => a.enabled && grantsOf(a.name).some((g) => g.power === 'work.land')).map((a) => a.name); } catch { return []; } };
 function grantsOf(name) {
@@ -2052,14 +2053,10 @@ function finishSession(ctx, d, actor) {
     const m = activeMaster(ctx);
     const board = !!m && m.holder === actor.name;
     if (board) { ctx.board.master = null; events.push({ board: ctx.id, type: 'master.released', actor, holder: actor.name }); }
-    let digest = null;
-    if (String(d.summary || '').trim()) {
-      digest = { id: rid('d'), date: new Date().toLocaleDateString('en-CA'), ts: now(), author: actor, summary: str(d.summary, 20_000), items: arr(d.items).map((x) => String(x).toUpperCase()).slice(0, 50) };
-      ctx.board.digest.push(digest);
-      if (ctx.board.digest.length > 500) ctx.board.digest.splice(0, ctx.board.digest.length - 500);
-      events.push({ board: ctx.id, type: 'digest.added', actor, entry: { id: digest.id, summary: trimChange(digest.summary) } });
-    }
-    return { released, releasedBoard: board, digest: digest ? digest.id : null };
+    const entry = String(d.summary || '').trim()
+      ? digest.add(ctx, events, actor, str(d.summary, 20_000), arr(d.items).map((x) => String(x).toUpperCase()).slice(0, 50))
+      : null;
+    return { released, releasedBoard: board, digest: entry ? entry.id : null };
   });
 }
 
@@ -3178,6 +3175,7 @@ function updateProfile(name, d, actor) {
 
 const memory = createMemory({ file: path.join(DATA, 'memory.json'), fail, now, rid });
 const metrics = createMetrics({ doneColumnId, workingColumn, recent });
+const digest = createDigest({ rid, now, trimChange, learnedSince: (ms) => memory.learnedSince(ms) });
 // Whose memory a route means: "me" is the calling agent; any other name must be an agent the board knows (a
 // standing agent, one that has called the board, or one with a profile or a memory), matched without regard to
 // capitals so "Rocket" is rocket's memory.
@@ -4159,29 +4157,13 @@ async function workWarnings(ctx, item) {
 }
 
 route('GET', '/api/boards/:board/digest', 'Daily digest: end-of-session summaries, newest first, and what each agent learned that day (learned: [{ agent, id, text, from, at }]). ?days=7', ({ p, q }) => {
-  const ctx = getCtx(p.board);
-  const days = clamp(Number(q.days) || 7, 1, 90);
-  const sinceMs = Date.now() - days * 86_400_000;
-  const since = new Date(sinceMs).toLocaleDateString('en-CA');
-  const byDay = {};
-  for (const e of ctx.board.digest) if (e.date >= since) (byDay[e.date] ||= { entries: [] }).entries.push(e);
-  for (const l of memory.learnedSince(sinceMs)) {
-    const date = new Date(l.at).toLocaleDateString('en-CA');
-    if (date >= since) ((byDay[date] ||= { entries: [] }).learned ||= []).push(l);
-  }
-  return Object.entries(byDay).sort(([a], [b]) => b.localeCompare(a)).map(([date, d]) => ({ date, entries: d.entries.sort((a, b) => b.ts.localeCompare(a.ts)), ...(d.learned ? { learned: d.learned } : {}) }));
+  return digest.read(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90));
 });
 route('POST', '/api/boards/:board/digest', 'Append to today\'s digest: { summary (markdown), items?: [ids] }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   if (!String(body.summary || '').trim()) fail(400, '"summary" is required');
-  return created(tx(ctx, (events) => {
-    const t = now();
-    const entry = { id: rid('d'), date: new Date().toLocaleDateString('en-CA'), ts: t, author: actor, summary: str(body.summary, 20_000), items: arr(body.items).map((x) => String(x).toUpperCase()).filter((id) => !(ctx.board.items[id] || ctx.archive.items[id])?.test).slice(0, 50) };
-    ctx.board.digest.push(entry);
-    if (ctx.board.digest.length > 500) ctx.board.digest.splice(0, ctx.board.digest.length - 500);
-    events.push({ board: ctx.id, type: 'digest.added', actor, entry: { id: entry.id, summary: trimChange(entry.summary) } });
-    return entry;
-  }));
+  return created(tx(ctx, (events) => digest.add(ctx, events, actor, str(body.summary, 20_000),
+    arr(body.items).map((x) => String(x).toUpperCase()).filter((id) => !(ctx.board.items[id] || ctx.archive.items[id])?.test).slice(0, 50))));
 });
 
 route('GET', '/api/boards/:board/brief', 'Start here (agents): who you are, what to do next, how this board works, the exact calls. ?via=cli|mcp|http &format=json', ({ req, p, q, actor }) => {
@@ -4694,11 +4676,7 @@ function manageAgent(target, d, actor) {
   if (agent && boards.has(M.defaultBoard)) {
     const ctx = boards.get(M.defaultBoard);
     const lines = Object.entries(res.changes).map(([k, v]) => `${k}: ${JSON.stringify(v.from)} → ${JSON.stringify(v.to)}`).join('; ');
-    tx(ctx, (events) => {
-      const entry = { id: rid('d'), date: new Date().toLocaleDateString('en-CA'), ts: now(), author: actor, summary: `Changed **${name}** (agents.manage, on the human's behalf): ${lines}`, items: [] };
-      ctx.board.digest.push(entry);
-      events.push({ board: ctx.id, type: 'digest.added', actor, entry: { id: entry.id, summary: trimChange(entry.summary) } });
-    });
+    tx(ctx, (events) => { digest.add(ctx, events, actor, `Changed **${name}** (agents.manage, on the human's behalf): ${lines}`, []); });
   }
   return { agent: standing.get(name), changes: res.changes };
 }

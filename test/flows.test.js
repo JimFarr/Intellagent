@@ -583,6 +583,31 @@ describe('agent flows', () => {
     assert.equal((await s.ok('GET', `${B}/items/${it.id}`)).lease, null);
   });
 
+  it('the digest: a posted entry leaves test tickets out and is an event', async () => {
+    const real = await mk({ title: 'in the digest' });
+    const fake = await mk({ title: 'throwaway', test: true });
+    const { seq } = await s.ok('GET', '/api/app');
+    const e = await s.ok('POST', `${B}/digest`, { summary: 'shipped', items: [real.id.toLowerCase(), fake.id] }, A);
+    assert.deepEqual(e.items, [real.id], 'ids upper-cased, test tickets dropped');
+    const [ev] = (await s.ok('GET', `/api/events?since=${seq}&types=digest.added`)).events;
+    assert.equal(ev.entry.id, e.id);
+    assert.ok((await s.ok('GET', `${B}/digest?days=1`))[0].entries.some((x) => x.id === e.id));
+    const bad = await s.api('POST', `${B}/digest`, { summary: ' ' }, A);
+    assert.equal(bad.status, 400);
+  });
+
+  it('the digest keeps the newest 500 entries', () => {
+    let n = 0;
+    const d = require('../lib/digest').createDigest({ rid: (p) => `${p}${n++}`, now: () => new Date().toISOString(), trimChange: (x) => x, learnedSince: () => [] });
+    const ctx = { id: 'main', board: { digest: [] } };
+    const events = [];
+    for (let i = 0; i < 501; i++) d.add(ctx, events, { kind: 'agent', name: 'ada' }, `n${i}`, []);
+    assert.equal(ctx.board.digest.length, 500);
+    assert.equal(ctx.board.digest[0].summary, 'n1', 'the oldest went first');
+    assert.equal(events.length, 501);
+    assert.equal(d.read(ctx, 1)[0].entries.length, 500);
+  });
+
   it('status lines and renewals do not wake other agents', async () => {
     const it = await mk({ title: 'quiet' });
     await s.ok('POST', `${B}/items/${it.id}/comments`, { body: 'I was here' }, { agent: 'watcher' });
