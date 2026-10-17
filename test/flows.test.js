@@ -740,7 +740,8 @@ describe('grants: powers the human delegates in agents.json', () => {
       gatekeeper: { enabled: false, grants: [{ power: 'column.gate', where: { 'properties.risk': 'low' } }] },
       boss: { enabled: false, grants: ['agents.control'] },
       worker: { enabled: false },
-    } } });
+      critic: { role: 'reviewer', enabled: false },
+    } }, manifest: { auth: { agentTokens: { critic: 't-critic' } } } });
   });
   after(async () => { await s.stop(); });
   const reviewed = async (title, by = 'worker', extra = {}) => {
@@ -749,11 +750,18 @@ describe('grants: powers the human delegates in agents.json', () => {
     await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'ready', evidence: 'npm test: green' }, ag(by));
     return it;
   };
+  // a delegated approval needs an ok the board can check (INT-313): the critic sends its own token
+  const passed = async (id) => {
+    await s.ok('POST', `${B}/items/${id}/reviewers`, { name: 'critic' }, USER);
+    const r = await fetch(`${s.base}${B}/items/${id}/reviewers/critic/verdict`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': 'critic', authorization: 'Bearer t-critic' }, body: JSON.stringify({ verdict: 'ok', comment: 'holds' }) });
+    assert.ok(r.ok, `critic's verdict: ${r.status}`);
+  };
 
   it('review.decide: a granted agent decides (final, recorded as delegated); never its own work; the human can override', async () => {
     const it = await reviewed('feature');
     const no = await s.api('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'approve' }, ag('worker'));
     assert.equal(no.body.code, 'HUMAN_ONLY');
+    await passed(it.id);
     const { seq } = await s.ok('GET', '/api/app');
     const done = await s.ok('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'approve', comment: 'tests pass, small change' }, ag('approver'));
     assert.equal(done.column, 'Done', 'a delegated approval goes through the gate');

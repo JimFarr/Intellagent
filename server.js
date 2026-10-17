@@ -943,6 +943,19 @@ function okStatus(ctx, item, g) {
   const early = !impossible && !unstaffed && short.length > 0 && short.every((s) => s.state === 'waiting' && Date.now() - Date.parse(find(s.name).at || 0) < 30 * 60_000);
   return { met: false, need, have, short, key: `oks:${impossible ? 'impossible' : [...short.map((s) => `${s.name}=${s.state}`), ...(unstaffed ? [`assign=${unstaffed}`] : [])].join(',')}`, text, early };
 }
+// A grant that says whose oks it needs (minOks, or where: reviewers.<name>) is the human's own rule, and it
+// already wants at least one ok that stands. A grant without one gets the floor below.
+const reviewerRule = (g) => !!g?.minOks || Object.keys(g?.where || {}).some((k) => k.startsWith('reviewers.'));
+// The floor under a delegated approval whose grant has no reviewer rule: each reviewer assigned to the ticket (an
+// author never counts) has an ok that stands, and there is at least one. No verdict yet is not "no concerns".
+// → okStatus's answer, plus none: true when nobody who could review it is assigned.
+function assignedOks(ctx, item) {
+  const st = okStatus(ctx, item, { minOks: 'all' });
+  if (st.met) return st;
+  const authors = [...authorsOf(item)].map((a) => a.toLowerCase());
+  const none = !(item.reviewers || []).some((r) => !authors.includes(r.name.toLowerCase()));
+  return none ? { ...st, none, key: 'reviewer:unassigned', text: 'a reviewer (no reviewer yet: the coordinator assigns one)' } : st;
+}
 const ownWork = (item, name) => !!item && ((item.workedBy || []).includes(name) || (item.questions || []).some((q) => q.kind === 'review' && q.raisedBy === name)
   || item.review?.requestedBy === name);
 // The grant an agent would use for this action, or a fail() saying why not. Humans never need one.
@@ -962,7 +975,9 @@ function grantFor(ctx, actor, power, item, what, { oks = true } = {}) {
   const scoped = mine.filter((x) => inScope(ctx, item, x.where));
   if (!scoped.length) fail(403, `${item?.id || 'This'} is outside your ${power} grant (${JSON.stringify(mine.map((x) => x.where || 'any'))})`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
   if (!oks) return scoped[0];
-  const g = scoped.find((x) => okStatus(ctx, item, x).met);
+  // a met grant with its own reviewer rule first: the floor for rule-less grants (assignedOks) then doesn't apply
+  const met = scoped.filter((x) => okStatus(ctx, item, x).met);
+  const g = met.find(reviewerRule) || met[0];
   if (g) return g;
   // In scope, but no grant's reviewers have passed it yet: say exactly what is missing (the closest grant's).
   const st = scoped.map((x) => okStatus(ctx, item, x)).sort((a, b) => (a.need - a.have) - (b.need - b.have))[0];
@@ -2007,6 +2022,10 @@ function decideReview(ctx, id, d, actor) {
     const evidence = String((item.questions || []).find((x) => x.kind === 'review')?.notes?.evidence || '').trim();
     if (grant && verdict === 'approve' && !evidence) fail(409, `${item.id}'s review has no evidence: only the human approves without it`, { code: 'NO_EVIDENCE', hint: 'Ask the author for evidence (screenshots, outputs, what to look at in the Preview) and to request review again' });
     if (grant && verdict === 'approve' && worried.length) fail(409, `${item.id} has concerns from ${worried.join(', ')}: only the human approves over a reviewer's concerns`, { code: 'CONCERNS_OPEN', hint: 'Leave it for the human, or @mention the author to address the concerns' });
+    // Nor before its reviewers have passed it: no concerns yet is not an ok.
+    const rv = grant && verdict === 'approve' && !reviewerRule(grant) ? assignedOks(ctx, item) : { met: true };
+    if (!rv.met && rv.none) fail(409, `${item.id} has no reviewer: only the human approves what nobody has reviewed`, { code: 'NO_REVIEWER', hint: 'Leave it until the coordinator assigns a reviewer and they say ok, or leave it for the human' });
+    if (!rv.met) fail(409, `${item.id} needs ${rv.text} before it is approved for the human`, { code: 'REVIEW_PENDING', missing: rv.short || [], hint: 'Wait for the verdicts (@mention whoever owes one), or leave it for the human' });
     // Nor does it carry a ticket past work it waits on: approving moves it on, and only the human can undo that.
     const open = openBlockersOf(ctx, item);
     if (grant && verdict === 'approve' && open.length) fail(409, `${item.id} is blocked by ${open.join(', ')}: only the human approves it before they are done`, { code: 'BLOCKED', hint: `Leave it for the human, or approve it once ${open.join(', ')} ${open.length > 1 ? 'are' : 'is'} done`, blockedBy: open });
@@ -2158,7 +2177,12 @@ function delegationGaps(ctx, it, q, grants) {
     const st = scoped.map((g) => okStatus(ctx, it, g)).sort((a, b) => (a.need - a.have) - (b.need - b.have))[0];
     if (st.early) early = true;
     else gap(st.key, st.text);
-  } else if (!scoped.length) {
+  } else if (scoped.length) {
+    // Only rule-less grants are met: the floor has to hold too (decideReview)
+    const st = scoped.some((g) => reviewerRule(g) && okStatus(ctx, it, g).met) ? { met: true } : assignedOks(ctx, it);
+    if (st.met) { /* nothing missing */ } else if (st.early) early = true;
+    else gap(st.key, st.text);
+  } else {
     // Several grants can each name a reviewer (reviewers.nebula, reviewers.drax): any one of them passing is
     // enough. Only reviewers who could review this ticket count (never one of its authors).
     const authors = authorsOf(it);

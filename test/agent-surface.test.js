@@ -1128,3 +1128,84 @@ describe('an @mention of a reviewer warns the author until it is assigned (INT-3
     } finally { await s.stop(); }
   });
 });
+
+describe('a delegated approval waits for the assigned reviewers (INT-313)', () => {
+  it('no reviewer, or one still to say ok, is chase and 409; every assigned ok is decide; a grant with its own reviewer rule and the human are unchanged', async () => {
+    const s = await startServer({ agents: { agents: {
+      // not the coordinator: its assign_reviewer would come before the chase
+      quill: { role: 'builder', enabled: false, grants: ['review.decide'] },
+      yondu: { role: 'builder', enabled: false, grants: [{ power: 'review.decide', where: { 'reviewers.nebula': 'ok' } }] },
+      nebula: { role: 'reviewer', enabled: false },
+      kraglin: { role: 'reviewer', enabled: false },
+      drax: { role: 'builder', enabled: false, reviewer: true },
+    } }, manifest: { auth: { agentTokens: { nebula: 't-nebula', kraglin: 't-kraglin' } } } });
+    try {
+      const inReview = async (title) => {
+        const it = await s.ok('POST', '/api/boards/main/items', { title, column: 'Ready' }, USER);
+        await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, { agent: 'dev' });
+        await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'e' }, { agent: 'dev' });
+        return it;
+      };
+      const assign = (id, name) => s.ok('POST', `/api/boards/main/items/${id}/reviewers`, { name }, USER);
+      // nebula and kraglin send their tokens (verified); drax has none here (unverified)
+      const verdict = async (id, who, v) => {
+        const r = await fetch(`${s.base}/api/boards/main/items/${id}/reviewers/${who}/verdict`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': who, ...(who === 'drax' ? {} : { authorization: `Bearer t-${who}` }) }, body: JSON.stringify({ verdict: v, comment: 'holds' }) });
+        assert.ok(r.ok, `${who}'s verdict: ${r.status}`);
+      };
+      const decide = (id, agent = 'quill', v = 'approve') => s.api('POST', `/api/boards/main/items/${id}/review/decision`, { verdict: v, comment: 'on the oks' }, { agent });
+      const action = async (id, agent = 'quill') => (await s.ok('GET', '/api/boards/main/work', undefined, { agent })).next.find((n) => n.id === id && (n.action === 'decide' || n.action === 'chase'));
+
+      // nobody reviewed it: evidence and no concerns are not enough
+      const a = await inReview('nobody looked');
+      let no = await decide(a.id);
+      assert.deepEqual([no.status, no.body.code], [409, 'NO_REVIEWER']);
+      assert.ok(no.body.hint);
+      assert.equal((await s.ok('GET', `/api/boards/main/items/${a.id}`)).column, 'Review', 'nothing moved');
+      let ch = await action(a.id);
+      assert.equal(ch?.action, 'chase', 'never decide while nobody has reviewed it');
+      assert.match(ch.why, /no reviewer yet/);
+      assert.equal(ch.tag, 'reviewer:unassigned');
+
+      // assigned, no verdict yet: refused, and nothing to chase while the reviewer was only just asked
+      await assign(a.id, 'kraglin');
+      no = await decide(a.id);
+      assert.deepEqual([no.status, no.body.code], [409, 'REVIEW_PENDING']);
+      assert.deepEqual(no.body.missing, [{ name: 'kraglin', state: 'waiting' }]);
+      assert.equal(await action(a.id), undefined, 'kraglin was only just asked');
+
+      // one ok is not all: the second reviewer's ok, which the board can't check, is chased by name
+      await verdict(a.id, 'kraglin', 'ok');
+      await assign(a.id, 'drax');
+      await verdict(a.id, 'drax', 'ok');
+      no = await decide(a.id);
+      assert.equal(no.body.code, 'REVIEW_PENDING');
+      assert.deepEqual(no.body.missing, [{ name: 'drax', state: 'unverified' }]);
+      ch = await action(a.id);
+      assert.equal(ch?.action, 'chase');
+      assert.match(ch.why, /drax ok can't count/);
+
+      // every assigned reviewer's ok stands: decide, and it goes through
+      const b = await inReview('reviewed');
+      await assign(b.id, 'kraglin');
+      await verdict(b.id, 'kraglin', 'ok');
+      assert.equal((await action(b.id))?.action, 'decide');
+      const ok = await decide(b.id);
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+
+      // asking for changes needs no oks, and the human approves what nobody reviewed
+      const c = await inReview('not yet');
+      assert.equal((await decide(c.id, 'quill', 'changes')).status, 200);
+      const d = await inReview('the human looked');
+      assert.equal((await s.api('POST', `/api/boards/main/items/${d.id}/review/decision`, { verdict: 'approve', comment: 'mine' }, USER)).status, 200);
+
+      // a grant that names its reviewer is the human's own rule: nebula's ok is enough, kraglin still pending
+      const e = await inReview('nebula is who counts');
+      await assign(e.id, 'nebula');
+      await assign(e.id, 'kraglin');
+      await verdict(e.id, 'nebula', 'ok');
+      assert.equal((await decide(e.id)).body.code, 'REVIEW_PENDING', 'the plain grant still waits for kraglin');
+      assert.equal((await action(e.id, 'yondu'))?.action, 'decide');
+      assert.equal((await decide(e.id, 'yondu')).status, 200);
+    } finally { await s.stop(); }
+  });
+});

@@ -158,7 +158,9 @@ describe('focus boards', () => {
     assert.equal(r.body.code, 'OUT_OF_FOCUS');
     assert.equal((await work('approver')).next.some((n) => n.id === t.id), false, 'no decide or chase for it either');
     await s.ok('DELETE', `${B}/focus/${f.id}`, undefined, USER);
-    await s.ok('POST', `${B}/items/${t.id}/review/decision`, { verdict: 'approve', comment: 'ok' }, { agent: 'approver' });
+    // past the focus check now; what stops it is that nobody reviewed it (INT-313)
+    const after = await s.api('POST', `${B}/items/${t.id}/review/decision`, { verdict: 'approve', comment: 'ok' }, { agent: 'approver' });
+    assert.equal(after.body.code, 'NO_REVIEWER');
   });
 
   test('the coordinator may add tickets to a focus board, nothing more', async () => {
