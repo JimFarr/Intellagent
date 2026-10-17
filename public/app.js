@@ -5130,7 +5130,8 @@
   /* The Analytics page (INT-312, on INT-311's GET /api/analytics, which it reads and nothing else): per agent the
      time in each state, the queue depth, runs, tokens, cost, models and tools; per ticket what it cost. Nothing is
      told by colour alone: every state in the bar is also written out with its time. It draws once per window
-     choice; nothing polls. The lane timeline and the suggestions wait for the endpoint (INT-336). */
+     choice; nothing polls. The lane is the agent's state segments on the window's own time axis; a suggestion sits
+     with the view it comes from (INT-358, on INT-336's segments and suggestions). */
   const AN_STATES = ['running', 'queued', 'waiting', 'throttled', 'retrying', 'failed', 'paused', 'idle'];
   const anDur = (ms) => (ms < 60000 ? `${Math.round(ms / 1000)}s` : ms < 3600000 ? `${Math.round(ms / 60000)}m` : ms < 86400000 ? `${(ms / 3600000).toFixed(1)}h` : `${(ms / 86400000).toFixed(1)}d`);
   const anNum = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 1e4 ? 0 : 1)}k` : String(n));
@@ -5146,6 +5147,32 @@
     const d = xy.map(([x, y], i) => `${i ? `H${x.toFixed(1)}V` : `M${x.toFixed(1)} `}${y.toFixed(1)}`).join('') + `H${w}`;
     return `<svg class="an-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><path d="${d}"/></svg>`;
   }
+  // One lane per agent: its state segments on the window's time axis; a stretch with no known state is hatched.
+  function anLane(g, from, to) {
+    if (!(g.segments || []).length) return '';
+    const t0 = Date.parse(from), t1 = Date.parse(to);
+    const cells = [];
+    let at = t0;
+    const gap = (until) => { if (until > at) cells.push(`<i class="an-seg" data-st="unknown" style="flex:${until - at}" title="not known|${anDur(until - at)}"></i>`); };
+    for (const s of g.segments) {
+      const a = Math.max(t0, Date.parse(s.from)), b = Math.min(t1, Date.parse(s.to));
+      if (!(b > a)) continue;
+      gap(a);
+      cells.push(`<i class="an-seg" data-st="${esc(s.status)}" style="flex:${b - a}" title="${esc(`${s.status}${s.note ? ` · ${s.note}` : ''}|${anDur(b - a)}`)}"></i>`);
+      at = b;
+    }
+    gap(t1);
+    const last = g.segments.slice(-6).map((s) => `${s.status} ${anDur(Date.parse(s.to) - Date.parse(s.from))}`).join(', ');
+    return `<div class="an-lane" role="img" aria-label="${esc(`${nameOf(g.agent)} over the window, oldest to newest, last six stretches: ${last}`)}">${cells.join('')}</div>
+      <div class="an-axis" aria-hidden="true"><span>${esc(new Date(from).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</span><span>now</span></div>`;
+  }
+  // A suggestion is the board's own sentence; the tickets it names open on a click.
+  function anTip(s) {
+    const chips = s.kind === 'waiting-on-human'
+      ? (s.items || []).map((id) => `<button type="button" class="mini-chip link" data-board="${esc(state.boardId)}" data-open="${esc(id)}">${esc(id)}</button>`).join('')
+      : '';
+    return `<aside class="an-tip ${esc(s.kind)}" aria-label="${s.kind === 'rebalance' ? 'Suggestion: rebalance' : 'Suggestion: waiting on you'}">${icon(s.kind === 'rebalance' ? 'layers' : 'flag', 'sm')}<span class="an-tip-text">${esc(s.text)}</span>${chips ? `<span class="an-tip-items">${chips}</span>` : ''}</aside>`;
+  }
   function openAnalytics() {
     const body = openDrawer('analyticsDrawer', 'Analytics', 'activity');
     body._reload = () => fillAnalytics(body);
@@ -5156,7 +5183,7 @@
     let a;
     try { a = await api('GET', `/api/analytics?days=${days}`); } catch (e) { body.innerHTML = `<div class="empty-note">${esc(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message)}</div>`; return; }
     if (!body.isConnected) return;
-    const win = `<div class="seg an-win" role="radiogroup" aria-label="Window">${[7, 30].map((d) => `<button type="button" role="radio" aria-checked="${d === days}" class="${d === days ? 'on' : ''}" data-an-days="${d}">${d} days</button>`).join('')}</div>`;
+    const win = `<div class="seg an-win" role="radiogroup" aria-label="Window">${[[1, '24 h'], [7, '7 days'], [30, '30 days']].map(([d, w]) => `<button type="button" role="radio" aria-checked="${d === days}" class="${d === days ? 'on' : ''}" data-an-days="${d}">${w}</button>`).join('')}</div>`;
     const empty = !a.agents.length;
     const card = (g) => {
       const known = Object.entries(g.states).filter(([, ms]) => ms > 0).sort((x, y) => (AN_STATES.indexOf(x[0]) + 1 || 99) - (AN_STATES.indexOf(y[0]) + 1 || 99));
@@ -5164,13 +5191,16 @@
       const bar = known.map(([st, ms]) => `<i class="an-seg" data-st="${esc(st)}" style="flex:${ms}" title="${esc(`${st}|${anDur(ms)} · ${Math.round((100 * ms) / total)}%`)}"></i>`).join('') + (g.unknownMs > 0 ? `<i class="an-seg" data-st="unknown" style="flex:${g.unknownMs}" title="not known|${anDur(g.unknownMs)}"></i>` : '');
       const legend = known.map(([st, ms]) => `<li><i class="an-key" data-st="${esc(st)}" aria-hidden="true"></i><b>${esc(st)}</b> ${anDur(ms)} <span class="muted">${Math.round((100 * ms) / total)}%</span></li>`).join('') + (g.unknownMs > 0 ? `<li><i class="an-key" data-st="unknown" aria-hidden="true"></i><b>not known</b> ${anDur(g.unknownMs)} <span class="muted">before its first state</span></li>` : '');
       const r = g.runs;
+      const tips = (a.suggestions || []).filter((s) => s.kind === 'rebalance' && s.agents?.[0] === g.agent).map(anTip).join('');
       const outcomes = [['ok', 'finished'], ['failed', 'failed'], ['timeout', 'timed out'], ['stopped', 'stopped'], ['limited', 'hit the usage limit']].filter(([k]) => r[k]).map(([k, w]) => `${r[k]} ${w}`);
       const depths = g.queue.map((p) => p.depth);
       const models = Object.entries(g.models).sort((x, y) => y[1].runs - x[1].runs);
       return `<article class="an-agent perm" data-an-agent="${esc(g.agent)}">
         <header class="perm-head">${avatar({ kind: 'agent', name: g.agent })}<b class="perm-nm">${esc(nameOf(g.agent))}</b><span class="grow"></span><span class="an-cost" title="Cost in the window">${anCost(g)}</span></header>
+        ${tips}
         <div class="an-bar" role="img" aria-label="${esc(`Time in each state: ${known.map(([st, ms]) => `${st} ${anDur(ms)}`).join(', ') || 'none known'}`)}">${bar}</div>
         <ul class="an-legend">${legend}</ul>
+        ${anLane(g, a.from, a.to)}
         <dl class="perm-facts">
           <dt>Runs</dt><dd>${r.count ? `${r.count} · ${anDur(r.ms)} running${outcomes.length ? ` · ${outcomes.join(', ')}` : ''}` : 'none in this window'}</dd>
           <dt>Tokens</dt><dd>${r.count ? anTok(g.tokens) : '—'}</dd>
@@ -5184,10 +5214,11 @@
     body.innerHTML = `<div class="an-top">${win}<span class="grow"></span></div>
       ${empty ? `<div class="empty-note">${icon('activity')}<span>No agent has run or changed state in the last ${days} days.</span></div>` : `
       <dl class="an-totals perm-facts"><dt>Runs</dt><dd>${a.totals.runs}</dd><dt>Tokens</dt><dd>${anTok(a.totals.tokens)}</dd><dt>Cost</dt><dd>${anCost(a.totals)}</dd></dl>
+      ${(a.suggestions || []).filter((s) => s.kind === 'waiting-on-human').map(anTip).join('')}
       ${a.agents.map(card).join('')}
       ${tickets.length ? `<section class="perm-group"><div class="perm-ghead">${icon('layers', 'sm')}<span class="ag-sec">What each ticket cost</span><span class="perm-ghelp">A run woken for several tickets is shared between them equally. Top ${tickets.length} by cost.</span></div>
         <table class="an-tickets"><thead><tr><th scope="col">Ticket</th><th scope="col">Runs</th><th scope="col">Time</th><th scope="col">Tokens</th><th scope="col">Cost</th></tr></thead><tbody>${tickets.map((t) => `<tr><th scope="row"><button class="mini-chip link" data-board="${esc(state.boardId)}" data-open="${esc(t.id)}">${esc(t.id)}</button>${t.shared ? '<small title="Some runs covered several tickets"> shared</small>' : ''}</th><td>${t.runs}</td><td>${anDur(t.ms)}</td><td>${anTok(t.tokens)}</td><td>${anCost(t)}</td></tr>`).join('')}</tbody></table></section>` : ''}`}
-      <p class="perm-intro">From ${esc(new Date(a.from).toLocaleDateString())} to now. The lane timeline and suggestions come when the endpoint gives them (INT-336).</p>`;
+      <p class="perm-intro">From ${esc(new Date(a.from).toLocaleDateString())} to now. The bar adds up the window; the lane below it shows when. Cost is what each run reported; a run that reported none is never counted as $0.</p>`;
     if (body._keepFocus) { body._keepFocus = false; $(`[data-an-days="${days}"]`, body)?.focus(); }
     body.onclick = (e) => {
       const d = e.target.closest('[data-an-days]');

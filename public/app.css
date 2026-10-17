@@ -2183,7 +2183,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .perm-live:empty { display: none; }
 /* The Analytics page (INT-312): a stacked bar of time per state (every state is also written out), a step line for the queue. */
 .an-top { display: flex; align-items: center; margin: 0 0 12px; }
-.an-win { width: 190px; }
+.an-win { width: 240px; max-width: 100%; }
 .an-totals { margin: 0 2px 14px; }
 .an-agent { margin-bottom: 10px; }
 .an-cost { font: 600 12px var(--mono); }
@@ -2204,6 +2204,14 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .an-queue { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 4px 10px; }
 .an-spark { width: 160px; height: 28px; flex: none; }
 .an-spark path { fill: none; stroke: var(--accent-2); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.an-lane { display: flex; gap: 1px; height: 8px; margin: 8px 0 2px; border-radius: 99px; overflow: hidden; background: var(--hover); }
+.an-lane .an-seg { min-width: 2px; }
+.an-axis { display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--muted); }
+.an-tip { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 4px 8px; margin: 0 0 10px; padding: 8px 10px; border-radius: var(--r-ctl, 12px); border: var(--bw, 1px) solid var(--border); border-left: 3px solid var(--accent-2); background: color-mix(in oklab, var(--accent-2) 8%, var(--surface)); font-size: 12.5px; line-height: 1.45; }
+.an-tip.rebalance { border-left-color: var(--warn); background: color-mix(in oklab, var(--warn) 8%, var(--surface)); }
+.an-tip > svg { margin-top: 2px; flex: none; }
+.an-tip-text { flex: 1 1 220px; min-width: 0; }
+.an-tip-items { display: flex; flex-wrap: wrap; gap: 4px; flex-basis: 100%; }
 .an-tickets { width: 100%; border-collapse: collapse; font-size: 12px; }
 .an-tickets th, .an-tickets td { padding: 6px 8px; text-align: left; border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent); font-weight: 400; }
 .an-tickets thead th { font: 600 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
