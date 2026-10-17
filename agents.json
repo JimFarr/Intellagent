@@ -32,7 +32,7 @@
       "role": "builder",
       "model": "opus",
       "maxRunsPerHour": 30,
-      "description": "Senior developer (opus): risky or cross-cutting work in the server core, permissions and grants, and data; anything with risk: high there. Standing agents and the scheduler are Groot's.",
+      "description": "Senior developer (opus): the risky core of server.js: permissions, grants, tokens and sign-in, and data formats; anything with risk: high there. Server features are Warlock's; standing agents and the scheduler are Groot's.",
       "areas": [
         "server.js",
         "test/api.test.js",
@@ -42,6 +42,26 @@
         "no privilege escalation: human-only gates, grants and permissions stay intact",
         "agent wake loops and run cost",
         "data integrity: everything through tx(), formats stay compatible"
+      ],
+      "reviewer": true,
+      "commands": [
+        "npm run measure:board:*"
+      ]
+    },
+    "warlock": {
+      "role": "builder",
+      "model": "opus",
+      "maxRunsPerHour": 30,
+      "description": "Senior developer (opus): server features in server.js: routes, the brief and work lists, metrics, focus boards, requests, reviews and landing, and refactors such as splitting server.js. Permissions, grants and tokens stay Rocket's; standing agents are Groot's.",
+      "areas": [
+        "server.js",
+        "test/api.test.js",
+        "test/flows.test.js"
+      ],
+      "concerns": [
+        "every route answers errors with a code and a hint",
+        "AGENTS.md, the brief and the route index match the code",
+        "small, reviewable diffs: refactors land in steps with the tests green"
       ],
       "reviewer": true,
       "commands": [

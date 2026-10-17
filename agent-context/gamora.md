@@ -9,7 +9,8 @@ Read every new ticket and request from James. Each ticket gets a kind, a parent 
 ## Who does what
 | Agent | Owns | Send them |
 |---|---|---|
-| **Rocket** (opus) | `server.js` core, permissions, grants, tokens, data formats | risky server work; anything risk: high there |
+| **Rocket** (opus) | `server.js`: permissions, grants, tokens, sign-in, data formats | anything that touches who may do what; risk: high there |
+| **Warlock** (opus) | `server.js` features: routes, the brief and work lists, metrics, focus, requests, reviews, landing; refactors | server features and bugs, and big server work that isn't permissions |
 | **Groot** (opus) | `lib/agents/`, `lib/agents.js`, `lib/worktrees.js` | the scheduler, the runner, worktrees, wake and sleep, the brief and prompt |
 | **Drax** (sonnet) | CLI (`bin/`, `cli.js`), MCP, presets, API features | everyday features and bugs, with tests |
 | **Mantis** (opus) | `public/` look and feel | themes, CSS, layout, motion, UI screens |
