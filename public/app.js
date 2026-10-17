@@ -6184,7 +6184,7 @@
   // level ("a b or c") is not a switch the builder has: it stays whole as one row of text, which still saves as written.
   function ruleTree(text, fields = ruleFields()) {
     const src = String(text || '').trim();
-    const whole = { mode: 'all', items: [{ path: '', test: 'raw', value: src }] };
+    const whole = { mode: 'all', items: [{ path: '', test: 'raw', value: src, whole: true }] };
     const tokens = src.match(/\(|\)|is:rule:"[^"]*"|[^\s()]+(?:\([^\s()]*\)[^\s()]*)*/gi) || [];
     let at = 0;
     const level = (depth) => {
@@ -6207,6 +6207,7 @@
     try { return node(level(0)); } catch { return whole; }
   }
   // One row back to its term, or null while it is not finished (no value yet, or a value with a space in it).
+  const RAW_TERM = /^(?:is:rule:"[^"]*"|[^\s()]+(?:\([^\s()]*\)[^\s()]*)*)$/;
   function ruleTerm(row) {
     if (row.group) {
       const inner = row.items.map(ruleTerm);
@@ -6214,7 +6215,11 @@
     }
     const t = RULE_TESTS[row.test];
     if (!t) return null;
-    if (t.op === 'raw') return String(row.value || '').trim() || null;
+    if (t.op === 'raw') {
+      const v = String(row.value || '').trim();
+      // Free text is only safe as the whole condition; beside other rows it must stay one term, or the saved text would group differently than the rows show
+      return v && (row.whole || (RAW_TERM.test(v) && !/^or$/i.test(v))) ? v : null;
+    }
     if (row.path === '@') return /^[\w.-]+$/.test(row.value || '') ? `@${row.value}` : null;
     if (t.op === 'set') return `${t.not ? '!' : ''}${row.path}`;
     const vals = [].concat(row.value ?? []).map((v) => String(v).trim()).filter(Boolean);
@@ -6412,11 +6417,13 @@
         const all = treeFor(i);
         const list = g != null ? all.items[g].items : all.items;
         list.push({ path: 'type', test: 'is', value: '' });
+        for (const it of all.items) delete it.whole;
         commit(i, all, at(i, g != null ? `${g}.${list.length - 1}` : list.length - 1, '[data-bfdd]'));
         return true;
       }
       if (e.target.closest('[data-rbgadd]')) {
         const all = treeFor(i);
+        for (const it of all.items) delete it.whole;
         all.items.push({ group: true, mode: 'all', items: [{ path: 'type', test: 'is', value: '' }] });
         commit(i, all, at(i, `${all.items.length - 1}.0`, '[data-bfdd]'));
         return true;
