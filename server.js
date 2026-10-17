@@ -2020,7 +2020,7 @@ function recordLanding(ctx, item, agent, actor, events, r) {
   const waiting = !r.landed.length && !!r.commits?.length;
   const lands = waiting ? landers().filter((n) => n !== actor.name) : [];
   const body = r.landed.length
-    ? `⤵ Landed on ${r.branch || 'main'}: ${r.landed.map((x) => `\`${x}\``).join(', ')} from \`agent/${agent}\`${r.via === 'merge' ? ` by merge commit \`${r.merge}\` (a cherry-pick conflicted; the merge keeps the branch's own conflict resolution)` : ''}.${r.equivalent?.length ? ` Already on ${r.branch || 'main'}: ${r.equivalent.map((e) => (e.unmatched ? `\`${e.sha}\` (its patch is on ${r.branch || 'main'}, but not among the newest commits searched, so which commit has it is unknown; \`${e.main}\` is only the tip)` : `\`${e.sha}\` as \`${e.main}\``)).join(', ')}.` : ''}`
+    ? `⤵ Landed on ${r.branch || 'main'}: ${r.landed.map((x) => `\`${x}\``).join(', ')} from \`agent/${agent}\`${r.via === 'merge' ? ` by merge commit \`${r.merge}\` (a cherry-pick conflicted; the merge keeps the branch's own conflict resolution)` : ''}.${r.equivalent?.length ? ` Already on ${r.branch || 'main'}: ${r.equivalent.map((e) => (e.unmatched ? `\`${e.sha}\` (its patch is on ${r.branch || 'main'}, but not among the newest commits searched, so which commit has it is unknown)` : `\`${e.sha}\` as \`${e.main}\``)).join(', ')}.` : ''}`
     : `⚠ Not landed: ${r.reason}.${waiting ? (lands.length ? ` ${lands.map((n) => `@${n}`).join(' ')} will land it.` : ` When that's sorted${r.hint ? ` (${r.hint})` : ''}, run \`${r.command}\`.`) : ''}`;
   item.comments.push({ id: rid('c'), author: SYSTEM, body, createdAt: now() });
   item.landing = r.landed.length ? { state: 'landed', commits: r.landed, from: agent, at: now() }
