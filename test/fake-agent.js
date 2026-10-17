@@ -97,7 +97,10 @@ if (mode === 'stream') {
           body: JSON.stringify({ body: `turn ${turns} in pid ${process.pid} (${kind}${role})` }),
         });
       }
-      process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: turns * 50000 }, num_turns: 1 })}\n`);
+      // one tool call per turn (a command line holding a secret: the stats keep only its name), and claude's
+      // total_cost_usd, which is the session's RUNNING total (INT-310)
+      process.stdout.write(`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'FOO=1 git push https://user:s3cret@host/x' } }] } })}\n`);
+      process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: turns * 0.25, usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: turns * 50000 }, num_turns: 1 })}\n`);
     }
   });
   process.stdin.on('end', () => process.exit(0));
@@ -141,7 +144,7 @@ process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
   }
   // like `claude -p --output-format json`: one result object, with token counts, as the last line
   if (mode === 'usage') {
-    process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 500, cache_creation_input_tokens: 40 } })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 0.5, usage: { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 500, cache_creation_input_tokens: 40 } })}\n`);
     return;
   }
   //   node fake-agent.js rate <utilization>   prints claude's rate_limit_event (allowed) with that share of the
