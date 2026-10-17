@@ -4052,6 +4052,7 @@
     if (ev.actor?.kind === 'user' && ev.actor.name === settings.userName) return;
     if (ev.actor?.kind === 'user' && ev.type !== 'comment.added') return;
     if (QUIET.has(ev.type)) return;
+    if (ev.type === 'agents.changed' && !ev.error) return; // the add, save and remove toasts already say it; the drawer refreshes itself (INT-329)
     const important = ev.type === 'attention.raised' || (ev.type === 'comment.added' && ev.mentions?.some((n) => n.toLowerCase() === settings.userName.toLowerCase()));
     if ((ev.type === 'request.replied' || ev.type === 'request.done') && ev.actor?.kind === 'agent') {
       if (askOpen() && ev.board === state.boardId) return; // the reply is landing in the open thread already
