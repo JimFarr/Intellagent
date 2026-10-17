@@ -4031,6 +4031,7 @@
     if (ev.type?.startsWith('request.')) { $('#requestsDrawer .drawer-body')?._reload?.(); if (ev.board === state.boardId) reloadAsk(); }
     if (/^(item\.moved|item\.archived|attention\.|review\.)/.test(ev.type || '')) loadMetrics();
     if (ev.type === 'permissions.changed') { rolesCache = null; $('#permsDrawer .drawer-body')?._reload?.(); }
+    if (ev.type === 'permissions.changed' || ev.type === 'agent.managed' || ev.type === 'agents.changed') $('#gridDrawer .drawer-body')?._reload?.();
     if (ev.type?.startsWith('agent.') || ev.type === 'agents.changed') refreshPresence();
     // a ticket's live line feeds an agent's Now row (INT-162): refresh the open drawer, at most every 2 s
     else if (ev.type === 'lease.status' && $('#agentsDrawer') && !nowTimer) nowTimer = setTimeout(() => { nowTimer = null; refreshPresence(); }, 2000);
@@ -4110,6 +4111,7 @@
     ['digestDrawer', 'Digest', 'news', () => openDigest()],
     ['agentsDrawer', 'Agents', 'bot', () => openAgents()],
     ['permsDrawer', 'Permissions', 'lock', () => openPermissions()],
+    ['gridDrawer', 'Who holds what', 'sliders', () => openPermGrid()],
     ['rulesDrawer', 'Standing rules', 'pin', () => openRules()],
     ['metricsDrawer', 'Flow', 'activity', () => openMetrics()],
     ['archiveDrawer', 'Archive', 'archive', () => openArchive()],
@@ -5030,6 +5032,149 @@
     : permExpand(a.perms || [], byKey).has(key))).map((a) => a.name);
   // "npm run deploy:staging", "WebFetch", "Edit and Write in docs/**", "test, git": what holding it brings
   const permGives = (p) => [...(p.allows?.commands || []), ...(p.allows?.tools || []), ...(p.allows?.folders || []).map((f) => `Edit and Write in ${f}`), ...(p.allows?.includes || []), ...(p.allows?.powers || [])];
+
+  /* The permissions grid (INT-231, on INT-239's /api/agents/grid): agents down the side, the library across,
+     grouped by kind. A cell is off, on, or on with rules (the tick plus a padlock). A click opens a panel under
+     the grid to change it. Labels lie flat; the grid scrolls inside its box, so 375 px never scrolls the page. */
+  const GRID_KIND_ORDER = ['builtin', 'power', 'command', 'tool', 'folders', 'bundle', 'verbal'];
+  const GRID_MODE = { off: 'off', on: 'on', rules: 'on, with rules' };
+  const gridOks = (g) => (g.minOks != null || g.from ? ` · needs ${g.minOks === 'all' ? 'all' : g.minOks ?? 'every'} ok${g.from ? ` from ${g.from.join(', ')}` : ''}` : '');
+  function openPermGrid() {
+    const body = openDrawer('gridDrawer', 'Who holds what', 'sliders');
+    body._reload = () => fillPermGrid(body);
+    fillPermGrid(body);
+  }
+  async function fillPermGrid(body) {
+    let g, me;
+    try { [g, me] = await Promise.all([api('GET', '/api/agents/grid'), api('GET', '/api/permissions/me').catch(() => ({}))]); }
+    catch (e) { body.innerHTML = `<div class="empty-note">${esc(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message)}</div>`; return; }
+    if (!body.isConnected) return;
+    const perms = [...g.permissions].sort((a, b) => GRID_KIND_ORDER.indexOf(a.kind) - GRID_KIND_ORDER.indexOf(b.kind));
+    const groups = GRID_KIND_ORDER.map((k) => [k, perms.filter((p) => p.kind === k)]).filter(([, ps]) => ps.length);
+    const flat = groups.flatMap(([, ps]) => ps);
+    const cellHtml = (a, p, r, c) => {
+      const cell = a.cells[p.key];
+      const word = GRID_MODE[cell.mode] + (p.enforced ? '' : ', not enforced') + (cell.implied ? `, needed by ${(cell.by || []).join(', ')}` : '') + (cell.differsFromRole ? ', differs from its role' : '');
+      const mark = cell.mode === 'off' ? '' : icon(p.enforced ? 'check' : 'msg', 'sm') + (cell.mode === 'rules' ? `<i class="pg-lk">${icon('lock', 'sm')}</i>` : '');
+      return `<td><button class="pg-cell m-${cell.mode}${p.enforced ? '' : ' verbal'}${cell.implied ? ' implied' : ''}${cell.differsFromRole ? ' differs' : ''}" data-agent="${esc(a.name)}" data-key="${esc(p.key)}" data-r="${r}" data-c="${c}" aria-label="${esc(`${nameOf(a.name)}, ${p.name}: ${word}`)}" title="${esc(`${p.name}|${word}`)}">${mark}</button></td>`;
+    };
+    const table = `<table class="pg"><thead>
+      <tr><th class="pg-agent" rowspan="2" scope="col">Agent</th>${groups.map(([k, ps]) => `<th class="pg-kind" colspan="${ps.length}" scope="colgroup">${esc(PERM_KINDS[k][0])}</th>`).join('')}</tr>
+      <tr>${flat.map((p) => `<th class="pg-perm${p.enforced ? '' : ' verbal'}" scope="col" title="${esc(`${p.name}|${p.key}`)}"><span>${esc(p.name)}</span></th>`).join('')}</tr></thead>
+      <tbody>${g.agents.map((a, r) => {
+        const on = flat.filter((p) => a.cells[p.key].mode !== 'off').length;
+        const differs = flat.some((p) => a.cells[p.key].differsFromRole);
+        return `<tr><th class="pg-agent" scope="row">${avatar({ kind: 'agent', name: a.name })}<span class="pg-who"><b>${esc(nameOf(a.name))}</b><small>${esc(a.role || 'no role')}${differs ? `<i class="pg-dot" title="Differs from its role|Some of what it holds is not what its role gives" aria-label="differs from its role"></i>` : ''}</small></span><span class="pg-load" role="img" aria-label="${on} of ${flat.length} permissions on" title="${on} of ${flat.length} on"><i style="width:${Math.round((100 * on) / Math.max(1, flat.length))}%"></i></span></th>${flat.map((p, c) => cellHtml(a, p, r, c)).join('')}</tr>`;
+      }).join('')}</tbody></table>`;
+    const first = !$('.pg-scroll', body);
+    if (first) {
+      body.innerHTML = `<p class="perm-intro">Every standing agent against every permission. Click a cell to change it; the change is written to <code>agents.json</code>. A dot means it differs from the agent's role.</p>
+        ${me.boardHasUserToken === false ? `<div class="aa-lock">${icon('lock', 'sm')}<span>Read only: cells can be changed only on a board with a sign-in token. Run <code>intellagent token</code>, restart the board and sign in with <code>intellagent open</code>.</span></div>` : ''}
+        ${g.errors?.length ? `<div class="perm-warn risk perm-errors">${icon('info', 'sm')}<span>Skipped: ${g.errors.map(esc).join(' · ')}</span></div>` : ''}
+        <div class="pg-scroll" tabindex="0" role="region" aria-label="Permissions grid, scrolls sideways"></div>
+        <p class="pg-key"><span class="pg-cell m-on" aria-hidden="true">${icon('check', 'sm')}</span>on <span class="pg-cell m-rules" aria-hidden="true">${icon('check', 'sm')}<i class="pg-lk">${icon('lock', 'sm')}</i></span>on, with rules <span class="pg-cell m-on verbal" aria-hidden="true">${icon('msg', 'sm')}</span>words only, not enforced</p>
+        <div class="pg-panel" data-keep></div>`;
+      body._grid = g;
+      body.onclick = (e) => { const c = e.target.closest('.pg-cell[data-agent]'); if (c) gridPanel(body, c.dataset.agent, c.dataset.key, me); };
+      body.onkeydown = (e) => {
+        const c = e.target.closest?.('.pg-cell[data-agent]');
+        const d = { ArrowRight: [0, 1], ArrowLeft: [0, -1], ArrowDown: [1, 0], ArrowUp: [-1, 0] }[e.key];
+        if (!c || !d) return;
+        const next = $(`.pg-cell[data-r="${+c.dataset.r + d[0]}"][data-c="${+c.dataset.c + d[1]}"]`, body);
+        if (next) { e.preventDefault(); next.focus(); next.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+      };
+    }
+    // a refresh patches the table only: the scroll position, the focused cell and a panel being typed in stay
+    const focus = document.activeElement?.closest?.('.pg-cell[data-agent]');
+    const at = focus && [focus.dataset.agent, focus.dataset.key];
+    $('.pg-scroll', body).innerHTML = table;
+    body._grid = g;
+    if (at) $(`.pg-cell[data-agent="${CSS.escape(at[0])}"][data-key="${CSS.escape(at[1])}"]`, body)?.focus({ preventScroll: true });
+    const sel = body._sel;
+    if (sel) $(`.pg-cell[data-agent="${CSS.escape(sel[0])}"][data-key="${CSS.escape(sel[1])}"]`, body)?.setAttribute('aria-current', 'true');
+    if (sel && !$('.pg-pan.dirty', body)) gridPanel(body, sel[0], sel[1], me, { quiet: true });
+  }
+  function gridPanel(body, agent, key, me, { quiet = false } = {}) {
+    const g = body._grid;
+    const a = g.agents.find((x) => x.name === agent);
+    const p = g.permissions.find((x) => x.key === key);
+    if (!a || !p) return;
+    const cell = a.cells[key];
+    body._sel = [agent, key];
+    $$('.pg-cell[aria-current]', body).forEach((c) => c.removeAttribute('aria-current'));
+    $(`.pg-cell[data-agent="${CSS.escape(agent)}"][data-key="${CSS.escape(key)}"]`, body)?.setAttribute('aria-current', 'true');
+    const power = p.heldBy === 'grants';
+    const approval = key === 'review.decide' || key === 'column.gate';
+    const r = cell.rules || {};
+    const whereText = Object.entries(r.where || {}).map(([k, v]) => `${k}=${[].concat(v).join(',')}`).join('\n');
+    const locked = me.boardHasUserToken === false;
+    const modes = [['off', 'Off'], ['on', 'On'], ...(power ? [['rules', 'With rules']] : [])];
+    const host = $('.pg-panel', body);
+    host.innerHTML = `<section class="pg-pan${p.enforced ? '' : ' verbal'}" aria-label="${esc(`${nameOf(agent)}: ${p.name}`)}">
+      <header class="perm-head">${avatar({ kind: 'agent', name: agent })}<b class="perm-nm">${esc(nameOf(agent))}</b><span class="muted">·</span><b class="perm-nm">${esc(p.name)}</b><code class="perm-key">${esc(key)}</code><span class="grow"></span><button class="btn sm ghost" data-pg-close title="Close">${icon('x', 'sm')}<span>Close</span></button></header>
+      ${p.enforced ? '' : `<p class="perm-warn">${icon('info', 'sm')}<span><b>Not enforced:</b> ${esc(String(p.warning || 'words only: the agent is trusted to follow it').replace(/^not enforced:\s*/i, ''))}</span></p>`}
+      ${cell.implied ? `<p class="perm-warn">${icon('info', 'sm')}<span>On because ${esc((cell.by || []).join(', '))} ${(cell.by || []).length > 1 ? 'need' : 'needs'} it. Turn that off to turn this off.</span></p>` : ''}
+      <div class="seg pg-modes" role="radiogroup" aria-label="Mode">${modes.map(([m, l]) => `<button type="button" role="radio" aria-checked="${cell.mode === m}" class="${cell.mode === m ? 'on' : ''}" data-mode="${m}">${l}</button>`).join('')}</div>
+      <div class="pg-rules" ${cell.mode === 'rules' ? '' : 'hidden'}>
+        ${approval ? `<div class="perm-two"><label><span class="aa-label">Oks needed</span><input class="inp" data-r="minOks" value="${esc(r.minOks ?? '')}" placeholder="2, or all" inputmode="numeric"></label>
+          <label><span class="aa-label">From reviewers</span><input class="inp" data-r="from" value="${esc((r.from || []).join(', '))}" placeholder="nebula, kraglin"></label></div>` : ''}
+        <label><span class="aa-label">Only where</span><textarea class="inp mono" data-r="where" rows="2" spellcheck="false" placeholder="column=Done&#10;fields.risk=low">${esc(whereText)}</textarea></label>
+      </div>
+      <label><span class="aa-label">Guidance (not enforced; the agent reads it in its brief)</span><textarea class="inp" data-pg-guide rows="2" maxlength="1000">${esc(cell.guidance || '')}</textarea></label>
+      <div class="pg-brief"><span class="aa-label">Adds to its brief</span>${cell.brief?.length ? cell.brief.map((l) => `<q class="perm-brief">${esc(l)}</q>`).join('') : '<span class="muted">Nothing: it is off, or the permission has no brief line.</span>'}</div>
+      <p class="perm-err" hidden role="alert"></p>
+      <div class="pg-acts"><button class="btn sm primary" data-pg-save ${locked ? 'disabled title="Needs a sign-in token"' : ''}>Save</button></div></section>`;
+    const pan = $('.pg-pan', host);
+    let mode = cell.mode;
+    const sync = () => {
+      $$('[data-mode]', pan).forEach((b) => { b.classList.toggle('on', b.dataset.mode === mode); b.setAttribute('aria-checked', String(b.dataset.mode === mode)); });
+      $('.pg-rules', pan).hidden = mode !== 'rules';
+    };
+    pan.addEventListener('input', () => pan.classList.add('dirty'));
+    pan.addEventListener('click', (e) => {
+      const m = e.target.closest('[data-mode]');
+      if (m) { mode = m.dataset.mode; pan.classList.add('dirty'); sync(); return; }
+      if (e.target.closest('[data-pg-close]')) { body._sel = null; host.innerHTML = ''; $$('.pg-cell[aria-current]', body).forEach((c) => c.removeAttribute('aria-current')); $(`.pg-cell[data-agent="${CSS.escape(agent)}"][data-key="${CSS.escape(key)}"]`, body)?.focus(); }
+    });
+    pan.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); $('[data-pg-close]', pan).click(); } });
+    $('[data-pg-save]', pan).onclick = async (e) => {
+      const err = $('.perm-err', pan);
+      const send = {};
+      const guide = $('[data-pg-guide]', pan).value.trim();
+      if (guide !== (cell.guidance || '')) send.guidance = guide;
+      if (mode !== cell.mode || mode === 'rules') send.mode = mode;
+      if (mode === 'rules') {
+        const rules = {};
+        const oks = $('[data-r="minOks"]', pan)?.value.trim();
+        if (oks) rules.minOks = /^\d+$/.test(oks) ? +oks : oks;
+        const from = ($('[data-r="from"]', pan)?.value || '').split(',').map((s) => s.trim()).filter(Boolean);
+        if (from.length) rules.from = from;
+        const where = {};
+        for (const line of $('[data-r="where"]', pan).value.split(/\r?\n/)) {
+          const i = line.indexOf('=');
+          if (i > 0) where[line.slice(0, i).trim()] = line.slice(i + 1).split(',').map((s) => s.trim()).filter(Boolean);
+        }
+        if (Object.keys(where).length) rules.where = where;
+        send.rules = rules;
+      }
+      if (!Object.keys(send).length) { err.hidden = false; err.textContent = 'Nothing changed.'; return; }
+      err.hidden = true;
+      e.currentTarget.disabled = true;
+      try {
+        const res = await api('PUT', `/api/agents/${encodeURIComponent(agent)}/permissions/${encodeURIComponent(key)}`, send);
+        pan.classList.remove('dirty');
+        const said = [...(res.also || []).map((x) => `${x.key} on: ${x.why}`), ...(res.notes || [])];
+        toast(`${nameOf(agent)}: ${p.name} is ${GRID_MODE[res.cell.mode]}${gridOks(res.cell.rules || {})}`, { icon: 'lock', timeout: said.length ? 7000 : 2600 });
+        if (said.length) toast(said.join('. '), { icon: 'info', timeout: 9000, wrap: true });
+        await fillPermGrid(body);
+      } catch (e2) {
+        err.hidden = false;
+        err.textContent = e2.data?.hint ? `${e2.message}. ${e2.data.hint}` : e2.message;
+        e.currentTarget.disabled = locked;
+      }
+    };
+    if (!quiet) { $('.pg-modes [aria-checked="true"]', pan)?.focus(); pan.scrollIntoView({ block: 'nearest' }); }
+  }
 
   function openPermissions() {
     const body = openDrawer('permsDrawer', 'Permissions', 'lock');
