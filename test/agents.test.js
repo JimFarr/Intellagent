@@ -1264,6 +1264,7 @@ describe('token usage', () => {
     await poke('metered', 2);
     m = await agentState(s, 'metered');
     assert.deepEqual([m.usageToday.runs, m.usageToday.input, m.usageToday.output], [2, 240, 60]);
+    assert.deepEqual(m.usageToday.byModel, { default: { input: 240, output: 60, cacheRead: 1000, cacheCreated: 80, runs: 2 } }, 'usage per model (INT-308); no model set = default');
 
     await poke('quiet', 1);
     const q = await agentState(s, 'quiet');

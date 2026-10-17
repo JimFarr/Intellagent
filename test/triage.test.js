@@ -25,6 +25,8 @@ describe('classify (INT-308)', () => {
     assert.equal(classify([{ type: 'comment.added', intent: 'explain' }]), 'build');
     assert.equal(classify([{ type: 'request.created' }]), 'build');
     assert.equal(classify([{ type: 'item.assigned' }]), 'build');
+    assert.equal(classify([{ type: 'attention.resolved' }]), 'build', 'an answer is acted on');
+    assert.equal(classify([{ type: 'review.approved' }]), 'build', 'an approval is acted on');
     assert.equal(classify([pending('start')]), 'build');
     assert.equal(classify([pending('renew'), pending('address_feedback')]), 'build', 'one build event makes the batch build');
     assert.equal(classify([{ type: 'something.new' }]), 'build');
