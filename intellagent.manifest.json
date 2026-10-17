@@ -25,5 +25,8 @@
         }
       ]
     }
+  },
+  "metrics": {
+    "prometheus": true
   }
 }
