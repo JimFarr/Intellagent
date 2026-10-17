@@ -392,6 +392,16 @@ describe("the account's usage holds back optional work (fake clock)", () => {
     assert.equal(core.state.usageHolds.length, 1);
   });
 
+  it('minutes held stop at the reset though nobody looked since, and overlapping accounts count once', () => {
+    const { scheduler, core } = usageRig([]);
+    scheduler.noteRate('bot', { five_hour: { utilization: 0.9, resetsAt: RESET } });
+    mock.timers.tick(3 * 60 * MIN); // well past the reset; nothing called holding() meanwhile
+    assert.equal(scheduler.heldMinutes(T0 - MIN), 60, 'the open stretch ends at its reset, not at now');
+    const from = new Date(T0).toISOString();
+    core.state.usageHolds.push({ provider: 'other', from, until: new Date(RESET).toISOString(), to: new Date(RESET).toISOString() });
+    assert.equal(scheduler.heldMinutes(T0 - MIN), 60, 'a second account held over the same hour is still one hour');
+  });
+
   it('work it already saw before the hold does not wake it again at the reset', () => {
     const { scheduler, offered } = usageRig([W('pickup', 'T-4')]);
     scheduler.checkPending('bot');
