@@ -2880,7 +2880,7 @@ function itemView(ctx, item, archived = false, blocksOf = null) {
   const col = ctx.board.columns.find((c) => c.id === (archived ? item.archivedFrom : item.columnId));
   const blocks = blocksOf ? [...(blocksOf.get(item.id) || [])] : Object.values(ctx.board.items).filter((x) => x.blockedBy?.includes(item.id)).map((x) => x.id);
   const focus = archived ? [] : focusNames(ctx, item.id);
-  const unanswered = archived ? [] : unansweredIn(item);
+  const unanswered = archived || item.columnId === doneColumnId(ctx) ? [] : unansweredIn(item); // a finished ticket owes no reply (workFor skips it too)
   return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived, ...(focus.length ? { focus } : {}), ...(unanswered.length ? { unanswered } : {}) };
 }
 

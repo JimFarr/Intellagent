@@ -39,6 +39,28 @@ describe('run logs outlive a fast agent (INT-343)', () => {
   });
 });
 
+describe('seen, not answered: no wake, no mark on finished tickets (INT-343)', () => {
+  it('an agent whose run answered nothing is not woken again for it, after the run or by the sweep; a Done ticket carries no mark', async () => {
+    const { until } = require('./helpers');
+    // the run exits 0 without a word: the comment stays seen (👀 from run start), not answered
+    const s = await startServer({ agents: { defaults: { settleSeconds: 0.2, throttleMinutes: 0, sweepMinutes: 0.02 }, agents: { mute: { run: 'node -e 0' } } } });
+    try {
+      const t = await s.ok('POST', `${B}/items`, { title: 'fyi', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${t.id}/comments`, { body: '@mute fyi, nothing to do' }, USER);
+      await until(async () => (await s.ok('GET', '/api/agents/mute')).lastRun?.endedAt, 8000, 'the run');
+      const item = async () => s.ok('GET', `${B}/items/${t.id}`);
+      assert.equal((await item()).unanswered?.[0]?.agent, 'mute', 'seen, not answered');
+      const runs = (await s.ok('GET', '/api/agents/mute')).history.length;
+      await new Promise((r) => setTimeout(r, 3500)); // the run-end check and a few sweeps (1.2 s each)
+      const after = await s.ok('GET', '/api/agents/mute');
+      assert.deepEqual([after.history.length, after.queued], [runs, 0], 'listing it started no run');
+      // finished: no mark on the card
+      await s.ok('POST', `${B}/items/${t.id}/move`, { column: 'Done' }, USER);
+      assert.equal((await item()).unanswered, undefined);
+    } finally { await s.stop(); }
+  });
+});
+
 describe('seen, not answered (INT-343)', () => {
   it('shows on the card and in the agent\'s work once 👀 is on an addressed comment; clears when it answers; starts no run', async () => {
     // enabled: false, so nothing runs: the test plays the agent's part over the API
