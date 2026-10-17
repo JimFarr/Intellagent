@@ -1376,6 +1376,7 @@ function requestReview(ctx, id, d, actor, commits = null) {
     if (item.columnId === doneColumnId(ctx)) fail(409, `${item.id} is already done (approved) — it can't go back to review`, { code: 'ALREADY_DONE', hint: 'If something is left to do, file a new ticket or comment on this one' });
     const col = d.column ? findColumn(ctx.board, d.column) : reviewColumn(ctx);
     if (!col) fail(400, 'No review column. Flag one with { "flags": { "review": true } } or pass "column".');
+    helperOwns(actor, item, 'request review');
     guardWrite(ctx, item, actor);
     if (item.columnId !== col.id) moveInto(ctx, item, col.id, 'top', actor, events);
     // A review explains itself in five parts (changed / why / evidence / verify / risks); a plain
@@ -1450,6 +1451,7 @@ function createItem(ctx, d, actor) {
     // Created on a focus board: made on this board and added to that focus board.
     const focus = d.focus ? getFocus(ctx, d.focus) : null;
     if (focus) guardFocus(ctx, actor, {});
+    if (d.assignee) mayAssign(actor, str(d.assignee, 64).trim());
     const id = `${b.idPrefix}-${b.nextNumber++}`;
     const t = now();
     const item = {
@@ -1635,6 +1637,7 @@ function applyPatch(ctx, item, p, actor, events) {
     const prev = item.assignee || null;
     const next = p.assignee ? str(p.assignee, 64).trim() : null;
     if (prev !== next) {
+      mayAssign(actor, next);
       set('assignee', next);
       item.assignedBy = next ? assignedByOf(actor) : null;
       // In a sleeping column an assignment is a note of who will take it, not a call to start.
@@ -1738,6 +1741,7 @@ function claimLease(ctx, id, d, actor) {
   return tx(ctx, (events) => {
     const item = getItem(ctx, id);
     checkColumnPerm(ctx, actor, [item.columnId]);
+    helperOwns(actor, item, 'take a lease');
     // Only the human may lease a ticket in someone else's name: a lease makes its holder an author of the ticket
     // (workedBy: refused as its reviewer, OWN_WORK on grants) and wakes them. An agent leases as itself.
     if (d.claimant && actor.kind !== 'user' && d.claimant !== actor.name) {
@@ -1906,6 +1910,7 @@ function requestLease(ctx, id, d, actor) {
     const l = activeLease(item);
     if (!l) fail(409, `${item.id} isn't leased — just start it`, { code: 'NOT_LEASED', hint: `POST …/items/${item.id}/start` });
     if (l.claimant === actor.name) fail(409, 'You already hold it');
+    helperOwns(actor, item, 'ask for the lease');
     item.leaseRequests = (item.leaseRequests || []).filter((x) => x.by !== actor.name);
     const req = { by: actor.name, reason: str(d.reason || '', 1000), at: now() };
     item.leaseRequests.push(req);
@@ -1921,6 +1926,7 @@ function handOverLease(ctx, id, d, actor) {
     if (actor.kind === 'agent' && l.claimant !== actor.name) fail(403, `Only ${l.claimant} (or a human) can hand it over`, { code: 'FORBIDDEN' });
     const to = str(d.to || item.leaseRequests?.[0]?.by || '', 64).trim();
     if (!to) fail(400, '"to" is required (no pending request)');
+    if (actor.kind !== 'user' && isHelper(to) && item.assignee !== to) fail(403, `${to} is a helper: it doesn't take over a ticket's lease`, { code: 'NOT_ROUTABLE', hint: `Keep the lease and send ${to} a request for the chore: POST /api/boards/<board>/requests { "to": "${to}", "body": "…" }` });
     makeLease(item, to, l.minutes || M.lease.defaultMinutes, d.status || null, null);
     item.leaseRequests = (item.leaseRequests || []).filter((x) => x.by !== to);
     item.version++;
@@ -2406,7 +2412,7 @@ function workFor(ctx, name) {
   }
   // A router (the coordinator) assigns Ready work; it never picks it up itself.
   const router = isCoordinator(ctx, name);
-  if (!router && (!next.length || next.every((n) => n.action === 'renew'))) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
+  if (!router && !isHelper(name) && (!next.length || next.every((n) => n.action === 'renew'))) for (const x of ready.slice(0, 3)) add('start', x, `Ready to pick up (${x.priority})`, call(x.id, 'start'));
   // A router assigns reviewers to tickets waiting in review, when a reviewer other than the author exists.
   if (router) {
     const pool = reviewerPool();
@@ -2501,7 +2507,8 @@ function stalledFor(ctx, name, minutes) {
   });
   for (const it of b.columns.filter((c) => c.id !== done).flatMap((c) => c.itemIds.map((id) => b.items[id]).filter(Boolean))) {
     const who = it.assignee;
-    if (!who || who === name || asleep(ctx, it) || it.test || (it.questions || []).length || activeLease(it)) continue;
+    // a helper's ticket is one the human gave it by hand: the human follows it up, not the supervisor (INT-252)
+    if (!who || who === name || asleep(ctx, it) || it.test || (it.questions || []).length || activeLease(it) || isHelper(who)) continue;
     let a;
     try { a = standing.get(who); } catch { continue; } // only standing agents can be woken
     if (standing.isRunning(who)) continue;
@@ -2689,11 +2696,15 @@ function briefing(ctx, name, base, via = 'cli') {
     }),
     ...(() => {
       // The receptionist routes work: show it the team with role, model tier and what each does.
-      const team = isCoordinator(ctx, name) && standing ? standing.list().agents.filter((a) => a.name !== name) : [];
+      const all = isCoordinator(ctx, name) && standing ? standing.list().agents.filter((a) => a.name !== name) : [];
+      // helpers (INT-252) are called on by the builders, never routed to
+      const team = all.filter((a) => !a.helper);
+      const helpers = all.filter((a) => a.helper).map((a) => a.name);
       if (!team.length) return [];
       return ['', '## Agents you can route to (set "assignee")',
         ...team.map((a) => `- **${a.name}**${a.role ? ` · ${a.role}` : ''}${a.model ? ` · ${a.model}${a.tier ? ` (${a.tier})` : ''}${a.provider ? ` · ${a.provider}` : ''}` : ''}${a.enabled ? '' : ' · paused'}${a.description ? ` — ${a.description}` : ''}${a.areas?.length ? `\n  owns: ${a.areas.map((x) => `\`${x}\``).join(', ')}` : ''}${a.concerns?.length ? `\n  watches for: ${a.concerns.join('; ')}` : ''}`),
-        'Route by tier when agents have models: **junior** (haiku) gets small, well-specified tickets; **mid** (sonnet) normal features and bugs; **senior** (opus) risky or cross-cutting work and anything with risk: high. Match the code first: give a ticket to the agent whose areas cover the files it touches (and whose concerns fit it); then the role (a designer gets design work); then the tier.'];
+        'Route by tier when agents have models: **junior** (haiku) gets small, well-specified tickets; **mid** (sonnet) normal features and bugs; **senior** (opus) risky or cross-cutting work and anything with risk: high. Match the code first: give a ticket to the agent whose areas cover the files it touches (and whose concerns fit it); then the role (a designer gets design work); then the tier.',
+        ...(helpers.length ? [`Helpers, not for routing: ${helpers.join(', ')}. Only the human assigns them a ticket (403 NOT_ROUTABLE); the builders call on them for chores.`] : [])];
     })(),
     ...(() => {
       const g = grantsOf(name);
@@ -4493,8 +4504,10 @@ route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=7|30: done, 
   metrics(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90)));
 route('GET', '/api/boards/:board/requests', 'Requests from the human to agents: ?status=open|done&to=<agent>', ({ p, q }) =>
   (getCtx(p.board).board.requests || []).filter((x) => (!q.status || x.status === q.status) && (!q.to || x.to === q.to)).slice().reverse());
-route('POST', '/api/boards/:board/requests', 'Ask an agent something not tied to a ticket: { body, to? } (to defaults to the board coordinator). The human\'s "remember that …" also goes into that agent\'s memory', ({ p, body, actor }) => {
-  const req = createRequest(getCtx(p.board), body, actor);
+route('POST', '/api/boards/:board/requests', 'Ask an agent something not tied to a ticket: { body, to? } (to defaults to the board coordinator). The human\'s "remember that …" also goes into that agent\'s memory. A request to a helper needs call-helpers (403 NOT_DELEGABLE)', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  mayCall(actor, requestTarget(ctx, body.to));
+  const req = createRequest(ctx, body, actor);
   const r = rememberFrom(req.body, req.to, req.id, actor);
   return created(r ? { ...req, ...r } : req);
 });
@@ -4512,6 +4525,7 @@ route('GET', '/api/boards/:board/items/:id/transitions', 'Where you can move thi
 });
 route('POST', '/api/boards/:board/items/:id/start', 'Start or resume work in one step: lease + move to the working column + status + assign. { status?, minutes?, column?, force? }. An agent with its own worktree is switched to the ticket\'s branch ticket/<name>/<ID> first (reply: branch; a ticket with unlanded commits on agent/<name> stays there); uncommitted work there answers 409 DIRTY, a full or locked working column WIP_LIMIT / LOCKED_COLUMN, and nothing changes', async ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
+  helperOwns(actor, getItem(ctx, p.id), 'start work'); // before its worktree switches branch
   const branch = await startTicketBranch(ctx, p.id, body, actor);
   return startWork(ctx, p.id, body, actor, branch);
 });
@@ -5275,6 +5289,25 @@ function heldPerms(name) {
   let a;
   try { a = standing?.get(name); } catch { return null; }
   return a?.perms ? permLibrary().resolve(a.perms).keys : null;
+}
+// Helper agents (INT-252): "helper": true in agents.json (the human's file; agents.manage can't set it). A helper
+// is called on with a request for a chore on someone's ticket, never handed the ticket: only the human assigns it
+// one, and on any other ticket it never takes a lease, starts or requests review, so the caller keeps its work.
+function isHelper(name) { return !!name && !!standing?.helperOf?.(name); }
+function mayAssign(actor, to) {
+  if (actor.kind === 'user' || !isHelper(to)) return;
+  fail(403, `${to} is a helper: only the human assigns it a ticket`, { code: 'NOT_ROUTABLE', hint: `Keep the ticket and send ${to} a request for a chore on it: POST /api/boards/<board>/requests { "to": "${to}", "body": "what, where, and which card to report on" }` });
+}
+function helperOwns(actor, item, what) {
+  if (actor.kind !== 'agent' || !isHelper(actor.name) || item.assignee === actor.name) return;
+  fail(403, `${actor.name} is a helper: it doesn't ${what} on a ticket it wasn't assigned`, { code: 'NOT_ROUTABLE', hint: 'Do the chore, then reply on the request you were sent (POST …/requests/<id>/reply) and comment on the card it named; the caller keeps the ticket, its lease and its review' });
+}
+// A request to a helper needs "Call on the helpers" (call-helpers); the human can always send one. A helper never
+// calls a helper, so two of them can't wake each other in a loop.
+function mayCall(actor, to) {
+  if (actor.kind === 'user' || !isHelper(to)) return;
+  if (isHelper(actor.name)) fail(403, `${actor.name} is a helper: helpers don't call on helpers`, { code: 'NOT_DELEGABLE', hint: 'Do the chore yourself, or say on the request what is missing' });
+  if (!heldPerms(actor.name)?.includes('call-helpers')) fail(403, `Only agents holding "Call on the helpers" (call-helpers) send requests to ${to}`, { code: 'NOT_DELEGABLE', hint: 'Do the chore yourself, or ask on the card. The human gives call-helpers in the permissions grid; the Builder role holds it' });
 }
 // May this caller run another agent's code (intellagent sandbox exec, INT-258)? The human, a standing agent
 // holding run-authors-code, or an agent outside agents.json whose name a token proves: on a board without

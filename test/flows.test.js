@@ -882,12 +882,12 @@ describe('agent manager: the agents.manage grant', () => {
     assert.equal((await patch(ag('mgr'), 'w2', { role: 'coordinator' })).body.code, 'HUMAN_ONLY');
     assert.equal((await patch(USER, 'r1', { role: 'coordinator' })).status, 200);
     assert.equal((await patch(ag('mgr'), 'r1', { role: 'reviewer' })).body.code, 'HUMAN_ONLY');
-    // perms: null means "the role's tools": w1's own three would become builder's four, so not for a manager
+    // perms: null means "the role's tools": w1's own three would become builder's five, so not for a manager
     assert.equal((await patch(ag('mgr'), 'w1', { perms: null })).body.code, 'WIDEN');
     // the human changes roles freely
     assert.equal((await patch(USER, 'r1', { role: 'builder', perms: null })).status, 200);
     a = await s.ok('GET', '/api/agents/r1');
-    assert.deepEqual(a.perms, ['edit', 'test', 'build', 'git']);
+    assert.deepEqual(a.perms, ['edit', 'test', 'build', 'git', 'call-helpers']);
     assert.equal(a.permsFrom, 'role');
   });
 });

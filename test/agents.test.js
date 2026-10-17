@@ -1071,10 +1071,13 @@ describe('the receptionist supervises other agents', () => {
     const s = await startServer({ agents: { defaults: fast, agents: {
       desk: { role: 'coordinator', run: run('ok') },
       sleeper: { role: 'builder', enabled: false }, // never runs: its tickets stall
+      aide: { role: 'builder', enabled: false, helper: true },
     } } });
     try {
       const sup = async () => (await s.ok('GET', `${B}/work?agent=desk`)).supervise || [];
       const it = await s.ok('POST', `${B}/items`, { title: 'given to a paused agent', column: 'Ready', assignee: 'sleeper' }, USER);
+      const h = await s.ok('POST', `${B}/items`, { title: 'given to a paused helper', column: 'Ready', assignee: 'aide' }, USER);
+      assert.ok(!(await sup()).some((x) => x.id === h.id), "a helper's ticket is the human's to follow up (INT-252)");
       const t = await s.ok('POST', `${B}/items`, { title: 'throwaway', column: 'Ready', assignee: 'sleeper', test: true }, USER);
       const q = await s.ok('POST', `${B}/items`, { title: 'waiting on you', column: 'Ready', assignee: 'sleeper', needsHuman: 'which way?' }, USER);
       const ids = (await sup()).map((x) => x.id);

@@ -46,7 +46,7 @@ describe('roles as data: the library', () => {
     assert.deepEqual(r.differences({ role: 'builder', run: 'x', areas: ['a'] }), {}, 'keys a role does not set are not differences');
     assert.deepEqual(r.differences({ role: 'builder', listen: 'addressed', throttleMinutes: 3 }), {}, 'the same value is not a difference');
     assert.deepEqual(r.differences({ role: 'builder', perms: ['read'], model: 'opus' }), {
-      perms: { role: ['edit', 'test', 'build', 'git'], agent: ['read'] },
+      perms: { role: ['edit', 'test', 'build', 'git', 'call-helpers'], agent: ['read'] },
       model: { role: null, agent: 'opus' },
     });
   });

@@ -544,6 +544,13 @@ describe('when rebalancing is asked for (INT-234, fake clock)', () => {
     assert.equal(stateOf('kraglin').edits, false);
   });
 
+  it('a helper takes no rebalanced work, though it edits files (INT-252)', () => {
+    const { defs, stateOf } = rebalanceRig();
+    defs.drax.helper = true;
+    assert.equal(stateOf('drax').edits, false);
+    assert.equal(stateOf('rocket').edits, true);
+  });
+
   it('an agent paused on its own is off for an hour, then away; resuming makes it active again', () => {
     const { scheduler, stateOf } = rebalanceRig();
     scheduler.api.pause('drax');
