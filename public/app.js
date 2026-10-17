@@ -1273,7 +1273,8 @@
     }
     // the minutes on a "writing a reply" bubble count up between redraws (INT-191)
     for (const t of $$('.think-age[data-run]')) t.textContent = runAgo(t.dataset.run);
-    if ($('#agentsDrawer') && !$('#agentsDrawer .add-agent')) fillAgents($('#agentsDrawer .drawer-body')); // never wipe a half-filled form
+    // never wipe a half-filled form: the add-agent form, or the idle alarm's (INT-265)
+    if ($('#agentsDrawer') && !$('#agentsDrawer .add-agent, #agentsDrawer .idle-form')) fillAgents($('#agentsDrawer .drawer-body'));
   }
 
   function armDelete(btn, ids, done = () => {}) {
