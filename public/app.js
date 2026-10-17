@@ -5041,6 +5041,26 @@
     };
   }
 
+  // "Board admin": who holds an admin.* power, with the one switch that suspends them all (INT-351). Same row as
+  // "Approves for you"; the board answers 403 ADMIN_OFF to agents while it is off.
+  async function fillAdmin(el) {
+    if (!el || !state.board) return;
+    let v;
+    try { v = await api('GET', `/api/boards/${state.board.id}/admin`); } catch { el.innerHTML = ''; return; }
+    const who = v.holders.map((a) => `<div class="appr-who">${avatar({ kind: 'agent', name: a.name })}<b>${esc(nameOf(a.name))}</b><span>${esc([...new Set(a.grants.map((g) => g.power))].join(', '))}</span></div>`).join('')
+      || '<div class="appr-who"><span>No agent holds an admin power yet</span></div>';
+    patchHTML(el, `<div class="cr-label"><span>Board admin</span><span class="sr-auto">${v.on ? 'On: these agents may change how the board is run' : 'Off: every admin.* power is suspended (agents.control, agents.manage and work.land stay on)'}</span></div>
+      <button class="switch ${v.on ? 'on' : ''}" role="switch" aria-checked="${v.on}" aria-label="Board admin" data-admin-toggle title="${v.on ? 'Suspend board admin|Suspend every admin.* power on this board until you switch it back on' : 'Allow board admin|Let these agents use their admin powers again'}"></button>
+      <div class="appr-list ${v.on ? '' : 'off'}">${who}</div>`);
+    $('[data-admin-toggle]', el).onclick = async () => {
+      try {
+        await api('PUT', `/api/boards/${state.board.id}/admin`, { on: !v.on });
+        toast(v.on ? 'Board admin suspended: agents get ADMIN_OFF' : 'Board admin on', { icon: v.on ? 'x' : 'check', kind: v.on ? '' : 'ok', timeout: 2500 });
+        fillAdmin(el);
+      } catch (e) { toast(e.data?.hint ? `${e.message}. ${e.data.hint}` : e.message, { kind: 'error' }); }
+    };
+  }
+
   // The idle-board alarm (INT-265): who is woken when tickets wait but no builder has run for a while, after
   // how long, and a note for them. One switch, a summary, and Edit for the rest.
   async function fillIdleAlarm(el, editing = false) {
@@ -5716,7 +5736,7 @@
     // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266).
     const first = !body._agentsFilled;
     body._agentsFilled = true;
-    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(`<div class="focusbar codebar code-row" ${state.app.behind ? '' : 'hidden'}>${codeBehindHTML()}</div>` + stopRow + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + '<div class="coord-row base-row" data-base data-keep="base"></div>' + addBtn + (rows.length ? rows.map((p, i) => {
+    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(`<div class="focusbar codebar code-row" ${state.app.behind ? '' : 'hidden'}>${codeBehindHTML()}</div>` + stopRow + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row" data-admin data-keep="admin"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + '<div class="coord-row base-row" data-base data-keep="base"></div>' + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
@@ -5728,6 +5748,7 @@
         ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}</div>`;
     }).join('') : `<div class="empty-note">${icon('bot')}</div>`));
     fillApprovals($('[data-appr]', body));
+    fillAdmin($('[data-admin]', body));
     fillIdleAlarm($('[data-idle]', body));
     fillBaseRow($('[data-base]', body));
     body.onclick = async (e) => {
