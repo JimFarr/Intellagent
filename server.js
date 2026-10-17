@@ -2365,10 +2365,11 @@ function pendingWork(name, pickup = false) {
 }
 
 // Tickets a builder could start now, for the idle-board alarm: in a pickup column, not held, not blocked, not
-// waiting on the human, and on the active focus board if there is one.
-function waitingWork() {
+// waiting on the human, and on the active focus board if there is one. boardId: that board only.
+function waitingWork(boardId = null) {
   const out = [];
   for (const ctx of boards.values()) {
+    if (boardId && ctx.id !== boardId) continue;
     const cols = new Set(pickupColumns(ctx).map((c) => c.id));
     for (const c of ctx.board.columns.filter((x) => cols.has(x.id))) {
       for (const it of c.itemIds.map((id) => ctx.board.items[id]).filter(Boolean)) {
@@ -2572,6 +2573,13 @@ function metrics(ctx, days) {
       const by = {};
       for (const e of evs) { const n = e.actor?.name || '?'; by[n] ||= { reviews: 0, moves: 0 }; by[n][e.type.startsWith('review.') ? 'reviews' : 'moves']++; }
       return { reviews: evs.filter((e) => e.type.startsWith('review.')).length, moves: evs.filter((e) => e.type === 'item.moved').length, byAgent: by };
+    })(),
+    // How often the board went idle with work waiting: the idle-board alarms in the window (INT-265)
+    idle: (() => {
+      const log = b.idleLog || [];
+      const inWin = log.filter((a) => t(a.at) >= from);
+      return { alarms: inWin.length, prev: log.filter((a) => t(a.at) >= prevFrom && t(a.at) < from).length,
+        longestMinutes: inWin.length ? Math.max(...inWin.map((a) => a.idleMinutes || 0)) : null, lastAt: log.at(-1)?.at || null };
     })(),
   };
 }
@@ -3364,7 +3372,7 @@ const SCHEMA = {
       'attention.raised', 'attention.resolved', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
-      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.managed', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
+      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.managed', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
       'focus.created', 'focus.updated', 'focus.activated', 'focus.retired'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
@@ -3678,6 +3686,61 @@ route('PUT', '/api/boards/:board/approvals', 'Human only: switch approvals for t
   });
   return approvalsView(ctx);
 });
+
+// The idle-board alarm (INT-265): when tickets wait to be started but no builder has run for `minutes`, the
+// agents in `wake` get one board.idle event with the human's `note` (lib/agents/scheduler.js checkIdle). The
+// human sets it on the Agents page; until they do, agents with "idleAlarm": true in agents.json are woken.
+const standingAgents = () => { try { return standing.list().agents; } catch { return []; } };
+function idleAlarmOf(ctx) {
+  const set = ctx.board.idleAlarm;
+  if (set) return { on: !!set.on, minutes: set.minutes || 20, wake: [].concat(set.wake || []), note: set.note || '', from: 'settings' };
+  const flagged = standingAgents().filter((a) => a.idleAlarm);
+  return { on: flagged.length > 0, minutes: flagged.length ? Math.min(...flagged.map((a) => a.idleAlarm.minutes)) : 20, wake: flagged.map((a) => a.name), note: '', from: 'agents.json' };
+}
+const idleAlarmView = (ctx) => ({ ...idleAlarmOf(ctx), agents: standingAgents().map((a) => a.name), recent: (ctx.board.idleLog || []).slice(-10).reverse() });
+route('GET', '/api/boards/:board/idle-alarm', 'The idle-board alarm: { on, minutes, wake, note } (who is woken when tickets wait but no builder has run for that long), and its last alarms', ({ p }) => idleAlarmView(getCtx(p.board)));
+route('PUT', '/api/boards/:board/idle-alarm', 'Human only: set the idle-board alarm { on?, minutes? (5-1440), wake? (standing agents), note? (what they should do, up to 1000 characters) }', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  humanConfig(actor, 'set the idle-board alarm');
+  const cur = idleAlarmOf(ctx);
+  const next = { on: cur.on, minutes: cur.minutes, wake: cur.wake, note: cur.note };
+  if ('on' in body) {
+    if (typeof body.on !== 'boolean') fail(400, '"on" must be true or false', { code: 'BAD_REQUEST', hint: 'PUT …/idle-alarm { "on": true }' });
+    next.on = body.on;
+  }
+  if ('minutes' in body) {
+    const m = Number(body.minutes);
+    if (!Number.isInteger(m) || m < 5 || m > 1440) fail(400, '"minutes" must be a whole number from 5 to 1440', { code: 'BAD_REQUEST', hint: 'e.g. { "minutes": 20 }' });
+    next.minutes = m;
+  }
+  if ('wake' in body) {
+    const names = [...new Set([].concat(body.wake || []).map(String))];
+    const known = new Set(standingAgents().map((a) => a.name));
+    const unknown = names.filter((n) => !known.has(n));
+    if (unknown.length) fail(400, `Not standing agents: ${unknown.join(', ')}`, { code: 'BAD_REQUEST', hint: `Pick from: ${[...known].join(', ') || 'none defined'}` });
+    next.wake = names;
+  }
+  if ('note' in body) {
+    if (body.note != null && typeof body.note !== 'string') fail(400, '"note" must be text', { code: 'BAD_REQUEST', hint: '{ "note": "Nudge the assignees first" }' });
+    if (String(body.note || '').length > 1000) fail(400, '"note" is longer than 1000 characters', { code: 'TOO_LARGE', hint: 'Keep it to a few lines: what they should do when the board goes idle' });
+    next.note = String(body.note || '').trim();
+  }
+  if (next.on && !next.wake.length) fail(400, 'The alarm needs someone to wake', { code: 'BAD_REQUEST', hint: 'Pass "wake": ["<agent>"], or "on": false' });
+  tx(ctx, (events) => {
+    ctx.board.idleAlarm = next;
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { idleAlarm: { from: { on: cur.on, minutes: cur.minutes, wake: cur.wake }, to: { on: next.on, minutes: next.minutes, wake: next.wake } } } });
+  });
+  return idleAlarmView(ctx);
+});
+// An alarm that went off, kept on the board (the last 500) for the metrics and the Agents page
+function recordIdleAlarm(boardId, rec) {
+  const ctx = boards.get(boardId);
+  if (!ctx) return;
+  tx(ctx, (events) => {
+    ctx.board.idleLog = [...(ctx.board.idleLog || []), rec].slice(-500);
+    events.push({ board: ctx.id, type: 'agent.idle_alarm', actor: { kind: 'system', name: 'intellagent' }, ...rec });
+  });
+}
 route('GET', '/api/boards/:board/focus', 'Focus boards: saved views over this board (a handful of its tickets), and which board is active — the agents work only on the active one', ({ p }) => {
   const ctx = getCtx(p.board);
   return { active: ctx.board.activeFocus, focusBoards: ctx.board.focusBoards.map((f) => focusView(ctx, f)) };
@@ -4765,7 +4828,9 @@ standing = require('./lib/agents').createAgents({
   env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
   emit, matchesFilter, parseFilter, recent: () => recent, seq: () => seq,
   pending: (name, def) => pendingWork(name, def.pickup === true ? 'ready' : def.pickup || false),
-  waiting: () => waitingWork(),
+  waiting: (board) => waitingWork(board),
+  idleAlarms: () => [...boards.values()].map((ctx) => ({ board: ctx.id, ...idleAlarmOf(ctx) })),
+  onIdleAlarm: (board, rec) => recordIdleAlarm(board, rec),
   lastSeen: (name) => presence.get(name)?.lastSeen || null, // a running agent's last call to the board (stalled runs)
   activityOf,
   // a run's leaseless status line ends with it

@@ -1130,7 +1130,12 @@
       <button class="mt" data-mt="cycle" title="Cycle time|Median time from starting work to done">${icon('clock', 'sm')}<b>${dur(m.cycleHours.median)}</b> cycle</button>
       <button class="mt ${w.open ? 'attn' : ''}" data-mt="waiting" title="Waiting on you|Open questions and reviews${w.oldestId ? ` — oldest on ${esc(w.oldestId)}` : ''}">${icon('ask', 'sm')}<b>${w.open}</b> waiting on you${w.open ? ` · oldest ${dur(w.oldestHours)}` : ''}</button>
       <button class="mt" data-mt="answer" title="Your answer time|Median time from an agent asking to you answering (${m.answerHours.count} answered)">${icon('send', 'sm')}you answer in <b>${dur(m.answerHours.median)}</b></button>
-      ${m.slowest ? `<button class="mt" data-mt="slow" title="Slowest step|Column where tickets wait longest (median)">${icon('layers', 'sm')}slowest: <b>${esc(m.slowest.name)}</b> ${dur(m.slowest.medianStayHours)}</button>` : ''}`;
+      ${m.slowest ? `<button class="mt" data-mt="slow" title="Slowest step|Column where tickets wait longest (median)">${icon('layers', 'sm')}slowest: <b>${esc(m.slowest.name)}</b> ${dur(m.slowest.medianStayHours)}</button>` : ''}
+      ${m.idle ? (() => {
+        const d = m.idle.alarms - m.idle.prev;
+        const tr = d ? `<span class="mt-delta ${d > 0 ? 'down' : 'up'}">${d > 0 ? '↑' : '↓'}${Math.abs(d)}</span>` : '';
+        return `<button class="mt ${m.idle.alarms ? 'attn' : ''}" data-mt="idle" title="Idle board|Times tickets waited while no builder ran long enough to set off the idle alarm, in the last ${m.days} days (vs the ${m.days} before)${m.idle.longestMinutes != null ? `; longest ${dur(m.idle.longestMinutes / 60)}` : ''}">${icon('pause', 'sm')}<b>${m.idle.alarms}</b> idle${tr}</button>`;
+      })() : ''}`;
     box.onclick = (e) => {
       const d = e.target.closest('[data-days]');
       if (d) { settings.metricsDays = Number(d.dataset.days); saveSettings(); loadMetrics(true); return; }
@@ -1150,7 +1155,9 @@
     body.innerHTML = `<div class="section"><div class="section-head">${icon('layers', 'sm')}<span>Time in each column (median)</span><span class="rule"></span></div>
         ${m.columns.map((c) => `<div class="mbar"><span class="mb-name"><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span class="mb-track"><b style="width:${((c.medianStayHours || 0) / maxStay) * 100}%;background:${esc(c.color)}"></b></span><span class="mb-val">${dur(c.medianStayHours)}</span><span class="mb-sub">${c.count} now${c.oldestHours != null ? ` · oldest ${dur(c.oldestHours)}` : ''}</span></div>`).join('')}</div>
       <div class="section"><div class="section-head">${icon('check', 'sm')}<span>Done per day</span><span class="rule"></span></div><div class="mdays">${m.perDay.map((v) => `<i style="height:${(v / Math.max(1, ...m.perDay)) * 100}%" title="${v}"></i>`).join('')}</div></div>
-      ${agents.length ? `<div class="section"><div class="section-head">${icon('bot', 'sm')}<span>Finished, by who worked on it</span><span class="rule"></span></div>${agents.map(([n, v]) => `<div class="magent">${avatar({ kind: 'agent', name: n })}<span>${esc(n)}</span><b>${v}</b></div>`).join('')}</div>` : ''}`;
+      ${agents.length ? `<div class="section"><div class="section-head">${icon('bot', 'sm')}<span>Finished, by who worked on it</span><span class="rule"></span></div>${agents.map(([n, v]) => `<div class="magent">${avatar({ kind: 'agent', name: n })}<span>${esc(n)}</span><b>${v}</b></div>`).join('')}</div>` : ''}
+      ${m.idle ? `<div class="section"><div class="section-head">${icon('pause', 'sm')}<span>Idle board</span><span class="rule"></span></div>
+        <div class="mbar"><span class="mb-name">Idle alarms</span><span class="mb-val">${m.idle.alarms}</span><span class="mb-sub">${m.idle.prev} the ${m.days} days before${m.idle.longestMinutes != null ? ` · longest ${dur(m.idle.longestMinutes / 60)}` : ''}${m.idle.lastAt ? ` · last ${esc(rel(m.idle.lastAt))}` : ''}</span></div></div>` : ''}`;
   }
 
   function updateOverflow() {
@@ -4627,6 +4634,40 @@
       } catch (e) { toast(e.message, { kind: 'error' }); }
     };
   }
+
+  // The idle-board alarm (INT-265): who is woken when tickets wait but no builder has run for a while, after
+  // how long, and a note for them. One switch, a summary, and Edit for the rest.
+  async function fillIdleAlarm(el, editing = false) {
+    if (!el || !state.board) return;
+    let v;
+    try { v = await api('GET', `/api/boards/${state.board.id}/idle-alarm`); } catch { el.innerHTML = ''; return; }
+    if (!v.agents.length) { el.innerHTML = ''; return; }
+    const last = v.recent[0];
+    const summary = !v.wake.length ? 'Nobody to wake yet: pick who'
+      : `${v.on ? 'Wakes' : 'Would wake'} ${v.wake.map(nameOf).join(' and ')} when tickets wait and no builder has run for ${v.minutes} min`;
+    el.innerHTML = `<div class="cr-label"><span>When the board goes idle</span><span class="sr-auto">${esc(summary)}${last ? ` · last alarm ${esc(rel(last.at))}` : ''}</span></div>
+      <button class="switch ${v.on ? 'on' : ''}" data-idle-toggle ${v.wake.length ? '' : 'disabled'} title="${v.on ? 'Switch the alarm off|Nobody is woken when the board goes idle' : 'Switch the alarm on|Wake the agents you picked when the board goes idle'}"></button>
+      ${editing ? `<div class="idle-form">
+        <div class="aa-row"><input class="inp" type="number" min="5" max="1440" step="1" data-idle-min value="${v.minutes}" style="max-width:7em"><span class="aa-note">minutes with no builder running before the alarm</span></div>
+        <div class="aa-perms">${v.agents.map((n) => `<button class="toggle-chip ${v.wake.includes(n) ? 'on' : ''}" data-idle-wake="${esc(n)}">${esc(nameOf(n))}</button>`).join('')}<span class="aa-note">who to wake</span></div>
+        <textarea class="inp" rows="3" maxlength="1000" data-idle-note placeholder="What they should do, e.g. nudge the assignees first, ask Gamora to route anything unassigned">${esc(v.note)}</textarea>
+        <div class="idle-actions"><button class="btn sm" data-idle-cancel>Cancel</button><button class="btn sm primary" data-idle-save>Save</button></div>
+      </div>` : `<button class="btn sm ghost idle-edit" data-idle-edit>${icon('pencil', 'sm')}Edit</button>`}`;
+    const put = async (body, msg) => {
+      try { await api('PUT', `/api/boards/${state.board.id}/idle-alarm`, body); toast(msg, { icon: 'check', kind: 'ok', timeout: 2200 }); fillIdleAlarm(el); }
+      catch (e) { toast(e.message, { kind: 'error' }); }
+    };
+    $('[data-idle-toggle]', el).onclick = () => put({ on: !v.on }, v.on ? 'Idle alarm off' : 'Idle alarm on');
+    const ed = $('[data-idle-edit]', el);
+    if (ed) ed.onclick = () => fillIdleAlarm(el, true);
+    if (!editing) return;
+    for (const b of $$('[data-idle-wake]', el)) b.onclick = () => b.classList.toggle('on');
+    $('[data-idle-cancel]', el).onclick = () => fillIdleAlarm(el);
+    $('[data-idle-save]', el).onclick = () => {
+      const wake = $$('[data-idle-wake].on', el).map((b) => b.dataset.idleWake);
+      put({ minutes: Number($('[data-idle-min]', el).value), wake, note: $('[data-idle-note]', el).value, ...(wake.length ? {} : { on: false }) }, 'Idle alarm saved');
+    };
+  }
   /* The permission library (INT-244, on INT-228's /api/permissions): every permission an agent can hold, grouped
      by kind. Built-ins and powers are read-only; the human adds, edits and removes their own. A verbal permission
      is only words, so it looks different everywhere: dashed, a speech mark instead of a lock, and the warning. */
@@ -4825,7 +4866,7 @@
     const stopRow = sa.length || state.presence.some((p) => p.leases?.length) ? `<div class="stop-row">${allPaused
       ? `<button class="btn sm" data-resume-all title="Resume all|Unpause every standing agent; their queued events run">${icon('play', 'sm')}Resume all agents</button>`
       : `<button class="btn sm danger" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}Stop all agents</button>`}</div>` : '';
-    body.innerHTML = stopRow + '<div class="appr-row" data-appr></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
+    body.innerHTML = stopRow + '<div class="appr-row" data-appr></div><div class="appr-row idle-row" data-idle></div>' + coordRow + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
@@ -4835,6 +4876,7 @@
         ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}${p.name !== coord ? `<button class="make-coord" data-make-coord="${esc(p.name)}" title="Make coordinator|Requests go to this agent by default">${icon('send', 'sm')}Make coordinator</button>` : ''}</div>`;
     }).join('') : `<div class="empty-note">${icon('bot')}</div>`);
     fillApprovals($('[data-appr]', body));
+    fillIdleAlarm($('[data-idle]', body));
     body.onclick = async (e) => {
       const co = e.target.closest('[data-coord]');
       if (co) {

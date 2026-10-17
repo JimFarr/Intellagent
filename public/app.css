@@ -2133,3 +2133,9 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .card.focus-active { outline-color: color-mix(in oklab, var(--text) 55%, transparent); }
 .bulk .card.focused { outline-color: transparent; }
 .focus-chip { padding-left: 9px; background: color-mix(in oklab, var(--accent) 14%, transparent); color: color-mix(in oklab, var(--accent) 75%, var(--text)); font-family: var(--font); }
+
+/* The idle-board alarm on the Agents page (INT-265): one row like Approves for you, with an inline form */
+.idle-row .idle-edit { grid-column: 1 / -1; justify-self: start; margin-top: -4px; }
+.idle-form { grid-column: 1 / -1; display: grid; gap: 10px; }
+.idle-form textarea { width: 100%; resize: vertical; min-height: 64px; }
+.idle-actions { display: flex; justify-content: flex-end; gap: 8px; }

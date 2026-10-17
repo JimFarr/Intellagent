@@ -178,7 +178,7 @@ function alarmRig() {
       lingering: () => 0,
       endSession() {},
       start(name, d, s) {
-        for (const e of s.queue) if (e.type === 'board.idle') alarms.push({ at: Date.now() - T0, waiting: e.waiting.map((w) => w.id) });
+        for (const e of s.queue) if (e.type === 'board.idle') alarms.push({ agent: name, at: Date.now() - T0, waiting: e.waiting.map((w) => w.id), note: e.note, board: e.board });
         s.runs.push(new Date().toISOString()); s.queue.splice(0);
       },
     },
@@ -188,7 +188,7 @@ function alarmRig() {
   core.scheduler = scheduler;
   // the builder runs (and starts nothing): what the alarm's own nudge causes
   const builderRuns = () => { st('worker').runs.push(new Date().toISOString()); scheduler.checkIdle(); };
-  return { scheduler, agents, board, alarms, builderRuns, st };
+  return { scheduler, core, agents, board, alarms, builderRuns, st };
 }
 
 // Advance the fake clock in 1 s steps, so timers set while it runs (the settle delay after an alarm) fire too
@@ -255,5 +255,25 @@ describe('the idle-board alarm (fake clock)', () => {
     board.waiting = [];
     scheduler.checkIdle();
     assert.equal(agents.watch.queue.length, 0, 'nothing waits');
+  });
+
+  it('the board\'s setting decides: who it wakes, after how long, with the human\'s note; off means quiet', () => {
+    const { scheduler, core, agents, alarms } = alarmRig();
+    const recorded = [];
+    core.defs.lead = { name: 'lead', enabled: true, settleSeconds: 3, throttleMinutes: 0 };
+    let setting = { board: 'main', on: true, minutes: 30, wake: ['lead'], note: 'Ask Gamora first.' };
+    core.deps.idleAlarms = () => [setting];
+    core.deps.onIdleAlarm = (board, rec) => recorded.push({ board, ...rec });
+    scheduler.checkIdle();
+    advance(20 * MIN + 5000);
+    assert.equal(alarms.length, 0, 'not at 20 min: the setting says 30, and the agents.json flag is only the fallback');
+    advance(10 * MIN);
+    assert.deepEqual(alarms.map((a) => [a.agent, a.note, a.board]), [['lead', 'Ask Gamora first.', 'main']], 'lead is woken at 30 min, with the note');
+    assert.deepEqual(recorded.map((r) => [r.board, r.woke, r.repeat]), [['main', ['lead'], 1]]);
+    // switched off: quiet, whatever waits
+    setting = { ...setting, on: false };
+    advance(300 * MIN);
+    scheduler.checkIdle();
+    assert.equal(alarms.length, 1);
   });
 });

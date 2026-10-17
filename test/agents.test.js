@@ -342,6 +342,36 @@ describe('standing agents pick up work already on the board', () => {
       assert.match(log, /board\.idle — no builder has run for \d+ min, yet 1 ticket\(s\) wait/, 'Backlog is not waiting work');
       assert.match(log, new RegExp(`${waiting.id} "nobody started this" — unassigned`));
       assert.match(log, /builders: worker idle/);
+      // kept on the board: the Agents page lists it, the metrics count it
+      await until(async () => (await s.ok('GET', `${B}/idle-alarm`)).recent.length === 1, 4000, 'recorded');
+      const rec = (await s.ok('GET', `${B}/idle-alarm`)).recent[0];
+      assert.deepEqual([rec.woke, rec.waiting, rec.repeat], [['watch'], [waiting.id], 1]);
+      const m = await s.ok('GET', `${B}/metrics?days=7`);
+      assert.equal(m.idle.alarms, 1);
+      assert.equal(m.idle.prev, 0);
+      assert.ok(m.idle.longestMinutes >= 0);
+    } finally { await s.stop(); }
+  });
+
+  it('the idle-board alarm is a board setting: the human picks who it wakes and a note for them; agents.json flags are the fallback', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      worker: { run: run('ok'), worktree: true, enabled: false },
+      lander: { run: run('ok'), idleAlarm: true, idleAlarmMinutes: 30, enabled: false },
+      lead: { run: run('ok'), enabled: false },
+    } } });
+    try {
+      const before = await s.ok('GET', `${B}/idle-alarm`);
+      assert.deepEqual([before.on, before.minutes, before.wake, before.from], [true, 30, ['lander'], 'agents.json'], 'until the human sets it, agents.json decides');
+      assert.deepEqual(before.agents.sort(), ['lander', 'lead', 'worker']);
+      assert.equal((await s.api('PUT', `${B}/idle-alarm`, { on: false }, { agent: 'lead' })).status, 403, 'human only');
+      for (const bad of [{ minutes: 2 }, { minutes: 20.5 }, { wake: ['nobody'] }, { on: true, wake: [] }, { note: 'x'.repeat(1001) }, { on: 'yes' }]) {
+        assert.ok([400].includes((await s.api('PUT', `${B}/idle-alarm`, bad, USER)).status), JSON.stringify(bad).slice(0, 40));
+      }
+      const set = await s.ok('PUT', `${B}/idle-alarm`, { wake: ['lead'], minutes: 45, note: 'Nudge the assignees first; ask Gamora for anything unassigned.' }, USER);
+      assert.deepEqual([set.on, set.minutes, set.wake, set.from], [true, 45, ['lead'], 'settings']);
+      assert.equal(set.note, 'Nudge the assignees first; ask Gamora for anything unassigned.');
+      const off = await s.ok('PUT', `${B}/idle-alarm`, { on: false }, USER);
+      assert.deepEqual([off.on, off.wake], [false, ['lead']], 'switching off keeps who it wakes');
     } finally { await s.stop(); }
   });
 });
