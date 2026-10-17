@@ -831,7 +831,7 @@ const commitsAuthor = (item) => (item.questions || []).find((q) => q.kind === 'r
 // as a change next time. Resolves to the string, or null on a git error (cached for a minute, then tried again).
 const COMMITS_RETRY_MS = 60_000;
 async function lookUpCommits(author, id) {
-  const tips = worktrees.tips(author);
+  const tips = worktrees.tips(author, id);
   let commits = null;
   try { commits = (await worktrees.commitsForAsync(author, id, { strict: true })).map((c) => c.sha).join(','); } catch { /* unknown */ }
   if (tips) {
@@ -846,8 +846,8 @@ function ticketCommits(item, ctx = null) {
   if (ctx && knownCommits.has(`${ctx.id}:${item.id}`)) return knownCommits.get(`${ctx.id}:${item.id}`);
   const author = commitsAuthor(item);
   if (!author || !worktrees || !agentBranch(author)) return '';
-  const tips = worktrees.tips(author);
-  const hit = commitsCache.get(`${author}\0${item.id}`);
+  const tips = worktrees.tips(author, item.id);
+  const hit =commitsCache.get(`${author}\0${item.id}`);
   if (tips && hit?.tips === tips && (hit.commits != null || Date.now() - hit.at < COMMITS_RETRY_MS)) return hit.commits;
   const key = `${author}\0${item.id}`;
   if (!commitsLooking.has(key)) {
