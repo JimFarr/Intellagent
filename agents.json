@@ -124,13 +124,13 @@
         "phone width (375px)"
       ],
       "reviewer": true,
-      "model": "opus",
+      "model": "sonnet",
       "run": "claude -p \"Handle the Intellagent events described on stdin.\" --permission-mode acceptEdits --tools \"Bash,Read,Grep,Glob,Edit,Write\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-mantis.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Edit\" \"Write\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"Bash(git merge main)\" \"Bash(git merge --abort)\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
       "maxRunsPerHour": 30
     },
     "phyla": {
       "role": "builder",
-      "description": "Front-end developer (opus): screen features in public/ (editors, pages, builders, live indicators) built on Mantis's look and checked in her own sandbox and browser. Themes, CSS and motion are Mantis's.",
+      "description": "Front-end developer (sonnet): screen features in public/ (editors, pages, builders, live indicators) built on Mantis's look and checked in her own sandbox and browser. Themes, CSS and motion are Mantis's.",
       "throttleMinutes": 1,
       "areas": [
         "public/app.js",
@@ -144,7 +144,7 @@
         "follows Mantis's look; asks her before a new visual pattern"
       ],
       "reviewer": true,
-      "model": "opus",
+      "model": "sonnet",
       "run": "claude -p \"Handle the Intellagent events described on stdin.\" --permission-mode acceptEdits --tools \"Bash,Read,Grep,Glob,Edit,Write\" --strict-mcp-config --mcp-config \"C:/Development/apps/Intellagent/mcp-phyla.json\" --allowedTools \"Bash(intellagent:*)\" \"Read\" \"Grep\" \"Glob\" \"Edit\" \"Write\" \"Bash(npm test)\" \"Bash(npm test:*)\" \"Bash(node --test:*)\" \"Bash(git status:*)\" \"Bash(git diff:*)\" \"Bash(git log:*)\" \"Bash(git add:*)\" \"Bash(git commit:*)\" \"Bash(git merge main)\" \"Bash(git merge --abort)\" \"mcp__playwright\" --disallowedTools \"Read(**/local.json)\"",
       "maxRunsPerHour": 30
     },
@@ -229,9 +229,9 @@
     },
     "groot": {
       "role": "builder",
-      "model": "opus",
+      "model": "sonnet",
       "maxRunsPerHour": 30,
-      "description": "Senior developer (opus): standing agents, the scheduler, runner and worktrees (lib/agents/, lib/worktrees.js). Partners with Rocket on anything that crosses into server.js.",
+      "description": "Developer (sonnet): standing agents, the scheduler, runner and worktrees (lib/agents/, lib/worktrees.js). Partners with Rocket on anything that crosses into server.js.",
       "areas": [
         "lib/agents/",
         "lib/agents.js",
