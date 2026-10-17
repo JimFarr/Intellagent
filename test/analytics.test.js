@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 James Farrugia
+'use strict';
+// GET /api/analytics (INT-311): derived from agent.status events and agent-stats.jsonl, live and rolled files.
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { startServer } = require('./helpers');
+const { createAnalytics, logFiles } = require('../lib/analytics');
+
+const H = 3_600_000;
+const NOW = Date.parse('2026-10-10T00:00:00Z');
+const FROM = NOW - 24 * H; // days: 1
+const iso = (ms) => new Date(ms).toISOString();
+const status = (agent, s, at, extra = {}) => ({ seq: 1, ts: iso(at), type: 'agent.status', agent, status: s, ...extra });
+const record = (agent, end, more = {}) => ({
+  agent, model: 'opus', provider: 'anthropic', startedAt: iso(end - 600_000), endedAt: iso(end), why: 'work.pending',
+  items: [], code: 0, result: 'ok', tokens: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0 }, cost: null,
+  tools: null, commands: null, ...more,
+});
+const jsonl = (rows) => rows.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n';
+
+// A data folder with an events log and a stats log, each rolled once inside the window and once or twice before it.
+function fixture() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-analytics-'));
+  const w = (f, rows) => fs.writeFileSync(path.join(dir, f), jsonl(rows));
+  w(`events-${FROM - 72 * H}.jsonl`, [status('old', 'running', FROM - 80 * H)]); // too old: never read
+  w(`events-${FROM - 2 * H}.jsonl`, [status('a', 'running', FROM - 6 * H), status('a', 'idle', FROM - 5 * H)]);
+  w(`events-${FROM + 6 * H}.jsonl`, [
+    status('a', 'running', FROM + 2 * H, { lastRun: { events: 3 } }),
+    { seq: 2, ts: iso(FROM + 2.5 * H), type: 'comment.added', body: 'mentions "agent.status" in text' },
+    status('a', 'idle', FROM + 3 * H),
+  ]);
+  w('events.jsonl', [
+    status('a', 'paused', FROM + 20 * H),
+    '{"seq":9,"ts":"2026-10-09T21:00:00Z","type":"agent.status","agent":"a","sta', // torn line
+    status('b', 'running', FROM + 23 * H, { lastRun: { events: 1 } }),
+    status('a', 'idle', NOW + H), // after `now`: ignored
+  ]);
+  w(`agent-stats-${FROM - H}.jsonl`, [record('a', FROM - 2 * H, { cost: 9 })]); // ended before the window
+  w('agent-stats.jsonl', [
+    record('a', FROM + 3 * H, { items: ['INT-1', 'INT-2'], cost: 0.4, tools: { Bash: 2, Edit: 1 }, commands: ['git', 'npm', 'git'] }),
+    record('a', FROM + 4 * H, { items: ['INT-1'], result: 'failed', code: 1, tokens: null }),
+    record('b', FROM + 23.5 * H, { items: ['INT-2'], model: 'haiku', cost: 0.1, tools: { Read: 4 } }),
+  ]);
+  return dir;
+}
+
+describe('analytics: the pieces', () => {
+  it('reads the rolled files in the window, the newest one before it, and the live one; skips older ones', () => {
+    const dir = fixture();
+    assert.deepEqual(logFiles(dir, 'events', FROM).map((f) => path.basename(f)),
+      [`events-${FROM - 2 * H}.jsonl`, `events-${FROM + 6 * H}.jsonl`, 'events.jsonl']);
+    assert.deepEqual(logFiles(dir, 'agent-stats', FROM).map((f) => path.basename(f)),
+      [`agent-stats-${FROM - H}.jsonl`, 'agent-stats.jsonl']);
+    assert.deepEqual(logFiles(path.join(dir, 'missing'), 'events', FROM), [], 'no folder: nothing');
+  });
+
+  it('time in each state, queue depth, runs, tokens, cost by model, tools and commands per agent', () => {
+    const r = createAnalytics({ dataDir: fixture() })({ days: 1, now: NOW });
+    assert.equal(r.from, iso(FROM));
+    assert.deepEqual(r.agents.map((a) => a.agent), ['a', 'b'], '"old" is in a file that rolled before the window');
+    const [a, b] = r.agents;
+    // a was idle when the window opened (known from the file that rolled before it)
+    assert.deepEqual(a.states, { idle: 19 * H, running: H, paused: 4 * H });
+    assert.equal(a.unknownMs, 0);
+    assert.deepEqual(b.states, { running: H });
+    assert.equal(b.unknownMs, 23 * H, 'before its first state in the window, b is unknown');
+    assert.deepEqual(a.queue, [{ at: iso(FROM + 2 * H), status: 'running', depth: 3 }]);
+    assert.deepEqual(a.runs, { count: 2, ok: 1, failed: 1, timeout: 0, stopped: 0, limited: 0, ms: 1_200_000 });
+    assert.equal(a.cost, 0.4);
+    assert.equal(a.unpriced, 1, 'the failed run has no cost: counted, never taken as 0');
+    assert.deepEqual(a.tokens, { input: 100, output: 10, cacheRead: 0, cacheWrite: 0 });
+    assert.equal(a.models.opus.runs, 2);
+    assert.deepEqual(a.tools, [{ name: 'Bash', count: 2 }, { name: 'Edit', count: 1 }]);
+    assert.equal(a.toolsUnknown, 1);
+    assert.deepEqual(a.commands, [{ name: 'git', count: 2 }, { name: 'npm', count: 1 }]);
+    assert.equal(b.models.haiku.cost, 0.1);
+    assert.deepEqual(r.totals, { runs: 3, tokens: { input: 200, output: 20, cacheRead: 0, cacheWrite: 0 }, cost: 0.5, unpriced: 1 });
+  });
+
+  it('per ticket: a run woken for two tickets shares its cost between them, so tickets add up to the total', () => {
+    const r = createAnalytics({ dataDir: fixture() })({ days: 1, now: NOW });
+    const t = Object.fromEntries(r.tickets.map((x) => [x.id, x]));
+    assert.deepEqual(r.tickets.map((x) => x.id), ['INT-2', 'INT-1'], 'most expensive first');
+    assert.equal(t['INT-1'].runs, 2);
+    assert.equal(t['INT-1'].cost, 0.2);
+    assert.equal(t['INT-1'].unpriced, 1);
+    assert.equal(t['INT-1'].shared, 1);
+    assert.equal(t['INT-2'].cost, 0.3);
+    assert.deepEqual(t['INT-2'].agents, ['a', 'b']);
+    assert.equal(t['INT-1'].tokens.input, 50, 'half of the shared run; the failed one reported none');
+  });
+
+  it('?agent= narrows agents and tickets to that agent', () => {
+    const r = createAnalytics({ dataDir: fixture() })({ days: 1, now: NOW, agent: 'b' });
+    assert.deepEqual(r.agents.map((a) => a.agent), ['b']);
+    assert.deepEqual(r.tickets.map((x) => [x.id, x.cost]), [['INT-2', 0.1]]);
+    assert.equal(r.totals.cost, 0.1);
+  });
+});
+
+describe('GET /api/analytics', () => {
+  it('anyone who can read the board reads it; a bad agent name is 400 with a hint', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-test-'));
+    fs.mkdirSync(path.join(dir, 'data'));
+    const end = Date.now() - H;
+    fs.writeFileSync(path.join(dir, 'data', 'agent-stats.jsonl'), jsonl([record('rocket', end, { items: ['T-1'], cost: 0.25 })]));
+    const s = await startServer({ dir });
+    try {
+      const r = await s.ok('GET', '/api/analytics?days=7', undefined, { agent: 'someone' });
+      assert.equal(r.days, 7);
+      assert.equal(r.totals.cost, 0.25);
+      assert.deepEqual(r.tickets.map((t) => t.id), ['T-1']);
+      assert.equal((await s.ok('GET', '/api/analytics?days=500', undefined, { user: 'James' })).days, 90, 'capped at 90 days');
+      assert.deepEqual((await s.ok('GET', '/api/analytics?agent=nobody')).agents, []);
+      const bad = await s.api('GET', '/api/analytics?agent=a%20b');
+      assert.equal(bad.status, 400);
+      assert.equal(bad.body.code, 'BAD_REQUEST');
+      assert.ok(bad.body.hint);
+    } finally { await s.stop(); }
+  });
+});

@@ -190,6 +190,8 @@ The human decides with `POST …/review/decision { "verdict": "approve" | "chang
 ### Metrics
 `GET /api/boards/main/metrics?days=7` (or 30): tickets done (and the previous window), median cycle time (working column → done), median time in each column, open questions and how long the oldest has waited, and how fast the human answers. The UI shows it as a strip under the top bar.
 
+`GET /api/analytics?days=7` (1-90, default 7; `&agent=<name>` for one agent) is the agents' side: per agent, time in each state (`states`: running, queued, waiting, throttled, idle, paused, failed… in ms; `unknownMs` before its first known state), queue depth at each run start (`queue`), runs and how they ended, tokens, cost (`cost`, with `unpriced` counting runs that reported none: unknown, never 0), the same per model, and the top tools and command names; per ticket, runs, time, tokens and cost (a run woken for several tickets is shared between them equally, so tickets add up to the agents' totals). It is worked out on each call from the `agent.status` events and the run records in `agent-stats.jsonl`, live and rolled files, reading only the files of the window. **Anyone who can read the board may read it**, the human and every agent: it holds command names only, never command lines, prompts or ticket text.
+
 ### Daily digest
 At the end of a session: `POST /api/boards/main/digest { "summary": "markdown", "items": ["INT-12"] }`. Read what others wrote with `GET /api/boards/main/digest?days=3` — a cheap way to catch up.
 
@@ -511,7 +513,7 @@ Search       GET/POST /api/search
 Events       GET /api/events  /api/events/wait  /api/stream   POST /api/stream-ticket (the UI)
              GET/POST /api/subscriptions         DELETE /api/subscriptions/:id     GET …/:id/next   POST …/:id/ack
 Agents       GET/POST /api/agents  /api/agents/roles  /api/agents/:name  …/:name/log  …/:name/layers     PATCH/DELETE /api/agents/:name
-             GET/PUT /api/agents/base-context (PUT human)
+             GET/PUT /api/agents/base-context (PUT human)    GET /api/analytics
              POST /api/agents/stop-all  /api/agents/resume-all  /api/agents/:name/pause  …/resume  …/run
 Permissions  GET/POST /api/permissions         PATCH/DELETE /api/permissions/:key (human)
 Roles        GET /api/roles  /api/roles/:key

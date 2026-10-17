@@ -764,6 +764,7 @@ const { BASE_MAX, shipped: shippedBase } = require('./lib/agents/base');
 const { layersFor } = require('./lib/agents/prompt');
 const { createMemory, rememberText } = require('./lib/memory');
 const { createMetrics } = require('./lib/metrics');
+const { createAnalytics } = require('./lib/analytics');
 const { createDigest } = require('./lib/digest');
 const { createFocusBoards } = require('./lib/focus');
 const { createRequests } = require('./lib/requests');
@@ -3085,6 +3086,7 @@ function updateProfile(name, d, actor) {
 
 const memory = createMemory({ file: path.join(DATA, 'memory.json'), fail, now, rid });
 const metrics = createMetrics({ doneColumnId, workingColumn, recent });
+const analytics = createAnalytics({ dataDir: DATA });
 const digest = createDigest({ rid, now, trimChange, learnedSince: (ms) => memory.learnedSince(ms) });
 // standing is set at boot and isAgentName is declared further down, so both are read when called.
 const { activeFocus, inActiveFocus, focusNames, getFocus, focusView, focusEvent, addToFocus, guardFocus,
@@ -4404,6 +4406,11 @@ const controls = (actor, target) => {
   if (String(target).toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent cannot pause, resume or run itself', { code: 'OWN_WORK' });
 };
 route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run, now (what a live run is doing), history (last 10 runs). ?recent=N adds the N newest runs across all agents', ({ q }) => standing.list({ recent: Math.min(50, Math.max(0, Number(q.recent) || 0)) }));
+// Anyone who can read the board may read it (decided on INT-311): run records hold command names, never lines.
+route('GET', '/api/analytics', 'Agent analytics over ?days=7|30 (1-90), ?agent=<name> for one: time in each state, queue depth, runs, tokens, cost by model, top tools and commands; per ticket runs, tokens and cost', ({ q }) => {
+  if (q.agent != null && !/^[\w.-]{1,64}$/.test(String(q.agent))) fail(400, `"${String(q.agent).slice(0, 64)}" is not an agent name`, { code: 'BAD_REQUEST', hint: 'Pass ?agent=<name> as in GET /api/agents, or leave it out for every agent' });
+  return analytics({ days: clamp(Number(q.days) || 7, 1, 90), agent: q.agent || null });
+});
 route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {
   return { roles: Object.fromEntries(roleLibrary().list().map((v) => [v.key, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: permLibrary().labels() };
 });
