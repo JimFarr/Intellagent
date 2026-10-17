@@ -102,6 +102,43 @@ describe('analytics: the pieces', () => {
   });
 });
 
+describe('analytics: cost per call', () => {
+  // The worst a call reads: events.jsonl rolls only at start once past 20 MB, so the live file can be bigger; the
+  // stats file rolls at 5 MB (about 17k runs). Most event lines are not agent.status and are skipped unparsed.
+  it('a 25 MB events log and a full 5 MB stats file answer in well under a second', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-analytics-big-'));
+    const agents = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    const ev = [];
+    let size = 0;
+    for (let i = 0; size < 25e6; i++) {
+      const at = FROM - 24 * H + i * 1000;
+      const l = JSON.stringify(i % 50 ? { seq: i, ts: iso(at), type: 'comment.added', itemId: `INT-${i % 400}`, body: 'x'.repeat(300) }
+        : status(agents[i % 8], ['running', 'idle', 'queued'][i % 3], at, { lastRun: { events: 2 } }));
+      ev.push(l);
+      size += l.length + 1;
+    }
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), ev.join('\n') + '\n');
+    const st = [];
+    size = 0;
+    for (let i = 0; size < 5e6; i++) {
+      const l = JSON.stringify(record(agents[i % 8], FROM + (i % 86_400) * 1000, { items: [`INT-${i % 400}`], cost: 0.01, tools: { Bash: 3, Edit: 1 }, commands: ['git', 'npm'] }));
+      st.push(l);
+      size += l.length + 1;
+    }
+    fs.writeFileSync(path.join(dir, 'agent-stats.jsonl'), st.join('\n') + '\n');
+    const analytics = createAnalytics({ dataDir: dir });
+    const times = [];
+    let r;
+    for (let i = 0; i < 5; i++) { const s = process.hrtime.bigint(); r = analytics({ days: 30, now: NOW }); times.push(Number(process.hrtime.bigint() - s) / 1e6); }
+    times.sort((x, y) => x - y);
+    t.diagnostic(`analytics on ${ev.length} events and ${st.length} runs: median ${times[2].toFixed(0)} ms, max ${times[4].toFixed(0)} ms, reply ${(JSON.stringify(r).length / 1024).toFixed(0)} KB`);
+    assert.equal(r.agents.length, 8);
+    assert.equal(r.totals.runs, st.length);
+    assert.ok(times[2] < 3000, `median ${times[2]} ms`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 describe('GET /api/analytics', () => {
   it('anyone who can read the board reads it; a bad agent name is 400 with a hint', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-test-'));
