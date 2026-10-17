@@ -2147,16 +2147,19 @@ describe('a run gets its own token (INT-248)', () => {
 
 describe('stopping a board stops what it started', () => {
   it('killTree stops a process and the processes it started (agent runs must not outlive their board)', { skip: process.platform !== 'win32' && 'the orphan bug is Windows-only' }, async () => {
-    const { spawn, execSync } = require('child_process');
+    const { spawn } = require('child_process');
     const { killTree } = require('../lib/kill');
-    const p = spawn(process.execPath, ['-e', "require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1e3)'],{stdio:'ignore'});setInterval(()=>{},1e3)"], { stdio: 'ignore' });
+    // The parent prints its child's pid, so the test needs no process listing (a PowerShell start took
+    // longer than the wait when the whole suite ran at once: INT-352).
+    const p = spawn(process.execPath, ['-e', "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1e3)'],{stdio:'ignore'});console.log(c.pid);setInterval(()=>{},1e3)"], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    p.stdout.on('data', (d) => { out += d; });
     const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-    const kids = await until(() => {
-      const k = execSync(`powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter 'ParentProcessId=${p.pid}').ProcessId"`, { encoding: 'utf8' }).split(/\s+/).filter((x) => /^\d+$/.test(x)).map(Number);
-      return k.length ? k : null;
-    }, 8000, 'the child started');
-    assert.ok(killTree(p.pid));
-    await until(() => !alive(p.pid) && !kids.some(alive), 5000, 'parent and child stopped');
+    const kid = await until(() => (/^\d+\s/.test(out) ? Number(out.trim()) : null), 20000, 'the child started');
+    try {
+      assert.ok(killTree(p.pid));
+      await until(() => !alive(p.pid) && !alive(kid), 20000, 'parent and child stopped');
+    } finally { try { process.kill(kid); } catch { /* gone */ } }
   });
 });
 

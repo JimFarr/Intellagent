@@ -55,7 +55,8 @@ describe('the model follows the run (INT-308)', () => {
       const got = await until(async () => { const c = await bodies(s, it.id); return c.filter((b) => b.startsWith('ran on')).length >= 2 ? c : null; }, 8000, 'both comments');
       assert.ok(got.includes('ran on haiku (triage prompt)'), got.join(' | '));
       assert.ok(got.includes('ran on opus'), 'without runModels every run uses the agent model');
-      const a = await s.ok('GET', '/api/agents/cheap');
+      // the run's comment arrives before its record is written: wait for the record (INT-352)
+      const a = await until(async () => { const x = await s.ok('GET', '/api/agents/cheap'); return x.lastRun && x.history?.length ? x : null; }, 8000, 'the run record');
       assert.deepEqual([a.lastRun.kind, a.lastRun.model, a.history.at(-1).kind, a.history.at(-1).model], ['triage', 'haiku', 'triage', 'haiku']);
       const bad = await s.ok('GET', '/api/agents/bad');
       assert.deepEqual(bad.runModels, { build: 'sonnet' }, 'only plain model names under triage/build');
