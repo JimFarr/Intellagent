@@ -49,3 +49,27 @@ describe('intellagent restart', () => {
     }
   });
 });
+
+describe('intellagent init in a folder that already has a board (INT-325)', () => {
+  it('names the board there, says it was left alone and what to do next; the exit code stays 0', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-init-'));
+    const env = { INTELLAGENT_AGENT: 'ada' };
+    try {
+      const first = cli(['init', dir, '--name', 'Docs Site', '--prefix', 'DOC', '--template', 'simple'], { cwd: dir, env });
+      assert.equal(first.code, 0, first.err);
+      const manifest = path.join(dir, '.intellagent', 'intellagent.manifest.json');
+      const before = fs.readFileSync(manifest, 'utf8');
+      const again = cli(['init', dir, '--name', 'Other', '--prefix', 'OTH'], { cwd: dir, env });
+      assert.equal(again.code, 0);
+      assert.match(again.out, /Already initialised: /);
+      assert.match(again.out, /That board is "Docs Site" \(prefix DOC, port \d+\)\. init leaves it alone/);
+      assert.match(again.out, /another folder/);
+      assert.match(again.out, /intellagent status/);
+      assert.equal(fs.readFileSync(manifest, 'utf8'), before, 'the manifest is untouched');
+    } finally {
+      // init makes the board's data read-only: unlock it before removing the folder
+      const unlock = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, f.name); if (f.isDirectory()) unlock(p); else fs.chmodSync(p, 0o666); } };
+      try { unlock(dir); fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  });
+});

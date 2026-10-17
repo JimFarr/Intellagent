@@ -74,7 +74,14 @@ async function init() {
   const dir = path.resolve(f._[0] || '.');
   const folder = path.join(dir, '.intellagent');
   const manifestPath = path.join(folder, 'intellagent.manifest.json');
-  if (fs.existsSync(manifestPath)) { console.log(`Already initialised: ${manifestPath}`); return; }
+  if (fs.existsSync(manifestPath)) {
+    let old = null;
+    try { old = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { /* unreadable: say only where it is */ }
+    console.log(`Already initialised: ${manifestPath}`);
+    if (old) console.log(`That board is "${old.boardName || 'unnamed'}" (prefix ${old.idPrefix || '?'}, port ${old.port || '?'}). init leaves it alone: nothing was changed.`);
+    console.log(`Next: run init in another folder, or look at that board with: cd ${dir} && intellagent status`);
+    return;
+  }
   const name = String(f.name || path.basename(dir));
   // --preset <name|folder> sets the board up from a preset; --template is the older name for a built-in one
   let preset = null;
