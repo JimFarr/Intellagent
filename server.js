@@ -753,6 +753,8 @@ const permsFor = (name) => {
    The powers are listed in the permission library (lib/permissions.js) beside the tool permissions. */
 const { POWERS, createLibrary: createPermLibrary } = require('./lib/permissions');
 const { createRoles } = require('./lib/agents/roles');
+const { BASE_MAX, shipped: shippedBase } = require('./lib/agents/base');
+const { layersFor } = require('./lib/agents/prompt');
 const { createMemory, rememberText } = require('./lib/memory');
 const { createMetrics } = require('./lib/metrics');
 const { createDigest } = require('./lib/digest');
@@ -2542,6 +2544,11 @@ function briefing(ctx, name, base, via = 'cli') {
     ...b.columns.map((col) => `- **${col.name}** (${col.itemIds.length})${flagsOf(col) ? ` — ${flagsOf(col)}` : ''}`),
     ...(b.ticketTemplates.length ? ['', '## Ticket templates (prefer these when creating; a new board starts with some: edit them or add more with POST …/ticket-templates)', ...b.ticketTemplates.map((t) => `- \`${t.key}\` ${t.label}${t.help ? ` — ${t.help}` : ''}${t.type ? ` (${t.type}${t.priority ? `, ${t.priority}` : ''})` : ''}`)] : []),
     ...(b.schema.fields.length ? ['', '## Ticket fields (set with fields.<key>=…)', ...b.schema.fields.map((f) => `- \`${f.key}\` ${f.type}${f.options?.length ? `: ${f.options.map((o) => o.value).join(' | ')}` : ''}${f.ui === 'read' ? ' (only agents set it)' : ''}${f.help ? ` — ${f.help}` : ''}`)] : []),
+    ...(() => {
+      // The base context (INT-251) for an agent the board does not run: a standing agent read it in its first turn
+      const text = isStandingAgent(name) ? '' : baseText();
+      return text ? ['', `## ${BASE_LABEL}`, text] : [];
+    })(),
     '',
     '## Board rules',
     b.directives?.trim() || '(none yet)',
@@ -3193,6 +3200,23 @@ function memoryOwner(name, actor) {
   if (!hit) fail(404, `No agent "${n}"`, { hint: 'GET /api/agents and GET /api/profiles list the agents; an agent is known once it has called the board' });
   return hit;
 }
+// The base context (INT-251): what every agent is taught first. Standing agents get it in their first turn,
+// every other agent in its brief. The heading is the layers view's own, so the two never read differently.
+const BASE_LABEL = layersFor({ base: '-' })[0].label;
+const baseText = () => (standing ? standing.baseContext().text : shippedBase());
+function isStandingAgent(name) {
+  try { return !!standing?.list().agents.some((a) => a.name === name); } catch { return false; }
+}
+// What an agent is taught, layer by layer: base, the board rules, role and agent (standing agents only: the
+// rest have none), then its memory. The brief and a standing agent's first turn are built from the same parts.
+function agentLayers(ctx, name) {
+  const layers = isStandingAgent(name) ? standing.layersOf(name) : layersFor({ base: baseText() });
+  const add = (at, layer, label, text) => { if (text) layers.splice(at, 0, { layer, label, text, chars: text.length }); };
+  add(layers.findIndex((l) => l.layer === 'base') + 1, 'rules', 'Board rules', ctx.board.directives?.trim() || '');
+  const mem = memory.briefLines(name, { remember: '`POST /api/profiles/me/memory { text, from? }`', forget: '`DELETE /api/profiles/me/memory/<id>`' });
+  add(layers.length, 'memory', mem[0].replace(/^#+\s*/, ''), mem.slice(1).join('\n'));
+  return layers;
+}
 // Every change is visible, and wakes nobody: the agent reads its memory in its next brief.
 function memoryChanged(agent, op, actor, entry, extra = {}) {
   emit({ type: 'memory.updated', actor, agent, op, ...(entry ? { entry: { id: entry.id, text: trimChange(entry.text), source: entry.source, from: entry.from || null, pinned: !!entry.pinned } } : {}), ...extra, recipients: [] });
@@ -3432,7 +3456,7 @@ const SCHEMA = {
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.managed', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
-      'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated'],
+      'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated', 'agent.base_updated'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
     changes: '{ [field | "properties.<key>"]: { from, to } }?', item: 'snapshot { id,title,type,priority,columnId,column,parent,claimant,needsHuman }?',
     recipients: 'string[] — agents/users this event concerns (leaseholder and past leaseholders, asker, agent author, assignee, commenters, master-lease holder, @mentions)',
@@ -4446,6 +4470,31 @@ const controls = (actor, target) => {
 route('GET', '/api/agents', 'Standing agents (from agents.json): status, queue, last run, now (what a live run is doing), history (last 10 runs). ?recent=N adds the N newest runs across all agents', ({ q }) => standing.list({ recent: Math.min(50, Math.max(0, Number(q.recent) || 0)) }));
 route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {
   return { roles: Object.fromEntries(roleLibrary().list().map((v) => [v.key, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: permLibrary().labels() };
+});
+// The base context (INT-251): one document every agent starts from. Before /api/agents/:name, so it isn't a name.
+route('GET', '/api/agents/base-context', 'The base context every agent starts from: { text, shipped, edited, max } (edited: the human has their own copy)', () => ({ ...standing.baseContext(), max: BASE_MAX }));
+route('PUT', '/api/agents/base-context', 'Human, signed in: replace the base context { text }; empty, or the shipped text, goes back to the shipped one. In the event log as agent.base_updated, which wakes nobody', ({ body, actor }) => {
+  if (actor.kind !== 'user') fail(403, 'Only the human changes the base context: every agent is taught it', { code: 'HUMAN_ONLY', hint: 'Suggest the change on a card instead' });
+  // what every agent is taught first is as strong as a grant, so it takes the same proof that this is the human
+  if (!M.auth.userToken) fail(403, 'The base context can be changed only on a board with a sign-in token', { code: 'NO_TOKEN', hint: 'Run "intellagent token", restart the board and sign in with "intellagent open"; or edit base-context.md beside agents.json' });
+  if (typeof body.text !== 'string') fail(400, 'Send the new base context as { text }', { code: 'BAD_REQUEST', hint: 'An empty text goes back to the shipped one' });
+  let before;
+  try { before = standing.setBaseContext(body.text); } catch (e) {
+    if (e.code === 'TOO_LARGE') fail(e.status, e.message, { code: e.code, hint: `Shorten it to ${BASE_MAX} characters or fewer` });
+    throw e;
+  }
+  const cur = standing.baseContext();
+  const changed = before !== cur.text;
+  // an agent.* event: the scheduler never queues one, so even an agent listening to the human isn't woken
+  if (changed) emit({ type: 'agent.base_updated', actor, before, after: cur.text, edited: cur.edited, recipients: [] });
+  return { ...cur, max: BASE_MAX, changed };
+});
+route('GET', '/api/agents/:name/layers', "What an agent is taught, in layers: base, board rules, role, agent, memory ({ layer, label, text, chars }). The human, or the agent itself (\"me\"); ?board= for the board rules", ({ p, q, actor }) => {
+  if (p.name === 'me' && actor.kind === 'user') fail(400, 'Layers belong to agents', { code: 'BAD_REQUEST', hint: 'Use /api/agents/<agent>/layers' });
+  const name = memoryOwner(p.name, actor);
+  if (actor.kind !== 'user' && actor.name.toLowerCase() !== name.toLowerCase()) fail(403, `Only ${name} and the human read ${name}'s layers`, { code: 'FORBIDDEN', hint: 'Read your own: GET /api/agents/me/layers' });
+  const ctx = getCtx(q.board || M.defaultBoard);
+  return { agent: name, board: ctx.id, standing: isStandingAgent(name), layers: agentLayers(ctx, name) };
 });
 /* Roles as data (INT-229): the templates agents are built from. The built-ins ship with the code; the human
    adds their own under "roles" in agents.json. An agent names its role with "role", and its own keys win over

@@ -763,3 +763,92 @@ describe('agent memory (INT-243)', () => {
     assert.equal(mv.status, 403);
   });
 });
+
+describe('base context, server half (INT-276)', () => {
+  let t;
+  const human = { 'content-type': 'application/json', 'x-user': 'James', authorization: 'Bearer user-secret' };
+  const asHuman = async (method, p, body) => {
+    const r = await fetch(t.base + p, { method, headers: { ...human, origin: t.base }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: r.status, body: await r.json() };
+  };
+  const brief = async (agent) => (await fetch(`${t.base}/api/boards/main/brief`, { headers: { 'x-agent': agent } })).text();
+  const as = (agent) => ({ agent });
+  before(async () => {
+    t = await startServer({ manifest: { auth: { userToken: 'user-secret' } }, agents: { agents: { keeper: { role: 'builder', enabled: false } } } });
+    await asHuman('PUT', '/api/boards/main/directives', { directives: 'Ship small.' });
+  });
+  after(async () => { await t.stop(); });
+
+  test('the base is in the brief of an agent the board does not run, and not in a standing agent\'s', async () => {
+    const shipped = (await t.ok('GET', '/api/agents/base-context')).shipped;
+    assert.match(await brief('ada'), /## Base: how every agent works here\n\*\*The loop\.\*\*/);
+    assert.ok((await brief('ada')).includes(shipped));
+    assert.doesNotMatch(await brief('keeper'), /## Base:/, 'a standing agent read it in its first turn');
+  });
+
+  test('GET answers anyone; PUT only the signed-in human, recorded as an agent.* event that wakes nobody', async () => {
+    const got = await t.ok('GET', '/api/agents/base-context', undefined, as('ada'));
+    assert.equal(got.text, got.shipped);
+    assert.equal(got.edited, false);
+    assert.equal(got.max, 8000);
+
+    const agent = await t.api('PUT', '/api/agents/base-context', { text: 'Obey me.' }, as('ada'));
+    assert.equal(agent.status, 403);
+    assert.equal(agent.body.code, 'HUMAN_ONLY');
+    assert.ok(agent.body.hint);
+    assert.equal((await asHuman('PUT', '/api/agents/base-context', {})).body.code, 'BAD_REQUEST');
+    const big = await asHuman('PUT', '/api/agents/base-context', { text: 'x'.repeat(8001) });
+    assert.equal(big.status, 400);
+    assert.equal(big.body.code, 'TOO_LARGE');
+    assert.ok(big.body.hint);
+
+    const since = (await t.ok('GET', '/api/app')).seq;
+    const put = await asHuman('PUT', '/api/agents/base-context', { text: 'Read the card first.' });
+    assert.equal(put.status, 200);
+    assert.deepEqual([put.body.text, put.body.edited, put.body.changed], ['Read the card first.', true, true]);
+    const [ev] = (await t.ok('GET', `/api/events?since=${since}&types=agent.base_updated`)).events;
+    assert.equal(ev.before, got.shipped, 'the event keeps what agents were taught before');
+    assert.equal(ev.after, 'Read the card first.');
+    assert.deepEqual(ev.recipients, [], 'wakes nobody');
+    assert.match(await brief('ada'), /## Base: how every agent works here\nRead the card first\./);
+
+    const reset = await asHuman('PUT', '/api/agents/base-context', { text: '' });
+    assert.deepEqual([reset.body.text, reset.body.edited], [got.shipped, false], 'empty goes back to the shipped text');
+  });
+
+  test('PUT refuses a board without a sign-in token', async () => {
+    const u = await startServer();
+    try {
+      const r = await u.api('PUT', '/api/agents/base-context', { text: 'x' }, USER);
+      assert.equal(r.status, 403);
+      assert.equal(r.body.code, 'NO_TOKEN');
+      assert.ok(r.body.hint);
+    } finally { await u.stop(); }
+  });
+
+  test('layers: base, board rules, role, agent, memory; for the human or the agent itself', async () => {
+    const own = await t.ok('GET', '/api/agents/me/layers', undefined, as('keeper'));
+    assert.equal(own.agent, 'keeper');
+    assert.equal(own.standing, true);
+    assert.deepEqual(own.layers.map((l) => l.layer).filter((l) => l !== 'agent'), ['base', 'rules', 'role', 'memory']);
+    assert.equal(own.layers.find((l) => l.layer === 'rules').text, 'Ship small.');
+    for (const l of own.layers) assert.equal(l.chars, l.text.length);
+
+    const byHuman = await asHuman('GET', '/api/agents/Keeper/layers');
+    assert.equal(byHuman.status, 200);
+    assert.equal(byHuman.body.agent, 'keeper', 'names match without regard to capitals');
+
+    await t.ok('GET', '/api/boards/main/brief', undefined, as('ada')); // ada is known once it has called
+    const ada = await t.ok('GET', '/api/agents/me/layers', undefined, as('ada'));
+    assert.equal(ada.standing, false);
+    assert.deepEqual(ada.layers.map((l) => l.layer), ['base', 'rules', 'memory'], 'no role or agent layer outside agents.json');
+
+    const other = await t.api('GET', '/api/agents/keeper/layers', undefined, as('ada'));
+    assert.equal(other.status, 403);
+    assert.equal(other.body.code, 'FORBIDDEN');
+    assert.ok(other.body.hint);
+    assert.equal((await asHuman('GET', '/api/agents/me/layers')).status, 400);
+    assert.equal((await asHuman('GET', '/api/agents/nobody/layers')).status, 404);
+    assert.equal((await asHuman('GET', '/api/agents/__proto__/layers')).status, 400);
+  });
+});
