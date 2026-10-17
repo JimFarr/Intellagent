@@ -11,14 +11,14 @@ const T0 = Date.parse('2026-01-01T12:00:00Z');
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
 
 // One agent, "bot", with one event queued. What the runner is asked to start ends up in `started`.
-function rig({ def = {}, state = {} } = {}) {
+function rig({ def = {}, state = {}, save = () => {} } = {}) {
   const started = [];
   const emitted = [];
   const agents = { bot: { status: 'idle', cursor: 0, queue: [{ seq: 1, type: 'comment.added' }], inflight: null, runs: [], failures: 0, lastRun: null, ...state } };
   const core = {
     deps: { emit: (e) => emitted.push(e), seq: () => 1, recent: () => [] },
     state: { agents },
-    save() {},
+    save: () => save(agents),
     st: (name) => agents[name],
     requeueInflight() {},
     defs: { bot: { name: 'bot', enabled: true, settleSeconds: 3, throttleMinutes: 3, maxRunsPerHour: 20, ...def } },
@@ -160,13 +160,14 @@ describe('scheduler (fake clock)', () => {
 
   // INT-213: the state file is written once per event, however many agents it wakes.
   function crowd(n, wakes = () => true) {
-    const r = rig({ state: { queue: [] } });
+    const saves = [];
+    // the save spy records how long each agent's queue was at the moment of the write
+    const r = rig({ state: { queue: [] }, save: (agents) => saves.push(Object.fromEntries(Object.entries(agents).map(([k, s]) => [k, s.queue.length]))) });
+    r.saves = saves;
     for (let i = 2; i <= n; i++) {
       r.agents[`bot${i}`] = { status: 'idle', cursor: 0, queue: [], inflight: null, runs: [], failures: 0, lastRun: null };
       r.core.defs[`bot${i}`] = { ...r.core.defs.bot, name: `bot${i}` };
     }
-    r.saves = [];
-    r.core.save = () => r.saves.push(Object.fromEntries(Object.entries(r.agents).map(([k, s]) => [k, s.queue.length])));
     r.core.config.wakes = wakes;
     r.core.deps.onQueued = (name) => r.saves.push(`queued:${name}`);
     return r;
