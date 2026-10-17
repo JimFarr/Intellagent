@@ -62,3 +62,52 @@ describe('the route policy table (INT-144)', () => {
     assert.equal((await s.api('PUT', `${B}/approvals`, { on: true }, USER)).status, 200);
   });
 });
+
+describe('route policy gaps closed (INT-355)', () => {
+  let s;
+  const human = { 'content-type': 'application/json', 'x-user': 'James', origin: '', authorization: 'Bearer user-secret' };
+  const call = (method, p, headers, body) => fetch(s.base + p, { method, headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  before(async () => {
+    s = await startServer({
+      manifest: { auth: { userToken: 'user-secret' }, permissions: { ro: { readOnly: true } } },
+      agents: { agents: { ro: { enabled: false, grants: ['agents.control', 'agents.manage'] }, mgr: { enabled: false, grants: ['agents.manage'] }, w: { enabled: false, role: 'builder' } } },
+    });
+    human.origin = s.base;
+  });
+  after(() => s.stop());
+
+  it('renaming the app and adding a board are the human\'s', async () => {
+    for (const [method, p, body] of [['PATCH', '/api/app', { name: 'Mine now' }], ['POST', '/api/boards', { name: 'Side', idPrefix: 'SD' }]]) {
+      for (const agent of ['other', 'ro']) {
+        const r = await s.api(method, p, body, { agent });
+        assert.equal(r.status, 403, `${agent}: ${method} ${p}`);
+      }
+      const r = await s.api(method, p, body, { agent: 'other' });
+      assert.equal(r.body.code, 'HUMAN_ONLY');
+      assert.ok(r.body.hint, 'says what to do instead');
+    }
+    assert.equal((await call('PATCH', '/api/app', human, { name: 'Renamed' })).status, 200);
+    assert.equal((await call('POST', '/api/boards', human, { name: 'Side', idPrefix: 'SD' })).ok, true);
+    assert.equal((await s.ok('GET', '/api/app')).name, 'Renamed');
+  });
+
+  it('renaming the app needs the user token like every other write; reading it stays public', async () => {
+    const r = await call('PATCH', '/api/app', { 'x-user': 'James', origin: s.base }, { name: 'No token' });
+    assert.equal(r.status, 401);
+    assert.equal((await s.ok('GET', '/api/app', undefined, { agent: 'nobody' })).name, 'Renamed');
+  });
+
+  it('read-only takes the agents.* routes from an agent holding the grants; without read-only the grant still works', async () => {
+    for (const [method, p, body] of [
+      ['PATCH', '/api/agents/w', { description: 'x' }], ['POST', '/api/agents/stop-all', {}], ['POST', '/api/agents/resume-all', {}],
+      ['POST', '/api/agents/w/pause', {}], ['POST', '/api/agents/w/resume', {}], ['POST', '/api/agents/w/run', {}],
+    ]) {
+      const r = await s.api(method, p, body, { agent: 'ro' });
+      assert.equal(r.status, 403, `${method} ${p}`);
+      assert.match(r.body.error, /read-only/);
+    }
+    assert.equal((await s.api('PATCH', '/api/agents/w', { description: 'Builds things' }, { agent: 'mgr' })).status, 200);
+    // checking a command changes nothing, so a read-only agent may still do it
+    assert.notEqual((await s.api('POST', '/api/agents/w/commands/check', { command: 'npm run x' }, { agent: 'ro' })).status, 403);
+  });
+});

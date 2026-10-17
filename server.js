@@ -3624,7 +3624,8 @@ function issueAgentToken(name) {
 // Optional auth from the manifest. Off by default; docs and app name stay public so agents can discover it.
 function checkAuth(req, q, actor, pathname, policy) {
   // the route index, docs and app name stay public so agents can discover the board (and ask for a token)
-  if (!pathname.startsWith('/api') || pathname === '/api' || pathname === '/api/docs' || pathname === '/api/app') return;
+  // (reads only: renaming the app needs the user token like any other write, INT-355)
+  if (!pathname.startsWith('/api') || pathname === '/api' || pathname === '/api/docs' || (pathname === '/api/app' && req.method === 'GET')) return;
   // the UI's live stream: a valid ticket stands in for the human's token, on this one request
   if (q.ticket !== undefined && req.method === 'GET' && pathname === '/api/stream') {
     if (useStreamTicket(q.ticket)) return;
@@ -3679,8 +3680,8 @@ const LIBRARY_HUMAN = { why: 'Only the human can change the permission library',
 const B_ = '/api/boards/:board';
 const POLICY = {
   'POST /api/app/restart': { who: 'human', why: 'Only the human restarts the board', hint: 'Tell the human the board is behind main (GET /api/app → behind)' },
-  'PATCH /api/app': { who: 'any', readOnly: true },
-  'POST /api/boards': { who: 'any', readOnly: true },
+  'PATCH /api/app': { who: 'human', why: 'Only the human renames the app', hint: 'Suggest a name on a card' },
+  'POST /api/boards': { who: 'human', why: 'Only the human adds a board', hint: 'Ask on a card, with the name, prefix and template you have in mind' },
   [`PATCH ${B_}`]: { who: ['any', 'admin.rules', 'admin.coordinator'] },
   [`POST ${B_}/master`]: { who: 'any', held: true },
   [`PUT ${B_}/master/status`]: { who: 'self', held: true },
@@ -3758,12 +3759,13 @@ const POLICY = {
   'POST /api/agents': { who: 'human', why: 'Only the human can control standing agents' },
   'DELETE /api/agents/:name': { who: 'human', why: 'Only the human can control standing agents' },
   'POST /api/agents/:name/commands/check': { who: ['self', 'agents.manage'], readOnly: true },
-  'PATCH /api/agents/:name': { who: 'agents.manage', readOnly: true },
-  'POST /api/agents/stop-all': { who: 'agents.control', readOnly: true },
-  'POST /api/agents/resume-all': { who: 'agents.control', readOnly: true },
-  'POST /api/agents/:name/pause': { who: 'agents.control', readOnly: true },
-  'POST /api/agents/:name/resume': { who: 'agents.control', readOnly: true },
-  'POST /api/agents/:name/run': { who: 'agents.control', readOnly: true },
+  // read-only takes these from an agent holding the grant too (INT-355)
+  'PATCH /api/agents/:name': { who: 'agents.manage' },
+  'POST /api/agents/stop-all': { who: 'agents.control' },
+  'POST /api/agents/resume-all': { who: 'agents.control' },
+  'POST /api/agents/:name/pause': { who: 'agents.control' },
+  'POST /api/agents/:name/resume': { who: 'agents.control' },
+  'POST /api/agents/:name/run': { who: 'agents.control' },
   'DELETE /api/presence/:name': { who: 'human', why: 'Only the human can forget agents' },
   'PUT /api/profiles/me/status': { who: 'self', readOnly: true },
   'PATCH /api/profiles/me': { who: 'self', readOnly: true },
@@ -3837,7 +3839,7 @@ route('POST', '/api/app/restart', 'Human only: restart the board so it runs the 
   }, 300);
   return { restarting: true };
 });
-route('PATCH', '/api/app', 'Rename the app (white label): { name }', ({ body, actor }) => {
+route('PATCH', '/api/app', 'Human: rename the app (white label): { name }', ({ body, actor }) => {
   if (!String(body.name || '').trim()) fail(400, '"name" is required');
   const from = app.name;
   app.name = str(body.name, 60).trim();
@@ -3857,7 +3859,7 @@ route('GET', '/api/templates', 'Board templates: columns, ticket fields and stan
   key, label: t.label, description: t.description, columns: t.columns.map((c) => ({ name: c.name, flags: c.flags || {} })),
   fields: (t.schema?.fields || []).map((f) => ({ key: f.key, type: f.type })), directives: t.directives || '',
 })));
-route('POST', '/api/boards', 'Create a board: { name, id?, idPrefix?, template?: (see GET /api/templates), columns?, schema?, directives? }',
+route('POST', '/api/boards', 'Human: create a board: { name, id?, idPrefix?, template?: (see GET /api/templates), columns?, schema?, directives? }',
   ({ body, actor }) => created(boardView(createBoard(body, actor))));
 
 route('GET', '/api/boards/:board', 'Full board JSON + hash', ({ p }) => boardView(getCtx(p.board)));
