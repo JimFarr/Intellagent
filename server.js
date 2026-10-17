@@ -2881,7 +2881,10 @@ const ruleErrors = (fn) => { try { return fn(); } catch (e) { if (e instanceof c
 const cardRulesOf = (ctx) => ctx.board.cardRules || [];
 // A ticket as search sees it, with the review facts (only verdicts that still stand) and reviewers.<name>.
 function searchView(ctx, item, archived, blocksOf) {
-  const facts = cardrules.reviewFacts(item, (r) => verdictStands(item, r, ctx));
+  // Landing cherry-picks the commits, so the list of unlanded commits a verdict recorded is empty afterwards:
+  // once a ticket has landed its verified verdicts still stand (nothing more can be committed on it).
+  const landed = item.landing?.state === 'landed';
+  const facts = cardrules.reviewFacts(item, (r) => (landed ? !!r.verified : verdictStands(item, r, ctx)));
   const v = {
     ...itemView(ctx, item, archived, blocksOf),
     claimant: activeLease(item)?.claimant ?? null,

@@ -1278,6 +1278,45 @@ describe('a lander (work.land) gets approved work onto main', () => {
     }
   });
 
+  it('a verified ok still counts after the ticket has landed: review facts keep oks and allOk (INT-263)', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-facts-'));
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(dir, 'README.md'), 'hi\n');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    const s = await startServer({ dir, manifest: { auth: { agentTokens: { nebula: 't-nebula' } } }, agents: { defaults: fast, agents: {
+      bob: { run: run('commit'), worktree: true },
+      nebula: { role: 'reviewer', enabled: false },
+    } } });
+    try {
+      const b = await s.ok('POST', `${B}/items`, { title: 'for bob', column: 'Ready', assignee: 'bob' }, USER);
+      await until(async () => (await comments(s, b.id)).some((c) => c.startsWith('bob: committed')), 10000, 'bob committed');
+      await until(async () => (await agentState(s, 'bob')).status === 'idle', 6000, 'bob idle');
+      await s.ok('POST', `${B}/items/${b.id}/review`, { summary: 'done', evidence: 'e' }, { agent: 'bob' });
+      await s.ok('POST', `${B}/items/${b.id}/reviewers`, { name: 'nebula' }, USER);
+      const verdict = await fetch(`${s.base}${B}/items/${b.id}/reviewers/nebula/verdict`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent': 'nebula', authorization: 'Bearer t-nebula' }, body: JSON.stringify({ verdict: 'ok', comment: 'fine' }) });
+      assert.ok(verdict.ok);
+      const facts = async () => (await s.ok('POST', '/api/search', { board: 'main', where: { id: b.id } }, USER)).items[0].review;
+      assert.equal((await facts()).allOk, true, 'before landing');
+      await s.ok('POST', `${B}/items/${b.id}/review/decision`, { verdict: 'approve' }, USER);
+      assert.equal((await s.ok('GET', `${B}/items/${b.id}`)).landing.state, 'landed');
+      const after = await facts();
+      assert.equal(after.oks, 1, 'after landing');
+      assert.equal(after.allOk, true);
+      assert.equal(after.pending, 0);
+    } finally {
+      await s.stop();
+      try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
+    }
+  });
+
   it('a landing finished by hand stops being work: the sweep and the land route mark it landed, by hand (INT-261)', async () => {
     const fs = require('fs');
     const os = require('os');

@@ -150,9 +150,9 @@ describe('card rules on a board', () => {
       await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { changed: 'c', why: 'w', verify: 'v', evidence: 'shots' }, { agent: 'dev' });
       await s.ok('POST', `/api/boards/main/items/${it.id}/review/decision`, { verdict: 'approve', comment: 'fine' }, USER);
       const full = (await s.ok('POST', '/api/search', { board: 'main', where: { id: it.id }, full: true }, USER)).items[0];
-      assert.equal(full.review.verdict, 'approved', 'the decision is still there');
+      assert.equal(full.review.verdict, 'approve', 'the decision is still there');
       assert.equal(full.review.oks, 0, 'and so are the facts');
-      const byVerdict = await s.ok('POST', '/api/search', { board: 'main', where: { 'review.verdict': 'approved' } }, USER);
+      const byVerdict = await s.ok('POST', '/api/search', { board: 'main', where: { 'review.verdict': 'approve' } }, USER);
       assert.ok(byVerdict.items.some((x) => x.id === it.id), 'review.verdict still works in where');
     } finally { await s.stop(); }
   });
