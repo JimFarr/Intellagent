@@ -157,6 +157,51 @@ describe('scheduler (fake clock)', () => {
     scheduler.checkPending('bot');
     assert.equal(agents.bot.queue.length, 0, 'seen once, left alone');
   });
+
+  // INT-213: the state file is written once per event, however many agents it wakes.
+  function crowd(n, wakes = () => true) {
+    const r = rig({ state: { queue: [] } });
+    for (let i = 2; i <= n; i++) {
+      r.agents[`bot${i}`] = { status: 'idle', cursor: 0, queue: [], inflight: null, runs: [], failures: 0, lastRun: null };
+      r.core.defs[`bot${i}`] = { ...r.core.defs.bot, name: `bot${i}` };
+    }
+    r.saves = [];
+    r.core.save = () => r.saves.push(Object.fromEntries(Object.entries(r.agents).map(([k, s]) => [k, s.queue.length])));
+    r.core.config.wakes = wakes;
+    r.core.deps.onQueued = (name) => r.saves.push(`queued:${name}`);
+    return r;
+  }
+
+  it('an event that wakes seven agents saves the state once, with every queue in it, before anything is scheduled', () => {
+    const { scheduler, saves, started } = crowd(7);
+    scheduler.onEvent({ seq: 2, type: 'comment.added' });
+    const writes = saves.filter((x) => typeof x === 'object');
+    assert.equal(writes.length, 1);
+    assert.deepEqual(Object.values(writes[0]), [1, 1, 1, 1, 1, 1, 1], 'all seven queues are in the one write');
+    assert.equal(typeof saves[0], 'object', 'saved before any ⏳ is promised');
+    mock.timers.tick(3100);
+    assert.equal(started.length, 7, 'and every one of them still runs: nobody starves');
+  });
+
+  it('an event that wakes nobody writes nothing, and an agent event never queues', () => {
+    const { scheduler, saves, agents } = crowd(3, (def) => def.name === 'nobody');
+    scheduler.onEvent({ seq: 2, type: 'comment.added' });
+    assert.equal(saves.length, 0);
+    const all = crowd(3);
+    all.scheduler.onEvent({ seq: 3, type: 'agent.run.finished' });
+    assert.equal(all.saves.length, 0, "an agent's own run events never wake it (no loop)");
+    assert.equal(agents.bot.queue.length, 0);
+  });
+
+  it('recover catches up every agent with one write', () => {
+    const { scheduler, core, saves } = crowd(4);
+    core.deps.recent = () => [{ seq: 5, type: 'comment.added' }];
+    core.deps.seq = () => 5;
+    scheduler.recover();
+    const writes = saves.filter((x) => typeof x === 'object');
+    assert.equal(writes.length, 1);
+    assert.deepEqual(Object.values(writes[0]), [1, 1, 1, 1]);
+  });
 });
 
 // The idle-board alarm (INT-265): a builder ("worker", it edits files) and the agent the alarm wakes ("watch").
