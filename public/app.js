@@ -5095,7 +5095,7 @@
   const anCost = (c) => (c.cost == null ? '<span title="No run reported a cost">n/a</span>' : `$${c.cost < 10 ? c.cost.toFixed(2) : c.cost.toFixed(0)}${c.unpriced ? `<small title="${c.unpriced} run${c.unpriced === 1 ? '' : 's'} reported no cost, so this is a floor"> +${c.unpriced} unpriced</small>` : ''}`);
   const anTok = (t) => `${anNum(t.input)} in / ${anNum(t.output)} out`;
   function anSpark(points, from, to) {
-    if (!points.length) return '';
+    if (points.length < 3) return ''; // fewer than three points: the numbers say it all, a tick reads as a fault
     const w = 160, h = 28, max = Math.max(1, ...points.map((p) => p.depth));
     const span = Math.max(1, Date.parse(to) - Date.parse(from));
     const xy = points.map((p) => [Math.min(w, Math.max(0, ((Date.parse(p.at) - Date.parse(from)) / span) * w)), h - 2 - (p.depth / max) * (h - 4)]);
