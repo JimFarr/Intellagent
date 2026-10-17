@@ -307,6 +307,13 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .card.placeholder > * { visibility: hidden; }
 .card.placeholder::before, .card.placeholder::after { display: none; }
 .drag-ghost { position: fixed !important; z-index: 1000; margin: 0; pointer-events: none; transition: none !important; box-shadow: 0 34px 60px -18px rgb(0 0 0 / .55), 0 0 0 1.5px color-mix(in oklab, var(--accent) 50%, transparent) !important; }
+/* a dragged group (INT-272): the shadow sits on its cards, a long open group is cut short and fades out */
+.drag-ghost * { pointer-events: none !important; } /* a stack's front card asks for pointer events; in the ghost it would hide the column below */
+.drag-ghost.group { box-shadow: none !important; max-height: 260px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 200px, transparent); mask-image: linear-gradient(to bottom, #000 200px, transparent); }
+.drag-ghost.group.stack:not(.open) { overflow: visible; -webkit-mask-image: none; mask-image: none; }
+.drag-ghost.group .card { box-shadow: 0 24px 44px -18px rgb(0 0 0 / .5), 0 0 0 1.5px color-mix(in oklab, var(--accent) 45%, transparent); }
+.group.placeholder { max-height: 88px; overflow: hidden; border-radius: calc(var(--r-card, 14px) + 2px); background: color-mix(in oklab, var(--accent) 6%, transparent); outline: 1.5px dashed color-mix(in oklab, var(--accent) 60%, transparent); outline-offset: -1.5px; }
+.group.placeholder > * { visibility: hidden; }
 .morph-ghost { position: fixed !important; z-index: 160; margin: 0; pointer-events: none; transition: none !important; rotate: 0deg !important; transform-origin: 0 0; }
 .card.dim { opacity: .22; filter: grayscale(.7); }
 .card.flash { animation: flash 1.4s var(--ease); }

@@ -1775,7 +1775,11 @@
     if (g) return g;
     g = el(`<section class="group" data-key="${esc(key)}"><button class="group-head"><i class="tape"></i><span class="g-dot"></span><span class="g-name"></span><span class="g-count"></span><span class="grow"></span>${icon('chev', 'g-chev')}<span class="g-sum"></span></button><i class="g-bg"></i><div class="group-cards"></div></section>`);
     $('.group-head', g).onclick = () => toggleGroup(key);
+    // dragging the header carries the whole group, open or closed; a plain click still folds or fans it (INT-272)
+    $('.group-head', g).addEventListener('pointerdown', (e) => { if (e.button === 0 && g._ids?.length) armDrag(e, (start) => beginDrag(g, g._ids, start)); });
     $('.group-cards', g).addEventListener('click', () => { if (g.classList.contains('stack') && !g.classList.contains('open')) toggleGroup(key); });
+    // the pile's edge below the front card drags the stack too (the front card does so through its own handler)
+    $('.group-cards', g).addEventListener('pointerdown', (e) => { if (e.button === 0 && e.target === e.currentTarget && g.matches('.stack:not(.open)') && g._ids?.length) armDrag(e, (start) => beginDrag(g, g._ids, start)); });
     groupEls.set(key, g);
     return g;
   }
@@ -1783,6 +1787,7 @@
     const mode = settings.grouping;
     g.className = `group ${mode === 'list' ? 'listed' : mode}${mode === 'stack' && state.expanded.has(n.key) ? ' open' : ''}${mode === 'list' && state.folded.has(n.key) ? ' folded' : ''}`;
     g.style.setProperty('--tagc', tagColor(n.parent));
+    g._ids = n.ids; // what a drag of this group carries
     $('.g-name', g).textContent = n.parent;
     $('.g-count', g).textContent = n.ids.length;
     const cover = pick('groups') === 'cover';
@@ -2028,11 +2033,19 @@
     if (e.button !== 0 || e.target.closest('button, a, input, textarea, .avatar')) return;
     const card = e.currentTarget;
     const id = card.dataset.id;
+    // A closed stack moves as one: every card in it (INT-272). A click on it is left to the stack: it fans out (see ensureGroup).
+    const pile = card.closest('.group.stack:not(.open)');
+    if (pile) return armDrag(e, (start) => beginDrag(pile, pile._ids, start));
+    armDrag(e, (start) => beginDrag(card, [id], start), () => { if (state.bulk) toggleSelect(id); else openItem(id, card); });
+  }
+
+  // A press becomes a drag once it travels 6 px; short of that it stays a click. The click that follows a drag is swallowed.
+  function armDrag(e, begin, click = null) {
     const start = { x: e.clientX, y: e.clientY };
     const move = (ev) => {
       if (!drag) {
         if (state.bulk || Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 6) return;
-        beginDrag(card, id, start);
+        begin(start);
       }
       ev.preventDefault();
       dragMove(ev);
@@ -2041,25 +2054,31 @@
       removeEventListener('pointermove', move);
       removeEventListener('pointerup', up);
       removeEventListener('pointercancel', up);
-      if (drag) endDrag(ev.type === 'pointercancel');
-      // A click on a closed stack is left to the stack: it fans out (see ensureGroup).
-      else if (ev.type === 'pointerup' && !card.closest('.group.stack:not(.open)')) { if (state.bulk) toggleSelect(id); else openItem(id, card); }
+      if (drag) {
+        endDrag(ev.type === 'pointercancel');
+        const swallow = (c) => { c.stopPropagation(); c.preventDefault(); };
+        addEventListener('click', swallow, { capture: true, once: true });
+        setTimeout(() => removeEventListener('click', swallow, { capture: true }), 0);
+      } else if (ev.type === 'pointerup') click?.();
     };
     addEventListener('pointermove', move, { passive: false });
     addEventListener('pointerup', up);
     addEventListener('pointercancel', up);
   }
 
-  function beginDrag(card, id, start) {
+  // `el` is a card, or a group (a stack or a group header) carrying every card in `ids`.
+  function beginDrag(el, ids, start) {
+    const card = el, id = ids[0];
     const r = card.getBoundingClientRect();
     const ghost = card.cloneNode(true);
     ghost.classList.add('drag-ghost');
     ghost.classList.remove('flash', 'landed');
     Object.assign(ghost.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px` });
+    ghost.style.setProperty('--col', getComputedStyle(card).getPropertyValue('--col')); // the column's colour, outside the column
     document.body.append(ghost);
     const from = colById(state.board.items[id].columnId);
     ghost.style.willChange = 'translate, rotate';
-    drag = { id, card, ghost, x0: r.left, y0: r.top, off: { x: start.x - r.left, y: start.y - r.top }, fromCol: from.id, targetCol: from.id, beforeId: undefined, key: null, px: start.x, tilt: 0, pointer: start };
+    drag = { id, ids, group: card.classList.contains('group'), card, ghost, x0: r.left, y0: r.top, off: { x: start.x - r.left, y: start.y - r.top }, fromCol: from.id, targetCol: from.id, beforeId: undefined, key: null, px: start.x, tilt: 0, pointer: start };
     card.classList.add('placeholder');
     document.body.classList.add('dragging');
     for (const col of state.board.columns) {
@@ -2077,7 +2096,7 @@
       if (child === exclude) continue;
       if (child.classList.contains('card')) slots.push({ el: child, firstId: child.dataset.id });
       else if (child.classList.contains('group')) {
-        const cards = $$('.card', child).filter((x) => x !== exclude);
+        const cards = $$('.card', child).filter((x) => !exclude.contains(x));
         if (!cards.length) continue;
         if ((child.classList.contains('stack') && !child.classList.contains('open')) || child.classList.contains('folded')) slots.push({ el: child, firstId: cards[0].dataset.id });
         else for (const c of cards) slots.push({ el: c, firstId: c.dataset.id });
@@ -2103,6 +2122,11 @@
     for (const s of dropSlots(list, d.card)) {
       const r = s.el.getBoundingClientRect();
       if (ev.clientY < r.top + r.height / 2) { target = s; break; }
+    }
+    // a group goes between the column's own rows, never inside another group: before the row the slot sits in
+    if (target && d.group && target.el.parentNode !== list) {
+      const row = target.el.closest('.list > .group');
+      if (row) target = { el: row, firstId: $$('.card', row).find((x) => !d.card.contains(x))?.dataset.id };
     }
     const key = `${colEl.dataset.id}:${target ? target.firstId : '$end'}`;
     if (key === d.key) return;
@@ -2147,6 +2171,7 @@
     ], { duration: reduced() ? 1 : 260, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'forwards' }).onfinish = () => {
       d.ghost.remove(); d.card.classList.remove('placeholder', 'landed'); void d.card.offsetWidth; d.card.classList.add('landed');
     };
+    if (d.group) return endGroupDrag(d, cancelled);
     const col = colById(d.fromCol);
     const origIdx = col.itemIds.indexOf(d.id);
     const nextOrig = col.itemIds[origIdx + 1] ?? null;
@@ -2163,6 +2188,38 @@
     if (d.beforeId) body.beforeId = d.beforeId; else body.position = 'bottom';
     try { await api('POST', I(d.id, '/move'), body); } catch (e) { toast(e.message, { kind: 'error' }); }
     scheduleRefresh(0);
+  }
+
+  // A whole stack or group dropped on a column: one bulk move, in the group's order. Cards a gate, WIP limit or
+  // sleeping column stops stay put and the toast names them; Undo puts the rest back where they were (INT-272).
+  async function endGroupDrag(d, cancelled) {
+    const from = colById(d.fromCol), to = colById(d.targetCol);
+    if (cancelled || d.key === null || to.id === from.id) { setTimeout(render, 280); return; }
+    const ids = d.ids.filter((id) => state.board.items[id]?.columnId === from.id);
+    const was = [...from.itemIds];
+    // optimistic local move so a re-render doesn't snap back before the server answers
+    for (const id of ids) from.itemIds.splice(from.itemIds.indexOf(id), 1);
+    const at = d.beforeId ? to.itemIds.indexOf(d.beforeId) : -1;
+    to.itemIds.splice(at < 0 ? to.itemIds.length : at, 0, ...ids);
+    for (const id of ids) state.board.items[id].columnId = to.id;
+    setTimeout(render, 270);
+    let res;
+    try { res = await api('POST', B('/items/bulk'), { ids, patch: d.beforeId ? { column: to.id, beforeId: d.beforeId } : { column: to.id, position: 'bottom' } }); }
+    catch (e) { toast(e.message, { kind: 'error' }); scheduleRefresh(0); return; }
+    scheduleRefresh(0);
+    const moved = res.filter((r) => r.ok).map((r) => r.id);
+    const stuck = res.filter((r) => !r.ok);
+    // back in the old order: each card goes before the first card after it that never left
+    const undo = async () => {
+      for (const id of was.filter((x) => moved.includes(x))) {
+        const anchor = was.slice(was.indexOf(id) + 1).find((x) => !moved.includes(x));
+        try { await api('POST', I(id, '/move'), anchor ? { column: from.id, beforeId: anchor } : { column: from.id, position: 'bottom' }); } catch { /* moved again since */ }
+      }
+      scheduleRefresh(0);
+    };
+    const why = stuck.length ? ` · ${stuck.map((r) => r.id).join(', ')} stay${stuck.length === 1 ? 's' : ''}: ${stuck[0].error}` : '';
+    if (!moved.length) { toast(`Nothing moved${why}`, { kind: 'error', wrap: true }); return; }
+    toast(`Moved ${moved.length}${stuck.length ? ` of ${ids.length}` : ''} to ${to.name}${why}`, { icon: 'move', kind: stuck.length ? 'error' : 'ok', action: 'Undo', onAction: undo, wrap: !!stuck.length, timeout: stuck.length ? 7000 : 4500 });
   }
 
   /* ═════════════════════════ bulk ═════════════════════════ */
