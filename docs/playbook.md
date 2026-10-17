@@ -71,3 +71,17 @@ The human talks to one lead agent in chat; it works the board alongside the stan
 - Keep **one** background listener (`intellagent wait --agent <you> --types …`), re-armed after each batch of events. Never two, never with its output thrown away.
 - File, build, land, then **request review on your own tickets at once**: a ticket left in the pickup column gets picked up and rebuilt by an agent.
 - Leave routing to the coordinator; bring the human only product choices.
+
+## 8. Where the generic lessons live now
+
+The rules every board needs are shipped, so a fresh board learns them without this page. The lines below point at where each one is now; this page keeps the reasons.
+
+| Lesson | Where it lives |
+|---|---|
+| Resolve conflict hunks, never take a whole file; compare diff sizes before pushing (§4) | `lib/agents/base.md`, **Conflicts** |
+| Check where a ticket stands before archiving or redoing it (§6) | `lib/agents/base.md`, **Be productive** |
+| Leave routing to the coordinator (§7) | `lib/agents/base.md`, **Routing** |
+| Request review at once; split multi-step tickets; don't approve a half-built one (§3, §7) | `lib/agents/roles.json`, the builder brief |
+| Wait for every reviewer who said they are reviewing (§3) | `lib/agents/roles.json`, the reviewer brief |
+
+Still here, because they belong to one chat-side lead agent and not to a standing role: one background listener (§7), and the product-versus-technical split of approvals (§3).
