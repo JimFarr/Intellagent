@@ -1221,6 +1221,20 @@ describe('per-agent git worktrees', () => {
       git(bob, 'add', 'h.txt');
       git(bob, 'commit', '-q', '-m', 'bob adds h (T-3)');
       assert.equal((await wt.land('bob', 'T-3')).via, 'cherry-pick');
+      // INT-301: a change that is already on main under another sha counts as landed, found by patch id
+      const eve = (await wt.ensure('eve')).path;
+      write(eve, 'e.txt', 'eve\n');
+      git(eve, 'add', 'e.txt');
+      git(eve, 'commit', '-q', '-m', 'eve adds e (T-6)');
+      write(dir, 'e.txt', 'eve\n');
+      git(dir, 'add', 'e.txt');
+      git(dir, 'commit', '-q', '-m', 'the same change by hand');
+      const byHand = git(dir, 'rev-parse', '--short=7', 'HEAD');
+      const eq = await wt.land('eve', 'T-6');
+      assert.equal(eq.via, 'equivalent', JSON.stringify(eq));
+      assert.deepEqual(eq.landed, [byHand]);
+      assert.equal(eq.equivalent[0].main, byHand);
+      assert.equal(git(dir, 'rev-parse', '--short=7', 'HEAD'), byHand, 'no new commit on main');
       // INT-137: git never blocks the board (the event loop turns while it lands), and two landings asked for
       // at once go one after the other, so neither cherry-picks into the other's half-done state
       for (const [name, id] of [['cy', 'T-4'], ['di', 'T-5']]) {
