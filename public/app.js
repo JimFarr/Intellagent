@@ -1354,7 +1354,7 @@
     if (!btn || btn.disabled) return;
     btn.disabled = true;
     try { await api('POST', '/api/app/restart'); toast('Restarting — the page reconnects in a few seconds', { icon: 'restore', kind: 'ok' }); }
-    catch (err) { btn.disabled = false; toast(`${err.message}${err.hint ? ` — ${err.hint}` : ''}`, { kind: 'err' }); }
+    catch (err) { btn.disabled = false; toast(err.data?.hint ? `${err.message} — ${err.data.hint}` : err.message, { kind: 'error', wrap: true }); }
   });
 
   function renderHeader() {
