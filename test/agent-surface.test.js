@@ -406,10 +406,13 @@ describe('watching from the CLI', () => {
     const s = await startServer({ agents: { agents: {} } });
     const away = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-away-')); // no board folder here
     try {
-      const env = { INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'watcher' };
+      // A name of its own: with only a URL the cursor sits in a temp file keyed by URL hash and agent, and a
+      // port or name an older run used would hand this one that run's (higher) cursor and it would wait for nothing
+      const agent = `watcher-${process.pid}-${Date.now()}`;
+      const env = { INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: agent };
       const it = await s.ok('POST', '/api/boards/main/items', { title: 'watched', column: 'Ready' }, USER);
       assert.equal(cli(['do', 'add_comment', `id=${it.id}`, 'body=on it'], { cwd: away, env }).code, 0);
-      await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: '@watcher please look' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: `@${agent} please look` }, USER);
       const w = cli(['watch', '--once', '--', 'node', '-e', 'process.stdin.pipe(process.stdout)'], { cwd: away, env });
       assert.equal(w.code, 0, w.err || w.out);
       // The prompt is the standing agents' one (promptFor), not a copy of it.
