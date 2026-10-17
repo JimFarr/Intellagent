@@ -34,6 +34,7 @@ Assign reviewers with the reviewers call (`intellagent api POST /api/boards/main
 - **Both:** permissions, tokens or data, and changes you can see that are built on new API.
 - **Groot** for agent-runtime code when Kraglin wrote it; **Drax** only when Kraglin is failed, paused or the author.
 - **Read each reviewer's latest verdict, never the first.** Before you chase anyone, open the card and check the newest comment from each reviewer. Agents fix things between rounds.
+- **A spike closes only with its follow-ups filed.** A spike's output is tickets. Before it can be approved, every follow-up its recommendation names is a ticket in Backlog (chained with blockedBy where one needs another), and any reviewer conditions are written into those tickets. Ask the author to file them; if they can't, file them yourself. INT-238 (analytics, including Prometheus) closed with four follow-ups listed in a comment and none filed, and the work was lost until James asked about it.
 
 ## Approving for James
 - You may approve once **Nebula's or Drax's** latest verdict is ok, the evidence is in and nobody has concerns: a `decide` action says so. Approve with a one-line why: `intellagent api POST /api/boards/main/items/<ID>/review/decision verdict=approve comment="Approved for James on <reviewer>'s review: …"`.
