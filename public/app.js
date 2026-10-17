@@ -155,12 +155,16 @@
   };
 
   // Standing agents whose active run was woken for this request (kind 'requests') or by a comment on this
-  // ticket (kind 'comments') and haven't answered there yet — they get a "thinking" bubble. `answered(name,
-  // since)` says whether a reply from <name> landed after the run started. Only 'running' counts: queued,
-  // throttled, failed and paused runs show nothing, and the bubble goes with the run.
+  // ticket (kind 'comments') get a "thinking" bubble. It stays for the whole run, replies included: a reply
+  // does not mean the run is done (INT-185). `answered(name, since)`, when given, drops an agent that has
+  // already replied in this run (the writing pip, INT-286). Only 'running' counts: queued, throttled, failed
+  // and paused runs show nothing, and the bubble goes with the run.
   const thinkers = (kind, id, answered) => Object.values(state.standing || {})
-    .filter((a) => a.status === 'running' && a.lastRun?.about?.[kind]?.includes(id) && !answered(a.name, a.lastRun.startedAt))
+    .filter((a) => a.status === 'running' && a.lastRun?.about?.[kind]?.includes(id) && !answered?.(a.name, a.lastRun.startedAt))
     .map((a) => a.name);
+  // The bubble's words (INT-185): "is writing a reply" until <name> has posted in this run, then "is still working".
+  // `posts` is [{ who, at }] for the thread
+  const replyWords = (n, posts) => (posts.some((p) => p.who === n && p.at > standingOf(n).lastRun?.startedAt) ? 'is still working' : 'is writing a reply');
   const dotsHTML = '<i class="ai-dots"><b></b><b></b><b></b></i>';
   // Who is writing a comment on a ticket (INT-286): agents on a run woken by a comment there (as the reply bubble),
   // and people typing in its box (item.typing, lapsing TYPING_MS after the last one). Never yourself.
@@ -3459,8 +3463,9 @@
 
     $('.c-n', main).textContent = it.comments.length;
     const cmts = $('.cmts', main);
-    const think = m.create ? [] : thinkers('comments', it.id, (n, since) => it.comments.some((c) => c.author?.name === n && c.createdAt > since));
-    const ended = m.create ? [] : endedHere('comments', it.id, it.comments.map((c) => ({ who: c.author?.name, at: c.createdAt })));
+    const think = m.create ? [] : thinkers('comments', it.id);
+    const posts = it.comments.map((c) => ({ who: c.author?.name, at: c.createdAt }));
+    const ended = m.create ? [] : endedHere('comments', it.id, posts);
     const sig = `${it.id}:${it.comments.map((c) => `${c.id}${c.replacedBy || ''}${JSON.stringify(c.reactions || {})}${JSON.stringify(c.reactionNotes || {})}`).join('|')}:${think}:${think.map((n) => standingOf(n).stalled)}:${ended}:${Object.keys(state.profiles).length}`;
     if (cmts.dataset.sig !== sig) {
       cmts.dataset.sig = sig;
@@ -3471,7 +3476,7 @@
         ? `<details class="cmt-fold" data-cid="${esc(c.id)}"${open.has(c.id) ? ' open' : ''}><summary>${avatar(c.author)}<span class="what">Review request · replaced by the one below</span><span class="when" title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${icon('chev', 'sm')}</summary>${html}</details>`
         : html);
       cmts.innerHTML = it.comments.map((c) => fold(c, `<div class="cmt ${c.intent === 'explain' ? 'is-explain' : ''}" data-cid="${esc(c.id)}">${avatar(c.author, 'lg')}<div><div class="cmt-head"><b>${nameHTML(c.author?.name)}</b>${c.author?.kind === 'agent' ? `<span class="kind">${icon('bot', 'sm')}</span>` : ''}${c.intent === 'explain' ? '<span class="chip explain-chip">Explain</span>' : ''}<span title="${esc(c.createdAt)}">${rel(c.createdAt)}</span>${c.author?.kind === 'agent' && !m.archived ? `<button class="cmt-why" data-why="${esc(c.id)}" data-who="${esc(c.author.name)}" title="Ask why|${esc(nameOf(c.author.name))} explains this on the card — nothing else changes">${icon('ask', 'sm')}Ask why</button>` : ''}</div>${c.body ? `<div class="md">${md(c.body)}</div>` : ''}${commentAtts(c)}${reactionsHTML(c.reactions, { cid: c.id, add: !m.archived, notes: c.reactionNotes })}</div></div>`)).join('')
-        + think.map((n) => `<div class="cmt thinking" aria-live="polite">${avatar({ kind: 'agent', name: n }, 'lg')}<div><div class="cmt-head"><b>${nameHTML(n)}</b><span class="kind">${icon('bot', 'sm')}</span><span>is writing a reply</span></div><div class="think-bubble" role="status" aria-label="${esc(nameOf(n))} is writing a reply">${thinkAge(n)}</div></div></div>`).join('')
+        + think.map((n) => `<div class="cmt thinking" aria-live="polite">${avatar({ kind: 'agent', name: n }, 'lg')}<div><div class="cmt-head"><b>${nameHTML(n)}</b><span class="kind">${icon('bot', 'sm')}</span><span>${replyWords(n, posts)}</span></div><div class="think-bubble" role="status" aria-label="${esc(nameOf(n))} ${replyWords(n, posts)}">${thinkAge(n)}</div></div></div>`).join('')
         + ended.map((t) => `<div class="cmt-ended muted">${esc(t)}</div>`).join('');
       if (!cmts._reactWired) { cmts._reactWired = true; wireReactions(cmts, m.id); }
       cmts.querySelectorAll('.cmt-fold').forEach((d) => { d.ontoggle = () => (d.open ? open.add(d.dataset.cid) : open.delete(d.dataset.cid)); });
@@ -4370,10 +4375,11 @@
       const msgs = reqThread(list, reqWho);
       // one bubble per agent still working on an open request in this conversation
       const think = [...new Set(list.filter((q) => q.status === 'open' && (!reqWho || q.to === reqWho))
-        .flatMap((q) => thinkers('requests', q.id, (n, since) => q.replies.some((r) => r.author?.name === n && r.at > since))))];
+        .flatMap((q) => thinkers('requests', q.id)))];
+      const askPosts = list.flatMap((q) => (q.replies || []).map((r) => ({ who: r.author?.name, at: r.at })));
       let day = '';
       box.innerHTML = msgs.length ? msgs.map((m) => (m.day !== day ? `<div class="msg-day"><span>${esc(dayLabel((day = m.day)))}</span></div>` : '') + msgHTML(m)).join('')
-          + think.map((n) => `<div class="msg them thinking" aria-live="polite"><span class="msg-av">${avatar({ kind: 'agent', name: n }, 'lg')}</span><div class="msg-col"><div class="msg-who">${nameHTML(n)}</div><div class="bubble" role="status" aria-label="${esc(nameOf(n))} is writing a reply">${thinkAge(n)}</div></div></div>`).join('')
+          + think.map((n) => `<div class="msg them thinking" aria-live="polite"><span class="msg-av">${avatar({ kind: 'agent', name: n }, 'lg')}</span><div class="msg-col"><div class="msg-who">${nameHTML(n)}</div><div class="bubble" role="status" aria-label="${esc(nameOf(n))} ${replyWords(n, askPosts)}">${thinkAge(n)}</div></div></div>`).join('')
           + list.filter((q) => !reqWho || q.to === reqWho).flatMap((q) => endedHere('requests', q.id, (q.replies || []).map((r) => ({ who: r.author?.name, at: r.at }))))
             .map((t) => `<div class="msg them cmt-ended muted">${esc(t)}</div>`).join('')
         : `<div class="empty-note">${icon('send')}${reqWho ? `<div>No messages with ${esc(nameOf(reqWho))} yet</div>` : ''}</div>`;
