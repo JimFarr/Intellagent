@@ -1688,3 +1688,81 @@ describe('base context and prompt layers (INT-251)', () => {
     assert.ok(named >= 8, `the check found the texts it is meant to cover (${named})`);
   });
 });
+
+describe('automatic rebalancing planner (INT-234)', () => {
+  const { plan, pathsIn } = require('../lib/agents/rebalance');
+  const NOW = Date.parse('2026-10-17T12:00:00Z');
+  const H = 3600_000;
+  const A = (name, extra = {}) => ({ name, state: 'active', edits: true, role: 'builder', tier: 'mid', areas: [], ...extra });
+  const T = (id, assignee, extra = {}) => ({ id, assignee, inPickup: true, queuedAt: NOW - 2 * H, text: '', area: [], ...extra });
+  const queueOf = (name, n, extra = {}) => Array.from({ length: n }, (_, i) => T(`${name}-${i + 1}`, name, { queuedAt: NOW - 2 * H + i, ...extra }));
+  // apply moves the way the board will: new assignee, lastMovedAt now
+  const apply = (tickets, moves, at = NOW) => tickets.map((t) => { const m = moves.find((x) => x.id === t.id); return m ? { ...t, assignee: m.to, lastMovedAt: at } : t; });
+
+  it('moves nothing below the threshold or before the queue has waited, then just enough to close the gap', () => {
+    const agents = [A('rocket'), A('drax')];
+    assert.deepEqual(plan({ agents, tickets: [...queueOf('rocket', 4), ...queueOf('drax', 2)], now: NOW }), [], 'a gap of 2 is no imbalance');
+    const fresh = [...queueOf('rocket', 5, { queuedAt: NOW - 30 * 60_000 }), ...queueOf('drax', 2)];
+    assert.deepEqual(plan({ agents, tickets: fresh, now: NOW }), [], 'a queue younger than an hour waits');
+    const moves = plan({ agents, tickets: [...queueOf('rocket', 5), ...queueOf('drax', 2)], now: NOW });
+    assert.deepEqual(moves, [{ id: 'rocket-1', from: 'rocket', to: 'drax', why: 'rocket had 5 queued, drax 2' }], 'one move, oldest first: 4 and 3 are balanced');
+  });
+
+  it('never moves a ticket that is held, started, waiting on the human, blocked, pinned, assigned by the human, outside pickup or moved today', () => {
+    const agents = [A('rocket'), A('drax')];
+    const stuck = [{ held: true }, { started: true }, { waitingOnHuman: true }, { blocked: true }, { pinned: true }, { assignedByHuman: true }, { inPickup: false }, { lastMovedAt: NOW - 23 * H }]
+      .map((x, i) => T(`stuck-${i}`, 'rocket', { queuedAt: NOW - 3 * H, ...x }));
+    // the stuck ones still count towards rocket's queue (all but the one outside pickup and the started one)
+    const moves = plan({ agents, tickets: [...stuck, T('free', 'rocket')], now: NOW });
+    assert.deepEqual(moves.map((m) => m.id), ['free']);
+    assert.deepEqual(plan({ agents, tickets: [...stuck, T('free', 'rocket', { lastMovedAt: NOW - 25 * H })], now: NOW }).map((m) => m.id), ['free'], 'a day later it may move again');
+  });
+
+  it('can never ping-pong: a second pass over its own result moves nothing, even once the day has passed', () => {
+    const agents = [A('a'), A('b'), A('c')];
+    let tickets = [...queueOf('a', 9), ...queueOf('b', 1)];
+    const first = plan({ agents, tickets, now: NOW });
+    assert.equal(first.length, 3, 'capped at maxMoves');
+    tickets = apply(tickets, first);
+    assert.deepEqual(plan({ agents, tickets, now: NOW }).filter((m) => first.some((f) => f.id === m.id)), [], 'what moved stays put today');
+    // a day on, with every move forgotten, each pass only ever narrows the gap until it is under the threshold
+    let t = tickets.map((x) => ({ ...x, lastMovedAt: null }));
+    const seen = new Set();
+    for (let pass = 0; pass < 10; pass++) {
+      const m = plan({ agents, tickets: t, now: NOW + (pass + 1) * 25 * H });
+      for (const x of m) { assert.ok(!seen.has(`${x.id}>${x.from}`), `${x.id} went back to ${x.from}`); seen.add(`${x.id}>${x.to}`); }
+      t = apply(t, m, NOW + (pass + 1) * 25 * H);
+      if (!m.length) break;
+    }
+    const sizes = ['a', 'b', 'c'].map((n) => t.filter((x) => x.assignee === n).length);
+    assert.ok(Math.max(...sizes) - Math.min(...sizes) < 3, `balanced: ${sizes}`);
+  });
+
+  it('prefers the agent that owns the files, never takes work from its owner, and gives risk: high to a senior', () => {
+    const groot = A('groot', { areas: ['lib/agents/'], tier: 'senior' });
+    const rocket = A('rocket', { areas: ['server.js'] });
+    const drax = A('drax');
+    assert.deepEqual(pathsIn('Fix `lib/agents/runner.js` and server.js'), ['lib/agents/runner.js', 'server.js']);
+    // rocket is overloaded; a ticket naming lib/agents/ goes to groot even though drax's queue is shorter
+    const tickets = [T('x', 'rocket', { text: 'in lib/agents/scheduler.js', queuedAt: NOW - 3 * H }), ...queueOf('rocket', 5), ...queueOf('groot', 1), ...queueOf('drax', 0)];
+    assert.equal(plan({ agents: [groot, rocket, drax], tickets, now: NOW, settings: { maxMoves: 1 } }).find((m) => m.id === 'x')?.to, 'groot');
+    // groot is overloaded with its own files: they stay with it
+    const own = [...queueOf('groot', 6, { text: 'lib/agents/runner.js' })];
+    assert.deepEqual(plan({ agents: [groot, drax], tickets: own, now: NOW }), []);
+    // a risky ticket with no owner goes to the senior
+    const risky = [T('r', 'rocket', { risk: 'high' }), ...queueOf('rocket', 5)];
+    assert.equal(plan({ agents: [rocket, drax, A('opus', { tier: 'senior' })], tickets: risky, now: NOW, settings: { maxMoves: 1 } })[0].to, 'opus');
+  });
+
+  it("a removed agent's unstarted tickets all move at once, pins included; an away agent's move without the threshold; only active builders take work", () => {
+    const tickets = [...queueOf('gone', 5, { pinned: true }), T('gone-started', 'gone', { started: true }), T('nap-1', 'napper')];
+    const agents = [A('gone', { state: 'removed' }), A('napper', { state: 'away', awayAs: 'paused' }), A('drax'), A('kraglin', { edits: false, role: 'reviewer' }), A('paused', { state: 'away' })];
+    const moves = plan({ agents, tickets, now: NOW });
+    assert.deepEqual(moves.filter((m) => m.from === 'gone').map((m) => m.id), ['gone-1', 'gone-2', 'gone-3', 'gone-4', 'gone-5'], 'not capped, started stays');
+    assert.ok(moves.every((m) => m.to === 'drax'), 'never to a reviewer or an away agent');
+    assert.match(moves.find((m) => m.from === 'gone').why, /gone was removed/);
+    assert.deepEqual(plan({ agents: [A('napper', { state: 'away', awayAs: 'paused' }), A('drax')], tickets: [T('nap-1', 'napper')], now: NOW }),
+      [{ id: 'nap-1', from: 'napper', to: 'drax', why: 'napper has been paused for long' }]);
+    assert.deepEqual(plan({ agents: [A('gone', { state: 'removed' }), A('kraglin', { edits: false })], tickets, now: NOW }), [], 'nobody to take it: nothing moves');
+  });
+});
