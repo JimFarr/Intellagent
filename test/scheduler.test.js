@@ -122,6 +122,22 @@ describe('scheduler (fake clock)', () => {
     assert.deepEqual(r.scheduler.whenRuns('bot'), { busy: true });
   });
 
+  it('an agent held for the usage limit waits for the reset, says why, then runs by itself (INT-293)', () => {
+    const { scheduler, agents, started } = rig({ def: { throttleMinutes: 0 } });
+    scheduler.holdForLimit('bot', Date.now() + 30 * MIN);
+    assert.equal(agents.bot.status, 'waiting');
+    assert.equal(agents.bot.waitingFor, 'usage limit');
+    assert.equal(agents.bot.resumesAt, new Date(T0 + 30 * MIN).toISOString());
+    scheduler.dispatch('bot');
+    mock.timers.tick(29 * MIN);
+    assert.equal(started.length, 0, 'not before the reset');
+    assert.ok(Date.parse(scheduler.whenRuns('bot').at) >= T0 + 30 * MIN, 'whenRuns promises the reset, not the settle delay');
+    mock.timers.tick(MIN + 2000);
+    assert.equal(started.length, 1, 'runs once the limit resets');
+    assert.equal(agents.bot.waitingFor, undefined);
+    assert.equal(agents.bot.limitedUntil, undefined);
+  });
+
   it('a paused agent is not started, and says so', () => {
     const { scheduler, agents, started } = rig({ state: { paused: true } });
     scheduler.dispatch('bot');
@@ -284,6 +300,17 @@ describe('the idle-board alarm (fake clock)', () => {
     advance(MIN + 5000);
     assert.equal(alarms.length, 2);
     assert.deepEqual(alarms[1].waiting, ['T-1', 'T-2']);
+  });
+
+  it('stays quiet while the builders wait for the usage limit, and counts the quiet stretch from the reset (INT-293)', () => {
+    const { scheduler, alarms, st } = alarmRig();
+    scheduler.holdForLimit('worker', Date.now() + 60 * MIN);
+    advance(60 * MIN);
+    assert.equal(st('watch').queue.length + alarms.length, 0, 'nobody could run: no alarm');
+    advance(19 * MIN);
+    assert.equal(alarms.length, 0, 'the builders get their usual quiet stretch after the reset');
+    advance(2 * MIN + 5000);
+    assert.equal(alarms.length, 1, 'and then it alarms as usual');
   });
 
   it('stays quiet while the builders are paused, have events queued, or nothing waits', () => {

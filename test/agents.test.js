@@ -249,6 +249,42 @@ describe('standing agents retry safely', () => {
   });
 });
 
+describe('the usage limit', () => {
+  it('a run refused for the usage limit is no failure: the agent and its account mates wait for the reset, then run (INT-293)', async () => {
+    const marker = path.join(os.tmpdir(), `ia-limited-${Date.now()}`);
+    const s = await startServer({ agents: { defaults: { ...fast, maxFailures: 1 }, agents: {
+      lim: { run: run('limited', `"${marker}"`, 3), provider: 'acme' },
+      mate: { run: run('ok'), provider: 'acme' }, // same account: waits too, without a run of its own
+      other: { run: run('ok'), provider: 'elsewhere' }, // another account: unaffected
+    } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'limit test', column: 'Backlog' }, USER);
+      const seq = (await s.ok('GET', '/api/events?tail=true')).cursor;
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@lim go' }, USER);
+      const lim = await until(async () => { const a = await agentState(s, 'lim'); return a.status === 'waiting' && a.waitingFor === 'usage limit' ? a : null; }, 6000, 'lim waits for the limit');
+      assert.equal(lim.failures, 0, 'a refused run is not a failure');
+      assert.equal(lim.queued, 1, 'its events wait for the reset');
+      assert.ok(Date.parse(lim.resumesAt) > Date.now(), 'it says when it runs again');
+      assert.ok((await agentState(s, 'mate')).limitedUntil, 'the account mate is held too');
+      assert.equal((await agentState(s, 'other')).limitedUntil, null, 'another account is not');
+      const ev = (await s.ok('GET', `/api/events?since=${seq}&types=agent.usage_limited`)).events;
+      assert.deepEqual(ev.map((e) => [e.agent, e.provider, e.agents]), [['lim', 'acme', ['lim', 'mate']]]);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@mate and @other too' }, USER);
+      await until(async () => (await comments(s, it.id)).some((c) => c.startsWith('other: handled')), 6000, 'other runs at once');
+      assert.equal((await agentState(s, 'mate')).status, 'waiting', 'mate waits for the reset instead of spending a run');
+      assert.ok(!(await comments(s, it.id)).some((c) => c.startsWith('lim:') || c.startsWith('mate:')));
+      // after the reset both run by themselves, with nothing from the human
+      await until(async () => { const c = await comments(s, it.id); return c.some((x) => x.startsWith('lim: handled')) && c.some((x) => x.startsWith('mate: handled')); }, 12000, 'both run after the reset');
+      const after = await agentState(s, 'lim');
+      assert.equal(after.failures, 0);
+      assert.equal(after.limitedUntil, null);
+    } finally {
+      await s.stop();
+      fs.rmSync(marker, { force: true });
+    }
+  });
+});
+
 describe('standing agents survive a reboot', () => {
   it('retries the run that was cut off, telling the agent it was interrupted', async () => {
     let s = await startServer({ agents: { defaults: fast, agents: { worker: { run: run('slow', 1500) } } } });

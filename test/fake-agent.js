@@ -5,6 +5,7 @@
 //   node fake-agent.js ok          comment "handled <n> event(s)" on each ticket in the batch
 //   node fake-agent.js fail        exit 1
 //   node fake-agent.js slow <ms>   wait, then behave like ok
+//   node fake-agent.js limited <marker> <secs>   refused for the usage limit once, then ok
 // The comment also says whether the prompt reported an interrupted earlier run.
 //   node fake-agent.js flaky-once <marker>   comment through the real CLI, fail the first time, succeed on retry
 const [mode, arg] = process.argv.slice(2);
@@ -125,6 +126,15 @@ if (mode === 'commit') {
 let prompt = '';
 process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
   if (mode === 'fail') process.exit(1);
+  //   node fake-agent.js limited <marker> <secs>   the first run is refused like claude at its usage limit (a rejected
+  //   rate_limit_event resetting in <secs>, exit 1); every later run behaves like ok (INT-293)
+  if (mode === 'limited' && !require('fs').existsSync(arg)) {
+    require('fs').writeFileSync(arg, 'limited');
+    const resetsAt = Math.ceil(Date.now() / 1000) + (Number(process.argv[4]) || 2);
+    process.stdout.write(`${JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt, rateLimitType: 'five_hour' } })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'You have hit your limit' })}\n`);
+    process.exit(1);
+  }
   // like `claude -p --output-format json`: one result object, with token counts, as the last line
   if (mode === 'usage') {
     process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 500, cache_creation_input_tokens: 40 } })}\n`);

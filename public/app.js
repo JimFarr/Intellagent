@@ -187,6 +187,7 @@
     if (sa.status === 'failed') return 'Failed: needs you. Resume it on the Agents page, or ask someone else.';
     if (sa.status === 'throttled' || sa.status === 'queued' || sa.status === 'waiting') {
       const when = sa.resumesAt && new Date(sa.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (when && sa.waitingFor === 'usage limit') return `Waiting for the usage limit to reset: runs about ${when}`;
       return when ? `Runs about ${when}` : sa.status === 'throttled' ? 'Throttled: runs later' : 'Queued: runs shortly';
     }
     return null;
@@ -4732,7 +4733,7 @@
       const state_ = a.status === 'running' ? `running ${rel(a.now?.since || a.runningSince) || 'now'}`
         : a.status === 'failed' ? 'failed' : `${a.status === 'queued' ? 'waiting' : RUN_LABEL[a.status]}${a.queued ? ` · ${a.queued} queued` : ''}`;
       const items = a.status === 'running' ? a.now?.items : a.status === 'failed' ? lr.items : null;
-      const line = a.status === 'running' ? a.now?.line : a.status === 'failed' ? `exit ${lr.code ?? '?'}${lr.durationMs != null ? ` after ${secs(lr.durationMs)}` : ''}` : a.resumesAt ? `runs ${new Date(a.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+      const line = a.status === 'running' ? a.now?.line : a.status === 'failed' ? `exit ${lr.code ?? '?'}${lr.durationMs != null ? ` after ${secs(lr.durationMs)}` : ''}` : a.resumesAt ? `${a.waitingFor === 'usage limit' ? 'usage limit, ' : ''}runs ${new Date(a.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
       const acts = a.status === 'failed' ? `<span class="now-acts"><button class="btn sm ghost" data-standing="log" data-name="${esc(a.name)}">${icon('terminal', 'sm')}<span>Log</span></button><button class="btn sm ghost" data-standing="resume" data-name="${esc(a.name)}">${icon('play', 'sm')}<span>Resume</span></button></span>` : '';
       return `<div class="now-row" data-now="${esc(a.name)}" data-ring="${ring}"><span class="run-ring" data-ring="${ring}" style="${ringPhase()}">${avatar({ kind: 'agent', name: a.name })}${ring === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</span>
         <b class="now-nm">${esc(nameOf(a.name))}</b><span class="now-st">${esc(state_)}</span>
