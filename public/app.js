@@ -2707,6 +2707,21 @@
 
   /* ═════════════════════════ item modal ═════════════════════════ */
 
+  // The board payload carries no `unanswered`; only the ticket's own route does (INT-344). The drawer asks for it
+  // once per change to the thread (a comment or a reaction), never on a timer, and redraws only if the marks changed.
+  function syncUnanswered(m) {
+    const it = m.item;
+    if (m.create || !it?.comments) return;
+    const stamp = `${it.id}:${it.comments.map((c) => `${c.id}${JSON.stringify(c.reactions || {})}`).join('|')}`;
+    if (m.unansStamp === stamp) return;
+    m.unansStamp = stamp;
+    api('GET', I(it.id)).then((r) => {
+      if (state.modal !== m || m.id !== it.id) return;
+      const next = r.unanswered || [];
+      if (JSON.stringify(next) !== JSON.stringify(m.unanswered || [])) { m.unanswered = next; fillModal(m); }
+    }).catch(() => {});
+  }
+
   async function fetchItem(id) {
     if (state.board.items[id]) return { item: state.board.items[id], archived: false };
     const it = await api('GET', I(id));
@@ -2762,7 +2777,7 @@
       if (m.src) m.src.classList.remove('morph-src', 'is-open');
       m.src = cardEls.get(nid) || null;
       if (m.src && state.modal === m) m.src.classList.add(m.enter === 'zoom' ? 'morph-src' : 'is-open');
-      Object.assign(m, { id: nid, item: g.item, archived: g.archived, editingDesc: false, staged: [], tab: 'comments', draft: {}, baseVersion: null });
+      Object.assign(m, { id: nid, item: g.item, archived: g.archived, editingDesc: false, staged: [], tab: 'comments', draft: {}, baseVersion: null, unanswered: [], unansStamp: null });
       renderSaveBar(m);
       buildModalBody(m);
       for (const n of [$('.m-main', root), $('.m-side', root)]) { n.classList.remove('swap-in'); void n.offsetWidth; n.classList.add('swap-in'); n.scrollTop = 0; }
@@ -3499,7 +3514,8 @@
     const think = m.create ? [] : thinkers('comments', it.id);
     const posts = it.comments.map((c) => ({ who: c.author?.name, at: c.createdAt }));
     const ended = m.create ? [] : endedHere('comments', it.id, posts);
-    const unans = new Map((it.unanswered || []).map((u) => [u.commentId, u]));
+    syncUnanswered(m);
+    const unans = new Map((m.unanswered || []).map((u) => [u.commentId, u]));
     const sig = `${it.id}:${[...unans.keys()]}:${it.comments.map((c) => `${c.id}${c.replacedBy || ''}${JSON.stringify(c.reactions || {})}${JSON.stringify(c.reactionNotes || {})}`).join('|')}:${think}:${think.map((n) => standingOf(n).stalled)}:${ended}:${Object.keys(state.profiles).length}`;
     if (cmts.dataset.sig !== sig) {
       cmts.dataset.sig = sig;

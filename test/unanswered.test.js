@@ -98,3 +98,42 @@ describe('seen, not answered (INT-343)', () => {
     } finally { await s.stop(); }
   });
 });
+
+// INT-344: the drawer's item comes from the board payload, which carries no `unanswered`. The real syncUnanswered()
+// from the page asks the ticket's own route, so the chip's data arrives by the path the browser really takes.
+describe('seen, not answered: the drawer gets it by the real data path (INT-344)', () => {
+  const vm = require('node:vm');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const a = src.indexOf('function syncUnanswered');
+  const fn = src.slice(a, src.indexOf('async function fetchItem', a));
+  it('the board payload has no unanswered; the drawer fills it from the ticket route, once per change, and redraws only then', async () => {
+    const s = await startServer({ agents: { defaults: { settleSeconds: 0.2, throttleMinutes: 0 }, agents: { bot: { run: 'node -e 0', enabled: false } } } });
+    try {
+      const t = await s.ok('POST', `${B}/items`, { title: 'ask', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${t.id}/comments`, { body: '@bot please look' }, USER);
+      const c = (await s.ok('GET', `${B}/items/${t.id}`)).comments.at(-1);
+      await s.ok('POST', `${B}/items/${t.id}/reactions`, { emoji: 'eyes', commentId: c.id }, as('bot'));
+      const payloadItem = () => s.ok('GET', B).then((b) => b.board.items[t.id]);
+      const fromBoard = await payloadItem();
+      assert.equal(fromBoard.unanswered, undefined, 'the board payload does not carry it, which is why the drawer must ask');
+      let calls = 0; let redraws = 0;
+      const m = { id: t.id, item: fromBoard, unanswered: [] };
+      const ctx = { state: { modal: m }, I: (id) => `${B}/items/${id}`, api: (method, p) => { calls++; return s.ok(method, p); }, fillModal: () => { redraws++; } };
+      vm.runInNewContext(`${fn}\nthis.sync = syncUnanswered;`, ctx);
+      ctx.state.modal = m;
+      ctx.sync(m);
+      await new Promise((r) => setTimeout(r, 300));
+      assert.deepEqual(m.unanswered.map((u) => [u.commentId, u.agent]), [[c.id, 'bot']]);
+      assert.equal(redraws, 1);
+      ctx.sync(m); // same thread: no second request, no redraw
+      await new Promise((r) => setTimeout(r, 100));
+      assert.deepEqual([calls, redraws], [1, 1]);
+      await s.ok('POST', `${B}/items/${t.id}/comments`, { body: 'on it' }, as('bot'));
+      m.item = await payloadItem();
+      ctx.sync(m);
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal(JSON.stringify(m.unanswered), '[]', 'the answer clears it');
+      assert.deepEqual([calls, redraws], [2, 2]);
+    } finally { await s.stop(); }
+  });
+});
