@@ -1018,6 +1018,15 @@ function adminGate(ctx, actor, power, what, target = {}) {
   if (!g) fail(403, `This is outside your ${power} grant (${JSON.stringify(mine.map((x) => x.where || 'any'))})`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
   return { power, onBehalfOf: 'human' };
 }
+// The board counts its last column as done (doneColumnId): a ticket there is approved, unblocks its dependents and
+// counts in the metrics. So a delegated column change (adding, reordering, deleting) never changes which column is
+// last, or admin.columns would decide what counts as done without a gate. Called inside tx(), after the change:
+// the refusal rolls it back.
+function keepDone(ctx, actor, del, doneBefore) {
+  if (!del || doneColumnId(ctx) === doneBefore) return;
+  const was = ctx.board.columns.find((c) => c.id === doneBefore)?.name || doneBefore;
+  fail(403, `Only the human can change which column is final ("${was}" is the done column)`, { code: 'HUMAN_ONLY', hint: `The final column is the done column. Pass a position before "${was}", or ask the human on a card to change it` });
+}
 // What a delegated admin change leaves behind: the delegation on its event, and one digest line.
 const delegatedTag = (d) => (d ? { delegated: d } : {});
 function adminTrail(ctx, events, actor, d, text) {
@@ -3834,7 +3843,7 @@ function adminView(ctx) {
   return { on: !adminOff(ctx), holders };
 }
 route('GET', '/api/boards/:board/admin', 'Board admin for the human: who holds an admin.* power (columns, rules, coordinator, fields, focus, card rules, rebalancing), and on: false while the human has it switched off', ({ p }) => adminView(getCtx(p.board)));
-route('PUT', '/api/boards/:board/admin', 'Human only: switch board admin for the human on or off { on }. Off suspends every admin.* grant on this board (403 ADMIN_OFF) until switched back on', ({ p, body, actor }) => {
+route('PUT', '/api/boards/:board/admin', 'Human only: switch board admin for the human on or off { on }. Off suspends every admin.* grant on this board (403 ADMIN_OFF) until switched back on; agents.control, agents.manage and work.land given through admin stay on', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   humanConfig(actor, 'switch board admin on or off');
   if (typeof body.on !== 'boolean') fail(400, '"on" must be true or false', { code: 'BAD_REQUEST', hint: 'PUT …/admin { "on": false } suspends every admin.* grant; { "on": true } brings them back' });
@@ -4012,7 +4021,7 @@ function applyRebalance(ctx, moves, team, s, reason) {
   });
 }
 route('GET', '/api/boards/:board/rebalance', 'Automatic rebalancing: { on, minGap, minWaitMinutes, maxMoves, onceEveryMinutes } and its last passes (which tickets moved, from whom, to whom, why)', ({ p }) => rebalanceView(getCtx(p.board)));
-route('PUT', '/api/boards/:board/rebalance', 'Human only: switch automatic rebalancing { on?, minGap? (2-50), minWaitMinutes? (0-1440), maxMoves? (1-20), onceEveryMinutes? (60-10080) }', ({ p, body, actor }) => {
+route('PUT', '/api/boards/:board/rebalance', 'Human or admin.rebalancing: switch automatic rebalancing { on?, minGap? (2-50), minWaitMinutes? (0-1440), maxMoves? (1-20), onceEveryMinutes? (60-10080) }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const del = adminGate(ctx, actor, 'admin.rebalancing', 'change automatic rebalancing');
   // Only what was sent is stored: a key the human never set keeps following the defaults when they change.
@@ -4081,11 +4090,11 @@ route('GET', '/api/boards/:board/focus', 'Focus boards: saved views over this bo
   const ctx = getCtx(p.board);
   return { active: ctx.board.activeFocus, focusBoards: ctx.board.focusBoards.map((f) => focusView(ctx, f)) };
 });
-route('POST', '/api/boards/:board/focus', 'Human: make a focus board { name, itemIds: [], activate? (default true: the agents switch to it) }', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/focus', 'Human or admin.focus: make a focus board { name, itemIds: [], activate? (default true: the agents switch to it) }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   return created(focusView(ctx, createFocus(ctx, body, actor)));
 });
-route('PUT', '/api/boards/:board/focus/active', 'Human: choose the board the agents work on { id } (a focus board) or { id: null } (the full board). Agent work outside a focus board goes back to the pickup column', ({ p, body, actor }) => {
+route('PUT', '/api/boards/:board/focus/active', 'Human or admin.focus: choose the board the agents work on { id } (a focus board) or { id: null } (the full board). Agent work outside a focus board goes back to the pickup column', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   if (!('id' in body)) fail(400, '"id" is required (null for the full board)', { code: 'BAD_REQUEST', hint: 'PUT …/focus/active { "id": "fb_…" } or { "id": null }' });
   activateFocus(ctx, body.id, actor);
@@ -4096,12 +4105,12 @@ route('GET', '/api/boards/:board/focus/:id', 'One focus board with its tickets (
   const f = getFocus(ctx, p.id);
   return { ...focusView(ctx, f), items: f.itemIds.map((id) => snapshot(ctx, ctx.board.items[id])) };
 });
-route('PATCH', '/api/boards/:board/focus/:id', 'Change a focus board { name?, add?: [ids], remove?: [ids] } — the human; the coordinator may only add', ({ p, body, actor }) => {
+route('PATCH', '/api/boards/:board/focus/:id', 'Change a focus board { name?, add?: [ids], remove?: [ids] } — the human or admin.focus; the coordinator may only add', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   return focusView(ctx, updateFocus(ctx, p.id, body, actor));
 });
-route('DELETE', '/api/boards/:board/focus/:id', 'Human: retire a focus board — the view goes, no ticket moves. Returns what moved while it was open', ({ p, actor }) => retireFocus(getCtx(p.board), p.id, actor));
-route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directives } (human only)', ({ p, body, actor }) => {
+route('DELETE', '/api/boards/:board/focus/:id', 'Human or admin.focus: retire a focus board — the view goes, no ticket moves. Returns what moved while it was open', ({ p, actor }) => retireFocus(getCtx(p.board), p.id, actor));
+route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directives } (human or admin.rules)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {
     const v = str(body.directives ?? body.markdown, 50_000);
@@ -4246,22 +4255,25 @@ route('DELETE', '/api/boards/:board/schema/fields/:key', 'Remove a field definit
 
 route('GET', '/api/boards/:board/columns', 'List columns with flags', ({ p }) => getCtx(p.board).board.columns);
 
-route('POST', '/api/boards/:board/columns', 'Create column: { name, color?, icon?, position?, flags? } (human only)', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/columns', 'Create column: { name, color?, icon?, position?, flags? } (human or admin.columns; an agent never adds one after the last, done column)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const del = adminGate(ctx, actor, 'admin.columns', 'add columns (a column changes where the gates sit)');
   return created(tx(ctx, (events) => {
+    const done = doneColumnId(ctx);
     const col = addColumn(ctx.board, body);
+    keepDone(ctx, actor, del, done);
     events.push({ board: ctx.id, type: 'column.created', actor, columnId: col.id, column: { id: col.id, name: col.name, flags: col.flags }, ...delegatedTag(del) });
     adminTrail(ctx, events, actor, del, `Added the column "${col.name}"`);
     return col;
   }));
 });
 
-route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, color?, icon?, position?, flags? (merged) } — position and known flags are human only', ({ p, body, actor }) => {
+route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, color?, icon?, position?, flags? (merged) } — position and known flags are the human\'s or admin.columns (which never lifts a human-only gate or changes which column is last)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   return tx(ctx, (events) => {
     const col = findColumn(ctx.board, decodeURIComponent(p.column));
     const before = JSON.stringify({ ...col, itemIds: undefined });
+    const done = doneColumnId(ctx);
     const used = [];
     if ('flags' in body) {
       const next = pickFlags(body.flags, col.flags);
@@ -4282,6 +4294,7 @@ route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, co
       const cols = ctx.board.columns;
       cols.splice(cols.indexOf(col), 1);
       cols.splice(resolveIndex(cols.map((c) => c.id), body.position), 0, col);
+      keepDone(ctx, actor, used.find(([d]) => d?.power === 'admin.columns')?.[0], done);
     }
     if (JSON.stringify({ ...col, itemIds: undefined }) !== before || 'position' in body) {
       events.push({ board: ctx.id, type: 'column.updated', actor, columnId: col.id, column: { id: col.id, name: col.name, flags: col.flags }, ...delegatedTag(used.find(([d]) => d)?.[0]) });
@@ -4291,7 +4304,7 @@ route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, co
   });
 });
 
-route('DELETE', '/api/boards/:board/columns/:column', 'Delete an EMPTY column (human only)', ({ p, actor }) => {
+route('DELETE', '/api/boards/:board/columns/:column', 'Delete an EMPTY column (human or admin.columns; never a gated column or the last, done column)', ({ p, actor }) => {
   const ctx = getCtx(p.board);
   return tx(ctx, (events) => {
     const col = findColumn(ctx.board, decodeURIComponent(p.column));
@@ -4299,7 +4312,9 @@ route('DELETE', '/api/boards/:board/columns/:column', 'Delete an EMPTY column (h
     if (col.flags.humanOnlyIn || col.flags.humanOnlyOut) humanConfig(actor, `delete "${col.name}" (an approval gate: Can edit columns may add one, never take one away)`);
     const del = adminGate(ctx, actor, 'admin.columns', 'delete columns', { column: col });
     if (col.itemIds.length) fail(409, `"${col.name}" still has ${col.itemIds.length} item(s). Move or archive them first.`);
+    const done = doneColumnId(ctx);
     ctx.board.columns = ctx.board.columns.filter((c) => c !== col);
+    keepDone(ctx, actor, del, done);
     events.push({ board: ctx.id, type: 'column.deleted', actor, columnId: col.id, ...delegatedTag(del) });
     adminTrail(ctx, events, actor, del, `Deleted the column "${col.name}"`);
     return { deleted: col.id };

@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const fs = require('fs');
 const { startServer, USER } = require('./helpers');
-const { createLibrary, PERMS, POWERS, escalation } = require('../lib/permissions');
+const { createLibrary, PERMS, POWERS, ADMIN, adminCovers, escalation } = require('../lib/permissions');
 const { runFor, ROLES } = require('../lib/agents');
 
 const B = '/api/boards/main';
@@ -54,6 +54,19 @@ describe('the escalation rule for admin.permissions (INT-256)', () => {
 
   it('reports every refusal at once', () => {
     assert.deepEqual(codes(escalation(lib, ann, 'ann', ['web', 'admin.permissions'])).sort(), ['BEYOND_HELD', 'BOARD_POWER', 'OWN_ROW']);
+  });
+
+  it('admin covers a frozen list: a power added later never joins it by itself', () => {
+    const today = adminCovers();
+    assert.ok(!today.includes('admin.permissions'));
+    POWERS['admin.permissions'] = ADMIN['admin.permissions'];
+    POWERS['some.future'] = 'A power from a later version';
+    try {
+      assert.deepEqual(adminCovers(), today, 'admin.permissions and a new power are granted by name only');
+    } finally {
+      delete POWERS['admin.permissions'];
+      delete POWERS['some.future'];
+    }
   });
 
   it('a bundle or a need can never carry a board power, admin included', () => {

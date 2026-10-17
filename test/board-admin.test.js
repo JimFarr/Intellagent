@@ -17,7 +17,7 @@ const CALLS = {
   'admin.fields': ['PUT', `${B}/schema`, { builtins: { priority: { ui: 'read' } } }],
   'admin.cardRules': ['PUT', `${B}/card-rules`, { rules: [{ name: 'approved', condition: 'review.allOk', look: { outline: 'ok' } }] }],
   'admin.rebalancing': ['PUT', `${B}/rebalance`, { on: false }],
-  'admin.columns': ['POST', `${B}/columns`, { name: 'QA' }],
+  'admin.columns': ['POST', `${B}/columns`, { name: 'QA', position: 1 }],
   'admin.focus': ['POST', `${B}/focus`, { name: 'Today', itemIds: [], activate: false }],
 };
 
@@ -72,6 +72,33 @@ describe('board admin powers (INT-256)', () => {
     await s.ok('POST', `${B}/columns`, { name: 'Gated', flags: { humanOnlyIn: true } }, USER);
     assert.equal((await s.api('DELETE', `${B}/columns/Gated`, undefined, { agent: 'has-columns' })).body.code, 'HUMAN_ONLY');
     await s.ok('DELETE', `${B}/columns/Gated`, undefined, USER);
+  });
+
+  it('Can edit columns never changes which column is final (the done column)', async () => {
+    const names = async () => (await s.ok('GET', `${B}/columns`)).map((c) => c.name);
+    const was = await names();
+    assert.equal(was.at(-1), 'Done');
+    const refused = async (m, path, body, why) => {
+      const r = await s.api(m, path, body, { agent: 'has-columns' });
+      assert.equal(r.status, 403, why);
+      assert.equal(r.body.code, 'HUMAN_ONLY', why);
+      assert.match(r.body.hint, /final column is the done column/, why);
+      assert.deepEqual(await names(), was, `${why}: nothing changed`);
+    };
+    await refused('POST', `${B}/columns`, { name: 'Shipped' }, 'adding at the end');
+    await refused('POST', `${B}/columns`, { name: 'Shipped', position: 'bottom' }, 'adding at the bottom');
+    await refused('PATCH', `${B}/columns/Done`, { position: 0 }, 'moving Done away from the end');
+    await refused('PATCH', `${B}/columns/Backlog`, { position: 'bottom' }, 'moving another column after Done');
+    // an ungated last column can't be deleted either: the one before it would become done
+    await s.ok('PATCH', `${B}/columns/Done`, { flags: { humanOnlyIn: false } }, USER);
+    await refused('DELETE', `${B}/columns/Done`, undefined, 'deleting the last column');
+    await s.ok('PATCH', `${B}/columns/Done`, { flags: { humanOnlyIn: true } }, USER);
+    // a move that leaves Done last is fine
+    assert.equal((await s.api('PATCH', `${B}/columns/QA`, { position: 0 }, { agent: 'has-columns' })).status, 200);
+    assert.equal((await names()).at(-1), 'Done');
+    // the human may
+    await s.ok('POST', `${B}/columns`, { name: 'Shipped' }, USER);
+    await s.ok('DELETE', `${B}/columns/Shipped`, undefined, USER);
   });
 
   it('Can choose the coordinator never chooses itself', async () => {
