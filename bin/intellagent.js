@@ -422,9 +422,12 @@ function printTeam(t) {
 async function acceptGrants(p, t, f) {
   const asked = Object.entries(p.team.slots || {}).filter(([slot, s]) => (s.grants || []).length && t.steps.some((x) => x.slot === slot));
   const accept = [];
+  // one question per grant, with its whole scope (where, minOks, from): a scoped grant never reads like an unscoped one
   for (const [slot, s] of asked) {
-    const listed = s.grants.map((g) => (typeof g === 'string' ? g : g.power)).join(', ');
-    if (f.yes ? f.grants : await confirm(`Grant ${t.steps.find((x) => x.slot === slot).name}: ${listed}?`, f)) accept.push(slot);
+    const name = t.steps.find((x) => x.slot === slot).name;
+    for (const [i, g] of s.grants.entries()) {
+      if (f.yes ? f.grants : await confirm(`Grant ${name}: ${presets.grantText(g)}?`, f)) accept.push(`${slot}#${i}`);
+    }
   }
   const again = presets.teamInstall(p, { names: Object.fromEntries(t.steps.map((x) => [x.slot, x.name])), agents: [], roles: [...new Set(t.steps.map((x) => x.define.role))], grants: accept });
   t.steps = again.steps;

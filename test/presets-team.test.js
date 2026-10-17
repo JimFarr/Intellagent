@@ -138,6 +138,15 @@ describe('presets: installing the team (INT-302 step 2)', () => {
     assert.equal(presets.teamInstall(p, { ...ctx, grants: ['other'] }).steps[0].define.grants, undefined);
   });
 
+  it('grants are accepted one by one ("slot#i"), and the question names each one\'s whole scope', () => {
+    const p = loaded();
+    const one = presets.teamInstall(p, { ...ctx, grants: ['lead#1'] }).steps[0];
+    assert.deepEqual(one.define.grants, [{ power: 'review.decide', where: { 'reviewers.checker': 'ok' } }], 'only the scoped one');
+    assert.match(one.notes.join(' '), /1 proposed grant not accepted/);
+    assert.equal(presets.grantText({ power: 'review.decide', where: { 'reviewers.checker': 'ok' }, minOks: 2, from: ['a', 'b'] }), 'review.decide where {"reviewers.checker":"ok"}, needs 2 oks from a, b');
+    assert.notEqual(presets.grantText('review.decide'), presets.grantText({ power: 'review.decide', where: { column: 'Done' } }), 'scoped never reads like unscoped');
+  });
+
   it('listen, pickup, the flags and the description are checked', () => {
     for (const [k, v, re] of [['listen', 'x', /listen must be one of/], ['pickup', 'sometimes', /pickup must be/], ['reviewer', 'yes', /reviewer must be true or false/], ['keepAlive', 'stream-json', /keepAlive must be true or false/], ['description', 'x'.repeat(2001), /at most 2000/]]) {
       const p = team(); p.team.slots.lead[k] = v;
