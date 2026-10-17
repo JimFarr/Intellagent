@@ -1818,7 +1818,7 @@ describe('agent reviewers', () => {
       assert.equal(refused.status, 409);
       assert.equal(refused.body.code, 'GATE_UNMET');
       assert.equal(refused.body.gates[0].label, '1 reviewer ok');
-      assert.equal((await s.api('POST', `${B}/items/${a}/review/decision`, { verdict: 'approve' }, ag('boss'))).body.code, 'GATE_UNMET', 'a grant never skips a gate');
+      assert.equal((await s.api('POST', `${B}/items/${a}/review/decision`, { verdict: 'approve' }, ag('boss'))).body.code, 'NO_REVIEWER', 'a grant never skips a gate: with nobody to review it, NO_REVIEWER stops it before the gate is looked at');
       const still = await s.ok('GET', `${B}/items/${a}`);
       assert.equal(still.column, 'Review');
       assert.ok(still.questions.some((q) => q.kind === 'review'), 'the review is still open');
