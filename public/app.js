@@ -5145,9 +5145,10 @@
       ${tickets.length ? `<section class="perm-group"><div class="perm-ghead">${icon('layers', 'sm')}<span class="ag-sec">What each ticket cost</span><span class="perm-ghelp">A run woken for several tickets is shared between them equally. Top ${tickets.length} by cost.</span></div>
         <table class="an-tickets"><thead><tr><th scope="col">Ticket</th><th scope="col">Runs</th><th scope="col">Time</th><th scope="col">Tokens</th><th scope="col">Cost</th></tr></thead><tbody>${tickets.map((t) => `<tr><th scope="row"><button class="mini-chip link" data-board="${esc(state.boardId)}" data-open="${esc(t.id)}">${esc(t.id)}</button>${t.shared ? '<small title="Some runs covered several tickets"> shared</small>' : ''}</th><td>${t.runs}</td><td>${anDur(t.ms)}</td><td>${anTok(t.tokens)}</td><td>${anCost(t)}</td></tr>`).join('')}</tbody></table></section>` : ''}`}
       <p class="perm-intro">From ${esc(new Date(a.from).toLocaleDateString())} to now. The lane timeline and suggestions come when the endpoint gives them (INT-336).</p>`;
+    if (body._keepFocus) { body._keepFocus = false; $(`[data-an-days="${days}"]`, body)?.focus(); }
     body.onclick = (e) => {
       const d = e.target.closest('[data-an-days]');
-      if (d) { body._days = +d.dataset.anDays; fillAnalytics(body); return; }
+      if (d) { body._days = +d.dataset.anDays; body._keepFocus = true; fillAnalytics(body); return; }
       const o = e.target.closest('[data-open]');
       if (o && !e.target.closest('.avatar')) openItem(o.dataset.open, cardEls.get(o.dataset.open));
     };
