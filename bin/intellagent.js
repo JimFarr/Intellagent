@@ -277,6 +277,20 @@ async function stop() {
   try { fs.rmSync(pidFile); } catch { /* gone */ }
 }
 
+// Stops the board whoever started it (autostart, a background start or a terminal), then starts it detached
+// as `start --background` does, so it outlives this shell. Waits for the old one to let go of the port first:
+// else the start would find it still answering and say "Already running".
+async function restart() {
+  humanOnly('intellagent restart');
+  const mp = requireManifest();
+  const url = baseUrl(readManifest(mp));
+  await stop();
+  for (let i = 0; i < 50 && (await alive(url)); i++) await new Promise((res) => setTimeout(res, 100));
+  if (await alive(url)) { console.error(`Still running at ${url} after stop; stop it by hand, then: intellagent start`); process.exit(1); }
+  await startBackground(mp, url);
+  console.log(`Running at ${url} (logs: .intellagent/data/server.log)`);
+}
+
 // Everything an agent needs to start, from the board itself (so it is never stale).
 async function brief() {
   const f = flags(rest);
@@ -825,6 +839,7 @@ const HELP = `intellagent — a kanban for you and your agents
   skill install    add the intellagent skills to Claude Code (working a ticket; setting up)   [--project]
   start            run this project's board      --open --background
   stop             stop a board started in the background
+  restart          stop this project's board whoever started it, then start it again detached and print its address
   brief            what an agent needs to start: next steps, columns, templates, rules, calls   --agent --via cli|mcp|http
   open             open the board in a browser (signed in, if the board has a user token)
   merge ID         land an approved ticket's commits from its agent's worktree branch on main
@@ -869,7 +884,7 @@ const HELP = `intellagent — a kanban for you and your agents
 `;
 
 const commands = {
-  init, start, stop, status, docs, templates, skill, brief,
+  init, start, stop, restart, status, docs, templates, skill, brief,
   preset: presetCmd,
   open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
   token: tokenCmd,
