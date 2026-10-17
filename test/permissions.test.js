@@ -38,17 +38,28 @@ describe('the escalation rule for admin.permissions (INT-256)', () => {
     assert.deepEqual(escalation(lib, ann, 'bob', ['ship'])[0].missing, ['deploy', 'git', 'ship']);
     // holding the bundle covers its parts
     assert.deepEqual(escalation(lib, { ...ann, perms: ['ship'] }, 'bob', ['deploy']), []);
-    // powers too: a power it holds, scoped or not, is within the rule; one it doesn't is not
-    assert.deepEqual(escalation(lib, ann, 'bob', ['review.decide']), []);
-    assert.deepEqual(escalation(lib, ann, 'bob', ['work.land'])[0].missing, ['work.land']);
+  });
+
+  it('never hands out or takes away a board power, even one it holds (they stay the human\'s)', () => {
+    const r = escalation(lib, ann, 'bob', ['review.decide', 'work.land', 'admin.columns', 'admin']);
+    assert.deepEqual(codes(r), ['BOARD_POWER']);
+    assert.deepEqual(r[0].powers, ['admin', 'admin.columns', 'review.decide', 'work.land']);
   });
 
   it('never hands out admin.permissions, even though it holds it', () => {
-    assert.deepEqual(codes(escalation(lib, ann, 'bob', ['admin.permissions'])), ['ADMIN_PERMISSIONS']);
+    const r = escalation(lib, ann, 'bob', ['admin.permissions']);
+    assert.deepEqual(codes(r), ['BOARD_POWER']);
+    assert.deepEqual(r[0].powers, ['admin.permissions']);
   });
 
   it('reports every refusal at once', () => {
-    assert.deepEqual(codes(escalation(lib, ann, 'ann', ['web', 'admin.permissions'])).sort(), ['ADMIN_PERMISSIONS', 'BEYOND_HELD', 'OWN_ROW']);
+    assert.deepEqual(codes(escalation(lib, ann, 'ann', ['web', 'admin.permissions'])).sort(), ['BEYOND_HELD', 'BOARD_POWER', 'OWN_ROW']);
+  });
+
+  it('a bundle or a need can never carry a board power, admin included', () => {
+    const l = createLibrary({ x: { kind: 'bundle', includes: ['admin.columns'] }, y: { kind: 'verbal', brief: 'b', needs: ['admin'] } });
+    assert.ok(!l.list().some((e) => e.key === 'x' || e.key === 'y'));
+    assert.equal(l.errors.filter((m) => /is a power/.test(m)).length, 2);
   });
 });
 
@@ -56,7 +67,7 @@ describe('permission library', () => {
   it('seeds the built-ins from PERMS and POWERS', () => {
     const lib = createLibrary();
     const keys = lib.list().map((p) => p.key);
-    assert.deepEqual(keys, [...Object.keys(PERMS), ...Object.keys(POWERS)]);
+    assert.deepEqual(keys, [...Object.keys(PERMS), ...Object.keys(POWERS), 'admin']);
     assert.equal(lib.get('review.decide').heldBy, 'grants');
     assert.equal(lib.get('edit').heldBy, 'perms');
     assert.ok(lib.list().every((p) => p.builtin && p.enforced));

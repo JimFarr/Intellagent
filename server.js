@@ -761,7 +761,7 @@ const permsFor = (name) => {
    agents.control pause / resume / run other standing agents
    An agent never uses a grant on its own work: a ticket it worked on, or a review it requested.
    The powers are listed in the permission library (lib/permissions.js) beside the tool permissions. */
-const { POWERS, createLibrary: createPermLibrary, guidanceLine } = require('./lib/permissions');
+const { POWERS, ADMIN, ADMIN_BUNDLE, adminCovers, createLibrary: createPermLibrary, guidanceLine } = require('./lib/permissions');
 const { createRoles } = require('./lib/agents/roles');
 const { BASE_MAX, shipped: shippedBase } = require('./lib/agents/base');
 const { layersFor } = require('./lib/agents/prompt');
@@ -801,7 +801,8 @@ function grantsOf(name) {
       Object.assign(out, rule);
     }
     return out;
-  }).filter((g) => g && POWERS[g.power]);
+  }).flatMap((g) => (g?.power === ADMIN_BUNDLE ? adminCovers().map((power) => ({ ...g, power })) : [g]))
+    .filter((g) => g && POWERS[g.power]);
 }
 // { minOks, from } read from a grant, or a string saying why it can't be. minOks is a whole number ≥ 1 or "all";
 // from is a list of reviewer names (left out: every reviewer assigned to the ticket). from alone means "all".
@@ -994,6 +995,33 @@ function grantFor(ctx, actor, power, item, what, { oks = true } = {}) {
 // loosen the rules it is held to.
 function humanConfig(actor, what) {
   if (actor.kind !== 'user') fail(403, `Only the human can ${what}`, { code: 'HUMAN_ONLY', hint: 'Ask the human on a card (POST …/items/<id>/attention) to change it' });
+}
+// Board admin (INT-256): the same settings, which the human may hand out one by one as admin.* grants. An agent
+// passes only with that grant, in scope, while the human's "admin off" switch is not set. Its scope ("where") may
+// name the board, and for admin.columns the column; any other key, or a column scope without a column, is out of
+// scope: a scope only ever narrows. → null for the human, else the delegation to record on the events:
+// { power, onBehalfOf: 'human' }. Settings that have no admin power (the human's switches, tokens, grants) keep
+// humanConfig, which no grant reaches.
+const adminOff = (ctx) => !!(ctx?.board?.adminOff ?? M.adminOff);
+function adminGate(ctx, actor, power, what, target = {}) {
+  if (actor.kind === 'user') return null;
+  const mine = grantsOf(actor.name).filter((g) => g.power === power);
+  if (!mine.length) fail(403, `Only the human can ${what}`, { code: 'HUMAN_ONLY', hint: `Ask the human on a card (POST …/items/<id>/attention). The human can delegate this with "grants": ["${power}"] in agents.json` });
+  if (adminOff(ctx)) fail(403, 'Board admin for the human is switched off on this board', { code: 'ADMIN_OFF', hint: 'Leave it for the human: they switch board admin back on from the Agents page' });
+  const fits = (where) => !where || Object.entries(where).every(([k, want]) => {
+    const wants = [].concat(want).map((v) => String(v).toLowerCase());
+    if (k === 'board') return wants.includes(String(ctx.id).toLowerCase());
+    if (k === 'column' && target.column) return wants.includes(String(target.column.id).toLowerCase()) || wants.includes(String(target.column.name).toLowerCase());
+    return false;
+  });
+  const g = mine.find((x) => fits(x.where));
+  if (!g) fail(403, `This is outside your ${power} grant (${JSON.stringify(mine.map((x) => x.where || 'any'))})`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human' });
+  return { power, onBehalfOf: 'human' };
+}
+// What a delegated admin change leaves behind: the delegation on its event, and one digest line.
+const delegatedTag = (d) => (d ? { delegated: d } : {});
+function adminTrail(ctx, events, actor, d, text) {
+  if (d) digest.add(ctx, events, actor, `${text} (${d.power}, on the human's behalf)`, []);
 }
 
 // Per-agent column limits from the manifest (humans are never limited).
@@ -2573,6 +2601,13 @@ function powerBriefLines(ctx, x, said = {}) {
     'work.land': `${cli('POST', `${P}/items/<ID>/land`, 'agent=<yourself>')} — only approved work (NOT_APPROVED otherwise); resolve conflicts on your own branch first (cherry-pick the author's commits, keep both sides, run the tests), then land with agent=<yourself>; push main afterwards only if your agents.json allows it`,
     'agents.control': `${cli('POST', '/api/agents/<name>/pause')} · …/resume · …/run`,
     'agents.manage': `${cli('PATCH', '/api/agents/<name>', 'label="…" model=haiku alignment="…"')} — models: ${MANAGER_MODELS.join(', ')}; perms and permissions can only narrow; never your own record`,
+    'admin.columns': `${cli('PATCH', `${P}/columns/<column>`, 'flags.wipLimit=3')} · POST ${P}/columns · DELETE ${P}/columns/<column> — you may add a human-only gate, never lift one`,
+    'admin.rules': `${cli('PUT', `${P}/directives`, 'directives=@rules.md')}`,
+    'admin.coordinator': `${cli('PATCH', P, 'coordinator=<agent>')} — never yourself`,
+    'admin.fields': `${cli('PUT', `${P}/schema`, '\'{"builtins":{"priority":{"ui":"read"}}}\'')}`,
+    'admin.focus': `POST ${P}/focus · PATCH ${P}/focus/<id> · PUT ${P}/focus/active · DELETE ${P}/focus/<id>`,
+    'admin.cardRules': `${cli('PUT', `${P}/card-rules`, '@rules.json')}`,
+    'admin.rebalancing': `${cli('PUT', `${P}/rebalance`, 'on=false')}`,
   };
   return [`- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
     ...(Object.hasOwn(said, x.power) ? [`  ${guidanceLine(said[x.power])}`] : [])];
@@ -2661,7 +2696,8 @@ function briefing(ctx, name, base, via = 'cli') {
         ...g.flatMap((x) => powerBriefLines(ctx, x, said)),
         ...(behind ? [`**${behind}** A rule you rely on may have just landed and not be live.`] : []),
         'Your verdicts and moves are final and recorded as made on the human\'s behalf; the human can still override them. Never use a power on your own work (a ticket you worked on or asked to have reviewed) — the board refuses it. Explain each decision in its comment.',
-        ...(approvalsOff(ctx) && g.some((x) => APPROVAL_POWERS.has(x.power)) ? ['**Approvals are switched off on this board right now:** the human paused them, so review.decide and column.gate are suspended (403 APPROVALS_OFF). Leave reviews for the human until they switch approvals back on.'] : [])];
+        ...(approvalsOff(ctx) && g.some((x) => APPROVAL_POWERS.has(x.power)) ? ['**Approvals are switched off on this board right now:** the human paused them, so review.decide and column.gate are suspended (403 APPROVALS_OFF). Leave reviews for the human until they switch approvals back on.'] : []),
+        ...(adminOff(ctx) && g.some((x) => ADMIN[x.power]) ? ['**Board admin is switched off on this board right now:** the human paused it, so your admin.* powers are suspended (403 ADMIN_OFF). Leave board settings for the human until they switch it back on.'] : [])];
     })(),
     '',
     '## Columns (left to right)',
@@ -3183,7 +3219,7 @@ const digest = createDigest({ rid, now, trimChange, learnedSince: (ms) => memory
 // standing is set at boot and isAgentName is declared further down, so both are read when called.
 const { activeFocus, inActiveFocus, focusNames, getFocus, focusView, focusEvent, addToFocus, guardFocus,
   createFocus, updateFocus, activateFocus, retireFocus, dropFromFocus } = createFocusBoards({
-  fail, arr, str, rid, now, tx, getItem, itemEvent, activeLease, isCoordinator, humanConfig,
+  fail, arr, str, rid, now, tx, getItem, itemEvent, activeLease, isCoordinator, adminGate, adminTrail,
   workingColumn, pickupColumns, backToReady, isAgentName: (n) => isAgentName(n), listStanding: () => standing.list() });
 const { requestTarget, createRequest, replyRequest, withdrawRequest } = createRequests({
   fail, str, rid, now, tx, trimChange, saveAttachment, path, M, mayWithdraw, withdrawReason });
@@ -3696,18 +3732,27 @@ route('PATCH', '/api/boards/:board', 'Update board: { name?, idPrefix?, directiv
   const ctx = getCtx(p.board);
   tx(ctx, (events) => {
     const changes = {};
-    if ('directives' in body && str(body.directives, 50_000) !== ctx.board.directives) humanConfig(actor, 'change the board rules');
+    // one PATCH may use two powers; the event names the first, the digest each
+    const used = [];
+    if ('directives' in body && str(body.directives, 50_000) !== ctx.board.directives) used.push([adminGate(ctx, actor, 'admin.rules', 'change the board rules'), 'Changed the board rules']);
     if ('coordinator' in body) {
       const v = body.coordinator ? str(body.coordinator, 64).trim() : null;
-      if (v !== ctx.board.coordinator) humanConfig(actor, 'choose the coordinator');
-      if (v !== ctx.board.coordinator) { changes.coordinator = { from: ctx.board.coordinator, to: v }; ctx.board.coordinator = v; }
+      if (v !== ctx.board.coordinator) {
+        const d = adminGate(ctx, actor, 'admin.coordinator', 'choose the coordinator');
+        // an agent never makes itself the coordinator: the role carries routing and triage powers
+        if (d && v && v.toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent never makes itself the coordinator', { code: 'OWN_WORK', hint: 'Ask the human on a card' });
+        used.push([d, `Chose ${v || 'no one'} as the coordinator (was ${ctx.board.coordinator || 'no one'})`]);
+        changes.coordinator = { from: ctx.board.coordinator, to: v };
+        ctx.board.coordinator = v;
+      }
     }
     for (const k of ['name', 'idPrefix', 'directives']) {
       if (!(k in body)) continue;
       const v = k === 'idPrefix' ? str(body[k], 8).toUpperCase() : str(body[k], k === 'directives' ? 50_000 : 80);
       if (v !== ctx.board[k]) { changes[k] = { from: trimChange(ctx.board[k]), to: trimChange(v) }; ctx.board[k] = v; }
     }
-    if (Object.keys(changes).length) events.push({ board: ctx.id, type: 'board.updated', actor, changes });
+    if (Object.keys(changes).length) events.push({ board: ctx.id, type: 'board.updated', actor, changes, ...delegatedTag(used.find(([d]) => d)?.[0]) });
+    for (const [d, text] of used) adminTrail(ctx, events, actor, d, text);
   });
   return boardView(ctx);
 });
@@ -3781,6 +3826,25 @@ route('PUT', '/api/boards/:board/approvals', 'Human only: switch approvals for t
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { approvals: { from: on ? 'off' : 'on', to: on ? 'on' : 'off' } } });
   });
   return approvalsView(ctx);
+});
+// Board admin for the human (INT-256): who holds an admin.* power, and the human's switch that suspends them all.
+function adminView(ctx) {
+  const holders = [...new Set([...standingAgents().map((a) => a.name), ...Object.keys(M.permissions || {}).filter((n) => n !== '*')])]
+    .map((name) => ({ name, grants: grantsOf(name).filter((g) => ADMIN[g.power]) })).filter((a) => a.grants.length);
+  return { on: !adminOff(ctx), holders };
+}
+route('GET', '/api/boards/:board/admin', 'Board admin for the human: who holds an admin.* power (columns, rules, coordinator, fields, focus, card rules, rebalancing), and on: false while the human has it switched off', ({ p }) => adminView(getCtx(p.board)));
+route('PUT', '/api/boards/:board/admin', 'Human only: switch board admin for the human on or off { on }. Off suspends every admin.* grant on this board (403 ADMIN_OFF) until switched back on', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  humanConfig(actor, 'switch board admin on or off');
+  if (typeof body.on !== 'boolean') fail(400, '"on" must be true or false', { code: 'BAD_REQUEST', hint: 'PUT …/admin { "on": false } suspends every admin.* grant; { "on": true } brings them back' });
+  const on = body.on;
+  tx(ctx, (events) => {
+    if (adminOff(ctx) === !on) return;
+    ctx.board.adminOff = !on;
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { admin: { from: on ? 'off' : 'on', to: on ? 'on' : 'off' } } });
+  });
+  return adminView(ctx);
 });
 
 // The idle-board alarm (INT-265): when tickets wait to be started but no builder has run for `minutes`, the
@@ -3950,7 +4014,7 @@ function applyRebalance(ctx, moves, team, s, reason) {
 route('GET', '/api/boards/:board/rebalance', 'Automatic rebalancing: { on, minGap, minWaitMinutes, maxMoves, onceEveryMinutes } and its last passes (which tickets moved, from whom, to whom, why)', ({ p }) => rebalanceView(getCtx(p.board)));
 route('PUT', '/api/boards/:board/rebalance', 'Human only: switch automatic rebalancing { on?, minGap? (2-50), minWaitMinutes? (0-1440), maxMoves? (1-20), onceEveryMinutes? (60-10080) }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  humanConfig(actor, 'change automatic rebalancing');
+  const del = adminGate(ctx, actor, 'admin.rebalancing', 'change automatic rebalancing');
   // Only what was sent is stored: a key the human never set keeps following the defaults when they change.
   const sent = {};
   if ('on' in body) {
@@ -3968,7 +4032,8 @@ route('PUT', '/api/boards/:board/rebalance', 'Human only: switch automatic rebal
     if (Object.entries(sent).every(([k, v]) => stored[k] === v)) return;
     const cur = rebalanceOf(ctx);
     ctx.board.rebalance = { ...stored, ...sent };
-    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rebalance: { from: cur, to: rebalanceOf(ctx) } } });
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rebalance: { from: cur, to: rebalanceOf(ctx) } }, ...delegatedTag(del) });
+    adminTrail(ctx, events, actor, del, `Changed automatic rebalancing: ${JSON.stringify(sent)}`);
   });
   return rebalanceView(ctx);
 });
@@ -4041,8 +4106,9 @@ route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directi
   tx(ctx, (events) => {
     const v = str(body.directives ?? body.markdown, 50_000);
     if (v === ctx.board.directives) return;
-    humanConfig(actor, 'change the board rules');
-    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { directives: { from: trimChange(ctx.board.directives), to: trimChange(v) } } });
+    const del = adminGate(ctx, actor, 'admin.rules', 'change the board rules');
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { directives: { from: trimChange(ctx.board.directives), to: trimChange(v) } }, ...delegatedTag(del) });
+    adminTrail(ctx, events, actor, del, 'Changed the board rules');
     ctx.board.directives = v;
   });
   return { directives: ctx.board.directives };
@@ -4052,11 +4118,12 @@ route('PUT', '/api/boards/:board/directives', 'Replace standing rules: { directi
 route('GET', '/api/boards/:board/card-rules', 'Card rules: { rules: [{ name, condition, look: { outline?, badge?, tint?, ribbon?, mark?: { shape, tone | colour } }, enabled }] } in order; the first matching rule\'s outline, tint and ribbon win, badges stack (max 2), every matching mark is kept. A board starts with no rules. Condition language: see PUT', ({ p }) => ({ rules: cardRulesOf(getCtx(p.board)), tones: cardrules.TONES, shapes: cardrules.SHAPES }));
 route('PUT', '/api/boards/:board/card-rules', 'Replace the card rules (human only): { rules: [{ name, condition, look: { outline: ok|accent|warn|danger, tint?, badge?: { text, icon? }, ribbon?: text, mark?: { shape: square|circle|triangle|diamond|bar|star, tone: ok|accent|warn|danger  or  colour: #rrggbb } }, enabled? }] }. A condition is space-separated terms, all must hold: review.allOk · !review.concerns · review.oks>=2 · columnDays>=3 (days in the column) · fields.risk:low · reviewers.nebula:ok · @drax · is:rule:<name> (is:rule:"two words" or is:rule:two-words). Also a or b (either; and binds tighter) and one level of groups, (a or b). 400 BAD_REQUEST with a hint when one does not parse', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  humanConfig(actor, 'change the card rules');
+  const del = adminGate(ctx, actor, 'admin.cardRules', 'change the card rules');
   const rules = ruleErrors(() => cardrules.cleanRules(body.rules));
   tx(ctx, (events) => {
     if (JSON.stringify(rules) === JSON.stringify(cardRulesOf(ctx))) return;
-    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { cardRules: { from: cardRulesOf(ctx).map((r) => r.name), to: rules.map((r) => r.name) } } });
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { cardRules: { from: cardRulesOf(ctx).map((r) => r.name), to: rules.map((r) => r.name) } }, ...delegatedTag(del) });
+    adminTrail(ctx, events, actor, del, `Changed the card rules: ${rules.map((r) => r.name).join(', ') || 'none'}`);
     ctx.board.cardRules = rules;
   });
   return { rules: cardRulesOf(ctx) };
@@ -4081,8 +4148,8 @@ const schemaView = (ctx) => ({ ...ctx.board.schema, fieldTypes: FIELD_TYPES, uiM
 function schemaTx(ctx, actor, fn) {
   return tx(ctx, (events) => {
     const before = JSON.stringify(ctx.board.schema);
-    fn();
-    if (JSON.stringify(ctx.board.schema) !== before) events.push({ board: ctx.id, type: 'schema.updated', actor, schema: ctx.board.schema });
+    const del = fn(events) || null; // the delegation, when an agent used admin.fields
+    if (JSON.stringify(ctx.board.schema) !== before) events.push({ board: ctx.id, type: 'schema.updated', actor, schema: ctx.board.schema, ...delegatedTag(del) });
     return schemaView(ctx);
   });
 }
@@ -4090,10 +4157,14 @@ function schemaTx(ctx, actor, fn) {
 route('GET', '/api/boards/:board/schema', 'Ticket schema: built-in field config + declared custom fields', ({ p }) => schemaView(getCtx(p.board)));
 route('PUT', '/api/boards/:board/schema', 'Set schema: { builtins?: { type: { ui, stub, label }, ... }, fields?: FieldDef[] (replaces all) }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  return schemaTx(ctx, actor, () => {
+  return schemaTx(ctx, actor, (events) => {
+    let del = null;
     if ('builtins' in body) {
       const next = normBuiltins({ ...ctx.board.schema.builtins, ...body.builtins });
-      if (JSON.stringify(next) !== JSON.stringify(ctx.board.schema.builtins)) humanConfig(actor, 'change the built-in fields (who may edit what)');
+      if (JSON.stringify(next) !== JSON.stringify(ctx.board.schema.builtins)) {
+        del = adminGate(ctx, actor, 'admin.fields', 'change the built-in fields (who may edit what)');
+        adminTrail(ctx, events, actor, del, 'Changed the built-in field settings');
+      }
       ctx.board.schema.builtins = next;
     }
     if ('fields' in body) {
@@ -4102,6 +4173,7 @@ route('PUT', '/api/boards/:board/schema', 'Set schema: { builtins?: { type: { ui
       if (new Set(keys).size !== keys.length) fail(400, 'Duplicate field keys');
       ctx.board.schema.fields = defs;
     }
+    return del;
   });
 });
 route('GET', '/api/boards/:board/ticket-templates', 'Ticket templates: presets for new tickets (create with { "template": "<key>" })', ({ p }) => getCtx(p.board).board.ticketTemplates);
@@ -4176,10 +4248,11 @@ route('GET', '/api/boards/:board/columns', 'List columns with flags', ({ p }) =>
 
 route('POST', '/api/boards/:board/columns', 'Create column: { name, color?, icon?, position?, flags? } (human only)', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  humanConfig(actor, 'add columns (a column changes where the gates sit)');
+  const del = adminGate(ctx, actor, 'admin.columns', 'add columns (a column changes where the gates sit)');
   return created(tx(ctx, (events) => {
     const col = addColumn(ctx.board, body);
-    events.push({ board: ctx.id, type: 'column.created', actor, columnId: col.id, column: { id: col.id, name: col.name, flags: col.flags } });
+    events.push({ board: ctx.id, type: 'column.created', actor, columnId: col.id, column: { id: col.id, name: col.name, flags: col.flags }, ...delegatedTag(del) });
+    adminTrail(ctx, events, actor, del, `Added the column "${col.name}"`);
     return col;
   }));
 });
@@ -4189,13 +4262,18 @@ route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, co
   return tx(ctx, (events) => {
     const col = findColumn(ctx.board, decodeURIComponent(p.column));
     const before = JSON.stringify({ ...col, itemIds: undefined });
+    const used = [];
     if ('flags' in body) {
       const next = pickFlags(body.flags, col.flags);
       // every known flag, plus pickup and working, which steer where agents pick up work and get woken
       const gated = [...Object.keys(DEFAULT_FLAGS), 'pickup', 'working'].filter((k) => JSON.stringify(next[k]) !== JSON.stringify(col.flags[k]));
-      if (gated.length) humanConfig(actor, `change ${gated.join(', ')} on "${col.name}" (name, colour, icon and other custom flags are open)`);
+      // A human-only gate is what keeps work from skipping approval: admin.columns may add one, never lift it
+      // (lifting it would hand out column.gate, and approving one's own work, through a side door).
+      const lifted = ['humanOnlyIn', 'humanOnlyOut'].filter((k) => col.flags[k] && !next[k]);
+      if (lifted.length) humanConfig(actor, `lift ${lifted.join(', ')} on "${col.name}" (an approval gate: Can edit columns may add one, never take one away)`);
+      if (gated.length) used.push([adminGate(ctx, actor, 'admin.columns', `change ${gated.join(', ')} on "${col.name}" (name, colour, icon and other custom flags are open)`, { column: col }), `Changed ${gated.join(', ')} on "${col.name}"`]);
     }
-    if ('position' in body) humanConfig(actor, 'reorder columns (the order decides where the gates sit)');
+    if ('position' in body) used.push([adminGate(ctx, actor, 'admin.columns', 'reorder columns (the order decides where the gates sit)', { column: col }), `Moved the column "${col.name}"`]);
     if ('name' in body) { if (!String(body.name).trim()) fail(400, 'name cannot be empty'); col.name = str(body.name, 60).trim(); }
     if ('color' in body) col.color = str(body.color, 32);
     if ('icon' in body) col.icon = str(body.icon, 32);
@@ -4206,7 +4284,8 @@ route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, co
       cols.splice(resolveIndex(cols.map((c) => c.id), body.position), 0, col);
     }
     if (JSON.stringify({ ...col, itemIds: undefined }) !== before || 'position' in body) {
-      events.push({ board: ctx.id, type: 'column.updated', actor, columnId: col.id, column: { id: col.id, name: col.name, flags: col.flags } });
+      events.push({ board: ctx.id, type: 'column.updated', actor, columnId: col.id, column: { id: col.id, name: col.name, flags: col.flags }, ...delegatedTag(used.find(([d]) => d)?.[0]) });
+      for (const [d, text] of used) adminTrail(ctx, events, actor, d, text);
     }
     return col;
   });
@@ -4214,12 +4293,15 @@ route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, co
 
 route('DELETE', '/api/boards/:board/columns/:column', 'Delete an EMPTY column (human only)', ({ p, actor }) => {
   const ctx = getCtx(p.board);
-  humanConfig(actor, 'delete columns');
   return tx(ctx, (events) => {
     const col = findColumn(ctx.board, decodeURIComponent(p.column));
+    // deleting a gated column lifts its gate: the human's, as in PATCH
+    if (col.flags.humanOnlyIn || col.flags.humanOnlyOut) humanConfig(actor, `delete "${col.name}" (an approval gate: Can edit columns may add one, never take one away)`);
+    const del = adminGate(ctx, actor, 'admin.columns', 'delete columns', { column: col });
     if (col.itemIds.length) fail(409, `"${col.name}" still has ${col.itemIds.length} item(s). Move or archive them first.`);
     ctx.board.columns = ctx.board.columns.filter((c) => c !== col);
-    events.push({ board: ctx.id, type: 'column.deleted', actor, columnId: col.id });
+    events.push({ board: ctx.id, type: 'column.deleted', actor, columnId: col.id, ...delegatedTag(del) });
+    adminTrail(ctx, events, actor, del, `Deleted the column "${col.name}"`);
     return { deleted: col.id };
   });
 });
@@ -4908,7 +4990,7 @@ function cleanGrants(list) {
   if (!Array.isArray(list)) fail(400, '"grants" must be a list');
   return list.map((g) => {
     const power = typeof g === 'string' ? g : g?.power;
-    if (!POWERS[power]) fail(400, `Unknown power "${power}". Powers: ${Object.keys(POWERS).join(', ')}`);
+    if (!POWERS[power] && power !== ADMIN_BUNDLE) fail(400, `Unknown power "${power}". Powers: ${[...Object.keys(POWERS), ADMIN_BUNDLE].join(', ')}`);
     // A scope narrows a power, so a malformed one is refused, never dropped: dropping it would turn "only
     // where risk is low" into "everywhere".
     if (typeof g === 'string') return power;
