@@ -5392,6 +5392,8 @@ if (M.sandbox && !M.sandboxKeep) {
   const idleHours = M.sandboxIdleHours === undefined ? 4 : Number(M.sandboxIdleHours);
   if (idleHours > 0) {
     setInterval(() => {
+      // an open page or `intellagent wait` holds a stream: someone is there, reading
+      if (sseClients.size) lastUsed = Date.now();
       if (Date.now() - lastUsed < idleHours * 3600_000) return;
       try { fs.writeFileSync(path.join(DATA, 'stopped.json'), JSON.stringify({ at: now(), reason: `idle for ${idleHours} h` })); } catch { /* read-only data dir */ }
       shutdown();

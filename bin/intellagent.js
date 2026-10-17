@@ -987,6 +987,7 @@ async function sandboxCmd() {
   }
   const name = sub || defaultAgent(readManifest(mp));
   if (!name) { console.error('Usage: intellagent sandbox <agent name>   (or set INTELLAGENT_AGENT)'); process.exit(2); }
+  if (f['idle-hours'] !== undefined && !(Number(f['idle-hours']) >= 0)) { console.error(`--idle-hours takes a number of hours (0 = never stop), not "${f['idle-hours']}"`); process.exit(2); }
   const r = await sb.start(mp, String(name), { from: String(f.from || 'main'), seed: f.seed ? String(f.seed) : null, fresh: !!f.fresh, keep: f.keep === undefined ? null : f.keep !== 'false', idleHours: f['idle-hours'] === undefined ? null : Number(f['idle-hours']) });
   if (f.json) { console.log(JSON.stringify(r, null, 2)); return; }
   console.log(`${name}'s sandbox is running at ${r.url}  (${r.seed === 'kept' ? 'data kept' : `seeded: ${r.seed}${r.from ? `, from the board "${r.from}": its columns, fields and rules, no tickets` : ''}`}; code from ${r.source})`);

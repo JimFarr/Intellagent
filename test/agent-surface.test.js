@@ -642,13 +642,24 @@ describe('sandbox boards', () => {
     try {
       const idle = cli(['sandbox', 'idler', '--seed', 'empty', '--idle-hours', '0.0005', '--json'], { cwd: s.dir });
       const kept = cli(['sandbox', 'keeper', '--seed', 'empty', '--idle-hours', '0.0005', '--keep', '--json'], { cwd: s.dir });
+      // someone reading: a tab (or `intellagent wait`) holds a stream open, which counts as use
+      const reader = cli(['sandbox', 'reader', '--seed', 'empty', '--idle-hours', '0.0005', '--json'], { cwd: s.dir });
       assert.equal(idle.code, 0, idle.err);
       assert.equal(kept.code, 0, kept.err);
+      assert.equal(reader.code, 0, reader.err);
+      const bad = cli(['sandbox', 'nan', '--idle-hours', 'abc'], { cwd: s.dir });
+      assert.equal(bad.code, 2);
+      assert.match(bad.err, /--idle-hours takes a number of hours/);
+      const stream = new AbortController();
+      const open = await fetch(`${reader.json.url}/api/stream?board=main&agent=tester`, { signal: stream.signal });
+      assert.equal(open.ok, true);
       const up = (url) => fetch(`${url}/api/app`).then((x) => x.ok, () => false);
       // polling /api/app is what list does: it must not count as use
       for (let i = 0; i < 40 && await up(idle.json.url); i++) await new Promise((r) => setTimeout(r, 250));
       assert.equal(await up(idle.json.url), false, 'the unused sandbox stopped itself');
       assert.equal(await up(kept.json.url), true, 'the kept one is still up');
+      assert.equal(await up(reader.json.url), true, 'the one with an open stream is still up');
+      stream.abort();
       const list = cli(['sandbox', 'list', '--json'], { cwd: s.dir }).json;
       const row = (n) => list.find((x) => x.name === n);
       assert.equal(row('idler').running, false);
@@ -663,18 +674,32 @@ describe('sandbox boards', () => {
     } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
   });
 
-  it('when all 200 ports are taken, a new sandbox reuses the ports of sandboxes that are not running (INT-374)', async () => {
+  it('when all 200 ports are taken, a new sandbox takes the port of the one stopped longest, and of nobody else (INT-374)', async () => {
     const s = await startServer({ agents: { agents: {} } });
     try {
       fs.mkdirSync(path.join(s.dir, 'sandboxes'), { recursive: true });
       const ports = path.join(s.dir, 'sandboxes', 'ports.json');
       const old = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`old${i}`, SANDBOX_FIRST_PORT + i]));
       fs.writeFileSync(ports, JSON.stringify(old));
+      // no record of a stop (or one under a minute old): nothing is taken, and the refusal says what to do
+      fs.mkdirSync(path.join(s.dir, 'sandboxes', 'old5', 'data'), { recursive: true });
+      fs.writeFileSync(path.join(s.dir, 'sandboxes', 'old5', 'data', 'stopped.json'), JSON.stringify({ at: new Date().toISOString(), reason: 'idle for 4 h' }));
+      const full = cli(['sandbox', 'fresh1', '--seed', 'empty'], { cwd: s.dir });
+      assert.notEqual(full.code, 0);
+      assert.match(full.err, /No free port for a sandbox/);
+      assert.equal(Object.keys(JSON.parse(fs.readFileSync(ports, 'utf8'))).length, 200, 'nobody lost a port');
+      // stopped for a day, two of them: the older one gives its port, the other keeps its entry
+      for (const [n, ago] of [['old5', 86_400_000], ['old9', 172_800_000]]) {
+        fs.mkdirSync(path.join(s.dir, 'sandboxes', n, 'data'), { recursive: true });
+        fs.writeFileSync(path.join(s.dir, 'sandboxes', n, 'data', 'stopped.json'), JSON.stringify({ at: new Date(Date.now() - ago).toISOString(), reason: 'idle for 4 h' }));
+      }
       const r = cli(['sandbox', 'fresh1', '--seed', 'empty', '--json'], { cwd: s.dir });
       assert.equal(r.code, 0, r.err);
-      assert.ok(r.json.port >= SANDBOX_FIRST_PORT && r.json.port < SANDBOX_FIRST_PORT + 200);
+      assert.equal(r.json.port, SANDBOX_FIRST_PORT + 9, 'the port of old9, stopped longest');
       const now = JSON.parse(fs.readFileSync(ports, 'utf8'));
-      assert.deepEqual(Object.keys(now), ['fresh1'], 'the dead ones gave their ports back');
+      assert.equal(now.old9, undefined);
+      assert.equal(now.old5, SANDBOX_FIRST_PORT + 5);
+      assert.equal(Object.keys(now).length, 200);
     } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
   });
 
