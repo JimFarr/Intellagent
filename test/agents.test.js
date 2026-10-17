@@ -1116,8 +1116,25 @@ describe('lean runs', () => {
       fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
       assert.equal(boardMcpConfig(dir), null, 'no intellagent server');
       fs.writeFileSync(path.join(dir, '.mcp.json'), `﻿${JSON.stringify({ mcpServers: { intellagent: { command: 'node', args: ['mcp.js'] } } })}`);
-      assert.equal(boardMcpConfig(dir), '.mcp.json');
+      assert.equal(boardMcpConfig(dir), path.join(dir, '.mcp.json'));
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('points an untracked .mcp.json at the project, so a worktree agent still finds it (INT-345)', () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-mcp-proj-'));
+    const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-mcp-wt-'));
+    try {
+      fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { intellagent: { command: 'node', args: ['mcp.js'] } } }));
+      // the worktree is a checkout without the untracked file, so a relative path would not resolve there
+      assert.equal(fs.existsSync(path.join(worktree, '.mcp.json')), false);
+      const abs = boardMcpConfig(project);
+      assert.ok(path.isAbsolute(abs), 'absolute path');
+      assert.ok(fs.existsSync(abs), 'it names the project\'s file');
+      assert.match(runFor(['test'], { mcpConfig: abs }), new RegExp(`--mcp-config "${abs.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+      fs.rmSync(worktree, { recursive: true, force: true });
+    }
   });
 });
 
