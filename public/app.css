@@ -864,7 +864,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
   background: color-mix(in oklab, var(--tc) 9%, var(--surface)); color: var(--text); font: 500 13px var(--font);
   border: 1px solid color-mix(in oklab, var(--tc) 32%, var(--border));
   box-shadow: 0 18px 40px -14px rgb(0 0 0 / .5), inset 3px 0 0 var(--tc);
-  animation: toast-in .45s var(--spring); cursor: default; position: relative; overflow: hidden;
+  animation: toast-in .32s var(--ease); cursor: default; position: relative; overflow: hidden;
 }
 .toast > .i { color: var(--tc); }
 .toast.click { cursor: pointer; }
@@ -872,15 +872,45 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .toast.out { animation: toast-out .25s var(--ease) forwards; }
 .toast.error { --tc: var(--danger); }
 .toast.ok { --tc: var(--ok); }
-.toast .msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast.needs { --tc: var(--accent-2); }
+.toast .msg { display: block; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toast.wrap .msg { white-space: normal; line-height: 1.4; }
 .toast button { border: 0; background: color-mix(in oklab, var(--tc) 18%, transparent); color: var(--tc); font: 600 12px var(--font); padding: 5px 10px; border-radius: 8px; cursor: pointer; }
 .toast button:hover { background: color-mix(in oklab, var(--tc) 28%, transparent); }
 .toast .bar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--tc); opacity: .5; animation: toast-bar linear forwards; }
 @keyframes toast-bar { from { width: 100%; } to { width: 0; } }
 .toast:hover .bar { animation-play-state: paused; }
-@keyframes toast-in { from { opacity: 0; translate: 0 16px; scale: .95; } }
-@keyframes toast-out { to { opacity: 0; translate: 0 8px; scale: .97; } }
+@keyframes toast-in { from { opacity: 0; translate: 0 10px; } }
+@keyframes toast-out { to { opacity: 0; translate: 0 6px; } }
+.reduced .toast, .reduced .toast.out { animation-duration: .01s; }
+/* Toast looks (theme-driven: pill · card · note · ink). Pill is the tinted capsule above; the others take the board's own shapes. */
+/* Card: a small card in the theme's card radius, line and shadow. Info stays neutral; ok / error / needs add a straight edge bar. */
+:root[data-toast="card"] .toast {
+  border-radius: var(--r-card); padding: 10px 10px 10px 14px; background: var(--surface);
+  border: var(--bw) solid var(--card-line); box-shadow: var(--card-shadow-hover);
+}
+:root[data-toast="card"] .toast:is(.ok, .error, .needs)::before { content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--tc); }
+:root[data-toast="card"] .toast:not(.ok, .error, .needs) > .i { color: var(--muted); }
+:root[data-toast="card"] .toast .bar { left: var(--r-card); bottom: 0; height: 2px; max-width: calc(100% - 2 * var(--r-card)); opacity: .3; }
+:root[data-toast="card"][data-shadow="hard"] .toast { box-shadow: 4px 4px 0 var(--text); }
+/* Note: the quietest — a panel-coloured line with a hairline border; tone lives only in the icon (errors also tint the border). */
+:root[data-toast="note"] .toast {
+  border-radius: var(--r-ctl); padding: 8px 10px 8px 12px; background: var(--panel);
+  border: 1px solid var(--border); box-shadow: 0 10px 28px -16px var(--shadow);
+}
+:root[data-toast="note"] .toast.error { border-color: color-mix(in oklab, var(--danger) 45%, var(--border)); }
+:root[data-toast="note"] .toast .bar { display: none; }
+/* Ink: an inverted strip (text colour as the fill), so it reads in every theme without a tint; tones are pulled toward the page colour. */
+:root[data-toast="ink"] .toast {
+  border-radius: var(--r-ctl); padding: 9px 10px 9px 14px; background: var(--text); color: var(--bg);
+  border: 0; box-shadow: 0 16px 36px -16px var(--shadow);
+}
+:root[data-toast="ink"] .toast > .i { color: color-mix(in oklab, var(--tc) 72%, var(--bg)); }
+:root[data-toast="ink"] .toast:not(.ok, .error, .needs) > .i { color: color-mix(in oklab, var(--bg) 70%, var(--text)); }
+:root[data-toast="ink"] .toast button { background: color-mix(in oklab, var(--bg) 16%, transparent); color: var(--bg); }
+:root[data-toast="ink"] .toast button:hover { background: color-mix(in oklab, var(--bg) 26%, transparent); }
+:root[data-toast="ink"] .toast .bar { background: var(--bg); opacity: .25; }
+:root[data-toast="ink"] .toast:focus-visible, :root[data-toast="ink"] .toast button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .bulkbar { position: fixed; left: 50%; bottom: 20px; z-index: 80; translate: -50% 160%; display: flex; align-items: center; gap: 6px; padding: 7px; border-radius: calc(var(--r-ctl) + 8px); background: var(--surface); border: var(--bw) solid var(--border); box-shadow: var(--modal-shadow); transition: translate .5s var(--spring); }
 .bulkbar.show { translate: -50% 0; }

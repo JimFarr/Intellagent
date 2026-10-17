@@ -213,6 +213,7 @@
     avStyle: 'gem', // avatar look: gem | flat | tint | ring | pebble | stamp
     drop: 'ring', // a column a ticket is dragged over: ring | tint | lift | spotlight | dashed | pulse
     colColor: 'own', // own | accent | ink — column dots and rules
+    toast: 'pill', // pop-up notices: pill (tinted capsule) | card (the theme's card) | note (quiet line) | ink (inverted strip)
   };
   // Palette colours are #rgb or #rrggbb. WCAG relative luminance and contrast ratio, and a plain sRGB mix (p = share of y).
   const rgb = (h) => (h.length === 4 ? [...h.slice(1)].map((c) => c + c) : [h.slice(1, 3), h.slice(3, 5), h.slice(5, 7)]).map((x) => parseInt(x, 16));
@@ -470,7 +471,7 @@
   const settingsStore = stored(KEY, {});
   const DEFAULTS = {
     theme: BASE_THEME,
-    v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme', drop: 'theme', groups: 'theme',
+    v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme', drop: 'theme', groups: 'theme', toast: 'theme',
     density: 'cozy', colw: 300, ageDays: '7',
     motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full',
     stub: { id: true, type: true, priority: true, parent: true, author: true, lease: true, comments: true, attachments: true, blocked: true, properties: false, description: false, thumbnail: true, fields: true, assignee: true, status: true, checklist: true, listeners: true },
@@ -510,7 +511,7 @@
     Object.assign(r.dataset, {
       theme: settings.theme in THEMES ? settings.theme : BASE_THEME, mode: t.mode, glow: t.glow ? '1' : '',
       shadow: st.shadow, typeind: st.typeInd, chips: st.chips, heads: st.heads, avatar: st.avatar,
-      tape: pick('tape'), cards: pick('cards'), attn: pick('attn'), enter: pick('enter'), lanes: pick('lanes'), bg: pick('bg'), md: pick('md'), avstyle: pick('avStyle'), drop: pick('drop'), groups: pick('groups'),
+      tape: pick('tape'), cards: pick('cards'), attn: pick('attn'), enter: pick('enter'), lanes: pick('lanes'), bg: pick('bg'), md: pick('md'), avstyle: pick('avStyle'), drop: pick('drop'), groups: pick('groups'), toast: pick('toast'),
       density: settings.density,
     });
     r.style.setProperty('--fx-k', fxk(r.dataset.bg, t.mode));
@@ -4885,7 +4886,7 @@
 
   function toast(msg, { kind = '', icon: ic = null, actor = null, action = null, onAction = null, onClick = null, timeout = 3800, wrap = false } = {}) {
     const lead = actor ? avatar(actor) : ic ? icon(ic) : kind === 'error' ? icon('x') : kind === 'needs' ? icon('ask') : icon('sparkle');
-    const t = el(`<div class="toast ${kind === 'needs' ? '' : kind} ${onClick ? 'click' : ''} ${wrap ? 'wrap' : ''}" ${kind === 'needs' ? 'style="--tc:var(--accent-2)"' : ''}>${lead}<span class="msg"></span>${action ? `<button>${esc(action)}</button>` : ''}<i class="bar" style="animation-duration:${timeout}ms"></i></div>`);
+    const t = el(`<div class="toast ${kind} ${onClick ? 'click' : ''} ${wrap ? 'wrap' : ''}">${lead}<span class="msg"></span>${action ? `<button>${esc(action)}</button>` : ''}<i class="bar" style="animation-duration:${timeout}ms"></i></div>`);
     $('.msg', t).textContent = msg;
     const host = $('#toasts');
     host.append(t);
@@ -5514,6 +5515,7 @@
         ${opt('lanes', 'Columns', [['glass', 'Glass', 'Translucent panels'], ['solid', 'Solid', 'Opaque panels'], ['outline', 'Outline', 'Bordered, see-through'], ['lane', 'Lanes', 'No panels — dividers between lanes']])}
         ${opt('texture', 'Texture', [['on', 'On', 'Film grain and dotted board'], ['off', 'Off', 'Plain surfaces']])}
         ${opt('drop', 'Drop target', [['ring', 'Ring', 'An outline glow in the column colour'], ['tint', 'Tint', 'The column floods with its colour'], ['lift', 'Lift', 'The column rises to meet the card'], ['spotlight', 'Spot', 'Other columns dim; the target lights up'], ['dashed', 'Dashed', 'A technical dashed outline'], ['pulse', 'Pulse', 'A gentle breathing glow']])}
+        ${opt('toast', 'Toasts', [['pill', 'Pill', 'A capsule tinted in its tone'], ['card', 'Card', 'A small card in the theme’s own shape and shadow'], ['note', 'Note', 'A quiet line; the tone is only in the icon'], ['ink', 'Ink', 'An inverted strip that reads on any theme']])}
         ${opt('avStyle', 'Avatars', [['gem', 'Gem', 'Glossy colour with depth'], ['flat', 'Flat', 'Solid colour'], ['tint', 'Tint', 'Soft colour fill, coloured initials'], ['ring', 'Ring', 'Outline only'], ['pebble', 'Pebble', 'Organic, slightly irregular stone'], ['stamp', 'Stamp', 'Printed, with an offset shadow']])}
         ${opt('md', 'Markdown', [['clean', 'Clean', 'Hairline rows, small-caps headers, soft code blocks'], ['grid', 'Grid', 'Ruled cells and strong rules — structured'], ['paper', 'Paper', 'Editorial: serif headings, double-ruled tables, pull quotes'], ['terminal', 'Terminal', 'Monospace, dashed rules, inverted headers'], ['notebook', 'Notebook', 'Ruled paper, margin line, handwritten headings'], ['ledger', 'Ledger', 'Green-bar rows, tabular figures, accountant rules']])}
         </div>
