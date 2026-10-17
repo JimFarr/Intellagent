@@ -351,6 +351,72 @@ describe('the idle-board alarm (fake clock)', () => {
   });
 });
 
+// INT-296: above 85% of the five-hour window, pickup and supervise nudges wait for the reset
+describe("the account's usage holds back optional work (fake clock)", () => {
+  const { parseRate } = require('../lib/agents/usage');
+  beforeEach(() => mock.timers.enable({ apis: ['setTimeout', 'Date'], now: T0 }));
+  afterEach(() => mock.timers.reset());
+  const RESET = T0 + 60 * MIN;
+  function usageRig(work) {
+    const r = rig({ def: { run: 'claude -p "x"' }, state: { queue: [] } });
+    r.core.deps.pending = () => work;
+    r.offered = () => { const e = r.agents.bot.queue.find((x) => x.type === 'work.pending'); r.agents.bot.queue.length = 0; return e ? e.work.map((w) => w.id) : []; };
+    return r;
+  }
+  const W = (action, id) => ({ key: `main:${action}:${id}`, action, id });
+
+  it('parseRate reads every window from the newest rate_limit_event, and nothing from the prompt', () => {
+    const ev = (u) => JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', unifiedWindows: { five_hour: { utilization: u, resetsAt: 1800000000 }, seven_day: { utilization: 0.6, resetsAt: 1800500000 } } } });
+    const log = `prompt mentions ${ev(0.99)}\n--- output ---\n${ev(0.4)}\n{"type":"assistant"}\n${ev(0.42)}\n`;
+    assert.deepEqual(parseRate(log), { five_hour: { utilization: 0.42, resetsAt: 1800000000000 }, seven_day: { utilization: 0.6, resetsAt: 1800500000000 } });
+    const older = JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { rateLimitType: 'five_hour', utilization: 0.7, resetsAt: 1800000000 } });
+    assert.deepEqual(parseRate(`--- output ---\n${older}`), { five_hour: { utilization: 0.7, resetsAt: 1800000000000 } });
+    assert.equal(parseRate('--- output ---\n{"type":"result"}'), null);
+  });
+
+  it('held: only the work that is not optional is offered; after the reset the held work wakes it once', () => {
+    const { scheduler, core, offered } = usageRig([W('pickup', 'T-1'), W('supervise', 'T-2'), W('start', 'T-3')]);
+    scheduler.noteRate('bot', { five_hour: { utilization: 0.9, resetsAt: RESET } });
+    scheduler.checkPending('bot');
+    assert.deepEqual(offered(), ['T-3'], 'its own started-work queue still wakes it');
+    scheduler.checkPending('bot');
+    assert.deepEqual(offered(), [], 'and nothing again while held: no loop');
+    assert.equal(scheduler.usageView().anthropic.heldBack, true);
+    mock.timers.tick(61 * MIN);
+    scheduler.checkPending('bot');
+    assert.deepEqual(offered(), ['T-1', 'T-2'], 'after the reset the optional work is fresh');
+    scheduler.checkPending('bot');
+    assert.deepEqual(offered(), [], 'once');
+    assert.equal(scheduler.usageView().anthropic.heldBack, false);
+    assert.equal(scheduler.heldMinutes(T0 - MIN), 60, 'held from the report to the reset');
+    assert.equal(core.state.usageHolds.length, 1);
+  });
+
+  it('work it already saw before the hold does not wake it again at the reset', () => {
+    const { scheduler, offered } = usageRig([W('pickup', 'T-4')]);
+    scheduler.checkPending('bot');
+    assert.deepEqual(offered(), ['T-4'], 'seen while there was room');
+    scheduler.noteRate('bot', { five_hour: { utilization: 0.95, resetsAt: RESET } });
+    scheduler.checkPending('bot');
+    mock.timers.tick(61 * MIN);
+    scheduler.checkPending('bot');
+    assert.deepEqual(offered(), [], 'left alone before: still left alone');
+  });
+
+  it('below the threshold nothing is held, and a custom run with no provider has no account to hold', () => {
+    const r = usageRig([W('pickup', 'T-5')]);
+    r.scheduler.noteRate('bot', { five_hour: { utilization: 0.84, resetsAt: RESET } });
+    r.scheduler.checkPending('bot');
+    assert.deepEqual(r.offered(), ['T-5']);
+    const c = usageRig([W('pickup', 'T-6')]);
+    c.core.defs.bot.run = 'node adapter.js';
+    c.scheduler.noteRate('bot', { five_hour: { utilization: 0.99, resetsAt: RESET } });
+    c.scheduler.checkPending('bot');
+    assert.deepEqual(c.offered(), ['T-6']);
+    assert.deepEqual(c.scheduler.usageView(), {});
+  });
+});
+
 // INT-294: the alarm's only target is down, so it tells the human instead of going silent
 describe('the idle-board alarm falls back to the human (fake clock)', () => {
   beforeEach(() => mock.timers.enable({ apis: ['setTimeout', 'Date'], now: T0 }));

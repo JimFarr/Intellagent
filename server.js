@@ -3170,7 +3170,7 @@ function updateProfile(name, d, actor) {
 /* ───────────────────────── agent memory (lib/memory.js) ───────────────────────── */
 
 const memory = createMemory({ file: path.join(DATA, 'memory.json'), fail, now, rid });
-const metrics = createMetrics({ doneColumnId, workingColumn, recent });
+const metrics = createMetrics({ doneColumnId, workingColumn, recent, usageHeldMinutes: (from, to) => standing?.usageHeldMinutes(from, to) ?? 0 });
 const analytics = createAnalytics({ dataDir: DATA });
 const prometheus = createPrometheus({ dataDir: DATA, doneColumnId, workingColumn });
 const digest = createDigest({ rid, now, trimChange, learnedSince: (ms) => memory.learnedSince(ms) });

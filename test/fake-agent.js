@@ -144,6 +144,13 @@ process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
     process.stdout.write(`${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 500, cache_creation_input_tokens: 40 } })}\n`);
     return;
   }
+  //   node fake-agent.js rate <utilization>   prints claude's rate_limit_event (allowed) with that share of the
+  //   five-hour window spent, resetting in an hour, then behaves like ok (INT-296)
+  if (mode === 'rate') {
+    const in1h = Math.ceil(Date.now() / 1000) + 3600;
+    process.stdout.write(`${JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', resetsAt: in1h, rateLimitType: 'five_hour',
+      unifiedWindows: { five_hour: { utilization: Number(arg), resetsAt: in1h }, seven_day: { utilization: 0.5, resetsAt: in1h + 86400 } } } })}\n`);
+  }
   if (mode === 'flaky-once') {
     const fs = require('fs');
     const { execFileSync } = require('child_process');

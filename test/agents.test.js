@@ -251,6 +251,21 @@ describe('standing agents retry safely', () => {
   });
 });
 
+describe("the account's usage (INT-296)", () => {
+  it('a run reports the windows; GET /api/agents shows them per provider, and above 85% optional work is held back', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { spender: { run: run('rate', '0.9'), provider: 'acme' } } } });
+    try {
+      const it = await s.ok('POST', `${B}/items`, { title: 'usage test', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${it.id}/comments`, { body: '@spender go' }, USER);
+      const usage = await until(async () => (await s.ok('GET', '/api/agents')).usage?.acme, 6000, 'usage recorded');
+      assert.deepEqual([usage.window, usage.utilization, usage.heldBack, usage.holdAbove], ['five_hour', 0.9, true, 0.85]);
+      assert.ok(Date.parse(usage.resetsAt) > Date.now());
+      assert.equal(usage.windows.seven_day.utilization, 0.5);
+      assert.ok((await s.ok('GET', `${B}/metrics?days=7`)).usageHeld.minutes >= 0, 'the metrics count the minutes held');
+    } finally { await s.stop(); }
+  });
+});
+
 describe('a failed agent gets one more try (INT-295)', () => {
   it('after the cool-off its probe run succeeds, and it is back to normal with nothing from the human', async () => {
     const marker = path.join(os.tmpdir(), `ia-probe-${Date.now()}`);
