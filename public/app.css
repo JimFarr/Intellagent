@@ -287,14 +287,6 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
   content: ''; position: absolute; left: 1.5px; top: 5px; width: 5px; height: 19px;
   border: 2px solid var(--wire); border-bottom: 0; border-radius: 99px 99px 0 0;
 }
-/* Dog-ear: the corner folds over onto the card, with a crease shadow and a lit flap. */
-:root[data-tape="corner"] :is(.card, .group-head) .tape {
-  display: block; position: absolute; right: -1px; top: -1px; width: 22px; height: 22px; z-index: 2; border-top-right-radius: var(--r-card);
-  background:
-    linear-gradient(225deg, color-mix(in oklab, var(--panel) var(--col-alpha), var(--bg)) 0 49%, transparent 50%),
-    linear-gradient(45deg, color-mix(in oklab, var(--type-c) 18%, var(--surface)) 30%, color-mix(in oklab, #fff 22%, var(--surface)) 50%);
-  filter: drop-shadow(-1.5px 1.5px 1.5px rgb(0 0 0 / .2));
-}
 :root[data-cards="sticky"] .card::before {
   content: ''; position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; border-radius: 0 0 calc(var(--r-card) + 2px) 0;
   background: linear-gradient(135deg, transparent 50%, color-mix(in oklab, var(--type-c) 28%, var(--surface)) 50%);
@@ -353,7 +345,6 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .c-ribbon { position: absolute; top: 0; right: 0; width: 64px; height: 64px; overflow: hidden; border-top-right-radius: inherit; font: 700 8.5px/15px var(--font); letter-spacing: .06em; text-transform: uppercase; }
 .c-ribbon > span { position: absolute; top: 13px; right: -24px; width: 96px; height: 15px; rotate: 45deg; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 20px; box-sizing: border-box; color: color-mix(in oklab, var(--rr) 72%, var(--text)); background: color-mix(in oklab, var(--rr) 24%, var(--surface)); box-shadow: 0 1px 2px color-mix(in oklab, var(--rr) 25%, transparent); }
 .card:has(.c-ribbon) .c-top { padding-right: max(20px, var(--corner, 0px)); }
-:root[data-tape="corner"] .card:has(.c-ribbon) .tape { display: none; } /* the dog-ear and the ribbon share the corner */
 /* a state ring (selected, open, unseen) says more in the moment than a rule's outline */
 .card:is(.selected, .is-open, .unseen) .c-look[data-outline] { box-shadow: none; }
 .card > .c-body { border-radius: inherit; } /* .c-look sits in .c-body and takes the card's corners from it */
@@ -448,7 +439,6 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 :root[data-tape="tape"] .group .group-cards > .card:first-child .tape { left: 50%; right: auto; top: -5px; width: 62px; translate: -50% 0; rotate: -2deg; }
 :root[data-tape="pin"] .group .group-cards > .card:first-child .tape { left: 50%; top: -8px; }
 :root[data-tape="clip"] .group .group-cards > .card:first-child .tape { left: 18px; right: auto; rotate: -10deg; }
-:root[data-tape="corner"] .group .group-cards > .card:first-child .tape { width: 22px; height: 22px; }
 /* spine: the label runs down a rail beside the cards */
 /* The rail sits in the list's left padding (12px), so the cards keep about the same inset on both sides (the right
    one is that padding plus the scrollbar gutter) instead of being pushed off-centre. */
@@ -1637,9 +1627,6 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 :root[data-tape="clip"] .card .tape { rotate: calc(-10deg + var(--deco-r)); }
 :root[data-tape="clip"] .card[data-slot="1"] .tape, :root[data-tape="clip"] .card[data-slot="2"] .tape { left: auto; right: 18px; rotate: calc(8deg + var(--deco-r)); }
 :root[data-tape="clip"] .card[data-slot="3"] .tape { left: 34%; }
-/* dog-ear: not every fold is the same size */
-:root[data-tape="corner"] .card[data-slot="1"] .tape { width: 18px; height: 18px; }
-:root[data-tape="corner"] .card[data-slot="2"] .tape { width: 26px; height: 26px; }
 /* sticky notes lose their tape tilt link when the slot sets its own angle */
 
 /* review explanations: the agent's five parts, each in full */
@@ -2336,27 +2323,20 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .mk[data-shape="bar"] { height: 4px; border-radius: 1px; }
 .mk[data-shape="star"] { clip-path: polygon(50% 0, 62% 34%, 98% 36%, 70% 58%, 80% 94%, 50% 73%, 20% 94%, 30% 58%, 2% 36%, 38% 34%); }
 .mk.more { width: auto; min-width: var(--mk); height: auto; padding: 0 2px; background: none; font: 700 9.5px/1 var(--mono); color: var(--muted); }
-/* paper: the marks lie on the card with a soft shadow, and clear the dog-ear */
-:root:is([data-tape="corner"], [data-cards="sticky"]) .c-marks { filter: drop-shadow(0 1px 1px rgb(0 0 0 / .22)); }
-:root[data-tape="corner"] .c-marks { right: calc(max(var(--corner, 0px), 22px) + 10px); }
+/* paper: the marks lie on the card with a soft shadow */
+:root[data-cards="sticky"] .c-marks { filter: drop-shadow(0 1px 1px rgb(0 0 0 / .22)); }
 /* Bauhaus and other hard-shadow themes: flat shapes with a hard 1px outline in the ink colour */
 :root[data-shadow="hard"] .c-marks { --mk: 11px; filter: drop-shadow(1px 0 0 var(--text)) drop-shadow(-1px 0 0 var(--text)) drop-shadow(0 1px 0 var(--text)) drop-shadow(0 -1px 0 var(--text)); }
 :root[data-shadow="hard"] .mk[data-shape="square"], :root[data-shadow="hard"] .mk[data-shape="bar"] { border-radius: 0; }
 /* clear of the ribbon and the needs-you marker, which share the corner */
 .card:has(.c-ribbon) .c-marks { right: 34px; }
 .card.needs .c-marks { right: calc(var(--corner, 0px) + 34px); }
-:root[data-tape="corner"] .card.needs .c-marks { right: calc(max(var(--corner, 0px), 22px) + 34px); }
 /* the top row keeps out from under them: n marks of 10px with 3px gaps, plus the margin */
 :root .c-marks[data-n="1"] ~ .c-top { padding-right: max(var(--corner, 0px), 22px); }
 :root .c-marks[data-n="2"] ~ .c-top { padding-right: max(var(--corner, 0px), 35px); }
 :root .c-marks[data-n="3"] ~ .c-top { padding-right: max(var(--corner, 0px), 48px); }
 :root .c-marks[data-n="4"] ~ .c-top { padding-right: max(var(--corner, 0px), 61px); }
 :root .c-marks[data-n="5"] ~ .c-top { padding-right: max(var(--corner, 0px), 74px); }
-:root[data-tape="corner"] .c-marks[data-n="1"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 22px); }
-:root[data-tape="corner"] .c-marks[data-n="2"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 35px); }
-:root[data-tape="corner"] .c-marks[data-n="3"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 48px); }
-:root[data-tape="corner"] .c-marks[data-n="4"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 61px); }
-:root[data-tape="corner"] .c-marks[data-n="5"] ~ .c-top { padding-right: calc(var(--corner, 16px) + 74px); }
 /* the editor: the shape picker shows each shape in the rule's colour; the colour row offers the tones or a colour of its own */
 .shape-seg button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; }
 .shape-seg .mk { --mk: 11px; }

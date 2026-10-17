@@ -201,7 +201,7 @@
     card: 12, col: 20, modal: 22, ctl: 10, bw: 1, colAlpha: 84, titleW: 600,
     shadow: 'soft', // soft | flat | hard | glow
     cards: 'sticky', // sticky | clean | elevated | outline | glass | index
-    tape: 'tape', // tape | pin | clip | corner | none
+    tape: 'tape', // tape | pin | clip | none
     md: 'clean', // markdown look: clean | grid | paper | terminal
     attn: 'orbit', // needs-you styling: orbit | glow | bar | outline | ribbon
     enter: 'rise', // modal opening: rise | sheet | fade | pop | zoom
@@ -211,7 +211,7 @@
     heads: 'normal', // column titles: normal | caps
     avatar: 'mixed', // mixed (agents square, people round) | round | square
     bg: 'blobs', texture: true,
-    corner: null, // px kept clear in each card's top-right (auto: 16 when the fold decoration is on)
+    corner: null, // px kept clear in each card's top-right (0 unless the theme sets it)
     avatars: 'color', // color | accent | ink
     groups: 'tray', // tickets sharing a parent: tray (tinted panel) | rail (coloured rail) | rule (header + hairline) | tab (folder tab) | spine (vertical label) | foot (caption below) | cover (a summary card on top of the pile)
     avStyle: 'gem', // avatar look: gem | flat | tint | ring | pebble | stamp
@@ -246,13 +246,12 @@
       'on-accent': '#fff', 'accent-fill': c[6],
     },
   });
-  // The Bauhaus family shares one geometry: a card wears its type as a shape in the top-right corner (issue a
-  // circle, task a square, spike a triangle) and a column a thick rule on top. `s` is the shape's size in px,
-  // `rule` the rule's thickness; `extra` is the variant's own CSS (it comes last, so it wins).
-  const bauhausCss = (s, rule, extra = '') => `.card { background: radial-gradient(circle at 100% 0, var(--type-c) 0 ${s}px, transparent ${s + 1}px), var(--surface); } .card[data-type="task"] { background: linear-gradient(var(--type-c), var(--type-c)) 100% 0 / ${s}px ${s}px no-repeat, var(--surface); } .card[data-type="spike"] { background: linear-gradient(225deg, var(--type-c) 50%, transparent 50%) 100% 0 / ${Math.round(s * 1.36)}px ${Math.round(s * 1.36)}px no-repeat, var(--surface); } .card::before { display: none; } .column { border-top: ${rule}px solid var(--col); } .col-name { font-weight: 900; letter-spacing: .06em; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 900; } ${extra}`;
+  // The Bauhaus family shares one geometry: a column wears a thick rule on top. `rule` is the rule's
+  // thickness; `extra` is the variant's own CSS (it comes last, so it wins).
+  const bauhausCss = (rule, extra = '') => `.card::before { display: none; } .column { border-top: ${rule}px solid var(--col); } .col-name { font-weight: 900; letter-spacing: .06em; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 900; } ${extra}`;
   // The poster look (Bauhaus, Bauhaus Night) and the quieter studio look (thin borders, small shapes, no offset shadow).
-  const BAUHAUS_POSTER = { md: 'grid', card: 0, col: 0, modal: 0, ctl: 20, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'solid', chips: 'pill', heads: 'caps', bg: 'none', texture: true, avatar: 'round', corner: 30, titleW: 700, font: "'Archivo'", display: "'Archivo'" };
-  const BAUHAUS_STUDIO = { md: 'grid', card: 2, col: 2, modal: 4, ctl: 4, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, avatar: 'square', corner: 20, titleW: 600, font: "'Inter'", display: "'Archivo'", colAlpha: 100 };
+  const BAUHAUS_POSTER = { md: 'grid', card: 0, col: 0, modal: 0, ctl: 20, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'solid', chips: 'pill', heads: 'caps', bg: 'none', texture: true, avatar: 'round', titleW: 700, font: "'Archivo'", display: "'Archivo'" };
+  const BAUHAUS_STUDIO = { md: 'grid', card: 2, col: 2, modal: 4, ctl: 4, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, avatar: 'square', titleW: 600, font: "'Inter'", display: "'Archivo'", colAlpha: 100 };
   const STUDIO_CSS = '.col-name { font-weight: 700; letter-spacing: .1em; font-size: 12px; } .c-title { font-size: 14px; } .app-name { font-weight: 700; letter-spacing: -.01em; }';
   const THEMES = {
     // The first look, now one theme among many: its key stays, so a saved pick still finds it.
@@ -278,7 +277,7 @@
     rosepine: T('Rosé Pine', 'dark', ['#191724', '#1f1d2e', '#26233a', '#e0def4', '#908caa', '#393552', '#c4a7e7', '#ebbcba', '#eb6f92', '#9ccfd8', '#f6c177', '#3e8fb0', '#f6c177', '#eb6f92', '#c4a7e7', '#ebbcba', '#31748f'],
       { cards: 'clean', tape: 'none', typeInd: 'tint', attn: 'glow', enter: 'fade', bg: 'aurora' }),
     solarized: T('Solarized Light', 'light', ['#eee8d5', '#f5efdc', '#fdf6e3', '#073642', '#657b83', '#ddd6c1', '#268bd2', '#2aa198', '#dc322f', '#268bd2', '#b58900', '#859900', '#cb4b16', '#dc322f', '#268bd2', '#2aa198', '#d33682'],
-      { md: 'paper', card: 6, col: 12, modal: 14, ctl: 6, cards: 'clean', tape: 'corner', shadow: 'flat', attn: 'bar', enter: 'fade', lanes: 'solid', bg: 'none' }),
+      { md: 'paper', card: 6, col: 12, modal: 14, ctl: 6, cards: 'clean', tape: 'none', shadow: 'flat', attn: 'bar', enter: 'fade', lanes: 'solid', bg: 'none' }),
     github: T('GitHub Light', 'light', ['#f6f8fa', '#eef1f4', '#ffffff', '#1f2328', '#656d76', '#d0d7de', '#0969da', '#8250df', '#cf222e', '#0969da', '#9a6700', '#1a7f37', '#bc4c00', '#cf222e', '#54aeff', '#c297ff', '#ffd8b5'],
       { card: 8, col: 12, modal: 14, ctl: 7, cards: 'clean', tape: 'none', shadow: 'flat', attn: 'outline', enter: 'sheet', lanes: 'solid', chips: 'tag', bg: 'none', texture: false, avatar: 'round', titleW: 600 },
       '.c-title { font-size: 13.5px; } .c-id { color: var(--muted); }'),
@@ -295,7 +294,7 @@
       { card: 8, col: 14, modal: 16, ctl: 8, tape: 'none', cards: 'clean', typeInd: 'dot', attn: 'glow', enter: 'rise', lanes: 'outline', chips: 'tag', bg: 'aurora', titleW: 500, display: "'Inter'" },
       '.col-name { font-weight: 500; font-size: 13px; color: var(--muted); } .c-title { font-size: 13.5px; }'),
     paper: T('Paper', 'light', ['#f3efe6', '#ece6d9', '#fbf8f2', '#2b2a26', '#7b756a', '#d9d1c0', '#b4532a', '#2f6f62', '#b4362a', '#2f5d8a', '#b98a1b', '#3d7a4a', '#c06a2b', '#b4362a', '#e8d9bd', '#d9e4d6', '#efd3c8'],
-      { md: 'paper', card: 2, col: 4, modal: 6, ctl: 4, shadow: 'flat', tape: 'corner', cards: 'clean', typeInd: 'top', attn: 'ribbon', enter: 'fade', lanes: 'lane', chips: 'outline', heads: 'caps', bg: 'doodles', display: "'Fraunces', serif", colAlpha: 90 },
+      { md: 'paper', card: 2, col: 4, modal: 6, ctl: 4, shadow: 'flat', tape: 'none', cards: 'clean', typeInd: 'top', attn: 'ribbon', enter: 'fade', lanes: 'lane', chips: 'outline', heads: 'caps', bg: 'doodles', display: "'Fraunces', serif", colAlpha: 90 },
       '.c-title { font-family: var(--display); font-size: 15.5px; } .board { background-image: repeating-linear-gradient(transparent 0 27px, color-mix(in oklab, var(--accent-2) 9%, transparent) 27px 28px); background-size: auto; } .col-name { font-style: italic; }'),
     brutalist: T('Brutalist', 'light', ['#f4f1ea', '#ffffff', '#ffffff', '#111111', '#555555', '#111111', '#ff4d00', '#0047ff', '#ff2e2e', '#0047ff', '#ffcc00', '#00a651', '#ff8a00', '#ff2e2e', '#ffcc00', '#0047ff', '#ff4d00'],
       { md: 'grid', card: 0, col: 0, modal: 0, ctl: 0, bw: 2, shadow: 'hard', tape: 'none', cards: 'clean', typeInd: 'top', attn: 'outline', enter: 'pop', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, avatar: 'square', titleW: 700, font: "'Space Grotesk'", display: "'Space Grotesk'", colAlpha: 100 },
@@ -316,21 +315,21 @@
       { md: 'grid', card: 0, col: 0, modal: 0, ctl: 0, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'lane', chips: 'tag', bg: 'none', texture: false, avatar: 'square', avatars: 'ink', colColor: 'ink', titleW: 700, font: "'Inter'", display: "'Inter'", colAlpha: 100 },
       '.col-head { border-bottom: 3px solid var(--text) !important; align-items: flex-end; } .col-name { font-size: 30px; font-weight: 800; letter-spacing: -.045em; text-transform: lowercase; line-height: 1; } .col-count { background: none; padding: 0; font: 300 30px/1 var(--display); letter-spacing: -.04em; color: var(--accent); } .col-dot, .col-icon { display: none; } .card { background: transparent; border-width: 0 0 1px; border-color: var(--text); border-radius: 0; box-shadow: none; padding: 12px 0 11px; } .card::before { display: none; } .card:hover { background: rgb(0 0 0 / .03); } .c-title { font-size: 15.5px; letter-spacing: -.02em; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 800; letter-spacing: -.045em; font-size: 22px; } .logo { filter: grayscale(1) contrast(1.6); }'),
     bauhaus: T('Bauhaus', 'light', ['#f1ebdd', '#e8e0cd', '#fbf7ee', '#1a1a1a', '#6a645a', '#1a1a1a', '#d6312a', '#1f4fa3', '#d6312a', '#1f4fa3', '#f2b705', '#2e7d32', '#e8701a', '#d6312a', '#d6312a', '#1f4fa3', '#f2b705'],
-      { ...BAUHAUS_POSTER }, bauhausCss(22, 10)),
+      { ...BAUHAUS_POSTER }, bauhausCss(10)),
     // The same poster at night: primaries on warm black, cream ink.
     'bauhaus-night': T('Bauhaus Night', 'dark', ['#14130f', '#1c1b16', '#23211b', '#f1ebdd', '#9a9384', '#d9d1bf', '#e8443a', '#3d6fd6', '#e8443a', '#3d6fd6', '#f5c518', '#43a047', '#ef8a2a', '#e8443a', '#e8443a', '#3d6fd6', '#f5c518'],
-      { ...BAUHAUS_POSTER, texture: false }, bauhausCss(22, 10)),
+      { ...BAUHAUS_POSTER, texture: false }, bauhausCss(10)),
     // Black on paper with one red: the shapes alone tell the types apart.
     'bauhaus-mono': T('Bauhaus Mono', 'light', ['#ecebe7', '#e2e1dc', '#f8f8f6', '#151515', '#6b6b6b', '#151515', '#c8281e', '#151515', '#151515', '#151515', '#151515', '#3d3d3d', '#6b6b6b', '#c8281e', '#151515', '#6b6b6b', '#b5b5b5'],
-      { ...BAUHAUS_POSTER, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: var(--accent-fill); box-shadow: 3px 3px 0 var(--text); }')),
+      { ...BAUHAUS_POSTER, avatars: 'ink', colColor: 'ink' }, bauhausCss(10, '.btn.primary { background: var(--accent-fill); box-shadow: 3px 3px 0 var(--text); }')),
     // Mono, inverted: white geometry on black, red only for danger.
     'bauhaus-noir': T('Bauhaus Noir', 'dark', ['#0e0e0e', '#161616', '#1c1c1c', '#ededea', '#8c8c88', '#ededea', '#ededea', '#8c8c88', '#ededea', '#ededea', '#ededea', '#bdbdbd', '#a0a0a0', '#ff4a3d', '#ededea', '#8c8c88', '#4a4a4a'],
-      { ...BAUHAUS_POSTER, texture: false, avatars: 'ink', colColor: 'ink' }, bauhausCss(22, 10, '.btn.primary { background: var(--text); color: var(--bg); box-shadow: none; }')),
+      { ...BAUHAUS_POSTER, texture: false, avatars: 'ink', colColor: 'ink' }, bauhausCss(10, '.btn.primary { background: var(--text); color: var(--bg); box-shadow: none; }')),
     // For work: muted primaries, hairline borders, small shapes — still a circle, a square and a triangle.
     'bauhaus-studio': T('Bauhaus Studio', 'light', ['#f3f2ee', '#eae8e2', '#ffffff', '#1d1f24', '#6b6e76', '#d6d3cb', '#b8402f', '#24407a', '#b8402f', '#24407a', '#c9962a', '#3b7a4a', '#c9772a', '#b8402f', '#b8402f', '#24407a', '#c9962a'],
-      { ...BAUHAUS_STUDIO }, bauhausCss(14, 4, STUDIO_CSS)),
+      { ...BAUHAUS_STUDIO }, bauhausCss(4, STUDIO_CSS)),
     'bauhaus-studio-dark': T('Bauhaus Studio Dark', 'dark', ['#16171b', '#1d1f24', '#23262c', '#e7e6e1', '#8d9099', '#30333b', '#e0584a', '#5b84d6', '#e0584a', '#5b84d6', '#e3b341', '#4caf6e', '#e08a3a', '#e0584a', '#e0584a', '#5b84d6', '#e3b341'],
-      { ...BAUHAUS_STUDIO }, bauhausCss(14, 4, STUDIO_CSS)),
+      { ...BAUHAUS_STUDIO }, bauhausCss(4, STUDIO_CSS)),
     soft: T('Soft', 'light', ['#e6e9ef', '#e6e9ef', '#e6e9ef', '#2d3346', '#7b8196', '#d5d9e2', '#6c63ff', '#00b8a9', '#ef5d7a', '#5b8def', '#f0a93b', '#2bb673', '#f08c3b', '#e5484d', '#e6e9ef', '#e6e9ef', '#e6e9ef'],
       { card: 16, col: 26, modal: 28, ctl: 14, bw: 0, cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'glow', enter: 'rise', lanes: 'solid', bg: 'none', texture: false, avatar: 'round', colAlpha: 100 },
       '.column { box-shadow: 10px 10px 24px #c5c9d3, -10px -10px 24px #ffffff; } .card { box-shadow: 6px 6px 14px #c8ccd6, -6px -6px 14px #ffffff; } .card:hover { box-shadow: 2px 2px 6px #c8ccd6, -2px -2px 6px #ffffff; } .card::before { display: none; } .search input, .inp, .dd, .tbox, .seg { background: var(--bg); box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; border-color: transparent; } .pill-btn, .btn:not(.primary) { background: var(--bg); border-color: transparent; box-shadow: 4px 4px 10px #c8ccd6, -4px -4px 10px #ffffff; } .pill-btn:active, .btn:active { box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; } .modal, .drawer { box-shadow: 20px 20px 50px #c5c9d3, -20px -20px 50px #ffffff; } .seg button.on { box-shadow: 3px 3px 6px #c8ccd6, -3px -3px 6px #ffffff; }'),
@@ -523,7 +522,7 @@
     r.classList.toggle('no-texture', !texture);
     r.classList.toggle('reduced', reduced());
     r.style.setProperty('--colw', `${settings.colw}px`);
-    const corner = st.corner ?? (pick('tape') === 'corner' ? 16 : 0);
+    const corner = st.corner ?? 0;
     r.style.setProperty('--corner', `${corner}px`);
     r.dataset.avatars = st.avatars;
     r.dataset.colcolor = st.colColor;
@@ -5967,7 +5966,7 @@
         <h3>Style</h3>
         <div class="choices">
         ${opt('cards', 'Cards', [['sticky', 'Sticky', 'Tinted sticky notes, slightly tilted'], ['clean', 'Clean', 'Flat cards with a type marker'], ['elevated', 'Raised', 'Borderless, lifted on layered soft shadows'], ['outline', 'Line', 'Transparent with a fine outline'], ['glass', 'Glass', 'Frosted, see-through cards'], ['index', 'Index', 'Ruled index cards with a type-coloured header rule']])}
-        ${opt('tape', 'Decoration', [['tape', 'Tape', 'A strip of tape on sticky notes'], ['pin', 'Pin', 'A push-pin at the top'], ['clip', 'Clip', 'A binder clip on the edge'], ['corner', 'Fold', 'A folded top corner'], ['none', 'None', 'No decoration']])}
+        ${opt('tape', 'Decoration', [['tape', 'Tape', 'A strip of tape on sticky notes'], ['pin', 'Pin', 'A push-pin at the top'], ['clip', 'Clip', 'A binder clip on the edge'], ['none', 'None', 'No decoration']])}
         ${opt('attn', 'Needs you', [['orbit', 'Orbit', 'Spinning ring and a bouncing badge'], ['glow', 'Glow', 'A soft breathing halo'], ['bar', 'Bar', 'Accent edge and tint — calm'], ['outline', 'Outline', 'A solid outline and small badge'], ['ribbon', 'Ribbon', 'A bookmark tab on the card']])}
         ${opt('enter', 'Opening', [['rise', 'Rise', 'Fades in with a small lift'], ['sheet', 'Sheet', 'Slides in from the right as a side panel'], ['fade', 'Fade', 'A quick cross-fade'], ['pop', 'Pop', 'Snaps in with a little bounce'], ['zoom', 'Zoom', 'Grows out of the ticket']])}
         ${opt('groups', 'Groups', [['tray', 'Tray', 'Tickets sharing a parent sit on a faintly tinted panel'], ['rail', 'Rail', 'A coloured rail beside the cards, no panel'], ['rule', 'Rule', 'A header with a hairline underneath'], ['tab', 'Tab', 'A folder tab joined to the top of the cards'], ['spine', 'Spine', 'The #tag runs down a spine beside the cards'], ['foot', 'Footer', 'A quiet #tag caption under the cards'], ['cover', 'Cover', 'A summary card on top of the pile; the tickets list out beneath it']])}
