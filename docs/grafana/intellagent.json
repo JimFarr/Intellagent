@@ -1,0 +1,149 @@
+{
+  "__inputs": [
+    { "name": "DS_PROMETHEUS", "label": "Prometheus", "description": "The Prometheus that scrapes the board", "type": "datasource", "pluginId": "prometheus", "pluginName": "Prometheus" }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["intellagent"],
+  "time": { "from": "now-7d", "to": "now" },
+  "title": "Intellagent",
+  "uid": "intellagent-board",
+  "version": 1,
+  "templating": {
+    "list": [
+      { "type": "query", "name": "board", "label": "Board", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "query": { "query": "label_values(intellagent_tickets, board)", "refId": "board" }, "definition": "label_values(intellagent_tickets, board)", "refresh": 2, "sort": 1, "current": {}, "options": [] },
+      { "type": "textbox", "name": "price_input", "label": "USD per 1M input tokens", "query": "3", "current": { "text": "3", "value": "3" }, "options": [{ "selected": true, "text": "3", "value": "3" }] },
+      { "type": "textbox", "name": "price_output", "label": "USD per 1M output tokens", "query": "15", "current": { "text": "15", "value": "15" }, "options": [{ "selected": true, "text": "15", "value": "15" }] },
+      { "type": "textbox", "name": "price_cache_read", "label": "USD per 1M cache-read tokens", "query": "0.3", "current": { "text": "0.3", "value": "0.3" }, "options": [{ "selected": true, "text": "0.3", "value": "0.3" }] },
+      { "type": "textbox", "name": "price_cache_write", "label": "USD per 1M cache-write tokens", "query": "3.75", "current": { "text": "3.75", "value": "3.75" }, "options": [{ "selected": true, "text": "3.75", "value": "3.75" }] }
+    ]
+  },
+  "panels": [
+    { "id": 1, "type": "row", "title": "Flow", "collapsed": false, "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "panels": [] },
+    {
+      "id": 2, "type": "timeseries", "title": "Tickets per column", "description": "Open tickets in each column over time.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 0, "y": 1, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "stacking": { "mode": "normal" }, "fillOpacity": 30 } }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (column) (intellagent_tickets{board=\"$board\"})", "legendFormat": "{{column}}", "refId": "A" }]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Done per day", "description": "Tickets that reached the last column, per day.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 12, "y": 1, "w": 12, "h": 8 }, "interval": "1d",
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum(increase(intellagent_tickets_done_total{board=\"$board\"}[1d]))", "legendFormat": "done", "refId": "A" }]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Cycle time p50 / p90", "description": "Time from the working column (or creation) to done, for tickets that finished in the last 7 days.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 0, "y": 9, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line" } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.5, sum by (le) (increase(intellagent_cycle_seconds_bucket{board=\"$board\"}[7d])))", "legendFormat": "p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.9, sum by (le) (increase(intellagent_cycle_seconds_bucket{board=\"$board\"}[7d])))", "legendFormat": "p90", "refId": "B" }
+      ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Landings", "description": "Tickets by how their commits reached main: landed, landed by hand, or a failed landing still waiting.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 12, "y": 9, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (result) (intellagent_landings_total{board=\"$board\"})", "legendFormat": "{{result}}", "instant": true, "refId": "A" }]
+    },
+
+    { "id": 6, "type": "row", "title": "Agents", "collapsed": false, "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 }, "panels": [] },
+    {
+      "id": 7, "type": "state-timeline", "title": "Agent status", "description": "Each standing agent's status over time.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 0, "y": 18, "w": 24, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 70 },
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] },
+          "mappings": [{ "type": "value", "options": {
+            "1": { "text": "idle", "color": "blue", "index": 0 },
+            "2": { "text": "running", "color": "green", "index": 1 },
+            "3": { "text": "waiting", "color": "yellow", "index": 2 },
+            "4": { "text": "throttled", "color": "orange", "index": 3 },
+            "5": { "text": "failed", "color": "red", "index": 4 },
+            "6": { "text": "paused", "color": "purple", "index": 5 }
+          } }]
+        },
+        "overrides": []
+      },
+      "options": { "mergeValues": true, "showValue": "auto", "rowHeight": 0.8 },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "max by (agent) (intellagent_agent_status{status=\"idle\"}) * 1 + max by (agent) (intellagent_agent_status{status=\"running\"}) * 2 + max by (agent) (intellagent_agent_status{status=\"waiting\"}) * 3 + max by (agent) (intellagent_agent_status{status=\"throttled\"}) * 4 + max by (agent) (intellagent_agent_status{status=\"failed\"}) * 5 + max by (agent) (intellagent_agent_status{status=\"paused\"}) * 6", "legendFormat": "{{agent}}", "refId": "A" }]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Runs by result", "description": "Agent runs that ended in the last hour, by how they ended.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 0, "y": 26, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "stacking": { "mode": "normal" }, "fillOpacity": 70 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "ok" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "failed" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "timeout" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] }
+        ]
+      },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (result) (increase(intellagent_agent_runs_total[1h]))", "legendFormat": "{{result}}", "refId": "A" }]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Run time p50 / p90", "description": "How long agent runs take.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 12, "y": 26, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line" } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.5, sum by (le) (increase(intellagent_agent_run_seconds_bucket[1d])))", "legendFormat": "p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.9, sum by (le) (increase(intellagent_agent_run_seconds_bucket[1d])))", "legendFormat": "p90", "refId": "B" }
+      ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Tokens per model", "description": "Tokens used in the last hour, by model.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 0, "y": 34, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "stacking": { "mode": "normal" }, "fillOpacity": 70 } }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (model) (increase(intellagent_agent_tokens_total[1h]))", "legendFormat": "{{model}}", "refId": "A" }]
+    },
+    {
+      "id": 11, "type": "stat", "title": "Estimated cost", "description": "Tokens in the dashboard's time range times the prices set in the variables above. An estimate with your own prices: the board does not know them.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 12, "y": 34, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 }, "overrides": [] },
+      "options": { "colorMode": "none", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "(sum(increase(intellagent_agent_tokens_total{kind=\"input\"}[$__range])) * $price_input + sum(increase(intellagent_agent_tokens_total{kind=\"output\"}[$__range])) * $price_output + sum(increase(intellagent_agent_tokens_total{kind=\"cache_read\"}[$__range])) * $price_cache_read + sum(increase(intellagent_agent_tokens_total{kind=\"cache_write\"}[$__range])) * $price_cache_write) / 1e6", "legendFormat": "estimated cost", "instant": true, "refId": "A" }]
+    },
+    {
+      "id": 12, "type": "table", "title": "Usage-limit holds", "description": "Agents the account's usage limit is holding now (when it ends), and the runs it refused in the last day.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 0, "y": 42, "w": 24, "h": 7 },
+      "transformations": [{ "id": "merge", "options": {} }],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value #A" }, "properties": [{ "id": "displayName", "value": "Held until" }, { "id": "unit", "value": "dateTimeAsLocal" }] },
+          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [{ "id": "displayName", "value": "Refused (1d)" }, { "id": "decimals", "value": 0 }] }
+        ]
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "intellagent_usage_limit_until_seconds * 1000 > 0", "format": "table", "instant": true, "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "increase(intellagent_agent_usage_limited_total[1d]) > 0", "format": "table", "instant": true, "refId": "B" }
+      ]
+    },
+
+    { "id": 13, "type": "row", "title": "Waiting on the human", "collapsed": false, "gridPos": { "x": 0, "y": 49, "w": 24, "h": 1 }, "panels": [] },
+    {
+      "id": 14, "type": "timeseries", "title": "Open questions", "description": "Questions and review requests waiting for an answer.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 0, "y": 50, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "stacking": { "mode": "normal" }, "fillOpacity": 30 } }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (kind) (intellagent_questions_open{board=\"$board\"})", "legendFormat": "{{kind}}", "refId": "A" }]
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "Oldest wait", "description": "How long the oldest open question has waited.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "gridPos": { "x": 12, "y": 50, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line" } }, "overrides": [] },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "intellagent_question_oldest_seconds{board=\"$board\"}", "legendFormat": "oldest", "refId": "A" }]
+    }
+  ]
+}

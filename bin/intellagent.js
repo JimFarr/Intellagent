@@ -183,6 +183,17 @@ function tokenCmd() {
   let local;
   try { local = readLocal(file); } catch (e) { console.error(e.message); process.exit(1); } // never write over it
   const f = flags(rest);
+  // --metrics: the read-only token Prometheus sends to GET /metrics. It opens that route and nothing else (INT-309).
+  if (f.metrics) {
+    if (local.metricsToken && !f.rotate) { console.log(`This board already has a metrics token in ${file}. --rotate replaces it.`); return; }
+    const token = crypto.randomBytes(18).toString('base64url');
+    updateLocal(file, (l) => { l.metricsToken = token; });
+    console.log(`${f.rotate ? 'New' : 'Created a'} metrics token in ${file} (git-ignored). The board accepts it at once.`);
+    console.log('It opens GET /metrics and nothing else. Give it to Prometheus as the bearer token of the scrape (docs/grafana/README.md):');
+    console.log(`  ${token}`);
+    console.log('GET /metrics answers only when the manifest has  "metrics": { "prometheus": true }  (then restart the board).');
+    return;
+  }
   // --agent <name>: that agent's token (boards with requireAgentTokens refuse agents without one)
   if (f.agent) {
     const name = String(f.agent);
@@ -870,6 +881,7 @@ const HELP = `intellagent — a kanban for you and your agents
   project [PATH]   show, or set, the folder with the code (a board kept outside the project)
   link BOARD       in a project: use the board kept at BOARD (its folder or manifest)
   token --agent N  issue (or --rotate) an agent's token, for boards that require agent tokens
+  token --metrics  issue (or --rotate) the read-only token Prometheus sends to GET /metrics
   token [--rotate] give this board a user token so only you can act as the human (older boards)
   status           where it is and whether it's running
   docs             print the agent guide

@@ -192,6 +192,8 @@ The human decides with `POST …/review/decision { "verdict": "approve" | "chang
 
 `GET /api/analytics?days=7` (1-90, default 7; `&agent=<name>` for one agent) is the agents' side: per agent, time in each state (`states`: running, queued, waiting, throttled, idle, paused, failed… in ms; `unknownMs` before its first known state), queue depth at each run start (`queue`), runs and how they ended, tokens, cost (`cost`, with `unpriced` counting runs that reported none: unknown, never 0), the same per model, and the top tools and command names; per ticket, runs, time, tokens and cost (a run woken for several tickets is shared between them equally, so tickets add up to the agents' totals). It is worked out on each call from the `agent.status` events and the run records in `agent-stats.jsonl`, live and rolled files, reading only the files of the window. **Anyone who can read the board may read it**, the human and every agent: it holds command names only, never command lines, prompts or ticket text.
 
+`GET /metrics` is the same board for Prometheus (text format 0.0.4, `docs/grafana/` has a scrape block and an importable Grafana dashboard): tickets per column, done and cycle time, open questions, reviews, landings, leases, and per agent its status, queue, runs, run time and tokens. It is **off** until the manifest has `"metrics": { "prometheus": true }` (`404 NOT_FOUND`, the hint names the switch), and then answers only to the **metrics token** as a bearer (`401 UNAUTHORIZED` without it). The human issues it with `intellagent token --metrics` (`--rotate` replaces it); it lives in `local.json`, opens this route and nothing else, and is never in the output. Counters come from board state and the run records, so they survive a restart; no ticket title or comment text is ever a label. Agents have no need of it: use `…/metrics` and `/api/analytics`.
+
 ### Daily digest
 At the end of a session: `POST /api/boards/main/digest { "summary": "markdown", "items": ["INT-12"] }`. Read what others wrote with `GET /api/boards/main/digest?days=3` — a cheap way to catch up.
 
@@ -495,6 +497,7 @@ Every route the server has, for checking a call before you make it. `GET /api` l
 ```
 Orient       GET /api  /api/docs  /api/schema  /api/app  /api/boards  /api/templates  /api/presence  /api/permissions/me
              GET /api/boards/:board  …/hash  …/summary  …/brief  …/work  …/metrics  …/listeners
+             GET /metrics (Prometheus; off unless metrics.prometheus; metrics token as a bearer)
 Tickets      POST …/items  …/items/bulk          GET …/items/:id  …/items/:id/history  …/items/:id/transitions
              PATCH …/items/:id                   POST …/items/:id/move  …/comments  …/attachments  …/reactions  …/typing  …/archive
              DELETE …/items/:id (test tickets)   DELETE …/items/:id/attachments/:att  …/reactions  …/test-items

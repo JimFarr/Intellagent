@@ -765,6 +765,7 @@ const { layersFor } = require('./lib/agents/prompt');
 const { createMemory, rememberText } = require('./lib/memory');
 const { createMetrics } = require('./lib/metrics');
 const { createAnalytics } = require('./lib/analytics');
+const { createPrometheus } = require('./lib/prometheus');
 const { createDigest } = require('./lib/digest');
 const { createFocusBoards } = require('./lib/focus');
 const { createRequests } = require('./lib/requests');
@@ -3139,6 +3140,7 @@ function updateProfile(name, d, actor) {
 const memory = createMemory({ file: path.join(DATA, 'memory.json'), fail, now, rid });
 const metrics = createMetrics({ doneColumnId, workingColumn, recent });
 const analytics = createAnalytics({ dataDir: DATA });
+const prometheus = createPrometheus({ dataDir: DATA, doneColumnId, workingColumn });
 const digest = createDigest({ rid, now, trimChange, learnedSince: (ms) => memory.learnedSince(ms) });
 // standing is set at boot and isAgentName is declared further down, so both are read when called.
 const { activeFocus, inActiveFocus, focusNames, getFocus, focusView, focusEvent, addToFocus, guardFocus,
@@ -4619,7 +4621,19 @@ route('GET', '/api/analytics', 'Agent analytics over ?days=7|30 (1-90), ?agent=<
   if (q.agent != null && !/^[\w.-]{1,64}$/.test(String(q.agent))) fail(400, `"${String(q.agent).slice(0, 64)}" is not an agent name`, { code: 'BAD_REQUEST', hint: 'Pass ?agent=<name> as in GET /api/agents, or leave it out for every agent' });
   return analytics({ days: clamp(Number(q.days) || 7, 1, 90), agent: q.agent || null });
 });
-route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {
+// Prometheus scrape (INT-309). Off until the manifest says metrics: { prometheus: true }; then it answers only to the
+// metrics token in local.json (intellagent token --metrics). That token opens this route and nothing else: checkAuth
+// never looks at it, and it is never in the output. Outside /api, so checkAuth does not apply: the check is here.
+route('GET', '/metrics', 'Prometheus metrics (text format 0.0.4): tickets per column, done and cycle time, open questions, reviews, landings, agent status/queue/runs/tokens, leases. Off unless the manifest has metrics.prometheus; needs the metrics token as a bearer', ({ req, res }) => {
+  if (!M.metrics?.prometheus) fail(404, 'Prometheus metrics are off on this board', { code: 'NOT_FOUND', hint: `Switch them on with "metrics": { "prometheus": true } in ${MANIFEST_PATH}, restart the board, then run: intellagent token --metrics` });
+  let want = null;
+  try { want = readLocal(LOCAL_PATH).metricsToken || null; } catch { /* an unreadable local.json lets nobody in */ }
+  if (!want) fail(401, 'Prometheus metrics are on, but the board has no metrics token', { auth: 'metrics', code: 'UNAUTHORIZED', hint: 'The human issues one: intellagent token --metrics (the board accepts it at once). Prometheus sends it as a bearer token' });
+  if (!tokenEq(tokenOf(req), want)) fail(401, 'This route needs the metrics token (Authorization: Bearer …)', { auth: 'metrics', code: 'UNAUTHORIZED', hint: 'Set authorization.credentials (or bearer_token_file) in the scrape config to the token from: intellagent token --metrics' });
+  reply(res, 200, prometheus({ boards: [...boards.values()], agents: standingAgents(), seq, version: VERSION, build: BUILD }), { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+  return HANDLED;
+});
+route('GET', '/api/agents/roles','Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {
   return { roles: Object.fromEntries(roleLibrary().list().map((v) => [v.key, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: permLibrary().labels() };
 });
 // The base context (INT-251): one document every agent starts from. Before /api/agents/:name, so it isn't a name.
