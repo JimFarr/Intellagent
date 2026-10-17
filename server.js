@@ -752,6 +752,7 @@ const permsFor = (name) => {
 const { POWERS, createLibrary: createPermLibrary } = require('./lib/permissions');
 const { createRoles } = require('./lib/agents/roles');
 const { createMemory, rememberText } = require('./lib/memory');
+const { createMetrics } = require('./lib/metrics');
 // Standing agents the human lets land approved work (work.land): a landing that fails goes to them, not the human.
 const landers = () => { try { return standing.list().agents.filter((a) => a.enabled && grantsOf(a.name).some((g) => g.power === 'work.land')).map((a) => a.name); } catch { return []; } };
 function grantsOf(name) {
@@ -2516,81 +2517,6 @@ function briefing(ctx, name, base, via = 'cli') {
   return lines.join('\n');
 }
 
-/* ───── metrics: flow (column entries) and waits (closed questions) over a window ───── */
-
-const median = (xs) => { if (!xs.length) return null; const a = [...xs].sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
-const HOUR = 3600_000;
-
-function metrics(ctx, days) {
-  const b = ctx.board;
-  const nowMs = Date.now();
-  const from = nowMs - days * 86_400_000;
-  const prevFrom = from - days * 86_400_000;
-  const cols = b.columns;
-  const done = doneColumnId(ctx);
-  const work = workingColumn(ctx);
-  const all = [...Object.values(b.items), ...Object.values(ctx.archive.items)].filter((it) => !it.test);
-  const t = (x) => Date.parse(x);
-
-  // Throughput + cycle time: tickets that reached the last column in the window.
-  // Cycle time runs from first entering the working column (or creation, if it never did) to done.
-  const finishedIn = (lo, hi) => all.map((it) => {
-    const end = (it.flow || []).filter((f) => f.col === done && t(f.at) >= lo && t(f.at) < hi).at(-1);
-    if (!end) return null;
-    const start = (it.flow || []).find((f) => work && f.col === work.id) || { at: it.createdAt };
-    return { it, ms: Math.max(0, t(end.at) - t(start.at)), at: t(end.at) };
-  }).filter(Boolean);
-  const finished = finishedIn(from, nowMs + 1);
-  const before = finishedIn(prevFrom, from);
-  const perDay = Array.from({ length: days }, (_, i) => finished.filter((f) => f.at >= from + i * 86_400_000 && f.at < from + (i + 1) * 86_400_000).length);
-
-  // Time spent per column: stays that ended inside the window, plus what is sitting there now.
-  const stays = Object.fromEntries(cols.map((c) => [c.id, []]));
-  for (const it of all) {
-    const fl = it.flow || [];
-    for (let i = 0; i < fl.length - 1; i++) {
-      const end = t(fl[i + 1].at);
-      if (end >= from && stays[fl[i].col]) stays[fl[i].col].push(end - t(fl[i].at));
-    }
-  }
-  const columns = cols.map((c) => {
-    const real = c.itemIds.filter((id) => b.items[id] && !b.items[id].test);
-    const ages = real.map((id) => nowMs - t(b.items[id].enteredColumnAt || nowMs));
-    return { id: c.id, name: c.name, color: c.color, count: real.length, medianStayHours: stays[c.id].length ? median(stays[c.id]) / HOUR : null, oldestHours: ages.length ? Math.max(...ages) / HOUR : null };
-  });
-  const middle = columns.slice(1, -1).filter((c) => c.medianStayHours != null);
-  const slowest = middle.sort((x, y) => y.medianStayHours - x.medianStayHours)[0] || null;
-
-  // Waiting on the human: open questions now, and how fast they were answered in the window.
-  const open = Object.values(b.items).filter((it) => !it.test).flatMap((it) => (it.questions || []).map((q) => ({ id: it.id, kind: q.kind, ms: nowMs - t(q.raisedAt) })));
-  const answered = all.flatMap((it) => (it.waits || []).filter((w) => t(w.resolvedAt) >= from).map((w) => ({ kind: w.kind, ms: t(w.resolvedAt) - t(w.raisedAt) })));
-  const byAgent = {};
-  for (const f of finished) for (const n of new Set(f.it.workedBy || [])) byAgent[n] = (byAgent[n] || 0) + 1;
-
-  return {
-    days, from: new Date(from).toISOString(),
-    done: finished.length, donePrev: before.length, perDay,
-    cycleHours: { median: finished.length ? median(finished.map((f) => f.ms)) / HOUR : null, prev: before.length ? median(before.map((f) => f.ms)) / HOUR : null },
-    waiting: { open: open.length, reviews: open.filter((q) => q.kind === 'review').length, oldestHours: open.length ? Math.max(...open.map((q) => q.ms)) / HOUR : null, oldestId: open.sort((x, y) => y.ms - x.ms)[0]?.id || null },
-    answerHours: { median: answered.length ? median(answered.map((a) => a.ms)) / HOUR : null, count: answered.length },
-    columns, slowest: slowest ? { name: slowest.name, medianStayHours: slowest.medianStayHours } : null,
-    byAgent,
-    delegated: (() => {
-      const evs = recent.filter((e) => e.board === ctx.id && e.delegated && t(e.ts) >= from);
-      const by = {};
-      for (const e of evs) { const n = e.actor?.name || '?'; by[n] ||= { reviews: 0, moves: 0 }; by[n][e.type.startsWith('review.') ? 'reviews' : 'moves']++; }
-      return { reviews: evs.filter((e) => e.type.startsWith('review.')).length, moves: evs.filter((e) => e.type === 'item.moved').length, byAgent: by };
-    })(),
-    // How often the board went idle with work waiting: the idle-board alarms in the window (INT-265)
-    idle: (() => {
-      const log = b.idleLog || [];
-      const inWin = log.filter((a) => t(a.at) >= from);
-      return { alarms: inWin.length, prev: log.filter((a) => t(a.at) >= prevFrom && t(a.at) < from).length,
-        longestMinutes: inWin.length ? Math.max(...inWin.map((a) => a.idleMinutes || 0)) : null, lastAt: log.at(-1)?.at || null };
-    })(),
-  };
-}
-
 function archiveItems(ctx, ids, actor, reason = null) {
   return tx(ctx, (events) => {
     const done = [];
@@ -3171,6 +3097,7 @@ function updateProfile(name, d, actor) {
 /* ───────────────────────── agent memory (lib/memory.js) ───────────────────────── */
 
 const memory = createMemory({ file: path.join(DATA, 'memory.json'), fail, now, rid });
+const metrics = createMetrics({ doneColumnId, workingColumn, recent });
 // Whose memory a route means: "me" is the calling agent; any other name must be an agent the board knows (a
 // standing agent, one that has called the board, or one with a profile or a memory), matched without regard to
 // capitals so "Rocket" is rocket's memory.
