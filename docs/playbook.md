@@ -36,6 +36,7 @@ Give every agent an **areas** list (files it owns) and **concerns** (what it che
 - **The reviewer is never the author**, nor anyone who worked on the ticket.
 - **Split the decisions.** The human decides **product** (what it does, how it looks, what to build). A lead agent holding `review.decide` approves **technical** tickets (fixes, refactors, tests, tooling) once reviewers are ok and evidence is in, with a one-line why naming the grant. Nobody approves their own work (`OWN_WORK`), and nobody gets around it by acting as the human.
 - **Wait for every reviewer who said they are reviewing**, assigned or not, before approving anything that moves work, touches permissions or can lose data. We approved automatic rebalancing on one ok while a second reviewer's line-by-line read was still coming; it found that one save could drain a queue, and the approval had to be reverted on main.
+- **A spike closes only with its follow-ups filed** as tickets, with the reviewers' conditions written into them. A spike here closed with four follow-ups listed in a comment and none filed, and the work (analytics, a Prometheus endpoint) was lost until someone asked.
 - **Approval moves the card to Done, and only the human can move it back.** So: split a multi-step ticket into follow-ups and approve each step, and **don't approve a half-built ticket** even when the board offers it (leave a note saying what's missing).
 
 ## 4. Landing
