@@ -6140,6 +6140,7 @@
       { path: '@', label: 'Assigned or held by', kind: 'who', options: people },
       { path: 'needsHuman', label: 'Has an open question', kind: 'flag' },
       { path: 'blockedBy', label: 'Is blocked', kind: 'flag' },
+      { path: 'columnDays', label: 'Days in its column', kind: 'number' },
       { path: 'review.oks', label: 'Reviewers who said ok', kind: 'number' },
       { path: 'review.concerns', label: 'Reviewers with concerns', kind: 'number' },
       { path: 'review.pending', label: 'Reviewers yet to answer', kind: 'number' },
@@ -6163,25 +6164,54 @@
   const KIND_TESTS = { choice: ['is', 'not', 'any', 'none', 'set', 'unset'], tags: ['is', 'not', 'any', 'none', 'set', 'unset'], number: ['gte', 'lte', 'gt', 'lt', 'eq'], flag: ['yes', 'no'], text: ['is', 'not', 'set', 'unset'], who: ['is'], raw: ['raw'] };
   const TAG_LABELS = { is: 'has', not: 'has no', any: 'has any of', none: 'has none of', set: 'has some', unset: 'has none' };
   const testLabel = (kind, t) => (kind === 'tags' && TAG_LABELS[t]) || RULE_TESTS[t].label;
-  // "type:issue review.oks>=2 @drax" -> [{ path, test, value }]. A term the builder has no field for stays as written.
-  function ruleRows(text, fields = ruleFields()) {
-    return String(text || '').trim().split(/\s+/).filter(Boolean).map((raw) => {
-      const asText = { path: '', test: 'raw', value: raw };
-      if (/^@[\w.-]+$/.test(raw)) return { path: '@', test: 'is', value: raw.slice(1) };
-      const m = /^(!?)([A-Za-z_][\w.-]*?)(?:(>=|<=|>|<|=|:)(.+))?$/.exec(raw);
-      const f = m && fields.find((x) => x.path === m[2]);
-      if (!f || f.kind === 'who' || f.kind === 'raw') return asText;
-      const [, not, path, op, value] = m;
-      let test;
-      if (!op) test = f.kind === 'flag' ? (not ? 'no' : 'yes') : (not ? 'unset' : 'set');
-      else if (op === ':') test = value.includes('|') ? (not ? 'none' : 'any') : (not ? 'not' : 'is');
-      else test = !not && Object.keys(RULE_TESTS).find((k) => RULE_TESTS[k].op === op);
-      if (!test || !KIND_TESTS[f.kind].includes(test)) return asText;
-      return { path, test, value: RULE_TESTS[test].many ? value.split('|') : value ?? '' };
-    });
+  // One term back to a row. A term the builder has no field for stays as written.
+  function termRow(raw, fields) {
+    const asText = { path: '', test: 'raw', value: raw };
+    if (/^@[\w.-]+$/.test(raw)) return { path: '@', test: 'is', value: raw.slice(1) };
+    const m = /^(!?)([A-Za-z_][\w.-]*?)(?:(>=|<=|>|<|=|:)(.+))?$/.exec(raw);
+    const f = m && fields.find((x) => x.path === m[2]);
+    if (!f || f.kind === 'who' || f.kind === 'raw') return asText;
+    const [, not, path, op, value] = m;
+    let test;
+    if (!op) test = f.kind === 'flag' ? (not ? 'no' : 'yes') : (not ? 'unset' : 'set');
+    else if (op === ':') test = value.includes('|') ? (not ? 'none' : 'any') : (not ? 'not' : 'is');
+    else test = !not && Object.keys(RULE_TESTS).find((k) => RULE_TESTS[k].op === op);
+    if (!test || !KIND_TESTS[f.kind].includes(test)) return asText;
+    return { path, test, value: RULE_TESTS[test].many ? value.split('|') : value ?? '' };
+  }
+  // "type:issue review.oks>=2 (@drax or @nebula)" -> { mode: 'all', items: [row, row, { group, mode: 'any', items: [row, row] }] }.
+  // all = every item holds (terms side by side), any = one of them does (joined by or). A condition that mixes both at one
+  // level ("a b or c") is not a switch the builder has: it stays whole as one row of text, which still saves as written.
+  function ruleTree(text, fields = ruleFields()) {
+    const src = String(text || '').trim();
+    const whole = { mode: 'all', items: [{ path: '', test: 'raw', value: src }] };
+    const tokens = src.match(/\(|\)|is:rule:"[^"]*"|[^\s()]+(?:\([^\s()]*\)[^\s()]*)*/gi) || [];
+    let at = 0;
+    const level = (depth) => {
+      const alts = [[]];
+      for (;;) {
+        const tok = tokens[at++];
+        if (tok === undefined || tok === ')') { if ((tok === ')') !== (depth > 0)) throw new Error('unbalanced'); return alts; }
+        if (/^or$/i.test(tok)) alts.push([]);
+        else if (tok === '(') { if (depth) throw new Error('nested'); alts[alts.length - 1].push(node(level(depth + 1), true)); }
+        else alts[alts.length - 1].push(termRow(tok, fields));
+      }
+    };
+    const node = (alts, group) => {
+      if (alts.some((a) => !a.length)) throw new Error('empty');
+      const mode = alts.length === 1 ? 'all' : alts.every((a) => a.length === 1) ? 'any' : null;
+      if (!mode) throw new Error('mixed');
+      const items = mode === 'all' ? alts[0] : alts.map((a) => a[0]);
+      return group ? { group: true, mode, items } : { mode, items };
+    };
+    try { return node(level(0)); } catch { return whole; }
   }
   // One row back to its term, or null while it is not finished (no value yet, or a value with a space in it).
   function ruleTerm(row) {
+    if (row.group) {
+      const inner = row.items.map(ruleTerm);
+      return row.items.length && inner.every(Boolean) ? `(${inner.join(row.mode === 'any' ? ' or ' : ' ')})` : null;
+    }
     const t = RULE_TESTS[row.test];
     if (!t) return null;
     if (t.op === 'raw') return String(row.value || '').trim() || null;
@@ -6191,27 +6221,64 @@
     if (!vals.length || vals.some((v) => /\s/.test(v)) || (t.op !== ':' && !Number.isFinite(Number(vals[0])))) return null;
     return `${t.not ? '!' : ''}${row.path}${t.op}${vals.join('|')}`;
   }
-  const ruleDrafts = new Map(); // rule name -> rows being built that do not make a whole condition yet
+  // The whole tree as condition text, or null while any row is unfinished.
+  const treeText = (tree) => {
+    const terms = tree.items.map(ruleTerm);
+    return tree.items.length && terms.every(Boolean) ? terms.join(tree.mode === 'any' ? ' or ' : ' ') : null;
+  };
+  // A row or group by its address: "2" is the third item, "2.0" the first row of the group there.
+  const treeAt = (tree, addr) => String(addr).split('.').reduce((n, k) => n.items[k], tree);
+  const needsNoSpace = (row) => ` needs a value${/\s/.test([].concat(row.value ?? []).join('')) ? ' without spaces' : ''}`;
+  // What is missing, numbered as a person counts ("Condition 2", "Condition 3 in group 1"), or '' when nothing is
+  function firstTodo(tree) {
+    let gn = 0;
+    for (let j = 0; j < tree.items.length; j++) {
+      const it = tree.items[j];
+      if (!it.group) { if (!ruleTerm(it)) return `Condition ${j + 1}${needsNoSpace(it)}`; continue; }
+      gn++;
+      if (!it.items.length) return `Group ${gn} needs a condition`;
+      const k = it.items.findIndex((r) => !ruleTerm(r));
+      if (k >= 0) return `Condition ${k + 1} in group ${gn}${needsNoSpace(it.items[k])}`;
+    }
+    return '';
+  }
+  const ruleDrafts = new Map(); // rule name -> tree being built that is not a whole condition yet, or that the text cannot hold (the switch on "any" with one row)
   const ruleAsText = new Set(); // rule names shown as text
+  // The tree a rule is shown as: its draft while that still stands for the saved condition, else the condition read afresh
+  function treeOf(r, fields) {
+    const d = ruleDrafts.get(r.name);
+    if (d && (treeText(d) == null || treeText(d) === r.condition)) return d;
+    ruleDrafts.delete(r.name);
+    return ruleTree(r.condition, fields);
+  }
+  const modeSeg = (mode, label) => `<div class="seg mini" data-rbmode role="group" aria-label="${label}">${[['all', 'All of'], ['any', 'Any of']].map(([v, l]) => `<button class="${v === mode ? 'on' : ''}" data-v="${v}" aria-pressed="${v === mode}" title="${v === 'all' ? 'Every one must hold' : 'One of them is enough'}">${l}</button>`).join('')}</div>`;
   function ruleBuilderHTML(r, i, fields) {
-    const rows = ruleDrafts.get(r.name) || ruleRows(r.condition, fields);
-    const rowHTML = rows.map((row, j) => {
+    const tree = treeOf(r, fields);
+    const rowHTML = (row, addr, name) => {
       const f = fields.find((x) => x.path === row.path) || fields[fields.length - 1];
       const t = RULE_TESTS[row.test];
+      const id = String(addr).replace('.', '-');
       const shown = (v) => esc(f.options?.find((o) => o.v === v)?.l || v);
       let val = '';
       if (f.kind === 'raw') val = `<input class="inp mono" data-bv value="${esc(row.value || '')}" spellcheck="false" aria-label="Condition term" placeholder="e.g. is:rule:urgent">`;
       else if (t.op === 'set') val = '';
-      else if (f.options?.length) val = ddHTML(`rbv-${j}`, [].concat(row.value ?? []).filter(Boolean).map(shown).join(', '), { placeholder: t.many ? 'pick some' : 'pick one' }).replace('<button', `<button data-bvdd aria-label="${esc(f.label)}: value"`);
+      else if (f.options?.length) val = ddHTML(`rbv-${id}`, [].concat(row.value ?? []).filter(Boolean).map(shown).join(', '), { placeholder: t.many ? 'pick some' : 'pick one' }).replace('<button', `<button data-bvdd aria-label="${esc(f.label)}: value"`);
       else val = `<input class="inp" data-bv ${f.kind === 'number' ? 'type="number" min="0" inputmode="numeric"' : 'spellcheck="false"'} value="${esc(row.value ?? '')}" aria-label="${esc(f.label)}: value" placeholder="${f.kind === 'number' ? '2' : 'value'}">`;
-      return `<div class="rb-row ${ruleTerm(row) ? '' : 'todo'}" data-row="${j}" role="group" aria-label="Condition ${j + 1}">
-        ${ddHTML(`rbf-${j}`, esc(f.label)).replace('<button', `<button data-bfdd aria-label="Condition ${j + 1}: field"`)}
-        ${f.kind === 'raw' ? '' : ddHTML(`rbt-${j}`, esc(testLabel(f.kind, row.test))).replace('<button', `<button data-btdd aria-label="Condition ${j + 1}: test"`)}
-        ${val}<button class="icon-x" data-rbdel title="Remove this condition" aria-label="Remove condition ${j + 1}">${icon('x', 'sm')}</button></div>`;
-    }).join('');
+      return `<div class="rb-row ${ruleTerm(row) ? '' : 'todo'}" data-row="${addr}" role="group" aria-label="${name}">
+        ${ddHTML(`rbf-${id}`, esc(f.label)).replace('<button', `<button data-bfdd aria-label="${name}: field"`)}
+        ${f.kind === 'raw' ? '' : ddHTML(`rbt-${id}`, esc(testLabel(f.kind, row.test))).replace('<button', `<button data-btdd aria-label="${name}: test"`)}
+        ${val}<button class="icon-x" data-rbdel title="Remove this condition" aria-label="Remove ${name.toLowerCase()}">${icon('x', 'sm')}</button></div>`;
+    };
+    let gn = 0; // groups are counted among themselves ("Group 1"), not by their place among the rows
+    const items = tree.items.map((it, j) => it.group
+      ? `<div class="rb-group" data-group="${j}" role="group" aria-label="Group ${++gn}">
+          <div class="rb-head"><span>Group ${gn}</span>${modeSeg(it.mode, `Group ${gn}: all of or any of`)}<button class="icon-x" data-rbgdel title="Remove this group" aria-label="Remove group ${gn}">${icon('x', 'sm')}</button></div>
+          ${it.items.map((row, k) => rowHTML(row, `${j}.${k}`, `Condition ${k + 1} in group ${gn}`)).join('')}
+          <button class="btn ghost sm rb-add" data-rbadd>${icon('plus', 'sm')}Add a condition</button></div>`
+      : rowHTML(it, String(j), `Condition ${j + 1}`)).join('');
     return `<div class="rbuild" data-rbuild>
-        <div class="rb-head"><span>When all of these hold</span><button class="link-btn" data-rtext aria-pressed="false">Show as text</button></div>
-        ${rowHTML}<button class="btn ghost sm rb-add" data-rbadd>${icon('plus', 'sm')}Add a condition</button></div>`;
+        <div class="rb-head"><span>When</span>${modeSeg(tree.mode, 'All of or any of these conditions')}<span>${tree.mode === 'any' ? 'holds' : 'hold'}</span><button class="link-btn" data-rtext aria-pressed="false">Show as text</button></div>
+        ${items}<div class="rb-adds"><button class="btn ghost sm rb-add" data-rbadd>${icon('plus', 'sm')}Add a condition</button><button class="btn ghost sm rb-add" data-rbgadd>${icon('plus', 'sm')}Add a group</button></div></div>`;
   }
   const shapeSeg = (m) => `<div class="seg mini shape-seg" data-rshape role="group" aria-label="Mark shape">${['', ...RULE_SHAPES].map((sh) => `<button class="${(m?.shape || '') === sh ? 'on' : ''}" data-v="${sh}" title="${sh ? `Mark: ${sh}` : 'No mark'}" aria-label="${sh || 'No mark'}">${sh ? `<i class="mk" data-shape="${sh}" style="--mc:${m ? markColour(m) : 'var(--muted)'}"></i>` : '–'}</button>`).join('')}</div>`;
   const markColourPick = (m) => `<div class="mk-colour ${m ? '' : 'off'}"><div class="seg mini tone-seg" data-rmtone>${['', ...RULE_TONES].map((t) => `<button class="${(m?.tone || '') === t && !m?.colour ? 'on' : ''}" data-v="${t}"${m ? '' : ' disabled'} title="${t ? `Mark colour: ${t}` : 'Pick your own colour'}">${t ? `<i style="--rc:${toneVar(t)}"></i>${t}` : '–'}</button>`).join('')}</div><input type="color" class="mk-pick" data-rmcolour value="${esc(m?.colour || '#6aa8ff')}" aria-label="Own mark colour"${m ? '' : ' disabled'}></div>`;
@@ -6278,61 +6345,90 @@
       }
       if (e.target.closest('[data-ruleadd]')) addRule(pane);
     });
-    // The builder: rows that make a whole condition are saved; a row still missing its value is kept as a draft.
-    const rowsOf = (i) => { const r = rules()[i]; return (ruleDrafts.get(r.name) || ruleRows(r.condition)).map((x) => ({ ...x })); };
-    const at = (i, j, sel) => `[data-ri="${i}"] [data-row="${j}"] ${sel}`;
+    // The builder: a tree that makes a whole condition is saved; one still missing a value is kept as a draft.
+    const treeFor = (i) => structuredClone(treeOf(rules()[i], ruleFields()));
+    const at = (i, addr, sel) => `[data-ri="${i}"] [data-row="${addr}"] ${sel}`;
+    // The list a row sits in and its place there, from its address ("1.0" is the first row of the second item, a group)
+    const holder = (tree, addr) => { const p = String(addr).split('.'); return { list: p.length > 1 ? tree.items[p[0]].items : tree.items, k: Number(p[p.length - 1]) }; };
     // sel: where the focus goes after the redraw; a list is tried in order (the value if the row has one, else its test)
     const redraw = (sel) => { state.modal?.refresh(); if (sel) requestAnimationFrame(() => [].concat(sel).map((s) => $(s, pane)).find(Boolean)?.focus({ preventScroll: true })); };
-    const commit = (i, rows, sel) => {
+    const commit = (i, tree, sel) => {
       const name = rules()[i]?.name;
       if (!name) return;
-      const terms = rows.map(ruleTerm);
-      if (rows.length && terms.every(Boolean)) { ruleDrafts.delete(name); save(i, (r) => { r.condition = terms.join(' '); })?.then(() => redraw(sel)); }
-      else { ruleDrafts.set(name, rows); redraw(sel); }
+      const text = treeText(tree);
+      if (text != null) {
+        // Text cannot say "any of" over one row; keep the tree so the switch stays where it was put
+        if (JSON.stringify(ruleTree(text)) === JSON.stringify(tree)) ruleDrafts.delete(name); else ruleDrafts.set(name, tree);
+        save(i, (r) => { r.condition = text; })?.then(() => redraw(sel));
+      } else { ruleDrafts.set(name, tree); redraw(sel); }
     };
     const valueSel = (i, j) => [at(i, j, '[data-bvdd]'), at(i, j, '[data-bv]'), at(i, j, '[data-btdd]')];
     const builderClick = (e, i) => {
-      const j = Number(e.target.closest('[data-row]')?.dataset.row ?? -1);
+      const j = e.target.closest('[data-row]')?.dataset.row; // the row's address, e.g. "1" or "1.0"
+      const g = e.target.closest('[data-group]')?.dataset.group;
       const fields = ruleFields();
-      const rows = () => rowsOf(i);
       const fdd = e.target.closest('[data-bfdd]');
       if (fdd) {
-        const cur = rows()[j];
+        const cur = treeAt(treeFor(i), j);
         openDd(fdd, fields.map((f) => ({ label: f.label, cls: f.path === cur.path ? 'on' : '', run: () => {
-          const all = rows();
-          all[j] = f.kind === 'raw' ? { path: '', test: 'raw', value: ruleTerm(cur) || '' } : { path: f.path, test: KIND_TESTS[f.kind][0], value: '' };
+          const all = treeFor(i);
+          const { list, k } = holder(all, j);
+          list[k] = f.kind === 'raw' ? { path: '', test: 'raw', value: ruleTerm(cur) || '' } : { path: f.path, test: KIND_TESTS[f.kind][0], value: '' };
           commit(i, all, f.kind === 'raw' ? at(i, j, '[data-bv]') : at(i, j, '[data-btdd]'));
         } })), { search: true, placeholder: 'Find a field…' });
         return true;
       }
       const tdd = e.target.closest('[data-btdd]');
       if (tdd) {
-        const cur = rows()[j];
+        const cur = treeAt(treeFor(i), j);
         const f = fields.find((x) => x.path === cur.path);
         openDd(tdd, KIND_TESTS[f.kind].map((t) => ({ label: testLabel(f.kind, t), cls: t === cur.test ? 'on' : '', run: () => {
-          const all = rows();
+          const all = treeFor(i);
           const v = [].concat(cur.value ?? []).filter(Boolean);
-          all[j] = { ...cur, test: t, value: RULE_TESTS[t].many ? v : v[0] ?? '' };
+          const { list, k } = holder(all, j);
+          list[k] = { ...cur, test: t, value: RULE_TESTS[t].many ? v : v[0] ?? '' };
           commit(i, all, valueSel(i, j));
         } })));
         return true;
       }
       const vdd = e.target.closest('[data-bvdd]');
       if (vdd) {
-        const cur = rows()[j];
+        const cur = treeAt(treeFor(i), j);
         const f = fields.find((x) => x.path === cur.path);
+        const setValue = (v) => { const all = treeFor(i); treeAt(all, j).value = v; commit(i, all, at(i, j, '[data-bvdd]')); };
         if (!RULE_TESTS[cur.test].many) {
-          openDd(vdd, f.options.map((o) => ({ label: o.l, cls: o.v === cur.value ? 'on' : '', run: () => { const all = rows(); all[j].value = o.v; commit(i, all, at(i, j, '[data-bvdd]')); } })), { search: f.options.length > 8 });
+          openDd(vdd, f.options.map((o) => ({ label: o.l, cls: o.v === cur.value ? 'on' : '', run: () => setValue(o.v) })), { search: f.options.length > 8 });
           return true;
         }
         // Several values: pick and unpick with the menu open, saved once it closes
         const picked = new Set([].concat(cur.value ?? []));
         const items = f.options.map((o) => ({ label: o.l, cls: picked.has(o.v) ? 'on' : '', run: () => { if (picked.has(o.v)) picked.delete(o.v); else picked.add(o.v); items.find((x) => x.label === o.l).cls = picked.has(o.v) ? 'on' : ''; } }));
-        openDd(vdd, items, { keepOpen: true, onClose: () => { const all = rows(); all[j].value = f.options.map((o) => o.v).filter((v) => picked.has(v)); commit(i, all, at(i, j, '[data-bvdd]')); } });
+        openDd(vdd, items, { keepOpen: true, onClose: () => setValue(f.options.map((o) => o.v).filter((v) => picked.has(v))) });
         return true;
       }
-      if (e.target.closest('[data-rbdel]')) { const all = rows(); all.splice(j, 1); commit(i, all, `[data-ri="${i}"] [data-rbadd]`); return true; }
-      if (e.target.closest('[data-rbadd]')) { const all = rows(); all.push({ path: 'type', test: 'is', value: '' }); commit(i, all, at(i, all.length - 1, '[data-bfdd]')); return true; }
+      if (e.target.closest('[data-rbdel]')) { const all = treeFor(i); const { list, k } = holder(all, j); list.splice(k, 1); commit(i, all, `[data-ri="${i}"] [data-rbadd]`); return true; }
+      // New rows start as "Type is …", so the first thing to do is pick the field
+      if (e.target.closest('[data-rbadd]')) {
+        const all = treeFor(i);
+        const list = g != null ? all.items[g].items : all.items;
+        list.push({ path: 'type', test: 'is', value: '' });
+        commit(i, all, at(i, g != null ? `${g}.${list.length - 1}` : list.length - 1, '[data-bfdd]'));
+        return true;
+      }
+      if (e.target.closest('[data-rbgadd]')) {
+        const all = treeFor(i);
+        all.items.push({ group: true, mode: 'all', items: [{ path: 'type', test: 'is', value: '' }] });
+        commit(i, all, at(i, `${all.items.length - 1}.0`, '[data-bfdd]'));
+        return true;
+      }
+      if (e.target.closest('[data-rbgdel]')) { const all = treeFor(i); all.items.splice(g, 1); commit(i, all, `[data-ri="${i}"] [data-rbgadd]`); return true; }
+      const md = e.target.closest('[data-rbmode] button');
+      if (md) {
+        const all = treeFor(i);
+        (g != null ? all.items[g] : all).mode = md.dataset.v;
+        commit(i, all, `[data-ri="${i}"] ${g != null ? `[data-group="${g}"]` : '.rbuild > .rb-head'} [data-rbmode] [data-v="${md.dataset.v}"]`);
+        return true;
+      }
       if (e.target.closest('[data-rtext]')) {
         const name = rules()[i].name;
         if (ruleAsText.has(name)) ruleAsText.delete(name); else { ruleAsText.add(name); ruleDrafts.delete(name); }
@@ -6354,9 +6450,8 @@
     pane.addEventListener('change', (e) => {
       if (e.target.matches('[data-bv]')) {
         const i = idx(e.target);
-        const j = Number(e.target.closest('[data-row]').dataset.row);
-        const all = rowsOf(i);
-        all[j].value = e.target.value.trim();
+        const all = treeFor(i);
+        treeAt(all, e.target.closest('[data-row]').dataset.row).value = e.target.value.trim();
         commit(i, all);
         return;
       }
@@ -6385,9 +6480,9 @@
     const say = (msg, bad) => { hint.className = `rhint ${bad ? 'bad' : ''}`; hint.textContent = msg; };
     const rule = (state.board.cardRules || [])[card.dataset.ri];
     const draft = rule && !ruleAsText.has(rule.name) && ruleDrafts.get(rule.name);
-    if (draft) {
-      const k = draft.findIndex((row) => !ruleTerm(row));
-      return say(!draft.length ? 'Add at least one condition' : `Condition ${k + 1} needs a value${/\s/.test([].concat(draft[k].value ?? []).join('')) ? ' without spaces' : ''}; the rule keeps its last whole condition until then`, !draft.length);
+    if (draft && treeText(draft) == null) {
+      const todo = firstTodo(draft);
+      return say(todo ? `${todo}; the rule keeps its last whole condition until then` : 'Add at least one condition', !todo);
     }
     const v = String(text ?? '').trim();
     card._checking = v;

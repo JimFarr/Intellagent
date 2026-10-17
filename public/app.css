@@ -1375,9 +1375,9 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .rbuild { display: grid; gap: 6px; padding: 8px; border-radius: var(--r-ctl); background: color-mix(in oklab, var(--hover) 60%, transparent); }
 .rb-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
 .rb-head.as-text { justify-content: flex-end; margin-top: -3px; }
-.rb-head button, .rb-show { border: 0; background: none; padding: 2px 4px; border-radius: 6px; font: 12px var(--font); color: var(--accent); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
-.rb-head button:hover, .rb-show:hover { text-decoration: underline; }
-.rb-head button:focus-visible, .rb-show:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rb-head > button:not(.icon-x), .rb-show { border: 0; background: none; padding: 2px 4px; border-radius: 6px; font: 12px var(--font); color: var(--accent); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.rb-head > button:not(.icon-x):hover, .rb-show:hover { text-decoration: underline; }
+.rb-head > button:not(.icon-x):focus-visible, .rb-show:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .rb-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; gap: 6px; align-items: center; }
 .rb-row .dd, .rb-row .inp { height: 30px; font-size: 12.5px; min-width: 0; }
 .rb-row > [data-bfdd] { grid-column: 1; }
@@ -1388,6 +1388,10 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .rb-row.todo [data-bvdd] .v.ph, .rb-row.todo [data-bv]:placeholder-shown { color: var(--warn); }
 .rb-row.todo [data-bvdd], .rb-row.todo [data-bv] { border-color: color-mix(in oklab, var(--warn) 55%, var(--border)); }
 .rb-add { justify-self: start; }
+.rb-head { justify-content: flex-start; flex-wrap: wrap; }
+.rb-head > .link-btn, .rb-head.as-text > button, .rb-head > .icon-x { margin-left: auto; }
+.rb-adds { display: flex; flex-wrap: wrap; gap: 6px; }
+.rb-group { display: grid; gap: 6px; padding: 4px 0 4px 10px; border-left: 2px solid color-mix(in oklab, var(--accent) 55%, var(--border)); }
 .rcount { display: flex; align-items: flex-start; gap: 10px; }
 .rcount .rhint { flex: 1; margin-top: 0; }
 .rbuild ~ .rcount .rhint { margin-left: 0; }
