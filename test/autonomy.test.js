@@ -2,7 +2,7 @@
 // Autonomy (INT-393): a ticket's journey from pickup to Done, and every human intervention along the way.
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { stepJourney, columnsOf, stuckReason, levelOf } = require('../lib/alerts/autonomy');
+const { stepJourney, columnsOf, levelOf } = require('../lib/alerts/autonomy');
 
 const board = { columns: ['backlog', 'ready', 'in-progress', 'review', 'done'].map((id) => ({ id, flags: { working: id === 'in-progress' } })) };
 const cols = columnsOf(board);
@@ -81,22 +81,5 @@ describe('a ticket\'s journey', () => {
     assert.equal(levelOf({}), 'autonomous');
     assert.equal(levelOf({ decision: 1 }), 'approved');
     assert.equal(levelOf({ decision: 1, comment: 2 }), 'helped');
-  });
-});
-
-describe('stuck', () => {
-  const NOW = Date.parse('2026-10-19T18:00:00Z');
-  const H = 3600_000;
-  const at = (ms) => new Date(NOW - ms).toISOString();
-  const item = (over = {}) => ({ journey: { pickedUpAt: at(10 * H), touches: {}, moves: 1, back: 0 }, updatedAt: at(5 * H), enteredColumnAt: at(5 * H), comments: [], questions: [], ...over });
-  it('a picked-up ticket quiet for longer than the limit is stuck, and says why', () => {
-    assert.equal(stuckReason(item(), NOW, 4 * H), 'idle');
-    assert.equal(stuckReason(item({ questions: [{ kind: 'question' }] }), NOW, 4 * H), 'waiting_on_human');
-    assert.equal(stuckReason(item({ lease: { claimant: 'groot', expiresAt: at(-H), leasedAt: at(6 * H) } }), NOW, 4 * H), 'held_quiet');
-  });
-  it('not stuck: recent activity, not picked up, or done', () => {
-    assert.equal(stuckReason(item({ comments: [{ createdAt: at(H) }] }), NOW, 4 * H), null);
-    assert.equal(stuckReason(item({ journey: null }), NOW, 4 * H), null);
-    assert.equal(stuckReason(item({ journey: { pickedUpAt: at(9 * H), doneAt: at(6 * H), touches: {} } }), NOW, 4 * H), null);
   });
 });

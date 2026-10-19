@@ -1125,7 +1125,7 @@
       "id": 24,
       "type": "stat",
       "title": "Stuck now",
-      "description": "Tickets picked up, not done, and quiet for 4 hours. Anything here is the board failing to move on its own; see the reasons on the right.",
+      "description": "Tickets the stuck watch is sure of: picked up, not done, quiet for an hour and still so half an hour later (the coordinator is woken), or past its rounds (the human was asked).",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -1158,7 +1158,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(intellagent_tickets_stuck{job=\"$job\",board=\"$board\"})",
+          "expr": "sum(intellagent_tickets_stuck{job=\"$job\",board=\"$board\",state!=\"suspected\"})",
           "legendFormat": "Stuck now",
           "refId": "A"
         }
@@ -1248,7 +1248,7 @@
       "id": 27,
       "type": "timeseries",
       "title": "In flight and stuck",
-      "description": "Tickets picked up and not done, and how many of them are stuck (quiet 4 h), by why: waiting on the human, held but quiet, idle.",
+      "description": "Tickets picked up and not done, and how many the stuck watch is sure are stuck, by why: waiting on the human, no owner, owner down, owner quiet, held but quiet.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -1284,7 +1284,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (reason) (intellagent_tickets_stuck{job=\"$job\",board=\"$board\"})",
+          "expr": "sum by (reason) (intellagent_tickets_stuck{job=\"$job\",board=\"$board\",state!=\"suspected\"})",
           "legendFormat": "stuck: {{reason}}",
           "refId": "B"
         }

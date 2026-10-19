@@ -279,7 +279,8 @@ describe('run records, read incrementally', () => {
       assert.equal(v('intellagent_human_interventions', { kind: 'move' }), 0, 'the approval moved it to Done: not a manual move');
       assert.equal(v('intellagent_ticket_moves', { direction: 'back' }), 0);
       assert.equal(v('intellagent_tickets_in_flight', {}), 1);
-      assert.equal(v('intellagent_tickets_stuck', { reason: 'idle' }), 0, 'just started: not stuck');
+      assert.equal(v('intellagent_tickets_stuck', { reason: 'owner_quiet', state: 'sure' }), 0, 'just started: not stuck');
+      assert.equal(v('intellagent_stuck_oldest_seconds', {}), 0);
     } finally { await s.stop(); }
   });
 

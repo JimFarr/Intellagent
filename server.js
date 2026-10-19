@@ -681,6 +681,36 @@ function backfillJourneys(ctx) {
   }, { archive: true });
 }
 
+// The stuck watch (INT-394): every in-flight ticket checked each sweep, the stuck ones kept in board.stuck with when
+// they were first seen; the coordinator's work offers unstick once the board is sure; past its rounds, the human.
+const STUCK = require('./lib/alerts/stuck');
+function sweepStuck(ctx) {
+  const team = standingAgents().filter((a) => a.enabled).map((a) => a.name);
+  const works = Object.fromEntries(team.map((n) => [n, workFor(ctx, n)]));
+  const owners = STUCK.ownersOf(works);
+  const byName = new Map(standingAgents().map((a) => [a.name, a]));
+  const sleeping = new Set(ctx.board.columns.filter((c) => c.flags?.sleeping).map((c) => c.id));
+  const nowMs = Date.now();
+  const found = {};
+  for (const it of Object.values(ctx.board.items)) {
+    const s = STUCK.assess(it, nowMs, { owners: [...(owners.get(it.id) || [])], running: (n) => !!standing?.isRunning?.(n), status: (n) => byName.get(n)?.status, sleeping: (c) => sleeping.has(c) });
+    if (s) found[it.id] = s;
+  }
+  const next = STUCK.sweep(ctx.board.stuck, found, new Date(nowMs).toISOString());
+  const due = Object.entries(next).filter(([, e]) => STUCK.forHuman(e, nowMs));
+  if (JSON.stringify(next) === JSON.stringify(ctx.board.stuck || {}) && !due.length) return;
+  tx(ctx, (events) => {
+    for (const [id, e] of due) {
+      const it = ctx.board.items[id];
+      const hours = Math.round((nowMs - Date.parse(e.since)) / 360_000) / 10;
+      openQuestion(ctx, it, parseNeedsHuman({ reason: `Stuck for ${hours} h (${e.reason.replace('_', ' ')}${e.owner ? `: ${e.owner}` : ''}), and the coordinator could not move it on in ${STUCK.ROUNDS} rounds. What should happen to it?` }, SYSTEM), SYSTEM, events);
+      e.escalated = new Date(nowMs).toISOString();
+    }
+    ctx.board.stuck = next;
+  });
+}
+setInterval(() => { for (const ctx of boards.values()) { try { sweepStuck(ctx); } catch (e) { console.warn(`stuck watch (${ctx.id}): ${e.message}`); } } }, Math.max(1, Number(M.stuckSweepSeconds) || 300) * 1000).unref();
+
 function tx(ctx, fn, { archive = false } = {}) {
   const parts = boardParts(ctx.board);
   const before = parts.body;
@@ -1810,8 +1840,7 @@ function createAsk(ctx, id, d, actor) {
     ask = ASKS.newAsk({ id: rid('ask'), by: actor.name, to, kind, what, options, dueMinutes: d.dueMinutes, now: Date.now() });
     (it.asks ||= []).push(ask);
     if (it.asks.length > 50) it.asks.splice(0, it.asks.length - 50);
-    it.version++;
-    it.updatedAt = now();
+    it.version++; // updatedAt stays: an ask about a ticket is not progress on it (the stuck watch, INT-394)
     events.push(itemEvent(ctx, 'ask.created', it, actor, { ask: { ...ask }, mentions: [to] }));
     return it;
   });
@@ -3948,6 +3977,16 @@ route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason
   const ctx = getCtx(p.board);
   const { item, questionId } = askHuman(ctx, p.id, body.reason, actor, body.form ?? null);
   return { ...itemView(ctx, item), questionId };
+});
+route('GET', '/api/boards/:board/stuck', 'The stuck watch (INT-394): tickets picked up and not done that have been quiet, with since, reason (waiting_on_human, no_owner, owner_down, owner_quiet, held_quiet), owner, whether the board is sure, its round, and whether the human was asked', ({ p }) => {
+  const ctx = getCtx(p.board);
+  const nowMs = Date.now();
+  const stuck = Object.entries(ctx.board.stuck || {}).map(([id, e]) => {
+    const it = ctx.board.items[id];
+    return { id, title: it?.title || null, column: it ? ctx.board.columns.find((c) => c.id === it.columnId)?.name : null, assignee: it?.assignee || null, ...e,
+      minutes: Math.round((nowMs - Date.parse(e.since)) / 60_000), sure: STUCK.confirmed(e, nowMs), round: Math.max(0, STUCK.roundOf(e, nowMs)) };
+  }).sort((a, b) => b.minutes - a.minutes);
+  return { stuck, rules: { quietMinutes: STUCK.QUIET_MS / 60_000, sureAfterMinutes: STUCK.CONFIRM_MS / 60_000, roundMinutes: STUCK.ROUND_MS / 60_000, rounds: STUCK.ROUNDS } };
 });
 route('POST', '/api/boards/:board/items/:id/asks', 'Ask another agent for something, as an obligation instead of an @mention (INT-391): { to, kind: answer|decide|review|fix|assign_reviewer|unblock|other, what, options?, dueMinutes? (default 60) } → { ask }. A work item for its owner; closes itself when done (review: its verdict; fix: its next review request; assign_reviewer: a reviewer assigned) or with …/asks/<askId>/done; escalates once when overdue', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
