@@ -57,6 +57,23 @@ describe('scheduler (fake clock)', () => {
     assert.equal(started.length, 1, 'and the run starts');
   });
 
+  it('a newer work summary keeps the work of one not yet read, and drops what has left the list (INT-378)', () => {
+    const { scheduler, core, agents } = rig({ state: { queue: [] } });
+    const w = (id) => ({ key: `decide:${id}`, action: 'decide', id, why: 'ready' });
+    core.deps.pending = () => [w('LNZ-2')];
+    scheduler.checkPending('bot');
+    // before the agent runs, the list changes: LNZ-5 and LNZ-6 join, LNZ-2 is still there
+    core.deps.pending = () => [w('LNZ-2'), w('LNZ-5'), w('LNZ-6')];
+    scheduler.checkPending('bot');
+    const summaries = agents.bot.queue.filter((e) => e.type === 'work.pending');
+    assert.equal(summaries.length, 1, 'still one summary');
+    assert.deepEqual(summaries[0].work.map((x) => x.id).sort(), ['LNZ-2', 'LNZ-5', 'LNZ-6']);
+    // and LNZ-5 leaves before a third sweep that finds LNZ-7
+    core.deps.pending = () => [w('LNZ-2'), w('LNZ-6'), w('LNZ-7')];
+    scheduler.checkPending('bot');
+    assert.deepEqual(agents.bot.queue.filter((e) => e.type === 'work.pending')[0].work.map((x) => x.id).sort(), ['LNZ-2', 'LNZ-6', 'LNZ-7']);
+  });
+
   it('a quiet agent runs once the settle delay has passed, and not before', () => {
     const { scheduler, started } = rig();
     scheduler.enqueue('bot', [{ seq: 2, type: 'comment.added' }]);
