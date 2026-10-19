@@ -641,7 +641,7 @@ function stepJourneys(ctx, events) {
   for (const [id, evs] of byItem) {
     const it = ctx.board.items[id];
     if (!it) continue;
-    const j = AUTONOMY.stepJourney(it.journey, evs, cols);
+    const j = AUTONOMY.stepJourney(it.journey, evs, cols, now());
     if (j) it.journey = j; else delete it.journey;
   }
 }
@@ -685,15 +685,17 @@ function backfillJourneys(ctx) {
 // they were first seen; the coordinator's work offers unstick once the board is sure; past its rounds, the human.
 const STUCK = require('./lib/alerts/stuck');
 function sweepStuck(ctx) {
-  const team = standingAgents().filter((a) => a.enabled).map((a) => a.name);
-  const works = Object.fromEntries(team.map((n) => [n, workFor(ctx, n)]));
-  const owners = STUCK.ownersOf(works);
-  const byName = new Map(standingAgents().map((a) => [a.name, a]));
+  if (M.sandbox) return; // a sandbox runs no agents: nothing to wake, and its human is not to be asked
+  // every standing agent, paused or switched off included: an owner that can't run is down, not absent
+  const all = standingAgents();
+  const owners = STUCK.ownersOf(Object.fromEntries(all.map((a) => [a.name, workFor(ctx, a.name)])));
+  const byName = new Map(all.map((a) => [a.name, a]));
+  const statusOf = (n) => { const a = byName.get(n); return !a ? undefined : a.paused ? 'paused' : !a.enabled ? 'disabled' : a.status; };
   const sleeping = new Set(ctx.board.columns.filter((c) => c.flags?.sleeping).map((c) => c.id));
   const nowMs = Date.now();
   const found = {};
   for (const it of Object.values(ctx.board.items)) {
-    const s = STUCK.assess(it, nowMs, { owners: [...(owners.get(it.id) || [])], running: (n) => !!standing?.isRunning?.(n), status: (n) => byName.get(n)?.status, sleeping: (c) => sleeping.has(c) });
+    const s = STUCK.assess(it, nowMs, { owners: [...(owners.get(it.id) || [])], running: (n) => !!standing?.isRunning?.(n), status: statusOf, sleeping: (c) => sleeping.has(c) });
     if (s) found[it.id] = s;
   }
   const next = STUCK.sweep(ctx.board.stuck, found, new Date(nowMs).toISOString());
@@ -722,13 +724,13 @@ function tx(ctx, fn, { archive = false } = {}) {
   let result;
   try {
     result = fn(events);
+    stepJourneys(ctx, events); // inside the try: a journey that fails rolls the change back with it
   } catch (e) {
     ctx.board = JSON.parse(before);
     ctx.board.updatedAt = updatedAt;
     if (archive) ctx.archive = JSON.parse(beforeArchive);
     throw e;
   } finally { ctx.afterCommit = outer; }
-  stepJourneys(ctx, events);
   const afterParts = boardParts(ctx.board);
   const after = afterParts.body;
   const from = ctx.hash;
@@ -1821,14 +1823,19 @@ function askHuman(ctx, id, reason, actor, form = null) {
 /* ───── asks (INT-391): what one agent needs from another, as data instead of an @mention ───── */
 
 const ASKS = require('./lib/alerts/asks');
+// The manifest may tune them: "asks": { "dueMinutes": 60, "maxDueMinutes": 10080, "keep": 50 }
+const ASK_RULES = { ...ASKS.RULES, ...(isObj(M.asks) ? M.asks : {}) };
 // The coordinator that takes an overdue ask: the board's, else a standing agent with the coordinator role
 const coordinatorOf = (ctx) => ctx.board.coordinator || standingAgents().find((a) => a.enabled && a.role === 'coordinator')?.name || null;
+const sameName = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 function createAsk(ctx, id, d, actor) {
-  const to = str(d.to || '', 64).trim();
-  if (!to) fail(400, '"to" is required: the agent you need something from', { hint: 'To ask the human, use POST …/attention' });
-  if (to.toLowerCase() === actor.name.toLowerCase()) fail(400, "You can't ask yourself");
-  const known = standingAgents().some((a) => a.name.toLowerCase() === to.toLowerCase()) || to === coordinatorOf(ctx);
-  if (/^(human|user)$/i.test(to) || (actor.kind === 'agent' && !known)) fail(400, `"${to}" is not a standing agent`, { hint: 'Ask a standing agent; to ask the human, use POST …/attention' });
+  const asked = str(d.to || '', 64).trim();
+  if (!asked) fail(400, '"to" is required: the agent you need something from', { hint: 'To ask the human, use POST …/attention' });
+  if (sameName(asked, actor.name)) fail(400, "You can't ask yourself");
+  // the standing agent's own name, whatever its case: the ask is matched by it everywhere after
+  const to = standingAgents().find((a) => sameName(a.name, asked))?.name || (sameName(asked, coordinatorOf(ctx) || '') ? coordinatorOf(ctx) : null);
+  if (!to) fail(400, `"${asked}" is not a standing agent`, { hint: 'Ask a standing agent; to ask the human, use POST …/attention' });
+  mayCall(actor, to); // a helper is asked only by those who may call on the helpers (INT-252)
   const kind = d.kind || 'answer';
   if (!ASKS.KINDS.includes(kind)) fail(400, `"kind" must be one of ${ASKS.KINDS.join(', ')}`);
   const what = str(d.what || '', 2000).trim();
@@ -1837,9 +1844,8 @@ function createAsk(ctx, id, d, actor) {
   let ask;
   const item = tx(ctx, (events) => {
     const it = getItem(ctx, id);
-    ask = ASKS.newAsk({ id: rid('ask'), by: actor.name, to, kind, what, options, dueMinutes: d.dueMinutes, now: Date.now() });
-    (it.asks ||= []).push(ask);
-    if (it.asks.length > 50) it.asks.splice(0, it.asks.length - 50);
+    ask = ASKS.newAsk({ id: rid('ask'), by: actor.name, to, kind, what, options, dueMinutes: d.dueMinutes, now: Date.now() }, ASK_RULES);
+    ASKS.addAsk(it, ask, ASK_RULES);
     it.version++; // updatedAt stays: an ask about a ticket is not progress on it (the stuck watch, INT-394)
     events.push(itemEvent(ctx, 'ask.created', it, actor, { ask: { ...ask }, mentions: [to] }));
     return it;
@@ -1849,7 +1855,17 @@ function createAsk(ctx, id, d, actor) {
 function getAsk(it, askId) {
   const a = (it.asks || []).find((x) => x.id === askId);
   if (!a) fail(404, `No ask "${askId}" on ${it.id}`);
+  if (a.state !== 'open') fail(409, `That ask is already ${a.state}`, { code: 'CONFLICT' });
   return a;
+}
+// Finish an ask and what is linked to it (its escalation, the ask an escalation was for, the human's question an
+// overdue one opened), each said on the board.
+function finishAsk(ctx, it, a, fields, actor, events) {
+  const { closed, questionIds } = ASKS.finish(it, a, fields, now());
+  const type = fields.state === 'withdrawn' ? 'ask.withdrawn' : 'ask.done';
+  events.push(itemEvent(ctx, type, it, actor, { ask: { ...a }, ...(type === 'ask.done' ? { mentions: [a.by].filter((n) => !sameName(n, actor.name)) } : {}) }));
+  for (const x of closed) events.push(itemEvent(ctx, type, it, actor, { ask: { ...x } }));
+  if (questionIds.length) closeQuestions(ctx, it, actor, events, { pick: (q) => questionIds.includes(q.id), reply: `The ask was ${fields.state === 'withdrawn' ? 'withdrawn' : 'answered'}: ${fields.answer || ''}` });
 }
 // Answer an ask: its owner (or the asker, the coordinator or the human, to close it for them). The answer goes on
 // the card and to the asker.
@@ -1857,16 +1873,13 @@ function answerAsk(ctx, id, askId, d, actor) {
   return tx(ctx, (events) => {
     const it = getItem(ctx, id);
     const a = getAsk(it, askId);
-    if (a.state !== 'open') fail(409, `That ask is already ${a.state}`, { code: 'CONFLICT' });
-    if (actor.kind === 'agent' && ![a.to, a.by].includes(actor.name) && !isCoordinator(ctx, actor.name)) fail(403, `Only ${a.to} (asked), ${a.by} (asker), the coordinator or the human answer it`, { code: 'FORBIDDEN' });
+    if (actor.kind === 'agent' && ![a.to, a.by].some((n) => sameName(n, actor.name)) && !isCoordinator(ctx, actor.name)) fail(403, `Only ${a.to} (asked), ${a.by} (asker), the coordinator or the human answer it`, { code: 'FORBIDDEN' });
     const answer = str(d.answer || '', 4000).trim();
     if (!answer) fail(400, '"answer" is required', { hint: 'Say what you decided or did, in a line' });
-    Object.assign(a, { state: 'done', answer, doneAt: now(), doneBy: actor.name });
     it.comments.push({ id: rid('c'), author: actor, body: `↩ **${a.by}'s ask** (${a.kind}): ${a.what}\n\n${answer}`, createdAt: now() });
+    finishAsk(ctx, it, a, { state: 'done', answer, doneBy: actor.name }, actor, events);
     it.version++;
     it.updatedAt = now();
-    events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...a }, mentions: [a.by].filter((n) => n !== actor.name) }));
-    for (const up of ASKS.closeEscalations(it, a, now())) events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...up } }));
     return it;
   });
 }
@@ -1874,35 +1887,33 @@ function withdrawAsk(ctx, id, askId, d, actor) {
   return tx(ctx, (events) => {
     const it = getItem(ctx, id);
     const a = getAsk(it, askId);
-    if (a.state !== 'open') fail(409, `That ask is already ${a.state}`, { code: 'CONFLICT' });
-    if (actor.kind === 'agent' && a.by !== actor.name && !isCoordinator(ctx, actor.name)) fail(403, `Only ${a.by} (asker), the coordinator or the human withdraw it`, { code: 'FORBIDDEN' });
-    Object.assign(a, { state: 'withdrawn', answer: str(d.reason || '', 1000) || null, doneAt: now(), doneBy: actor.name });
+    if (actor.kind === 'agent' && !sameName(a.by, actor.name) && !isCoordinator(ctx, actor.name)) fail(403, `Only ${a.by} (asker), the coordinator or the human withdraw it`, { code: 'FORBIDDEN' });
+    finishAsk(ctx, it, a, { state: 'withdrawn', answer: str(d.reason || '', 1000) || null, doneBy: actor.name }, actor, events);
     it.version++;
-    events.push(itemEvent(ctx, 'ask.withdrawn', it, actor, { ask: { ...a } }));
     return it;
   });
 }
-// Something happened on the ticket that does what an ask asked for: close those asks, each telling its asker.
+// Something happened on the ticket that does what an ask asked for: close those asks (and what is linked to them).
 function closeAsks(ctx, it, events, trigger, actor) {
-  for (const a of ASKS.closeBy(it, trigger, now())) {
-    events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...a }, mentions: [a.by].filter((n) => n !== actor.name) }));
-    for (const up of ASKS.closeEscalations(it, a, now())) events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...up } }));
+  for (const { ask, linked } of ASKS.closeBy(it, trigger, now())) {
+    events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...ask }, mentions: [ask.by].filter((n) => !sameName(n, actor.name)) }));
+    for (const x of linked.closed) events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...x } }));
+    if (linked.questionIds.length) closeQuestions(ctx, it, actor, events, { pick: (q) => linked.questionIds.includes(q.id), reply: 'The ask was answered' });
   }
 }
-// Overdue asks escalate once: to the coordinator, or to the human when there is none (or the ask was the coordinator's).
+// Overdue asks escalate once (lib/alerts/asks.js escalationOf): to the coordinator, or to the human.
 function sweepAsks(ctx) {
-  if (!Object.values(ctx.board.items).some((it) => ASKS.overdueAsks(it, Date.now()).length)) return;
+  if (M.sandbox || !Object.values(ctx.board.items).some((it) => ASKS.overdueAsks(it, Date.now()).length)) return;
   tx(ctx, (events) => {
     for (const it of Object.values(ctx.board.items)) for (const a of ASKS.overdueAsks(it, Date.now())) {
       a.escalated = now();
       events.push(itemEvent(ctx, 'ask.overdue', it, SYSTEM, { ask: { ...a }, mentions: [a.by] }));
-      const coord = coordinatorOf(ctx);
-      if (coord && coord !== a.to && coord !== a.by) {
-        const up = ASKS.newAsk({ id: rid('ask'), by: 'intellagent', to: coord, kind: 'unblock', escalates: a.id, what: `${a.by} asked ${a.to} (${a.kind}): ${a.what}. Overdue since ${a.dueAt.slice(11, 16)}: get it done, or answer it for them`, dueMinutes: ASKS.DUE_MINUTES, now: Date.now() });
-        it.asks.push(up);
-        events.push(itemEvent(ctx, 'ask.created', it, SYSTEM, { ask: { ...up }, escalates: a.id, mentions: [coord] }));
+      const up = ASKS.escalationOf(a, coordinatorOf(ctx), { id: rid('ask'), now: Date.now() }, ASK_RULES);
+      if (up.ask) {
+        ASKS.addAsk(it, up.ask, ASK_RULES);
+        events.push(itemEvent(ctx, 'ask.created', it, SYSTEM, { ask: { ...up.ask }, escalates: a.id, mentions: [up.ask.to] }));
       } else {
-        openQuestion(ctx, it, parseNeedsHuman({ reason: `${a.by} asked ${a.to} and it is overdue (${a.kind}): ${a.what}` }, { kind: 'system', name: a.by }), SYSTEM, events);
+        a.questionId = openQuestion(ctx, it, parseNeedsHuman({ reason: up.question }, { kind: 'system', name: a.by }), SYSTEM, events).id;
       }
       it.version++;
     }

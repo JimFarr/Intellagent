@@ -1125,7 +1125,7 @@
       "id": 24,
       "type": "stat",
       "title": "Stuck now",
-      "description": "Tickets the stuck watch is sure of: picked up, not done, quiet for an hour and still so half an hour later (the coordinator is woken), or past its rounds (the human was asked).",
+      "description": "Tickets the stuck watch is sure of and the board should be moving by itself: picked up, not done, quiet for an hour and still so half an hour later (the coordinator is woken), or past its rounds. Tickets waiting on the human are left out (they are the human's queue; In flight and stuck shows them).",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -1158,7 +1158,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(intellagent_tickets_stuck{job=\"$job\",board=\"$board\",state!=\"suspected\"})",
+          "expr": "sum(intellagent_tickets_stuck{job=\"$job\",board=\"$board\",state!=\"suspected\",reason!=\"waiting_on_human\"})",
           "legendFormat": "Stuck now",
           "refId": "A"
         }

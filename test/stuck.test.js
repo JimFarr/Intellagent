@@ -18,6 +18,7 @@ describe('stuck rules', () => {
     assert.deepEqual(STUCK.assess(ticket(), NOW, who()), { reason: 'no_owner' });
     assert.deepEqual(STUCK.assess(ticket(), NOW, who({ owners: ['groot'] })), { reason: 'owner_quiet', owner: 'groot' });
     assert.deepEqual(STUCK.assess(ticket(), NOW, who({ owners: ['groot'], status: () => 'paused' })), { reason: 'owner_down', owner: 'groot' });
+    assert.deepEqual(STUCK.assess(ticket(), NOW, who({ owners: ['groot'], status: () => 'disabled' })), { reason: 'owner_down', owner: 'groot' }, 'switched off is down too');
     assert.deepEqual(STUCK.assess(ticket({ lease: { claimant: 'groot', expiresAt: ago(-30 * MIN), leasedAt: ago(100 * MIN) } }), NOW, who()), { reason: 'held_quiet', owner: 'groot' });
     assert.deepEqual(STUCK.assess(ticket({ questions: [{ kind: 'question' }] }), NOW, who()), { reason: 'waiting_on_human' });
   });
@@ -90,6 +91,17 @@ describe('the stuck watch on the simulator', () => {
     assert.equal(sim.board.stuck[t].reason, 'waiting_on_human', 'and it is the human\'s now');
     const asked = Date.parse(human[0].raisedAt);
     assert.deepEqual(sim.runs.filter((r) => Date.parse(r.at) > asked).map((r) => r.agent), [], 'after that nothing wakes anyone for it: no loop');
+  });
+
+  it('a ticket whose owner is paused is owner_down, not no_owner', () => {
+    sim = createSim({ team: { groot: { role: 'builder', behave: (run, act) => { for (const n of run.brief.next) if (n.action === 'start') act.start(n.id); } } } });
+    const t = sim.human.create({ title: 'x', column: 'Ready', assignee: 'groot' });
+    sim.tick('10m');
+    sim.agent('groot'); // started
+    sim.pause('groot');
+    sim.tick('2h');
+    assert.equal(sim.board.stuck[t]?.reason, 'owner_down');
+    assert.equal(sim.board.stuck[t]?.owner, 'groot');
   });
 
   it('a ticket moving along normally never enters the ledger', () => {
