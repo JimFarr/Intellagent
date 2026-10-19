@@ -716,7 +716,7 @@ function sweepStuck(ctx) {
   if (JSON.stringify(next) !== JSON.stringify(ctx.board.stuck || {}) || due.length) {
     tx(ctx, (events) => {
       for (const id of due) {
-        openQuestion(ctx, ctx.board.items[id], parseNeedsHuman({ reason: STUCK.humanQuestion(next[id], nowMs, STUCK_TIMINGS) }, SYSTEM), SYSTEM, events);
+        openQuestion(ctx, ctx.board.items[id], parseNeedsHuman({ reason: STUCK.humanQuestion(next[id], nowMs, STUCK_TIMINGS, ctx.board.items[id]) }, SYSTEM), SYSTEM, events);
         next[id].escalated = new Date(nowMs).toISOString();
       }
       ctx.board.stuck = next;

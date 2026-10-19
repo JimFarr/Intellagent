@@ -84,7 +84,7 @@ describe('stuck rules', () => {
     assert.deepEqual([next['T-1'].reason, next['T-2'].reason, next['T-2'].owner], ['no_owner', 'owner_quiet', 'groot'], 'a reply owed doesn\'t make an owner');
     assert.deepEqual(due, ['T-1']);
     assert.deepEqual([...owners.get('T-2')], ['groot']);
-    assert.match(STUCK.humanQuestion(next['T-1'], NOW), /^Stuck for 3\.3 h \(no owner\), and the coordinator could not move it on in 2 rounds/);
+    assert.match(STUCK.humanQuestion(next['T-1'], NOW, undefined, board.items['T-1']), /^Quiet for 1\.5 h \(no owner\), and the coordinator could not move it on in 2 rounds/);
   });
 });
 
@@ -159,7 +159,7 @@ describe('the stuck watch on a real board', () => {
       assert.ok(e?.escalated, `escalated: ${JSON.stringify(r.stuck)}`);
       const qs = (await s.ok('GET', `${B}/items/${t.id}`)).questions;
       assert.equal(qs.length, 1);
-      assert.match(qs[0].reason, /^Stuck for .* \(held quiet: groot\), and the coordinator could not move it on in 1 rounds/);
+      assert.match(qs[0].reason, /^Quiet for .* h \(held quiet: groot\), and the coordinator could not move it on in 1 rounds/);
       await new Promise((ok) => setTimeout(ok, 1500));
       assert.equal((await s.ok('GET', `${B}/items/${t.id}`)).questions.length, 1, 'asked once');
       assert.equal((await s.ok('GET', `${B}/stuck`)).stuck.find((x) => x.id === t.id)?.reason, 'waiting_on_human');
