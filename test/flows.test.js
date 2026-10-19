@@ -659,7 +659,7 @@ describe('agent flows', () => {
     const r = await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'done already', evidence: 'npm test' }, A);
     assert.match(r.warnings?.[0] || '', /spent \d+s in/);
     const plain = await s.ok('POST', `${B}/items`, { title: 'never started', column: 'Backlog' }, USER);
-    assert.equal((await s.ok('POST', `${B}/items/${plain.id}/review`, { summary: 'x', evidence: 'npm test' }, A)).warnings, undefined, 'no working-column visit, no claim about it');
+    assert.equal((await s.ok('POST', `${B}/items/${plain.id}/review`, { summary: 'x', evidence: 'npm test', learned: 'none' }, A)).warnings, undefined, 'no working-column visit, no claim about it');
   });
 
   it('test tickets: flagged at creation, immutable, deletable by anyone (leases apply); others are refused', async () => {

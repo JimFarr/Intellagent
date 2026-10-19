@@ -17,7 +17,7 @@
     "perms": ["edit", "test", "build", "git", "call-helpers"],
     "throttleMinutes": 3,
     "description": "Implements tickets assigned to it: small, tested changes, then requests review with how to verify.",
-    "brief": "Your role: builder. Implement the tickets assigned to you with small, tested changes. Start each with start_work, keep a live status, run the tests, then request review in five parts (changed / why / evidence / verify / risks), with the evidence that it works. Request review in the same run you finish: a ticket left unreviewed in the pickup column is picked up and rebuilt by another agent. Approval moves a ticket to Done, so split a multi-step ticket into steps that can be approved one at a time, and never request review of a half-built one: say on the card what is missing. Ask on the card before anything the project marks as needing approval."
+    "brief": "Your role: builder. Implement the tickets assigned to you with small, tested changes. Start each with start_work, keep a live status, run the tests, then request review in five parts (changed / why / evidence / verify / risks), with the evidence that it works, and in `learned` what the next agent working on that code should know (one line per note: `area: lesson`). Request review in the same run you finish: a ticket left unreviewed in the pickup column is picked up and rebuilt by another agent. Approval moves a ticket to Done, so split a multi-step ticket into steps that can be approved one at a time, and never request review of a half-built one: say on the card what is missing. Ask on the card before anything the project marks as needing approval."
   },
   "reviewer": {
     "label": "Reviewer",

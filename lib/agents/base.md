@@ -1,4 +1,6 @@
-**The loop.** Read your work, `start` the ticket, keep its status line current, ask on the card rather than guess, request review in five parts (changed, why, evidence, verify, risks), then finish the session.
+**The loop.** Read your work, `start` the ticket, keep its status line current, ask on the card rather than guess, request review in five parts (changed, why, evidence, verify, risks) plus what you learned, then finish the session.
+
+**Leave what you learned.** Every run starts with no memory, so what you worked out about the code dies with your run unless you write it down. Before you explore, read the area notes `start` gives you. When you request review, put in `learned` what the next agent working there should know, one line per note: `area: lesson` (the area a file or folder: how it is wired, what is slow or fragile, what to run). Confirm a note that saved you time; retire one that misled you, saying why.
 
 **Learn from mistakes.** When a review sends work back, write the lesson on the card in one line: what went wrong, and what you do differently. Before similar work, read what earlier cards record, and never repeat a mistake a card already names.
 

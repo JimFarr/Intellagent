@@ -155,6 +155,23 @@ PUT    /api/profiles/<agent>/memory       { "on": false }                       
 - The human can switch an agent's memory off, e.g. for an agent that reads outside content: its brief shows none and its writes answer `409 MEMORY_OFF`. Its entries are kept. A read-only agent (`readOnly` in its permissions) still writes its own memory: read-only covers the board, and the switch is the control for memory.
 - `<agent>` must be an agent the board knows (in agents.json, or one that has called the board), matched without regard to capitals, so `Rocket` is rocket's memory. Any other name answers `404 NOT_FOUND`, and a name that can't be an agent's `400`.
 
+## 2f. Area notes: what you learned, for whoever works there next
+
+Every run starts with no memory, so what a run works out about the code (how a module is wired, what is slow or fragile, what to run) is lost unless it is written down. Memory is one agent's; **area notes** belong to the code: each is kept by area (a file or a folder of the project) and read by any agent that works there.
+
+```
+GET    /api/notes?path=lib/alerts/        → { notes: [{ id, area, text, by, from?, at, confirmedBy? }], count }   (MCP: area_notes)
+POST   /api/notes                         { "area": "lib/alerts/work.js", "text": "…", "from": "INT-12" }        (MCP: add_note)
+POST   /api/notes/<id>/confirm            this one helped (not its author)
+POST   /api/notes/<id>/retire             { "why": "…" }: wrong or out of date (anyone; kept for the record, ?retired=true)
+PATCH  /api/notes/<id>                    { text?, area? } (its author or the human)
+DELETE /api/notes/<id>                    (the human only)
+```
+- **Leave them when you request review:** `learned` is the review's sixth part, one note per line: `area: lesson` (`lib/alerts/work.js: the TAG table decides when work is new again`), or `none`. Each line becomes a note from that ticket; the review card shows it under *Learned for next time*. An agent's review with no `learned` (not even `none`) comes back with a warning, as one without evidence does, and a line with no area is reported, not kept.
+- **They come back to you:** `start` returns `notes` for the paths the ticket names (in its title and description), your own `areas` and the ticket's earlier notes; your brief lists the notes on your areas under **Area notes**. Read them before you explore.
+- A folder note covers what is in it, and asking about a folder finds the notes inside it. Notes others confirmed come first. An area keeps at most 8 (the least confirmed, oldest goes, retired rather than lost), a note is at most 600 characters, and the same lesson on the same area counts as a confirmation instead of a second note.
+- Notes are only text an agent reads, like memory: they never grant anything, and they can be wrong. Retire one that misled you, saying why.
+
 ## 3. Leases (locks)
 
 ```
@@ -172,7 +189,7 @@ DELETE /api/boards/main/items/INT-12/lease                       → release
 `POST /api/boards/main/items/INT-12/start { "status": "reading the code", "minutes": 30 }` checks the ticket isn't held or blocked, leases it to you (not needed while you hold the master lease), moves it to the working column (flag `working`; e.g. In Progress) unless it is already there or further, and assigns it to you. If any check fails nothing changes and you get a `code` (`LEASED`, `BLOCKED`, `WIP_LIMIT`, `BOARD_HELD`). Pass `"force": true` to start a blocked ticket, `"column"` to pick the target. The reply includes `feedback` (if the review sent it back) and `lastAnswer` (your last question's answer).
 
 ### Explaining your work
-Reviews explain themselves in five parts: `changed` (what changed), `why` (the reasoning, and alternatives you rejected), `evidence` (what proves it works: screenshots, outputs, tests), `verify` (how the human can check it) and `risks` (risks and open questions). The review card shows each part in full. A single `summary` still works.
+Reviews explain themselves in five parts: `changed` (what changed), `why` (the reasoning, and alternatives you rejected), `evidence` (what proves it works: screenshots, outputs, tests), `verify` (how the human can check it) and `risks` (risks and open questions), plus `learned`: what the next agent working on that code should know (area notes, section 2f). The review card shows each part in full. A single `summary` still works.
 
 Keep `changed` short, plain and to the point. A non-technical reader should be able to follow it: say what the change does for the user, and name files, functions or flags only where the change needs them. Keep the other four parts as complete as they need to be. Example:
 - Before: "server.js (requestReview): counts commits via worktrees.commitsFor and stores `landing` on the review question; app.js renders a `.rv-does` line and a conditional button label."
@@ -564,6 +581,7 @@ Permissions  GET/POST /api/permissions         PATCH/DELETE /api/permissions/:ke
 Roles        GET /api/roles  /api/roles/:key  PUT /api/roles/:key (human)
 Profiles     GET /api/profiles  /api/profiles/me  /api/names/suggest     PATCH /api/profiles/me     DELETE /api/presence/:name
 Memory       GET/POST/PUT /api/profiles/:name/memory (PUT human)  PATCH/DELETE /api/profiles/:name/memory/:id   (:name may be "me")
+Area notes   GET/POST /api/notes   PATCH /api/notes/:id   POST /api/notes/:id/confirm  …/retire   DELETE /api/notes/:id (human)
 Files        GET /avatars/:file  /files/:board/:file
 ```
 

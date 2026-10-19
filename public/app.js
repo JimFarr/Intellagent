@@ -3642,7 +3642,7 @@
     return out;
   }
 
-  const REVIEW_LABELS = [['changed', 'What changed', 'pencil'],['why', 'Why', 'sparkle'], ['verify', 'How to verify', 'check'], ['evidence', 'Evidence', 'eye'], ['risks', 'Risks & open questions', 'flag']];
+  const REVIEW_LABELS = [['changed', 'What changed', 'pencil'],['why', 'Why', 'sparkle'], ['verify', 'How to verify', 'check'], ['evidence', 'Evidence', 'eye'], ['risks', 'Risks & open questions', 'flag'], ['learned', 'Learned for next time', 'news']];
   // The agent's explanation in full: its five parts when it gave them, else its whole review comment.
   function reviewNotesHTML(it, q) {
     if (q.notes && Object.keys(q.notes).length > (q.notes.changed && Object.keys(q.notes).length === 1 ? 1 : 0)) {

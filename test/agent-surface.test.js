@@ -55,7 +55,8 @@ describe('MCP tool profiles', () => {
   it('full lists every tool; an allow-list lists only the named ones', async () => {
     const full = await measure('full');
     assert.deepEqual(full.names, makeTools().map((t) => t[0]));
-    assert.ok(full.chars < 24001, `full got bigger than before the trim: ${full.chars}`);
+    // 24001 at the trim, plus area_notes and add_note (INT-403)
+    assert.ok(full.chars < 24401, `full got bigger than before the trim: ${full.chars}`);
     assert.deepEqual((await measure('tools=search,get_item,no_such_tool')).names, ['get_item', 'search']);
   });
 

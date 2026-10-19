@@ -826,6 +826,7 @@ const { BASE_MAX, shipped: shippedBase } = require('./lib/agents/base');
 const { layersFor } = require('./lib/agents/prompt');
 const { cleanPersonality, cleanContextItems } = require('./lib/agents/config');
 const { createMemory, rememberText } = require('./lib/memory');
+const NOTES = require('./lib/notes');
 const { createMetrics } = require('./lib/metrics');
 const { createAnalytics, waitingOnHuman } = require('./lib/analytics');
 const { createPrometheus } = require('./lib/prometheus');
@@ -2067,6 +2068,7 @@ function startWork(ctx, id, d, actor, branch = null) {
       ...(branch ? { branch } : {}),
       ...(item.review?.verdict === 'changes' ? { feedback: item.review.comment || null } : {}),
       ...(lastWait ? { lastAnswer: replyAfter(item, lastWait) } : {}),
+      ...(() => { const n = actor.kind === 'agent' ? notesForTicket(item, actor.name) : []; return n.length ? { notes: n.map((x) => ({ id: x.id, area: x.area, text: x.text, by: x.by, from: x.from || null, confirmed: x.confirmedBy?.length || 0 })) } : {}; })(),
       next: `Work, then POST /api/boards/${ctx.id}/items/${item.id}/review { "summary": "what changed and how to verify" }. Renew with POST …/lease if it takes longer than ${item.lease?.minutes || 'the lease'} minutes.`,
     };
   });
@@ -2198,6 +2200,17 @@ function briefing(ctx, name, base, via = 'cli') {
       remember: via === 'mcp' ? '`remember { text, from? }`' : via === 'http' ? '`POST /api/profiles/me/memory { text, from? }`' : '`intellagent api POST /api/profiles/me/memory text="…" from=<ID>`',
       forget: via === 'mcp' ? '`forget { id }`' : via === 'http' ? '`DELETE /api/profiles/me/memory/<id>`' : '`intellagent api DELETE /api/profiles/me/memory/<id>`',
     }),
+    ...(() => {
+      // Area notes (INT-403): what runs learned about the code this agent works on
+      let areas = [];
+      try { areas = standing?.list().agents.find((a) => a.name === name)?.areas || []; } catch { /* not a standing agent */ }
+      const mine = areas.length ? notes.forPaths(areas, { limit: 8 }) : [];
+      const call = via === 'http' ? '`GET /api/notes?path=<file or folder>`' : '`intellagent api GET "/api/notes?path=<file or folder>"`';
+      return ['', '## Area notes',
+        'What earlier runs learned about parts of the code, kept by file or folder for whoever works there next. `start` gives you the notes for the ticket you start; read them before you explore.',
+        ...(mine.length ? ['On your areas:', ...mine.map(NOTES.noteLine)] : []),
+        `Look one up: ${call}. One that helped: \`POST /api/notes/<id>/confirm\`. One that is wrong: \`POST /api/notes/<id>/retire { "why": "…" }\`. **When you request review, leave what you learned** in \`learned\`: one line per note, \`area: what the next agent working there should know\` (how it is wired, what is slow or fragile, what to run), or \`none\`.`];
+    })(),
     ...(() => {
       // The receptionist routes work: show it the team with role, model tier and what each does.
       const all = isCoordinator(ctx, name) && standing ? standing.list().agents.filter((a) => a.name !== name) : [];
@@ -2476,6 +2489,16 @@ function updateProfile(name, d, actor) {
 /* ───────────────────────── agent memory (lib/memory.js) ───────────────────────── */
 
 const memory = createMemory({ file: path.join(DATA, 'memory.json'), fail, now, rid });
+// Area notes (INT-403): what runs learned about a part of the code, for whoever works there next
+const notes = NOTES.createNotes({ file: path.join(DATA, 'notes.json'), fail, now, rid });
+// The notes an agent should read before working a ticket: on the paths the ticket names, its own areas, and the
+// ticket's earlier notes (a round of review feedback finds what the last round learned).
+function notesForTicket(item, agentName) {
+  let areas = [];
+  try { areas = standing?.list().agents.find((a) => a.name === agentName)?.areas || []; } catch { /* not a standing agent */ }
+  const paths = [...NOTES.pathsIn(`${item.title}\n${item.description || ''}`), ...areas];
+  return notes.forPaths(paths, { from: item.id, limit: 12 });
+}
 const metrics = createMetrics({ doneColumnId, workingColumn, recent, usageHeldMinutes: (from, to) => standing?.usageHeldMinutes(from, to) ?? 0 });
 const analytics = createAnalytics({ dataDir: DATA });
 const prometheus = createPrometheus({ dataDir: DATA, doneColumnId, workingColumn });
@@ -3054,6 +3077,12 @@ const POLICY = {
   'PATCH /api/profiles/:name/memory/:id': { who: 'self', readOnly: true },
   'DELETE /api/profiles/:name/memory/:id': { who: 'self', readOnly: true },
   'PUT /api/profiles/:name/memory': { who: 'human', why: 'Only the human switches memory on or off', hint: 'Ask on a card' },
+  // area notes (INT-403): anyone keeps them; only an author or the human edits one, only the human removes one
+  'POST /api/notes': { who: 'any' },
+  'PATCH /api/notes/:id': { who: 'any' },
+  'POST /api/notes/:id/confirm': { who: 'any' },
+  'POST /api/notes/:id/retire': { who: 'any' },
+  'DELETE /api/notes/:id': { who: 'human', why: 'Only the human removes an area note outright', hint: 'Retire it with why: POST /api/notes/<id>/retire { "why": "…" }' },
 };
 const WHO_KINDS = new Set(['human', 'any', 'self', 'coordinator']);
 const WRITE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -3838,7 +3867,17 @@ route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call
   for (const { name } of reviewerPool()) {
     if (named.includes(name.toLowerCase()) && !seated.has(name.toLowerCase())) warnings.push(`@${name} is not a reviewer on ${before.id}, so its review won't count. The receptionist assigns one, or the human can add it.`);
   }
+  // INT-403: the learned part becomes area notes. A review with nothing learned (not even "none")
+  // is warned about, as one without evidence is: the next agent would have to work it all out again.
+  const learned = NOTES.parseLearned(body.learned);
+  if (learned.bad?.length) warnings.push(`Not kept as area notes (write each as "area: what to know", the area a file or folder): ${learned.bad.map((x) => `"${x.slice(0, 80)}"`).join('; ')}`);
+  if (actor.kind === 'agent' && !learned.notes.length && !learned.none) warnings.push('Nothing learned: leave what the next agent working here should know in "learned", one line per note: "area: lesson" (the area a file or folder, e.g. "lib/alerts/work.js: the TAG table decides when work is new again"). Or "none" if there was nothing. Request review again with it.');
   const item = itemView(ctx, requestReview(ctx, p.id, body, actor, commits));
+  if (learned.notes.length) {
+    const r = notes.addAll(learned.notes, before.id, actor);
+    for (const x of r.refused) warnings.push(`Area note on "${x.area}" not kept: ${x.error}`);
+    if (r.added.length) return { ...item, notes: r.added.map((n) => n.id), ...(warnings.length ? { warnings } : {}) };
+  }
   return warnings.length ? { ...item, warnings } : item;
 });
 
@@ -4899,6 +4938,18 @@ route('DELETE', '/api/profiles/:name/memory/:id', 'Forget a memory entry — an 
   memoryChanged(name, 'removed', actor, e);
   return { forgot: e.id };
 });
+route('GET', '/api/notes', 'Area notes (INT-403): what runs learned about parts of the code. ?path=<file or folder> (a folder note covers what is in it; a folder finds the notes inside it), ?by=, ?from=<ticket>, ?retired=true → { notes: [{ id, area, text, by, from?, at, confirmedBy? }], count }', ({ q }) => {
+  const list = notes.list({ path: q.path ?? null, by: q.by || null, from: q.from || null, retired: q.retired === 'true' });
+  return { notes: list, count: list.length };
+});
+route('POST', '/api/notes', 'Keep an area note: { area (a project file or folder, e.g. "lib/alerts/" or "server.js"), text (one lesson, at most 600 characters), from? (ticket) } — the same lesson on the same area counts as a confirmation. Requesting review with "learned" does this for you', ({ body, actor }) => {
+  const r = notes.add(body, actor);
+  return { ...r.note, ...(r.duplicate ? { duplicate: true } : {}) };
+});
+route('PATCH', '/api/notes/:id', 'Change an area note: { text?, area? } — its author or the human; earlier texts are kept in history', ({ p, body, actor }) => notes.edit(p.id, body, actor));
+route('POST', '/api/notes/:id/confirm', 'This note helped: counts you as confirming it (notes others confirmed come first). Not its author', ({ p, actor }) => notes.confirm(p.id, actor));
+route('POST', '/api/notes/:id/retire', 'This note is wrong or out of date: { why } — it leaves use and is kept for the record (GET /api/notes?retired=true). Anyone', ({ p, body, actor }) => notes.retire(p.id, body, actor));
+route('DELETE', '/api/notes/:id', 'Human only: remove an area note outright', ({ p, actor }) => notes.remove(p.id, actor));
 route('PUT', '/api/profiles/:name/memory', 'Human only: switch an agent\'s memory on or off: { on } — off, its brief shows none and it can\'t write (409 MEMORY_OFF); entries are kept', ({ p, body, actor }) => {
   const name = memoryOwner(p.name, actor);
   const r = memory.setOn(name, body.on, actor);
