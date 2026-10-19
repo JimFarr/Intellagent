@@ -136,3 +136,55 @@ describe('quiet: nobody is woken for nothing', () => {
     assert.deepEqual(sim.wakes().slice(before), []);
   });
 });
+
+describe('wake from work (INT-390): a wake always carries work; news alone is context', () => {
+  const WORK = { wakeFrom: 'work' };
+
+  it('liveness holds: a day of work reaches Done with every agent waking from its work', () => {
+    sim = createSim({ columns: SLEEPING, defaults: WORK, team: TEAM() });
+    for (let i = 0; i < 12; i++) { sim.human.create({ title: `job ${i + 1}`, column: 'Ready' }); sim.tick('15m'); }
+    sim.tick('8h');
+    assert.deepEqual(stuck(sim), []);
+    assert.equal(sim.metrics().idleRuns, 0);
+  });
+
+  it('news with nothing to do wakes nobody: the lease released when the human moves an agent’s ticket to Done', () => {
+    for (const [mode, wakes] of [['events', 1], ['work', 0]]) {
+      const s = createSim({ defaults: { wakeFrom: mode }, team: { groot: { role: 'builder' } } });
+      try {
+        const t = s.human.create({ title: 'x', column: 'Ready' });
+        s.as('groot').start(t);
+        s.tick('10m');
+        const before = s.runs.length;
+        s.human.move(t, 'Done'); // lease.released, addressed to groot
+        s.tick('10m');
+        assert.equal(s.runs.length - before, wakes, `${mode}: ${s.wakes().slice(before).join(' | ')}`);
+      } finally { s.close(); }
+    }
+  });
+
+  it('a reassignment wakes the new assignee, not the one it was taken from', () => {
+    sim = createSim({ defaults: WORK, team: { groot: { role: 'builder' }, rocket: { role: 'builder' } } });
+    const t = sim.human.create({ title: 'x', column: 'Ready', assignee: 'groot' });
+    sim.tick('10m');
+    const before = sim.runs.length;
+    sim.human.assign(t, 'rocket');
+    sim.tick('10m');
+    assert.deepEqual(sim.wakes().slice(before).map((w) => w.split(' ')[0]), ['rocket']);
+  });
+
+  it('a mention is work: it wakes the agent once, with the comment as context, and not again once seen', () => {
+    sim = createSim({ defaults: WORK, team: { groot: { role: 'builder' } } });
+    const t = sim.human.create({ title: 'x', column: 'Ready' });
+    sim.tick('10m');
+    sim.human.comment(t, '@groot is the header in scope?');
+    sim.tick('10m');
+    const runs = sim.runs.filter((r) => r.agent === 'groot');
+    assert.equal(runs.length, 1);
+    assert.deepEqual(runs[0].work, [`mention:${t}`]);
+    assert.ok(runs[0].events.some((e) => e.type === 'comment.added'), 'the comment comes along as context');
+    sim.tick('1h');
+    assert.equal(sim.runs.filter((r) => r.agent === 'groot').length, 1, 'seen (👀) and left: a reply owed, which never wakes');
+  });
+});
+

@@ -1,6 +1,6 @@
 # How work reaches agents: the obligation ledger
 
-Status: proposed (INT-389, INT-390, INT-391), 2026-10-19. The alerting simulator (docs/simulator.md) is where each step is tried before it ships, and the Prometheus metrics from INT-389 measure it on the real board.
+Status (2026-10-19): INT-389 (metrics) landed; INT-390 (wake from work) landed behind `wakeFrom: "work"`; INT-391 (asks) next. The alerting simulator (docs/simulator.md) is where each step is tried before it ships, and the Prometheus metrics from INT-389 measure it on the real board.
 
 ## Today
 
@@ -49,3 +49,11 @@ board change ─► event log (unchanged: history, the UI's live feed, the audit
 3. **INT-391, asks:** stored ledger items, so chase and supervise become commands.
 
 Each step lands only when the simulator shows it is better, and the metrics say whether the real board agrees.
+
+## What the numbers said (2026-10-19)
+
+From this board's event log since 2026-10-11: 2,626 finished runs; 16% (411) changed nothing.
+- **Comments:** 56% of all runs were woken by comments, and 975 of the 1,008 runs woken only by comments were woken by another agent's comment (25 by the human). Agents talking to agents in prose is the main cost, which is what asks (INT-391) replace.
+- **Landing news:** 329 runs, about a quarter of them idle. INT-386 stopped them.
+
+In the simulator's benchmark (`node scripts/sim-bench.js`, `--wake work`), waking from work keeps liveness and gives the same runs where every wake already had work. It removes the wakes for news without work (a lease released, a reassignment's previous owner) and guarantees every wake carries an item.
