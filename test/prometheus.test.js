@@ -169,7 +169,7 @@ describe('GET /metrics: the numbers', () => {
     try {
       const m = parse((await scrape(s)).text);
       const keys = new Set(m.flatMap((x) => Object.keys(x.labels)));
-      const allowed = new Set(['agent', 'board', 'build', 'column', 'delegated', 'kind', 'le', 'model', 'provider', 'reason', 'result', 'status', 'verdict', 'version']);
+      const allowed = new Set(['agent', 'board', 'build', 'column', 'delegated', 'kind', 'le', 'model', 'direction', 'level', 'provider', 'reason', 'result', 'status', 'verdict', 'version']);
       assert.deepEqual([...keys].filter((k) => !allowed.has(k)), [], 'no label outside the fixed set');
       assert.ok(m.length < 400, `a bounded number of series on an empty board (${m.length})`);
     } finally { await s.stop(); }
@@ -248,6 +248,38 @@ describe('run records, read incrementally', () => {
       assert.equal(get(m, 'intellagent_agent_idle_runs_total', { agent: 'drax' }), 1);
       // the Review ticket (unassigned, no question), and drax's: drax is switched off, so nobody will touch it either
       assert.equal(get(m, 'intellagent_tickets_unowned', { board: 'main' }), 2);
+    } finally { await s.stop(); }
+  });
+
+  it('shows autonomy: finished tickets by how much a human stepped in, the interventions, churn, in flight and stuck (INT-393)', async () => {
+    const dir = tmp('ia-prom-autonomy-');
+    fs.writeFileSync(path.join(dir, 'local.json'), JSON.stringify({ metricsToken: TOKEN }));
+    const s = await startServer({ dir, manifest: { metrics: { prometheus: true } }, agents: { agents: { groot: { role: 'builder', enabled: false } } } });
+    const G = { agent: 'groot' };
+    try {
+      const flow = async (title, help) => {
+        const it = await s.ok('POST', '/api/boards/main/items', { title, column: 'Ready' }, USER);
+        await s.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, G);
+        if (help) await s.ok('POST', `/api/boards/main/items/${it.id}/comments`, { body: 'use the v2 endpoint' }, USER);
+        await s.ok('POST', `/api/boards/main/items/${it.id}/review`, { summary: 'done', evidence: 'tests pass' }, G);
+        await s.ok('POST', `/api/boards/main/items/${it.id}/review/decision`, { verdict: 'approve' }, USER);
+        return it.id;
+      };
+      await flow('only approved', false);
+      await flow('helped along', true);
+      const wip = await s.ok('POST', '/api/boards/main/items', { title: 'in flight', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${wip.id}/start`, {}, G);
+      const m = parse((await scrape(s)).text);
+      const v = (name, labels) => get(m, name, { board: 'main', ...labels });
+      assert.equal(v('intellagent_tickets_finished_by_autonomy', { level: 'approved' }), 1);
+      assert.equal(v('intellagent_tickets_finished_by_autonomy', { level: 'helped' }), 1);
+      assert.equal(v('intellagent_tickets_finished_by_autonomy', { level: 'autonomous' }), 0);
+      assert.equal(v('intellagent_human_interventions', { kind: 'decision' }), 2, 'one per approval, however many events it made');
+      assert.equal(v('intellagent_human_interventions', { kind: 'comment' }), 1);
+      assert.equal(v('intellagent_human_interventions', { kind: 'move' }), 0, 'the approval moved it to Done: not a manual move');
+      assert.equal(v('intellagent_ticket_moves', { direction: 'back' }), 0);
+      assert.equal(v('intellagent_tickets_in_flight', {}), 1);
+      assert.equal(v('intellagent_tickets_stuck', { reason: 'idle' }), 0, 'just started: not stuck');
     } finally { await s.stop(); }
   });
 

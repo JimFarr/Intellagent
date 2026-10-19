@@ -631,6 +631,56 @@ function createBoard(d, actor) {
 // Every mutation runs inside tx(): it either fully applies (saved + hashed + events emitted) or fully rolls back.
 // The board is serialised twice per write (snapshot, then compare-and-save). The archive only grows, so only
 // transactions that say they touch it ({ archive: true }) snapshot and save it.
+// Autonomy (INT-393): each ticket's journey from pickup to Done, stepped with the events of every change it is in
+const AUTONOMY = require('./lib/alerts/autonomy');
+function stepJourneys(ctx, events) {
+  const byItem = new Map();
+  for (const e of events) if (e.itemId && (!e.board || e.board === ctx.id)) (byItem.get(e.itemId) || byItem.set(e.itemId, []).get(e.itemId)).push(e);
+  if (!byItem.size) return;
+  const cols = AUTONOMY.columnsOf(ctx.board);
+  for (const [id, evs] of byItem) {
+    const it = ctx.board.items[id];
+    if (!it) continue;
+    const j = AUTONOMY.stepJourney(it.journey, evs, cols);
+    if (j) it.journey = j; else delete it.journey;
+  }
+}
+// Once per board: journeys for the tickets that moved before journeys were kept, replayed from the event log files
+// still on disk. Events of one change were emitted together, so one actor's events within a moment are one change.
+function backfillJourneys(ctx) {
+  if (ctx.board.journeysBackfilled) return;
+  const files = fs.readdirSync(DATA).filter((f) => /^events(-\d+)?\.jsonl$/.test(f))
+    .sort((a, b) => (Number(a.slice(7, -6)) || Infinity) - (Number(b.slice(7, -6)) || Infinity)).map((f) => path.join(DATA, f));
+  const byItem = new Map();
+  for (const f of files) {
+    for (const l of fs.readFileSync(f, 'utf8').split('\n')) {
+      if (!l) continue;
+      let e; try { e = JSON.parse(l); } catch { continue; }
+      if (!e.itemId || (e.board && e.board !== ctx.id)) continue;
+      (byItem.get(e.itemId) || byItem.set(e.itemId, []).get(e.itemId)).push(e);
+    }
+  }
+  const cols = AUTONOMY.columnsOf(ctx.board);
+  const replay = (evs) => {
+    let j;
+    for (let i = 0; i < evs.length;) {
+      const first = evs[i];
+      const batch = [];
+      while (i < evs.length && evs[i].actor?.name === first.actor?.name && Math.abs(Date.parse(evs[i].ts) - Date.parse(first.ts)) < 1000) batch.push(evs[i++]);
+      j = AUTONOMY.stepJourney(j, batch, cols);
+    }
+    return j;
+  };
+  tx(ctx, () => {
+    for (const it of [...Object.values(ctx.board.items), ...Object.values(ctx.archive.items)]) {
+      if (it.journey || !byItem.has(it.id)) continue;
+      const j = replay(byItem.get(it.id));
+      if (j) it.journey = j;
+    }
+    ctx.board.journeysBackfilled = new Date().toISOString();
+  }, { archive: true });
+}
+
 function tx(ctx, fn, { archive = false } = {}) {
   const parts = boardParts(ctx.board);
   const before = parts.body;
@@ -648,6 +698,7 @@ function tx(ctx, fn, { archive = false } = {}) {
     if (archive) ctx.archive = JSON.parse(beforeArchive);
     throw e;
   } finally { ctx.afterCommit = outer; }
+  stepJourneys(ctx, events);
   const afterParts = boardParts(ctx.board);
   const after = afterParts.body;
   const from = ctx.hash;
@@ -4907,6 +4958,7 @@ for (const d of fs.readdirSync(BOARDS_DIR)) {
   try { loadBoard(d); } catch (e) { console.warn(`Skipping board "${d}": ${e.message}`); }
 }
 if (!boards.size) seed();
+for (const ctx of boards.values()) { try { backfillJourneys(ctx); } catch (e) { console.warn(`journeys (${ctx.id}): ${e.message}`); } }
 checkPresence();
 // A sandbox has no worktrees: its projectRoot is a real checkout, and landing there would put commits on
 // main that James never approved on the real board (INT-80).

@@ -942,6 +942,399 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Autonomy: from pickup to Done without the human (INT-393)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 67,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Autonomous (7 days)",
+      "description": "Share of tickets finished in the last 7 days with no human at all between pickup and Done: the agents did the work and a delegated agent approved it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 68,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(delta(intellagent_tickets_finished_by_autonomy{job=\"$job\",board=\"$board\",level=\"autonomous\"}[7d])) / clamp_min(sum(delta(intellagent_tickets_finished_by_autonomy{job=\"$job\",board=\"$board\"}[7d])), 1)",
+          "legendFormat": "Autonomous (7 days)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Self-sufficient (7 days)",
+      "description": "Share finished in the last 7 days where the human only approved (or not even that): nobody had to step in during the work.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 68,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum(delta(intellagent_tickets_finished_by_autonomy{job=\"$job\",board=\"$board\",level=\"autonomous\"}[7d])) + sum(delta(intellagent_tickets_finished_by_autonomy{job=\"$job\",board=\"$board\",level=\"approved\"}[7d]))) / clamp_min(sum(delta(intellagent_tickets_finished_by_autonomy{job=\"$job\",board=\"$board\"}[7d])), 1)",
+          "legendFormat": "Self-sufficient (7 days)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Rework per ticket (7 days)",
+      "description": "Backward column moves (Review back to In Progress…) per ticket finished in the last 7 days. Lower is better.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 68,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(delta(intellagent_ticket_moves{job=\"$job\",board=\"$board\",direction=\"back\"}[7d])) / clamp_min(sum(delta(intellagent_tickets_finished_by_autonomy{job=\"$job\",board=\"$board\"}[7d])), 1)",
+          "legendFormat": "Rework per ticket (7 days)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Stuck now",
+      "description": "Tickets picked up, not done, and quiet for 4 hours. Anything here is the board failing to move on its own; see the reasons on the right.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 68,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(intellagent_tickets_stuck{job=\"$job\",board=\"$board\"})",
+          "legendFormat": "Stuck now",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Finished per day, by autonomy",
+      "description": "Tickets reaching Done each day: autonomous (no human), approved (the human only approved), helped (the human stepped in during the work).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 73,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 70
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (level) (delta(intellagent_tickets_finished_by_autonomy{job=\"$job\",board=\"$board\"}[1d]))",
+          "legendFormat": "{{level}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Human interventions per day",
+      "description": "What the human had to do between pickup and Done in the tickets finished each day, by kind. Everything but decision is the board needing help.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 73,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 70
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (kind) (delta(intellagent_human_interventions{job=\"$job\",board=\"$board\"}[1d]))",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "In flight and stuck",
+      "description": "Tickets picked up and not done, and how many of them are stuck (quiet 4 h), by why: waiting on the human, held but quiet, idle.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 81,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(intellagent_tickets_in_flight{job=\"$job\",board=\"$board\"})",
+          "legendFormat": "in flight",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (reason) (intellagent_tickets_stuck{job=\"$job\",board=\"$board\"})",
+          "legendFormat": "stuck: {{reason}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Churn",
+      "description": "Column moves per finished ticket, and backward moves (rework), over the last day.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 81,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(delta(intellagent_ticket_moves{job=\"$job\",board=\"$board\",direction=\"all\"}[1d])) / clamp_min(sum(delta(intellagent_tickets_finished_by_autonomy{job=\"$job\",board=\"$board\"}[1d])), 1)",
+          "legendFormat": "moves per ticket",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(delta(intellagent_ticket_moves{job=\"$job\",board=\"$board\",direction=\"back\"}[1d])) / clamp_min(sum(delta(intellagent_tickets_finished_by_autonomy{job=\"$job\",board=\"$board\"}[1d])), 1)",
+          "legendFormat": "backward moves per ticket",
+          "refId": "B"
+        }
+      ]
     }
   ]
 }
