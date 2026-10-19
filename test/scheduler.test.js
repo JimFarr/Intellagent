@@ -40,6 +40,23 @@ describe('scheduler (fake clock)', () => {
   beforeEach(() => mock.timers.enable({ apis: ['setTimeout', 'Date'], now: T0 }));
   afterEach(() => mock.timers.reset());
 
+  it('a leftover process that never reports its exit holds the next run a minute at most, then is stopped (INT-379)', () => {
+    const { scheduler, core, agents, started } = rig({ def: { throttleMinutes: 0 } });
+    let left = 1;
+    let stopped = 0;
+    core.runner.lingering = () => left;
+    core.runner.endLingering = () => { stopped++; left = 0; return 1; };
+    scheduler.dispatch('bot');
+    assert.equal(started.length, 0);
+    assert.equal(agents.bot.status, 'waiting', 'it says it is waiting, not the status it had before');
+    assert.equal(agents.bot.waitingFor, 'its last run to end');
+    mock.timers.tick(30_000);
+    assert.equal(started.length, 0, 'still within the minute');
+    mock.timers.tick(31_000);
+    assert.equal(stopped, 1, 'the leftover is stopped');
+    assert.equal(started.length, 1, 'and the run starts');
+  });
+
   it('a quiet agent runs once the settle delay has passed, and not before', () => {
     const { scheduler, started } = rig();
     scheduler.enqueue('bot', [{ seq: 2, type: 'comment.added' }]);
