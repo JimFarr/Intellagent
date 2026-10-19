@@ -834,3 +834,22 @@ describe('a run that is catching up its worktree (fake clock)', () => {
     assert.equal(agents.bot.status, 'paused');
   });
 });
+
+describe('saving through a rename (Windows)', () => {
+  it('a rename that fails a few times with EPERM is tried again, not thrown', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const { renameRetry } = require('../lib/jsonfile');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-rename-'));
+    const tmp = path.join(dir, 'a.tmp');
+    const file = path.join(dir, 'a.json');
+    fs.writeFileSync(tmp, '{}');
+    const real = fs.renameSync;
+    let fails = 3;
+    fs.renameSync = (...a) => { if (fails-- > 0) throw Object.assign(new Error('busy'), { code: 'EPERM' }); return real(...a); };
+    try { renameRetry(tmp, file); } finally { fs.renameSync = real; }
+    assert.equal(fs.readFileSync(file, 'utf8'), '{}');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
