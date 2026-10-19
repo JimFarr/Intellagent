@@ -228,3 +228,18 @@ describe('asks (INT-391): obligations between agents as data', () => {
   });
 });
 
+
+describe('a long work list (INT-397): what a summary cannot carry comes in the next one', () => {
+  let sim = null;
+  afterEach(() => { sim?.close(); sim = null; });
+  it('a coordinator with 30 tickets to triage is offered every one of them, each once', () => {
+    // it leaves everything alone: the point is what it is offered, not what it does with it
+    sim = createSim({ team: { gamora: { role: 'coordinator' } } });
+    const ids = [];
+    for (let i = 0; i < 30; i++) ids.push(sim.human.create({ title: `job ${i}`, column: 'Ready' }));
+    sim.tick('2h');
+    const offered = sim.runs.flatMap((r) => r.work).filter((w) => w.startsWith('triage:')).map((w) => w.slice(7));
+    assert.deepEqual([...new Set(offered)].sort(), [...ids].sort(), 'every ticket offered');
+    assert.equal(offered.length, ids.length, 'each once');
+  });
+});
