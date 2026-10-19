@@ -80,7 +80,7 @@ describe('liveness: nothing gets stuck with nobody told', () => {
 });
 
 describe('quiet: nobody is woken for nothing', () => {
-  it('an approval wakes nobody, its landing included', { todo: 'INT-386: item.landed / item.land_failed are addressed to the author, so every approval costs it a run' }, () => {
+  it('an approval wakes nobody, its landing included (INT-386)', () => {
     sim = createSim({ team: { groot: { role: 'builder' } } });
     const t = sim.human.create({ title: 'x', column: 'Ready' });
     sim.as('groot').start(t);
