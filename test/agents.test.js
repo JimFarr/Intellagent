@@ -1805,7 +1805,20 @@ describe('agent reviewers', () => {
       assert.equal(v.reviewers[0].verdict, 'concerns');
       assert.match(v.comments.at(-1).body, /⚠ \*\*Concerns\*\*[\s\S]*@maker/);
       assert.equal(v.column, 'Review', 'a reviewer never moves the ticket');
-      assert.equal((await s.api('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'approve' }, ag('critic'))).body.code, 'HUMAN_ONLY');
+      // INT-377: a reviewer who calls the decide route is pointed at the verdict route, with the exact call
+      const verdictCall = (v) => `POST /api/boards/main/items/${it.id}/reviewers/critic/verdict { "verdict": "${v}", "comment": "…" }`;
+      const asDecider = (await s.api('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'approve' }, ag('critic'))).body;
+      assert.equal(asDecider.code, 'HUMAN_ONLY');
+      assert.equal(asDecider.call, verdictCall('ok'), 'an assigned reviewer is told how to record a verdict');
+      assert.match(asDecider.hint, /Record your verdict/);
+      const sentOk = (await s.api('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'concerns' }, ag('critic'))).body;
+      assert.equal(sentOk.call, verdictCall('concerns'), 'the verdict it sent is carried into the call');
+      const stranger = (await s.api('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'ok' }, ag('plain'))).body;
+      assert.equal(stranger.code, 'HUMAN_ONLY');
+      assert.match(stranger.call, /reviewers\/plain\/verdict/, 'an ok sent by an agent not on the ticket is recognised as a reviewer\'s verdict too');
+      const plainRefusal = (await s.api('POST', `${B}/items/${it.id}/review/decision`, { verdict: 'approve' }, ag('plain'))).body;
+      assert.equal(plainRefusal.call, undefined, 'anyone else gets the usual refusal');
+      assert.match(plainRefusal.hint, /grants/);
       // asking for review again resets the tick and wakes the reviewer
       await s.ok('POST', `${B}/items/${it.id}/start`, {}, ag('maker'));
       const again = await s.ok('POST', `${B}/items/${it.id}/review`, { summary: 'added the test' }, ag('maker'));
@@ -1848,6 +1861,9 @@ describe('agent reviewers', () => {
       assert.equal(refused.body.code, 'GATE_UNMET');
       assert.equal(refused.body.gates[0].label, '1 reviewer ok');
       assert.equal((await s.api('POST', `${B}/items/${a}/review/decision`, { verdict: 'approve' }, ag('boss'))).body.code, 'NO_REVIEWER', 'a grant never skips a gate: with nobody to review it, NO_REVIEWER stops it before the gate is looked at');
+      const okSent = await s.api('POST', `${B}/items/${a}/review/decision`, { verdict: 'ok' }, ag('boss'));
+      assert.equal(okSent.status, 400, 'a decider who sends a reviewer\'s verdict is told the decide values (INT-377)');
+      assert.match(okSent.body.error, /"ok" is a reviewer's verdict: deciding a review takes "approve" or "changes"/);
       const still = await s.ok('GET', `${B}/items/${a}`);
       assert.equal(still.column, 'Review');
       assert.ok(still.questions.some((q) => q.kind === 'review'), 'the review is still open');
