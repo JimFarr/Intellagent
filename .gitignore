@@ -3,6 +3,7 @@ node_modules/
 cursors/
 .worktrees/
 local.json
+.claude/skills/
 
 # This board's own team setup: private, never published (James, 2026-10-17)
 agents.json

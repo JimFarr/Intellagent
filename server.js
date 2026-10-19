@@ -4711,7 +4711,7 @@ route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=2
    agent. What it may change is a fixed list; the run command, grants, enabled, env and cwd stay with the
    human's file. Models come from an allowlist, and tool perms and board permissions only ever narrow. */
 const MANAGER_MODELS = Array.isArray(M.managerModels) && M.managerModels.length ? M.managerModels.map(String) : ['haiku', 'sonnet', 'opus'];
-const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context', 'contextItems', 'personality', 'reviewer'];
+const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context', 'contextItems', 'skills', 'personality', 'reviewer'];
 // Wake settings (INT-370): each one makes an agent run more often, at the human's cost, so the human sets them on
 // POST and PATCH alike and an agent manager never does (403 HUMAN_ONLY, not among MANAGE_KEYS).
 const WAKE_KEYS = ['supervise', 'idleAlarm', 'listen', 'pickup', 'throttleMinutes'];
@@ -4855,6 +4855,12 @@ function manageAgent(target, d, actor) {
   if ('concerns' in d) cfg.concerns = strList(d.concerns, 'concerns');
   if ('reviewer' in d) cfg.reviewer = d.reviewer ? true : null;
   if ('personality' in d) cfg.personality = cleanPersonality(d.personality);
+  if ('skills' in d) {
+    // A skill is read into the agent's worktree and prompt on every run, like a context file: the human's to attach
+    if (agent) fail(403, 'Skills are the human\'s: a skill is instructions copied into the agent\'s worktree before every run', { code: 'HUMAN_ONLY', hint: 'Ask the human to attach it on the Agents page, or with PATCH /api/agents/<name> { skills }' });
+    cfg.skills = standing.cleanSkills(d.skills) || [];
+    if (!cfg.skills.length) cfg.skills = null;
+  }
   if ('context' in d && 'contextItems' in d) fail(400, 'Send either context (the one "Context" note) or contextItems, not both', { code: 'BAD_REQUEST', hint: 'contextItems is the whole list; context only sets its "Context" note' });
   if ('context' in d || 'contextItems' in d) {
     // The whole list goes through manage, so the history holds it in full and Revert puts the old list back.
@@ -4912,6 +4918,11 @@ route('GET', '/api/agents/:name/context', "An agent's context as the text its pr
   managerOf(actor, a.name, { self: true });
   return { agent: a.name, file: a.contextFile, items: a.contextItems, text: standing.contextOf(a.name) };
 });
+route('GET', '/api/agents/:name/skills', "An agent's skills (SKILL.md files the human attached): each { id, path, on, name, description } read from the file now, or an error when it can't be read. Human, the agent itself, or agents.manage over it", ({ p, actor }) => {
+  const a = standing.get(p.name);
+  managerOf(actor, a.name, { self: true });
+  return { agent: a.name, skills: a.skills || [] };
+});
 route('GET', '/api/agents/:name/preview', "Human or agents.manage: the first-turn prompt the board would send this agent now (role brief, speciality, personality, context items, rules), built by the code a real run uses → { agent, prompt, layers }", ({ p, actor }) => {
   const a = standing.get(p.name); // 404 if unknown
   managerOf(actor, a.name, { self: true });
@@ -4928,7 +4939,7 @@ route('POST', '/api/agents/:name/commands/check', 'Human or agents.manage: what 
   if (typeof body?.command !== 'string' || !body.command.trim()) fail(400, 'command is required', { code: 'BAD_REQUEST', hint: 'POST { "command": "npm run measure:board" }' });
   return standing.checkCommand(p.name, body.command);
 });
-route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), context? (sets the "Context" note), supervise?, idleAlarm? (the human only: true|false|null|{ minutes }), listen? (the human only: addressed|inbox|human|new-tickets, a filter object or a list), pickup? (the human only: false|ready|all), throttleMinutes? (the human only: 0-1440) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));
+route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), skills?: [{ path of a SKILL.md or its folder, id?, on? }] (the whole list; the human\'s only: copied into the agent\'s worktree before each run), context? (sets the "Context" note), supervise?, idleAlarm? (the human only: true|false|null|{ minutes }), listen? (the human only: addressed|inbox|human|new-tickets, a filter object or a list), pickup? (the human only: false|ready|all), throttleMinutes? (the human only: 0-1440) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));
 route('POST', '/api/agents/stop-all', 'Human (or the agents.control grant): stop every agent now — kill runs, pause standing agents, release agent leases and the master lease, send their In Progress tickets back to Ready with a comment', ({ actor }) => {
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
   return stopAllAgents(actor);
