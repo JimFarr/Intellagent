@@ -267,3 +267,17 @@ test('the program over HTTP: ask, refuse, done, ceiling, and state kept across a
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('names the processes an agent started, so a stray test run is easy to find', () => {
+  const { isAgentProcess, parseWindowsProcesses } = require('../lib/machine');
+  assert.equal(isAgentProcess(String.raw`node C:\Lenza\.intellagent\worktrees\banner\node_modules\vitest\vitest.mjs run`), true);
+  assert.equal(isAgentProcess(String.raw`node C:\Lenza\.intellagent\review\natasha\node_modules\vite\bin\vite.js build`), true);
+  assert.equal(isAgentProcess(String.raw`node C:\Lenza\node_modules\vite\bin\vite.js preview --outDir C:\Lenza\.intellagent\builds\natasha`), false, 'an agent build\'s server is meant to stay up');
+  assert.equal(isAgentProcess('C:\Program Files\Google\Chrome\chrome.exe'), false);
+  const list = parseWindowsProcesses(
+    [{ IDProcess: 0, Name: 'Idle', PercentProcessorTime: 900 }, { IDProcess: 42, Name: 'node#2', PercentProcessorTime: 1200 }],
+    [{ ProcessId: 42, CommandLine: 'node vitest.mjs run', CreationDate: '/Date(1760889060000)/' }],
+    12,
+  );
+  assert.deepEqual(list, [{ pid: 42, name: 'node', cpuPercent: 100, startedAt: '2025-10-19T15:51:00.000Z', command: 'node vitest.mjs run' }]);
+});
