@@ -1687,6 +1687,9 @@
       let c = colEls.get(col.id);
       if (!c) { c = buildColumn(col.id); colEls.set(col.id, c); }
       updateColumn(c, col);
+      const hint = i === 0 && col.flags.allowCreate && !b.columns.some((x) => x.itemIds.length);
+      $('.col-hint', c).hidden = !hint;
+      c.classList.toggle('hinted', hint);
       if (boardEl.children[i] !== c) boardEl.insertBefore(c, boardEl.children[i] || null);
     });
     for (const [id, c] of colEls) if (!b.columns.some((x) => x.id === id)) { c.remove(); colEls.delete(id); }
@@ -1848,7 +1851,8 @@
         <button class="col-add" title="New ticket|Opens a full ticket to write · Shift+click for the quick one-line box (Fix login #auth !high /issue)">${icon('plus')}</button></header>
       <div class="col-wip" hidden><i></i></div>
       <div class="composer"><div class="tpl-row"></div>${tboxHTML({ ph: 'New ticket…', okIcon: 'plus', okTitle: 'Create', hint: 'Enter', rows: 2 })}</div>
-      <div class="list"></div></section>`);
+      <div class="list"></div>
+      <p class="col-hint" hidden>Shift+click <b>+</b> for the quick one-line box. Add <code>#parent</code>, <code>!high</code> or <code>/issue</code> to set it as you type.</p></section>`);
     $('.col-add', c).onclick = (e) => (e.shiftKey ? openComposer(id) : openCreate(id));
     $('.col-count', c).onclick = () => {
       if (!state.bulk) return;

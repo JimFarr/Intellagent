@@ -203,6 +203,11 @@ body.scrimmed .topbar, body.scrimmed .metrics, body.scrimmed .board, body.scrimm
 .col-wip.full i { background: var(--danger); }
 
 .list { flex: 1; min-height: 64px; overflow-y: auto; overflow-x: hidden; padding: 4px 12px 16px; display: flex; flex-direction: column; gap: var(--gap); scrollbar-gutter: stable; }
+.col-hint { margin: 0; padding: 0 16px 14px; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.col-hint[hidden] { display: none; }
+.column.hinted .list { flex: 0 0 auto; }
+.col-hint code { font-family: inherit; color: var(--text); background: color-mix(in oklab, var(--text) 8%, transparent); border-radius: 4px; padding: 0 4px; }
+.col-hint b { color: var(--text); }
 .list:empty::after { content: ''; display: block; flex: 0 0 76px; border-radius: var(--r-card); border: 1.5px dashed color-mix(in oklab, var(--text) 10%, transparent); }
 
 .dragging, .dragging * { cursor: grabbing !important; }
