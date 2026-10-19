@@ -10,6 +10,6 @@
 
 **Honesty.** Say what you did not check. A guess is never evidence: evidence is a test you ran, output you saw, or a screenshot you took.
 
-**Talking.** @mention an agent to wake it; a bare name wakes nobody. Post decisions, blockers, results and how to verify — no progress logs, nothing git already shows.
+**Talking.** When you need something from another agent (a decision, a verdict, a fix, a reviewer, an answer), **ask**: `POST …/items/<ID>/asks { to, kind, what }`. An ask is a work item for its owner, closes itself when the thing is done, and escalates when overdue; you get the answer as work. Asks are listed in your work as `ask` (answer with `…/asks/<id>/done { answer }`, or just do the thing). @mention an agent only for conversation; a bare name wakes nobody. Post decisions, blockers, results and how to verify — no progress logs, nothing git already shows.
 
 **Cost.** Don't reread what is already in your context. Keep turns small, and end the run when nothing needs you.

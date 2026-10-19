@@ -1737,6 +1737,98 @@ function askHuman(ctx, id, reason, actor, form = null) {
   return { item, questionId: q.id };
 }
 
+/* ───── asks (INT-391): what one agent needs from another, as data instead of an @mention ───── */
+
+const ASKS = require('./lib/alerts/asks');
+// The coordinator that takes an overdue ask: the board's, else a standing agent with the coordinator role
+const coordinatorOf = (ctx) => ctx.board.coordinator || standingAgents().find((a) => a.enabled && a.role === 'coordinator')?.name || null;
+function createAsk(ctx, id, d, actor) {
+  const to = str(d.to || '', 64).trim();
+  if (!to) fail(400, '"to" is required: the agent you need something from', { hint: 'To ask the human, use POST …/attention' });
+  if (to.toLowerCase() === actor.name.toLowerCase()) fail(400, "You can't ask yourself");
+  const known = standingAgents().some((a) => a.name.toLowerCase() === to.toLowerCase()) || to === coordinatorOf(ctx);
+  if (/^(human|user)$/i.test(to) || (actor.kind === 'agent' && !known)) fail(400, `"${to}" is not a standing agent`, { hint: 'Ask a standing agent; to ask the human, use POST …/attention' });
+  const kind = d.kind || 'answer';
+  if (!ASKS.KINDS.includes(kind)) fail(400, `"kind" must be one of ${ASKS.KINDS.join(', ')}`);
+  const what = str(d.what || '', 2000).trim();
+  if (!what) fail(400, '"what" is required: what you need, in a line');
+  const options = Array.isArray(d.options) ? d.options.map((o) => str(o, 200)).filter(Boolean).slice(0, 10) : null;
+  let ask;
+  const item = tx(ctx, (events) => {
+    const it = getItem(ctx, id);
+    ask = ASKS.newAsk({ id: rid('ask'), by: actor.name, to, kind, what, options, dueMinutes: d.dueMinutes, now: Date.now() });
+    (it.asks ||= []).push(ask);
+    if (it.asks.length > 50) it.asks.splice(0, it.asks.length - 50);
+    it.version++;
+    it.updatedAt = now();
+    events.push(itemEvent(ctx, 'ask.created', it, actor, { ask: { ...ask }, mentions: [to] }));
+    return it;
+  });
+  return { item, ask };
+}
+function getAsk(it, askId) {
+  const a = (it.asks || []).find((x) => x.id === askId);
+  if (!a) fail(404, `No ask "${askId}" on ${it.id}`);
+  return a;
+}
+// Answer an ask: its owner (or the asker, the coordinator or the human, to close it for them). The answer goes on
+// the card and to the asker.
+function answerAsk(ctx, id, askId, d, actor) {
+  return tx(ctx, (events) => {
+    const it = getItem(ctx, id);
+    const a = getAsk(it, askId);
+    if (a.state !== 'open') fail(409, `That ask is already ${a.state}`, { code: 'CONFLICT' });
+    if (actor.kind === 'agent' && ![a.to, a.by].includes(actor.name) && !isCoordinator(ctx, actor.name)) fail(403, `Only ${a.to} (asked), ${a.by} (asker), the coordinator or the human answer it`, { code: 'FORBIDDEN' });
+    const answer = str(d.answer || '', 4000).trim();
+    if (!answer) fail(400, '"answer" is required', { hint: 'Say what you decided or did, in a line' });
+    Object.assign(a, { state: 'done', answer, doneAt: now(), doneBy: actor.name });
+    it.comments.push({ id: rid('c'), author: actor, body: `↩ **${a.by}'s ask** (${a.kind}): ${a.what}\n\n${answer}`, createdAt: now() });
+    it.version++;
+    it.updatedAt = now();
+    events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...a }, mentions: [a.by].filter((n) => n !== actor.name) }));
+    for (const up of ASKS.closeEscalations(it, a, now())) events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...up } }));
+    return it;
+  });
+}
+function withdrawAsk(ctx, id, askId, d, actor) {
+  return tx(ctx, (events) => {
+    const it = getItem(ctx, id);
+    const a = getAsk(it, askId);
+    if (a.state !== 'open') fail(409, `That ask is already ${a.state}`, { code: 'CONFLICT' });
+    if (actor.kind === 'agent' && a.by !== actor.name && !isCoordinator(ctx, actor.name)) fail(403, `Only ${a.by} (asker), the coordinator or the human withdraw it`, { code: 'FORBIDDEN' });
+    Object.assign(a, { state: 'withdrawn', answer: str(d.reason || '', 1000) || null, doneAt: now(), doneBy: actor.name });
+    it.version++;
+    events.push(itemEvent(ctx, 'ask.withdrawn', it, actor, { ask: { ...a } }));
+    return it;
+  });
+}
+// Something happened on the ticket that does what an ask asked for: close those asks, each telling its asker.
+function closeAsks(ctx, it, events, trigger, actor) {
+  for (const a of ASKS.closeBy(it, trigger, now())) {
+    events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...a }, mentions: [a.by].filter((n) => n !== actor.name) }));
+    for (const up of ASKS.closeEscalations(it, a, now())) events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...up } }));
+  }
+}
+// Overdue asks escalate once: to the coordinator, or to the human when there is none (or the ask was the coordinator's).
+function sweepAsks(ctx) {
+  if (!Object.values(ctx.board.items).some((it) => ASKS.overdueAsks(it, Date.now()).length)) return;
+  tx(ctx, (events) => {
+    for (const it of Object.values(ctx.board.items)) for (const a of ASKS.overdueAsks(it, Date.now())) {
+      a.escalated = now();
+      events.push(itemEvent(ctx, 'ask.overdue', it, SYSTEM, { ask: { ...a }, mentions: [a.by] }));
+      const coord = coordinatorOf(ctx);
+      if (coord && coord !== a.to && coord !== a.by) {
+        const up = ASKS.newAsk({ id: rid('ask'), by: 'intellagent', to: coord, kind: 'unblock', escalates: a.id, what: `${a.by} asked ${a.to} (${a.kind}): ${a.what}. Overdue since ${a.dueAt.slice(11, 16)}: get it done, or answer it for them`, dueMinutes: ASKS.DUE_MINUTES, now: Date.now() });
+        it.asks.push(up);
+        events.push(itemEvent(ctx, 'ask.created', it, SYSTEM, { ask: { ...up }, escalates: a.id, mentions: [coord] }));
+      } else {
+        openQuestion(ctx, it, parseNeedsHuman({ reason: `${a.by} asked ${a.to} and it is overdue (${a.kind}): ${a.what}` }, { kind: 'system', name: a.by }), SYSTEM, events);
+      }
+      it.version++;
+    }
+  });
+}
+
 /* ───── structured agent flows: pickup/working columns, transitions, start, decide, finish, work ───── */
 
 function workingColumn(ctx) {
@@ -2295,7 +2387,7 @@ const { reviewColumn, REVIEW_PARTS, reviewerPool, authorsOf, addReviewer, remove
   fail, str, rid, now, tx, getItem, itemEvent, trimChange, mentionsIn, M, SYSTEM, boards,
   findColumn, doneColumnId, workingColumn, moveInto, guardWrite, helperOwns, parseNeedsHuman, syncNeeds, openQuestion,
   closeQuestions, afterCommit, isCoordinator, ticketCommits, agentBranch, grantsOf, grantFor, reviewerRule, assignedOks,
-  openBlockersOf, reviewWithdrawnUndecided, landers, getStanding: () => standing, getWorktrees: () => worktrees });
+  openBlockersOf, reviewWithdrawnUndecided, landers, closeAsks: (...a) => closeAsks(...a), getStanding: () => standing, getWorktrees: () => worktrees });
 // Whose memory a route means: "me" is the calling agent; any other name must be an agent the board knows (a
 // standing agent, one that has called the board, or one with a profile or a memory), matched without regard to
 // capitals so "Rocket" is rocket's memory.
@@ -2486,6 +2578,7 @@ setInterval(() => {
     if ((ms?.expiresAt && Date.parse(ms.expiresAt) <= Date.now()) || idle) {
       tx(ctx, (events) => { ctx.board.master = null; events.push({ board: ctx.id, type: 'master.expired', actor: SYSTEM, holder: ms.holder, recipients: [ms.holder], ...(idle ? { reason: `idle for ${idleMin} minutes` } : {}) }); });
     }
+    try { sweepAsks(ctx); } catch (e) { console.warn(`ask sweep: ${e.message}`); }
     const expired = [];
     for (const item of Object.values(ctx.board.items)) {
       if (!item.lease) continue;
@@ -2814,6 +2907,9 @@ const POLICY = {
   [`POST ${B_}/items/:id/lease/handover`]: { who: 'self' },
   [`POST ${B_}/items/:id/lease/decline`]: { who: 'self', held: true },
   [`POST ${B_}/items/:id/attention`]: { who: 'any', readOnly: true, held: true },
+  [`POST ${B_}/items/:id/asks`]: { who: 'any', readOnly: true, held: true },
+  [`POST ${B_}/items/:id/asks/:askId/done`]: { who: ['self', 'coordinator'], readOnly: true, held: true },
+  [`POST ${B_}/items/:id/asks/:askId/withdraw`]: { who: ['self', 'coordinator'], readOnly: true, held: true },
   [`DELETE ${B_}/items/:id/attention`]: { who: ['self', 'coordinator'], readOnly: true, held: true },
   [`DELETE ${B_}/items/:id`]: { who: 'any' },
   [`DELETE ${B_}/test-items`]: { who: 'human', why: 'Only a human can delete all test tickets at once — delete them one by one' },
@@ -3801,6 +3897,19 @@ route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason
   const ctx = getCtx(p.board);
   const { item, questionId } = askHuman(ctx, p.id, body.reason, actor, body.form ?? null);
   return { ...itemView(ctx, item), questionId };
+});
+route('POST', '/api/boards/:board/items/:id/asks', 'Ask another agent for something, as an obligation instead of an @mention (INT-391): { to, kind: answer|decide|review|fix|assign_reviewer|unblock|other, what, options?, dueMinutes? (default 60) } → { ask }. A work item for its owner; closes itself when done (review: its verdict; fix: its next review request; assign_reviewer: a reviewer assigned) or with …/asks/<askId>/done; escalates once when overdue', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  const { item, ask } = createAsk(ctx, p.id, body, actor);
+  return { ...itemView(ctx, item), ask };
+});
+route('POST', '/api/boards/:board/items/:id/asks/:askId/done', 'Answer an ask: { answer } — its owner, the asker, the coordinator or the human', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  return itemView(ctx, answerAsk(ctx, p.id, p.askId, body, actor));
+});
+route('POST', '/api/boards/:board/items/:id/asks/:askId/withdraw', 'Take back an ask you made: { reason } — the asker, the coordinator or the human', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  return itemView(ctx, withdrawAsk(ctx, p.id, p.askId, body, actor));
 });
 route('DELETE', '/api/boards/:board/items/:id/attention', 'Answer: { reply?, questionId?, answers? } — one question, or all open ones without questionId (reply becomes a comment); answers: { key: value } for a question with a form', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);

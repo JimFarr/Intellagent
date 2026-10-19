@@ -188,3 +188,43 @@ describe('wake from work (INT-390): a wake always carries work; news alone is co
   });
 });
 
+describe('asks (INT-391): obligations between agents as data', () => {
+  const WORK = { wakeFrom: 'work' };
+
+  it('an ask wakes its owner once; the answer wakes the asker once; nobody else is told', () => {
+    sim = createSim({ defaults: WORK, team: { groot: { role: 'builder' }, stakar: { role: 'builder', behave: agentLike({ does: ['ask'] }) }, rocket: { role: 'builder' } } });
+    const t = sim.human.create({ title: 'x', column: 'Ready' });
+    sim.tick('10m');
+    sim.as('groot').askAgent(t, { to: 'stakar', kind: 'decide', what: 'CSV or JSON?' });
+    sim.tick('30m');
+    assert.deepEqual(sim.wakes().map((w) => w.split(' ')[0]), ['stakar', 'groot']);
+    assert.equal(sim.item(t).asks[0].state, 'done');
+    assert.deepEqual(sim.runs.at(-1).work, [`ask_answered:${t}`]);
+  });
+
+  it('an ask nobody answers escalates once to the coordinator, and closes with the original when it is answered', () => {
+    sim = createSim({ defaults: WORK, team: { gamora: { role: 'coordinator' }, groot: { role: 'builder' }, stakar: { role: 'builder' } } });
+    const t = sim.human.create({ title: 'x', column: 'Ready', assignee: 'groot' });
+    const askId = sim.as('groot').askAgent(t, { to: 'stakar', kind: 'decide', what: 'CSV or JSON?', dueMinutes: 30 });
+    sim.tick('3h');
+    const asks = sim.item(t).asks;
+    assert.equal(asks.length, 2, 'one escalation, not one per sweep');
+    assert.equal(asks[1].to, 'gamora');
+    assert.equal(asks[1].escalates, askId);
+    assert.ok(sim.runs.some((r) => r.agent === 'gamora' && r.work.includes(`ask:${t}`)), 'the coordinator is woken for it');
+    sim.as('stakar').answerAsk(t, askId, 'CSV');
+    assert.deepEqual(sim.item(t).asks.map((a) => a.state), ['done', 'done'], 'the escalation closes with it');
+  });
+
+  it('an ask for a reviewer closes itself when the coordinator assigns one, with no answer to write', () => {
+    sim = createSim({ defaults: WORK, team: { gamora: { role: 'coordinator', behave: agentLike({ reviewers: ['nebula'] }) }, groot: { role: 'builder' }, nebula: { role: 'reviewer' }, stakar: { role: 'builder' } } });
+    const t = sim.human.create({ title: 'x', column: 'Ready', assignee: 'groot' });
+    sim.as('groot').start(t);
+    sim.as('groot').review(t);
+    sim.as('stakar').askAgent(t, { to: 'gamora', kind: 'assign_reviewer', what: 'needs a reviewer' });
+    sim.tick('30m');
+    assert.equal(sim.item(t).asks[0].state, 'done');
+    assert.deepEqual(sim.item(t).reviewers.map((r) => r.name), ['nebula']);
+  });
+});
+
