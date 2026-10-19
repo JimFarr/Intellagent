@@ -396,6 +396,7 @@ intellagent leases ceiling --cpu 8 --gpu 5000 # the most that may be leased at o
 - A no is not an error: it says why and, where waiting helps, `freesAt`. A request bigger than the ceiling gets `freesAt: null`.
 - Every lease **ends by itself** when its time is up (at most 120 minutes; renew to keep it), so a crashed agent never strands the machine. Declare `done` as soon as you are.
 - The human's own work never asks: the Guard watches `leases machine` and lowers the ceiling to leave them room.
+- `leases machine` also lists the busiest processes with their command lines; `agent: true` marks one started from the board's own folders (a worktree, a review checkout, an agent's build). A test still running after its run ended shows here, holding threads no lease accounts for. `intellagent leases reap <pid>` stops it and its children; it refuses any process not marked `agent` (`403 NOT_AGENTS`), so the person's programs are out of reach.
 - HTTP for other tools: `GET /status`, `GET /machine`, `POST /ask`, `POST /leases/<id>/renew|done`, `PUT /ceiling`. Only programs on this PC: the Host must be `127.0.0.1:7499` or `localhost:7499`, a request with an `Origin` header (a web page) is refused, and writes need `content-type: application/json`. Errors are `{ error, code, hint }`. The CLI starts the program when it is not running; `intellagent leases start|stop` by hand.
 
 ## 5. Events — know when things change

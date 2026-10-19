@@ -9,6 +9,7 @@
 //   POST /leases/<id>/renew { minutes }
 //   POST /leases/<id>/done
 //   PUT  /ceiling  { cpu, gpuMB }
+//   POST /reap     { pid }            stops a process an agent left running (and its children); nothing else
 //   POST /shutdown
 // Only programs on this PC may drive it, never a web page: the Host must be this address (no DNS rebinding),
 // a request carrying an Origin (every browser sends one on a POST) is refused, and writes must say they are JSON
@@ -72,6 +73,7 @@ async function main() {
       const p = url.pathname.replace(/\/+$/, '') || '/';
       const m = p.match(/^\/leases\/([^/]+)\/(renew|done)$/);
       if (req.method === 'GET' && (p === '/' || p === '/status')) return send(res, 200, ledger.status());
+      if (req.method === 'POST' && p === '/reap') return send(res, 200, await machine.reap((await body(req)).pid));
       if (req.method === 'GET' && p === '/machine') return send(res, 200, { ...(await machine.reading()), ledger: ledger.status() });
       if (req.method === 'POST' && p === '/ask') {
         const out = ledger.ask(await body(req));
@@ -93,7 +95,7 @@ async function main() {
         send(res, 200, { stopping: true });
         return setImmediate(() => process.exit(0));
       }
-      send(res, 404, { error: `No route for ${req.method} ${p}`, code: 'NOT_FOUND', hint: 'See routes', routes: ['GET /status', 'GET /machine', 'POST /ask', 'POST /leases/<id>/renew', 'POST /leases/<id>/done', 'PUT /ceiling', 'POST /shutdown'] });
+      send(res, 404, { error: `No route for ${req.method} ${p}`, code: 'NOT_FOUND', hint: 'See routes', routes: ['GET /status', 'GET /machine', 'POST /ask', 'POST /leases/<id>/renew', 'POST /leases/<id>/done', 'PUT /ceiling', 'POST /reap', 'POST /shutdown'] });
     } catch (e) {
       send(res, e.status || 500, { error: e.message, code: e.code || CODES[e.status] || 'ERROR', ...(e.hint || HINTS[e.status] ? { hint: e.hint || HINTS[e.status] } : {}) });
     }
