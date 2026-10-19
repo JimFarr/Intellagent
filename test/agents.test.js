@@ -446,6 +446,33 @@ describe('standing agents pick up work already on the board', () => {
     } finally { await s.stop(); }
   });
 
+  it('work that appears while a run for something else is waiting is still offered after that run (INT-378)', async () => {
+    // Lenza, 2026-10-19: a ticket became decidable while the supervisor waited out his hourly cap. The run that
+    // followed (for other events) counted his whole brief as seen; he left the ticket alone, since it wasn't in
+    // his events, and no sweep offered it again.
+    const s = await startServer({ agents: { defaults: fast, agents: {
+      maker: { role: 'builder', enabled: false },
+      boss: { run: run('ok'), grants: ['review.decide'] },
+    } } });
+    try {
+      const runs = async () => (await s.ok('GET', '/api/events?types=agent.run.started')).events.filter((e) => e.agent === 'boss');
+      await new Promise((r) => setTimeout(r, 2000)); // past the board's first sweep: from here only a run's end checks again
+      const waiting = await s.ok('POST', `${B}/items`, { title: 'waits for a decision', column: 'Ready', assignee: 'maker' }, USER);
+      await s.ok('POST', `${B}/items/${waiting.id}/start`, {}, { agent: 'maker' });
+      await s.ok('POST', `${B}/items/${waiting.id}/review`, { changed: 'x', why: 'y', verify: 'z', evidence: 'npm test: 1 pass' }, { agent: 'maker' });
+      assert.equal((await s.ok('GET', `${B}/work?agent=boss`)).next.find((n) => n.id === waiting.id)?.action, 'chase', 'boss has work on it, with no event telling him');
+      const other = await s.ok('POST', `${B}/items`, { title: 'something else', column: 'Backlog' }, USER);
+      await s.ok('POST', `${B}/items/${other.id}/comments`, { body: '@boss a question about this one' }, USER);
+      await until(async () => (await runs()).length === 2 && (await agentState(s, 'boss')).status === 'idle', 8000, 'the comment run, then the offer');
+      const [first, offer] = await runs();
+      assert.deepEqual(first.items, [other.id], 'woken for the comment only');
+      assert.equal(offer.why, 'work.pending');
+      assert.deepEqual(offer.items, [waiting.id], 'the work it was never told about is offered after that run');
+      await new Promise((r) => setTimeout(r, 1200));
+      assert.equal((await runs()).length, 2, 'offered once: nothing loops');
+    } finally { await s.stop(); }
+  });
+
   it('the idle-board alarm reaches its agent through a real board: what waits, from the pickup columns, and how the builders stand', async () => {
     // idleAlarmMinutes 0.03: due ~1.8 s after the board starts. The timing rules are in scheduler.test.js.
     const s = await startServer({ agents: { defaults: fast, agents: {
