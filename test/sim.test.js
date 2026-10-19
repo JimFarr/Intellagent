@@ -32,7 +32,8 @@ describe('alerting simulator', () => {
     assert.equal(sim.item(t).columnId, 'done', `it got done: ${sim.wakes().join(' | ')}`);
     // triage, build, then (as of INT-383) stakar is woken to chase "a reviewer: the coordinator assigns one" at the
     // moment the coordinator is woken to assign it: a run spent on work already in hand (INT-385 looks at this).
-    assert.deepEqual(sim.wakes().map((w) => w.split(' ')[0]), ['gamora', 'groot', 'stakar', 'gamora', 'nebula', 'stakar'], 'triage, build, (chase), assign a reviewer, review, decide');
+    // ...and groot is woken once more when his commits land (item.landed is addressed to the author): INT-385 too.
+    assert.deepEqual(sim.wakes().map((w) => w.split(' ')[0]), ['gamora', 'groot', 'stakar', 'gamora', 'nebula', 'stakar', 'groot'], 'triage, build, (chase), assign a reviewer, review, decide, (landed)');
   });
 
   it('a name without @, or an @ inside code or a quote, wakes nobody', () => {
@@ -57,8 +58,9 @@ describe('alerting simulator', () => {
     assert.deepEqual(sim.wakes('groot'), ['groot item.moved T-1']);
   });
 
-  it('an approval is news, not a task: the author is not woken for it', () => {
-    sim = createSim({ team: { groot: { role: 'builder' } } });
+  it('an approval is news, not a task: the author is not woken for it (landing aside)', () => {
+    // landing off: the approval alone. With landing on, item.landed wakes the author after every approval (INT-385).
+    sim = createSim({ landing: 'off', team: { groot: { role: 'builder' } } });
     const t = sim.human.create({ title: 'x', column: 'Ready' });
     sim.as('groot').start(t);
     sim.as('groot').review(t);
