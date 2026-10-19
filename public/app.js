@@ -1028,8 +1028,23 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const maxStay = Math.max(1, ...m.columns.map((c) => c.medianStayHours || 0));
     const agents = Object.entries(m.byAgent).sort((a, b) => b[1] - a[1]);
     body.innerHTML = `<div class="section"><div class="section-head">${icon('layers', 'sm')}<span>Time in each column (median)</span><span class="rule"></span></div>
+        <p class="mcap">Median time a ticket stays in each column, with how many are there now and the oldest. Bars are scaled to the longest column.</p>
         ${m.columns.map((c) => `<div class="mbar"><span class="mb-name"><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span class="mb-track"><b style="width:${((c.medianStayHours || 0) / maxStay) * 100}%;background:${esc(c.color)}"></b></span><span class="mb-val">${dur(c.medianStayHours)}</span><span class="mb-sub">${c.count} now${c.oldestHours != null ? ` · oldest ${dur(c.oldestHours)}` : ''}</span></div>`).join('')}</div>
-      <div class="section"><div class="section-head">${icon('check', 'sm')}<span>Done per day</span><span class="rule"></span></div><div class="mdays">${m.perDay.map((v) => `<i style="height:${(v / Math.max(1, ...m.perDay)) * 100}%" title="${v}"></i>`).join('')}</div></div>
+      <div class="section"><div class="section-head">${icon('check', 'sm')}<span>Done per day</span><span class="rule"></span></div>
+        <p class="mcap">Tickets that reached ${esc(state.board.columns.at(-1)?.name || 'the last column')}, one bar per day, last ${m.days} days. Today is the bar on the right.</p>
+        ${(() => {
+          const n = m.perDay.length;
+          const top = Math.max(1, ...m.perDay);
+          const dayOf = (i) => new Date(Date.now() - (n - 1 - i) * 86_400_000);
+          const long = (d) => d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
+          const short = (d) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+          const every = n > 10 ? 7 : 1;
+          return `<div class="mchart" role="img" aria-label="Tickets done per day, last ${m.days} days: ${m.perDay.reduce((a, b) => a + b, 0)} in total, at most ${top} in one day">
+            <span class="my-axis"><b>${top}</b><b>0</b></span>
+            <div class="mdays">${m.perDay.map((v, i) => `<span class="mday" title="${esc(long(dayOf(i)))}: ${v} done"><i style="height:${(v / top) * 100}%"></i><b class="mv">${v || ''}</b></span>`).join('')}</div>
+            <div class="mx">${m.perDay.map((_, i) => `<span>${(n - 1 - i) % every === 0 ? esc(i === n - 1 ? 'today' : short(dayOf(i))) : ''}</span>`).join('')}</div>
+          </div>`;
+        })()}</div>
       ${agents.length ? `<div class="section"><div class="section-head">${icon('bot', 'sm')}<span>Finished, by who worked on it</span><span class="rule"></span></div>${agents.map(([n, v]) => `<div class="magent">${avatar({ kind: 'agent', name: n })}<span>${esc(n)}</span><b>${v}</b></div>`).join('')}</div>` : ''}
       <div class="section costly"></div>
       ${m.idle ? `<div class="section"><div class="section-head">${icon('pause', 'sm')}<span>Idle board</span><span class="rule"></span></div>
