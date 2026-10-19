@@ -281,3 +281,13 @@ test('names the processes an agent started, so a stray test run is easy to find'
   );
   assert.deepEqual(list, [{ pid: 42, name: 'node', cpuPercent: 100, startedAt: '2025-10-19T15:51:00.000Z', command: 'node vitest.mjs run' }]);
 });
+
+test('reap stops only a process marked agent, and every refusal has a code and a hint (INT-395)', () => {
+  const { reapable } = require('../lib/machine');
+  const list = [{ pid: 42, name: 'node', agent: true }, { pid: 7, name: 'chrome', agent: false }];
+  assert.equal(reapable(list, 42).pid, 42);
+  assert.equal(reapable(list, '42').pid, 42, 'the CLI sends a number, a raw body may send a string');
+  for (const [pid, status, code] of [[7, 403, 'NOT_AGENTS'], [99, 404, 'NOT_FOUND'], [undefined, 400, 'BAD_REQUEST'], ['x', 400, 'BAD_REQUEST'], [-1, 400, 'BAD_REQUEST']]) {
+    assert.throws(() => reapable(list, pid), (e) => e.status === status && e.code === code && typeof e.hint === 'string' && e.hint.length > 0, `pid ${pid}`);
+  }
+});
