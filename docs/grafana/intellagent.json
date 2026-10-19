@@ -45,17 +45,35 @@
     "list": [
       {
         "type": "query",
-        "name": "board",
+        "name": "job",
         "label": "Board",
         "datasource": {
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
         "query": {
-          "query": "label_values(intellagent_tickets, board)",
+          "query": "label_values(intellagent_up, job)",
+          "refId": "job"
+        },
+        "definition": "label_values(intellagent_up, job)",
+        "refresh": 2,
+        "sort": 1,
+        "current": {},
+        "options": []
+      },
+      {
+        "type": "query",
+        "name": "board",
+        "label": "Board id",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "query": {
+          "query": "label_values(intellagent_tickets{job=\"$job\"}, board)",
           "refId": "board"
         },
-        "definition": "label_values(intellagent_tickets, board)",
+        "definition": "label_values(intellagent_tickets{job=\"$job\"}, board)",
         "refresh": 2,
         "sort": 1,
         "current": {},
@@ -179,7 +197,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (column) (intellagent_tickets{board=\"$board\"})",
+          "expr": "sum by (column) (intellagent_tickets{job=\"$job\",board=\"$board\"})",
           "legendFormat": "{{column}}",
           "refId": "A"
         }
@@ -217,7 +235,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(increase(intellagent_tickets_done_total{board=\"$board\"}[1d]))",
+          "expr": "sum(increase(intellagent_tickets_done_total{job=\"$job\",board=\"$board\"}[1d]))",
           "legendFormat": "done",
           "refId": "A"
         }
@@ -253,7 +271,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.5, sum by (le) (increase(intellagent_cycle_seconds_bucket{board=\"$board\"}[7d])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (increase(intellagent_cycle_seconds_bucket{job=\"$job\",board=\"$board\"}[7d])))",
           "legendFormat": "p50",
           "refId": "A"
         },
@@ -262,7 +280,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le) (increase(intellagent_cycle_seconds_bucket{board=\"$board\"}[7d])))",
+          "expr": "histogram_quantile(0.9, sum by (le) (increase(intellagent_cycle_seconds_bucket{job=\"$job\",board=\"$board\"}[7d])))",
           "legendFormat": "p90",
           "refId": "B"
         }
@@ -304,7 +322,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (result) (intellagent_landings{board=\"$board\"})",
+          "expr": "sum by (result) (intellagent_landings{job=\"$job\",board=\"$board\"})",
           "legendFormat": "{{result}}",
           "instant": true,
           "refId": "A"
@@ -407,7 +425,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by (agent) (intellagent_agent_status{status=\"idle\"}) * 1 + max by (agent) (intellagent_agent_status{status=\"running\"}) * 2 + max by (agent) (intellagent_agent_status{status=\"waiting\"}) * 3 + max by (agent) (intellagent_agent_status{status=\"throttled\"}) * 4 + max by (agent) (intellagent_agent_status{status=\"failed\"}) * 5 + max by (agent) (intellagent_agent_status{status=\"paused\"}) * 6",
+          "expr": "max by (agent) (intellagent_agent_status{job=\"$job\",status=\"idle\"}) * 1 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"running\"}) * 2 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"waiting\"}) * 3 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"throttled\"}) * 4 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"failed\"}) * 5 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"paused\"}) * 6",
           "legendFormat": "{{agent}}",
           "refId": "A"
         }
@@ -493,7 +511,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (result) (increase(intellagent_agent_runs_total[1h]))",
+          "expr": "sum by (result) (increase(intellagent_agent_runs_total{job=\"$job\"}[1h]))",
           "legendFormat": "{{result}}",
           "refId": "A"
         }
@@ -529,7 +547,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.5, sum by (le) (increase(intellagent_agent_run_seconds_bucket[1d])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (increase(intellagent_agent_run_seconds_bucket{job=\"$job\"}[1d])))",
           "legendFormat": "p50",
           "refId": "A"
         },
@@ -538,7 +556,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.9, sum by (le) (increase(intellagent_agent_run_seconds_bucket[1d])))",
+          "expr": "histogram_quantile(0.9, sum by (le) (increase(intellagent_agent_run_seconds_bucket{job=\"$job\"}[1d])))",
           "legendFormat": "p90",
           "refId": "B"
         }
@@ -578,7 +596,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (model) (increase(intellagent_agent_tokens_total[1h]))",
+          "expr": "sum by (model) (increase(intellagent_agent_tokens_total{job=\"$job\"}[1h]))",
           "legendFormat": "{{model}}",
           "refId": "A"
         }
@@ -621,7 +639,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(sum(increase(intellagent_agent_tokens_total{kind=\"input\"}[$__range])) * $price_input + sum(increase(intellagent_agent_tokens_total{kind=\"output\"}[$__range])) * $price_output + sum(increase(intellagent_agent_tokens_total{kind=\"cache_read\"}[$__range])) * $price_cache_read + sum(increase(intellagent_agent_tokens_total{kind=\"cache_write\"}[$__range])) * $price_cache_write) / 1e6",
+          "expr": "(sum(increase(intellagent_agent_tokens_total{job=\"$job\",kind=\"input\"}[$__range])) * $price_input + sum(increase(intellagent_agent_tokens_total{job=\"$job\",kind=\"output\"}[$__range])) * $price_output + sum(increase(intellagent_agent_tokens_total{job=\"$job\",kind=\"cache_read\"}[$__range])) * $price_cache_read + sum(increase(intellagent_agent_tokens_total{job=\"$job\",kind=\"cache_write\"}[$__range])) * $price_cache_write) / 1e6",
           "legendFormat": "estimated cost",
           "instant": true,
           "refId": "A"
@@ -692,7 +710,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "intellagent_usage_limit_until_seconds * 1000 > 0",
+          "expr": "intellagent_usage_limit_until_seconds{job=\"$job\"} * 1000 > 0",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -702,7 +720,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "increase(intellagent_agent_usage_limited_total[1d]) > 0",
+          "expr": "increase(intellagent_agent_usage_limited_total{job=\"$job\"}[1d]) > 0",
           "format": "table",
           "instant": true,
           "refId": "B"
@@ -756,7 +774,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (kind) (intellagent_questions_open{board=\"$board\"})",
+          "expr": "sum by (kind) (intellagent_questions_open{job=\"$job\",board=\"$board\"})",
           "legendFormat": "{{kind}}",
           "refId": "A"
         }
@@ -792,7 +810,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "intellagent_question_oldest_seconds{board=\"$board\"}",
+          "expr": "intellagent_question_oldest_seconds{job=\"$job\",board=\"$board\"}",
           "legendFormat": "oldest",
           "refId": "A"
         }
@@ -845,7 +863,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (reason) (increase(intellagent_agent_wakes_total[1h]))",
+          "expr": "sum by (reason) (increase(intellagent_agent_wakes_total{job=\"$job\"}[1h]))",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
@@ -882,7 +900,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (agent) (increase(intellagent_agent_idle_runs_total[6h])) / clamp_min(sum by (agent) (increase(intellagent_agent_measured_runs_total[6h])), 1)",
+          "expr": "sum by (agent) (increase(intellagent_agent_idle_runs_total{job=\"$job\"}[6h])) / clamp_min(sum by (agent) (increase(intellagent_agent_measured_runs_total{job=\"$job\"}[6h])), 1)",
           "legendFormat": "{{agent}}",
           "refId": "A"
         }
@@ -919,7 +937,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (board) (intellagent_tickets_unowned)",
+          "expr": "sum by (board) (intellagent_tickets_unowned{job=\"$job\"})",
           "legendFormat": "{{board}}",
           "refId": "A"
         }
