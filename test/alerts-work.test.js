@@ -74,6 +74,19 @@ describe('workFor: an agent\'s next actions', () => {
     assert.deepEqual(actions(w), ['chase:A', 'decide:B']);
     assert.match(w.next[0].why, /a reviewer \(no reviewer yet/);
   });
+  it('a reviewer\'s concerns on your review are work: address_concerns, keyed per verdict, gone once you ask again (INT-388)', () => {
+    const review = { kind: 'review', raisedBy: 'groot', id: 'q1', notes: { evidence: 'x' } };
+    const ctx = makeBoard([{ id: 'A', columnId: 'review', questions: [review], workedBy: ['groot'],
+      reviewers: [{ name: 'nebula', verdict: 'concerns', commentId: 'c1', at: iso(-MIN) }], comments: [{ id: 'c1', body: '⚠ No test for the error path', author: { kind: 'agent', name: 'nebula' }, createdAt: iso(-MIN) }] }]);
+    const world = makeWorld(ctx, { groot: {}, nebula: { reviewer: true } });
+    const w = world.workFor(ctx, 'groot');
+    assert.deepEqual(actions(w), ['address_concerns:A']);
+    assert.match(w.next[0].why, /nebula raised concerns on your review: ⚠ No test for the error path/);
+    assert.deepEqual(world.pendingWork('groot').map((x) => x.key), ['main:address_concerns:A:c1']);
+    ctx.board.items.A.reviewers[0].verdict = null; // review requested again
+    assert.deepEqual(actions(world.workFor(ctx, 'groot')), []);
+  });
+
   it('a master lease held by someone else empties everyone else\'s next', () => {
     const ctx = makeBoard([{ id: 'A', columnId: 'ready', assignee: 'groot' }], { master: { holder: 'rocket' } });
     const world = makeWorld(ctx, { groot: {}, rocket: {} });

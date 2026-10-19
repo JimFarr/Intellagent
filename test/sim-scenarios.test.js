@@ -52,7 +52,7 @@ describe('liveness: nothing gets stuck with nobody told', () => {
     assert.deepEqual(stuck(sim), []);
   });
 
-  it('a reviewer with concerns reaches the author as work: it redoes the ticket and its reviewer is asked again', { todo: 'INT-388: concerns are only a comment that @mentions the author; nothing in its work says to address them, so an author that acts on its work never does' }, () => {
+  it('a reviewer with concerns reaches the author as work: it redoes the ticket and its reviewer is asked again (INT-388)', () => {
     sim = createSim({ columns: SLEEPING, team: TEAM({ nebula: { role: 'reviewer', behave: (run, act) => {
       // concerns the first time, ok after
       for (const id of run.items) { const it = sim.item(id); const r = it.reviewers.find((x) => x.name === 'nebula'); if (r && !r.verdict) act.verdict(id, it.comments.some((c) => /Concerns/.test(c.body)) ? 'ok' : 'concerns', 'needs a test'); }
