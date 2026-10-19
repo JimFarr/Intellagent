@@ -5539,7 +5539,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const allPaused = sa.length && sa.every((a) => a.status === 'paused');
     const stopRow = sa.length || state.presence.some((p) => p.leases?.length) ? `<div class="stop-row">${allPaused
       ? `<button class="btn sm" data-resume-all title="Resume all|Unpause every standing agent; their queued events run">${icon('play', 'sm')}Resume all agents</button>`
-      : `<button class="btn sm danger" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}Stop all agents</button>`}</div>` : '';
+      : `<button class="btn sm danger${body._stopArmed ? ' armed' : ''}" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}${body._stopArmed ? 'Click again to stop everything' : 'Stop all agents'}</button>`}</div>` : '';
     // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266).
     const first = !body._agentsFilled;
     body._agentsFilled = true;
@@ -5573,12 +5573,15 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         e.stopPropagation();
         if (!stop.classList.contains('armed')) {
           stop.classList.add('armed'); stop.lastChild.textContent = 'Click again to stop everything';
-          // Stays armed until the second click; a click elsewhere or Escape disarms it
+          // Stays armed until the second click; a click elsewhere or Escape disarms it.
+          // The flag on body lets the next redraw (fillAgents) keep the armed look (INT-340)
+          body._stopArmed = true;
           const disarm = (ev) => {
             if (ev?.type === 'click' && stop.contains(ev.target)) return;
             if (ev?.type === 'keydown' && ev.key !== 'Escape') return;
             document.removeEventListener('click', disarm, true); document.removeEventListener('keydown', disarm, true);
             stop.classList.remove('armed'); stop.lastChild.textContent = 'Stop all agents';
+            body._stopArmed = false;
           };
           stop._disarm = disarm;
           document.addEventListener('click', disarm, true); document.addEventListener('keydown', disarm, true);
