@@ -1228,6 +1228,86 @@ describe('lean runs', () => {
       fs.rmSync(worktree, { recursive: true, force: true });
     }
   });
+
+  // the allowed and forbidden lists of a claude command line, each flag's values up to the next flag
+  const lists = (run) => {
+    const t = [...run.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+    const of = (flag) => t.flatMap((x, i) => { if (x !== flag) return []; const out = []; for (let j = i + 1; j < t.length && !t[j].startsWith('--'); j++) out.push(t[j]); return out; });
+    return { allowed: of('--allowedTools'), denied: of('--disallowedTools'), configs: of('--mcp-config') };
+  };
+
+  it('an agent\'s own MCP servers and commands land in the allowed list, never after --disallowedTools (INT-396)', () => {
+    const { cleanMcp, withExtras, misplacedDenies } = require('../lib/agents/config');
+    // a built run: the servers' config after the board's, their tools and the commands allowed
+    const built = lists(runFor(['edit'], { mcpConfig: ['board.json', 'mine.json'], mcpServers: ['playwright'], commands: ['git merge:*'], protect: ['C:\\b\\local.json'] }));
+    assert.deepEqual(built.configs, ['board.json', 'mine.json']);
+    assert.ok(built.allowed.includes('mcp__playwright') && built.allowed.includes('Bash(git merge:*)'));
+    assert.ok(!built.denied.some((t) => /playwright|git merge/.test(t)));
+    // a hand-written run that ends with --disallowedTools: the extras come as flags of their own, so they are allowed
+    const custom = `${runFor(['read'])}`;
+    const added = lists(withExtras(custom, { mcpFile: 'C:/d/agent-mcp/qa.json', servers: ['playwright'], commands: ['npm run e2e'] }));
+    assert.ok(added.allowed.includes('mcp__playwright') && added.allowed.includes('Bash(npm run e2e)'));
+    assert.ok(added.configs.includes('C:/d/agent-mcp/qa.json'));
+    assert.ok(!added.denied.some((t) => /playwright|e2e/.test(t)));
+    assert.equal(withExtras(custom, {}), custom, 'nothing to add: unchanged');
+    assert.equal(withExtras('node adapter.js', { commands: ['npm run e2e'] }), 'node adapter.js', 'not a claude run: unchanged');
+    // the Lenza mistake: extras appended to a hand-built run land in the forbidden list, and are named
+    const lenza = `${custom} "Bash(git merge:*)" "mcp__playwright" "Bash(intellagent:*)"`;
+    assert.deepEqual(misplacedDenies(lenza, { commands: ['git merge:*'] }).sort(), ['Bash(git merge:*)', 'Bash(intellagent:*)', 'mcp__playwright'].sort());
+    assert.deepEqual(misplacedDenies(custom), [], 'the board\'s own deny rules are not flagged');
+    assert.deepEqual(misplacedDenies('claude -p x --disallowedTools "mcp__browser__navigate" "WebFetch"'), [], 'one MCP tool or a whole built-in is a real deny');
+    // what agents.json may declare
+    const ok = cleanMcp({ playwright: { command: 'npx', args: ['@playwright/mcp@latest'], env: { HEADLESS: '1' } }, docs: { type: 'http', url: 'https://x.test/mcp' } });
+    assert.deepEqual(Object.keys(ok.servers), ['playwright', 'docs']);
+    assert.deepEqual(ok.errors, []);
+    for (const [mcp, why] of [
+      [[], /must be an object/],
+      [{ my_server: { command: 'x' } }, /letters, digits and dashes/],
+      [{ intellagent: { command: 'x' } }, /board's own server/],
+      [{ a: { args: ['x'] } }, /needs a command/],
+      [{ a: { type: 'http' } }, /needs a url/],
+      [{ a: { command: 'x', args: 'y' } }, /args must be a list/],
+      [{ a: { command: 'x', env: { K: 1 } } }, /env and headers/],
+      [{ a: { command: 'x', run: 'y' } }, /unknown key/],
+    ]) {
+      const r = cleanMcp(mcp);
+      assert.deepEqual(r.servers, {}, JSON.stringify(mcp));
+      assert.match(r.errors.join('; '), why);
+    }
+  });
+
+  it('on a board: "mcp" in agents.json reaches the run with no custom run, its file is protected, and a misplaced allow is flagged (INT-396)', async () => {
+    const s = await startServer({ agents: { agents: {
+      qa: { role: 'builder', enabled: false, mcp: { playwright: { command: 'npx', args: ['@playwright/mcp@latest'] } }, commands: ['npm run e2e'] },
+      sup: { run: 'claude -p "x" --allowedTools "Bash(intellagent:*)" --disallowedTools "Read(**/agents.json)" "Bash(git merge:*)" "mcp__playwright"', commands: ['git merge:*'], enabled: false },
+      bad: { role: 'builder', enabled: false, mcp: { 'no good': { command: 'x' } } },
+      newbie: { role: 'builder', enabled: false, probation: { since: '2026-10-20T00:00:00.000Z' }, mcp: { playwright: { command: 'npx' } } },
+    } } });
+    try {
+      const { agents, error } = await s.ok('GET', '/api/agents');
+      const qa = lists(agents.find((a) => a.name === 'qa').run);
+      const file = qa.configs.find((c) => /agent-mcp[\\/]qa\.json$/.test(c));
+      assert.ok(file, 'the agent\'s servers are a config file of their own');
+      assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { mcpServers: { playwright: { command: 'npx', args: ['@playwright/mcp@latest'] } } });
+      assert.ok(qa.allowed.includes('mcp__playwright') && qa.allowed.includes('Bash(npm run e2e)'));
+      assert.ok(qa.denied.some((t) => /^Read\(.*agent-mcp\/\*\*\)$/.test(t)), 'a server\'s env may hold a key: the folder is not the agent\'s to read');
+      assert.ok(!agents.find((a) => a.name === 'qa').run.includes('@playwright'), 'the run names the file, never the servers\' settings');
+      // the hand-written run keeps its words, gets its commands allowed, and its misplaced allows are named
+      const sup = lists(agents.find((a) => a.name === 'sup').run);
+      assert.ok(sup.allowed.includes('Bash(git merge:*)'));
+      assert.match(error, /agent "sup": its run forbids "Bash\(git merge:\*\)", "mcp__playwright", which look meant to be allowed/);
+      const checkOf = async (command) => { const r = await s.api('POST', '/api/agents/sup/commands/check', { command }, USER); assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body; };
+      const check = await checkOf('git merge:*');
+      assert.equal(check.applies, true, 'a hand-written claude run takes its commands now');
+      assert.match(check.why, /^Kept, but denied: its own run lists it after --disallowedTools/);
+      assert.equal((await checkOf('npm run e2e')).denied, null);
+      assert.match(error, /agent "bad": mcp server "no good": a name is letters, digits and dashes/);
+      // probation: no servers, and no file left behind
+      const newbie = lists(agents.find((a) => a.name === 'newbie').run);
+      assert.ok(!newbie.allowed.includes('mcp__playwright') && !newbie.configs.some((c) => /agent-mcp/.test(c)));
+      assert.equal(fs.existsSync(file.replace(/qa\.json$/, 'newbie.json')), false);
+    } finally { await s.stop(); }
+  });
 });
 
 describe('token usage', () => {
@@ -1999,7 +2079,7 @@ describe('extra commands the human allows', () => {
       assert.equal((await ok('rev', 'npm test --prefix:*')).denied, null, 'the reviewer role holds run-authors-code');
       const own = await ok('custom', 'npm run x');
       assert.equal(own.applies, false);
-      assert.match(own.note, /its own run command/);
+      assert.match(own.note, /own run is not a claude run/);
       // who may ask: the human and an agent with agents.manage; nobody else, and nothing changes
       assert.equal((await check('dev', 'npm run x', { agent: 'manager' })).status, 200);
       const refused = await check('dev', 'npm run x', { agent: 'other' });
