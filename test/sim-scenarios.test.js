@@ -92,7 +92,7 @@ describe('quiet: nobody is woken for nothing', () => {
     assert.deepEqual(sim.wakes().slice(before), []);
   });
 
-  it('a decider is not woken to chase a reviewer the coordinator is about to assign', { todo: 'INT-387: chase "a reviewer (the coordinator assigns one)" wakes the decider at the moment the coordinator is woken to assign it' }, () => {
+  it('a decider is not woken to chase a reviewer the coordinator is about to assign (INT-387)', () => {
     // the flow that showed it: the coordinator triages, the builder builds, and the review needs a reviewer
     sim = createSim({ columns: SLEEPING, team: TEAM() });
     sim.human.create({ title: 'x', column: 'Ready' });

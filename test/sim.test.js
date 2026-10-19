@@ -30,9 +30,7 @@ describe('alerting simulator', () => {
     const t = sim.human.create({ title: 'Fix the login', column: 'Ready' });
     sim.tick('1h');
     assert.equal(sim.item(t).columnId, 'done', `it got done: ${sim.wakes().join(' | ')}`);
-    // triage, build, then (as of INT-383) stakar is woken to chase "a reviewer: the coordinator assigns one" at the
-    // moment the coordinator is woken to assign it: a run spent on work already in hand (INT-385 looks at this).
-    assert.deepEqual(sim.wakes().map((w) => w.split(' ')[0]), ['gamora', 'groot', 'stakar', 'gamora', 'nebula', 'stakar'], 'triage, build, (chase), assign a reviewer, review, decide');
+    assert.deepEqual(sim.wakes().map((w) => w.split(' ')[0]), ['gamora', 'groot', 'gamora', 'nebula', 'stakar'], 'triage, build, assign a reviewer, review, decide: nobody woken twice');
   });
 
   it('a name without @, or an @ inside code or a quote, wakes nobody', () => {

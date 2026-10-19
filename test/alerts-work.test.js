@@ -36,6 +36,7 @@ function makeWorld(ctx, team = {}) {
       isRunning: (n) => !!team[n]?.running, superviseOf: (n) => (team[n]?.supervise ? 30 : 0), pickupOf: (n) => team[n]?.pickup || false,
       grantsOf: (n) => (team[n]?.grants || []).map((power) => ({ power })), isHelper: (n) => !!team[n]?.helper,
       reviewerPool: () => Object.entries(team).filter(([, a]) => a.reviewer).map(([name]) => ({ name, areas: [] })),
+      routers: () => Object.entries(team).filter(([, a]) => a.role === 'coordinator' && a.status !== 'paused').map(([name]) => name),
     },
     isCoordinator: (c, n) => team[n]?.role === 'coordinator', approvalsOff: () => false, commitsPending: () => false,
   });
@@ -123,6 +124,18 @@ describe('pendingWork: what wakes an agent, under which key', () => {
     assert.deepEqual(world.pendingWork('groot', 'ready').map((w) => `${w.action}:${w.id}`), ['pickup:A']);
     assert.deepEqual(world.pendingWork('gamora', 'all').map((w) => `${w.action}:${w.id}`).sort(), ['triage:A', 'triage:B']);
   });
+  it('no reviewer yet belongs to the coordinator for 30 minutes: the decider is not woken to chase it before (INT-387)', () => {
+    const review = { kind: 'review', raisedBy: 'groot', id: 'q1', raisedAt: iso(-5 * MIN), notes: { evidence: 'x' } };
+    const ctx = makeBoard([{ id: 'A', columnId: 'review', questions: [review], workedBy: ['groot'] }]);
+    const team = { stakar: { grants: ['review.decide'] }, gamora: { role: 'coordinator' }, nebula: { reviewer: true } };
+    assert.deepEqual(makeWorld(ctx, team).pendingWork('stakar'), [], 'a coordinator can assign one: not for the decider yet');
+    assert.deepEqual(actions(makeWorld(ctx, team).workFor(ctx, 'stakar')), ['chase:A'], 'its brief still lists it');
+    review.raisedAt = iso(-31 * MIN);
+    assert.deepEqual(makeWorld(ctx, team).pendingWork('stakar').map((x) => x.action), ['chase'], 'after 30 minutes it is a stall: chase');
+    review.raisedAt = iso(-5 * MIN);
+    assert.deepEqual(makeWorld(ctx, { ...team, gamora: { role: 'coordinator', status: 'paused' } }).pendingWork('stakar').map((x) => x.action), ['chase'], 'no coordinator able to run: chase at once');
+  });
+
   it('a chase key changes with the kind of gap, not its wording', () => {
     const review = { kind: 'review', raisedBy: 'groot', id: 'q1', notes: { evidence: 'tests pass' } };
     const ctx = makeBoard([{ id: 'A', columnId: 'review', questions: [review], workedBy: ['groot'] }]);

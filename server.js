@@ -699,6 +699,8 @@ const { delegationGaps, workFor, stalledFor, untriaged, pendingWork, waitingWork
     get: (n) => { if (!standing) throw new Error("no standing agents"); return standing.get(n); },
     isRunning: (n) => !!standing?.isRunning?.(n), superviseOf: (n) => standing?.superviseOf?.(n) || 0, pickupOf: (n) => standing?.pickupOf?.(n),
     grantsOf: (n) => grantsOf(n), isHelper: (n) => isHelper(n), reviewerPool: () => reviewerPool(),
+    // coordinators able to run now: the board's, or a standing agent with the coordinator role, not paused or failed
+    routers: (c) => { try { return standing.list().agents.filter((x) => (x.role === 'coordinator' || x.name === c.board.coordinator) && x.enabled && !x.paused && x.status !== 'failed').map((x) => x.name); } catch { return []; } },
   },
   isCoordinator: (...a) => isCoordinator(...a), approvalsOff: (...a) => approvalsOff(...a), commitsPending: (...a) => commitsPending(...a),
 });
