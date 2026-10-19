@@ -92,7 +92,10 @@ describe('area notes on a real board', () => {
       const t1 = await s.ok('POST', `${B}/items`, { title: 'Tidy lib/alerts/work.js', column: 'Ready' }, USER);
       await s.ok('POST', `${B}/items/${t1.id}/start`, {}, as('groot'));
       const r1 = await s.ok('POST', `${B}/items/${t1.id}/review`, { changed: 'x', why: 'y', verify: 'z', evidence: 'tests pass' }, as('groot'));
-      assert.ok(r1.warnings.some((w) => /^Nothing learned/.test(w)), 'nothing learned: warned');
+      const w1 = r1.warnings.find((w) => /^Nothing learned/.test(w));
+      assert.ok(w1, 'nothing learned: warned');
+      assert.match(w1, /POST \/api\/notes/);
+      assert.doesNotMatch(w1, /Request review again/);
       const r2 = await s.ok('POST', `${B}/items/${t1.id}/review`, { changed: 'x', why: 'y', verify: 'z', evidence: 'tests pass',
         learned: 'lib/alerts/work.js: the TAG table decides when work is new again\nthis line has no area' }, as('groot'));
       assert.equal(r2.notes.length, 1);
