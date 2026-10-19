@@ -232,4 +232,32 @@ describe('roles as data: on the board', () => {
     assert.equal((await s.api('POST', '/api/agents', { name: 'w3', supervise: 'on' }, USER)).status, 400);
     await s.ok('DELETE', '/api/agents/watcher', undefined, USER);
   });
+
+  it('listen, pickup and throttleMinutes: the human sets them on PATCH, kept with before and after; an agent manager never (INT-401)', async () => {
+    await s.ok('POST', '/api/agents', { name: 'waker', role: 'builder', enabled: false }, USER);
+    await s.ok('POST', '/api/agents/waker/accept', {}, USER);
+    const r = await s.ok('PATCH', '/api/agents/waker', { listen: ['addressed', 'new-tickets'], pickup: true, throttleMinutes: 7 }, USER);
+    assert.deepEqual(r.changes.listen.to, ['addressed', 'new-tickets']);
+    assert.deepEqual(r.changes.pickup.to, 'ready', 'true is stored as "ready"');
+    assert.deepEqual(r.changes.throttleMinutes, { from: null, to: 7 });
+    const now = await agent('waker');
+    assert.deepEqual([now.listen, now.pickup, now.throttleMinutes], [['addressed', 'new-tickets'], 'ready', 7]);
+    assert.ok(((await agent('waker')).changes || []).some((c) => c.changes.throttleMinutes), 'recorded with before and after');
+    // a filter object is a listen source too; null goes back to the role's
+    await s.ok('PATCH', '/api/agents/waker', { listen: { types: 'item.created', column: 'Ready' }, pickup: null, throttleMinutes: 0 }, USER);
+    assert.equal((await agent('waker')).throttleMinutes, 0);
+    // bad shapes: 400 and nothing changes
+    for (const body of [{ listen: 'everything' }, { listen: [] }, { listen: [['a']] }, { pickup: 'sometimes' }, { throttleMinutes: -1 }, { throttleMinutes: 2.5 }, { throttleMinutes: '3' }]) {
+      assert.equal((await s.api('PATCH', '/api/agents/waker', body, USER)).status, 400, JSON.stringify(body));
+    }
+    assert.equal((await agent('waker')).throttleMinutes, 0);
+    // an agent manager over it, and the agent itself, are refused
+    for (const [who, body] of [['boss', { listen: 'human' }], ['boss', { pickup: 'all' }], ['boss', { throttleMinutes: 1, description: 'and this' }], ['waker', { throttleMinutes: 0 }]]) {
+      const no = await s.api('PATCH', '/api/agents/waker', body, { agent: who });
+      assert.equal(no.status, 403, `${who} ${JSON.stringify(body)}`);
+    }
+    assert.equal((await s.api('PATCH', '/api/agents/waker', { pickup: 'all' }, { agent: 'boss' })).body.code, 'HUMAN_ONLY');
+    assert.equal((await agent('waker')).throttleMinutes, 0);
+    await s.ok('DELETE', '/api/agents/waker', undefined, USER);
+  });
 });

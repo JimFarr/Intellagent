@@ -4671,7 +4671,28 @@ const MANAGER_MODELS = Array.isArray(M.managerModels) && M.managerModels.length 
 const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context', 'contextItems', 'personality', 'reviewer'];
 // Wake settings (INT-370): each one makes an agent run more often, at the human's cost, so the human sets them on
 // POST and PATCH alike and an agent manager never does (403 HUMAN_ONLY, not among MANAGE_KEYS).
-const WAKE_KEYS = ['supervise', 'idleAlarm'];
+const WAKE_KEYS = ['supervise', 'idleAlarm', 'listen', 'pickup', 'throttleMinutes'];
+const LISTEN_WORDS = ['addressed', 'inbox', 'human', 'new-tickets'];
+// INT-401, PATCH only (POST keeps its own looser reading): listen is a word, an event filter object or a list of those;
+// pickup is false, "ready" (or true) or "all"; throttleMinutes is whole minutes, 0 turns it off. null: the role's.
+function cleanRunWake(d) {
+  const out = {};
+  if (d.listen !== undefined) {
+    const one = (l) => LISTEN_WORDS.includes(l) || (l && typeof l === 'object' && !Array.isArray(l) && Object.keys(l).length > 0 && Object.values(l).every((v) => ['string', 'number', 'boolean'].includes(typeof v)));
+    const xs = [].concat(d.listen);
+    if (d.listen !== null && !(xs.length && xs.length <= 10 && xs.every(one))) fail(400, `"listen" is one of ${LISTEN_WORDS.join(', ')}, an event filter object, or a list of those`, { code: 'BAD_REQUEST', hint: 'null goes back to the role\'s' });
+    out.listen = d.listen;
+  }
+  if (d.pickup !== undefined) {
+    if (d.pickup !== null && ![true, false, 'ready', 'all'].includes(d.pickup)) fail(400, '"pickup" is false, "ready" (or true), "all", or null (the role\'s)', { code: 'BAD_REQUEST' });
+    out.pickup = d.pickup === true ? 'ready' : d.pickup;
+  }
+  if (d.throttleMinutes !== undefined) {
+    if (d.throttleMinutes !== null && !(Number.isInteger(d.throttleMinutes) && d.throttleMinutes >= 0 && d.throttleMinutes <= 1440)) fail(400, '"throttleMinutes" is whole minutes 0-1440 (0 turns it off), or null (the role\'s)', { code: 'BAD_REQUEST' });
+    out.throttleMinutes = d.throttleMinutes;
+  }
+  return out;
+}
 // → the keys present in d, checked: true or false (false overrides the role), null (back to the role's).
 // idleAlarm also takes { minutes } (5-1440), stored as idleAlarm: true with idleAlarmMinutes, as agents.json has it.
 function cleanWake(d) {
@@ -4723,7 +4744,7 @@ function manageAgent(target, d, actor) {
     const wake = keys.filter((k) => WAKE_KEYS.includes(k));
     if (wake.length) fail(403, `${wake.join(', ')}: how often an agent is woken is the human's to set`, { code: 'HUMAN_ONLY', hint: 'Ask the human on a card' });
   }
-  const cfg = cleanWake(d || {});
+  const cfg = { ...cleanWake(d || {}), ...cleanRunWake(d || {}) };
   if ('role' in d) {
     if (d.role != null && !roleLibrary().has(d.role)) fail(400, `Unknown role "${d.role}"`, { code: 'BAD_REQUEST', hint: `Roles: ${roleLibrary().keys().join(', ')}` });
     if (agent && (d.role === 'coordinator' || a.role === 'coordinator') && d.role !== a.role) {
@@ -4864,7 +4885,7 @@ route('POST', '/api/agents/:name/commands/check', 'Human or agents.manage: what 
   if (typeof body?.command !== 'string' || !body.command.trim()) fail(400, 'command is required', { code: 'BAD_REQUEST', hint: 'POST { "command": "npm run measure:board" }' });
   return standing.checkCommand(p.name, body.command);
 });
-route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), context? (sets the "Context" note), supervise?, idleAlarm? (the human only: true|false|null|{ minutes }) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));
+route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), context? (sets the "Context" note), supervise?, idleAlarm? (the human only: true|false|null|{ minutes }), listen? (the human only: addressed|inbox|human|new-tickets, a filter object or a list), pickup? (the human only: false|ready|all), throttleMinutes? (the human only: 0-1440) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));
 route('POST', '/api/agents/stop-all', 'Human (or the agents.control grant): stop every agent now — kill runs, pause standing agents, release agent leases and the master lease, send their In Progress tickets back to Ready with a comment', ({ actor }) => {
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
   return stopAllAgents(actor);
