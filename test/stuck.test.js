@@ -32,6 +32,12 @@ describe('stuck rules', () => {
     assert.equal(STUCK.assess(ticket({ test: true }), NOW, who()), null);
   });
 
+  it('a journey from before progress was kept falls back to the ticket\'s activity, so an upgrade finds nothing stuck that is moving', () => {
+    const legacy = ticket({ journey: { pickedUpAt: ago(3000 * MIN), touches: {} }, updatedAt: ago(10 * MIN) });
+    assert.equal(STUCK.assess(legacy, NOW, who()), null);
+    assert.deepEqual(STUCK.assess({ ...legacy, updatedAt: ago(90 * MIN) }, NOW, who()), { reason: 'no_owner' });
+  });
+
   it('an ask in its time keeps it stuck but handled; making the ask is not activity', () => {
     const asked = ticket({ asks: [{ state: 'open', at: ago(5 * MIN), dueAt: ago(-55 * MIN) }] });
     assert.deepEqual(STUCK.assess(asked, NOW, who({ owners: ['groot'] })), { reason: 'owner_quiet', owner: 'groot', asked: true });

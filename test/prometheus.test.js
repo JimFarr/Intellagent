@@ -169,7 +169,7 @@ describe('GET /metrics: the numbers', () => {
     try {
       const m = parse((await scrape(s)).text);
       const keys = new Set(m.flatMap((x) => Object.keys(x.labels)));
-      const allowed = new Set(['agent', 'board', 'build', 'column', 'delegated', 'kind', 'le', 'model', 'direction', 'level', 'provider', 'reason', 'result', 'status', 'verdict', 'version']);
+      const allowed = new Set(['agent', 'board', 'build', 'column', 'delegated', 'kind', 'le', 'model', 'direction', 'level', 'provider', 'reason', 'result', 'state', 'status', 'verdict', 'version']);
       assert.deepEqual([...keys].filter((k) => !allowed.has(k)), [], 'no label outside the fixed set');
       assert.ok(m.length < 400, `a bounded number of series on an empty board (${m.length})`);
     } finally { await s.stop(); }
