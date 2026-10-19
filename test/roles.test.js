@@ -158,4 +158,78 @@ describe('roles as data: on the board', () => {
     await s.ok('PATCH', '/api/agents/mine', { role: 'triager' }, USER);
     assert.equal((await agent('mine')).role, 'triager');
   });
+
+  it('PUT /api/roles/:key: the human adds and replaces their own roles; commands written by hand are kept (INT-370)', async () => {
+    const made = await s.ok('PUT', '/api/roles/scout', { label: 'Scout', brief: 'Your role: scout.', perms: ['read'], supervise: true, throttleMinutes: 4 }, USER);
+    assert.equal(made.created, true);
+    assert.deepEqual([made.role.label, made.role.perms, made.role.supervise, made.role.throttleMinutes, made.role.builtin], ['Scout', ['read'], true, 4, false]);
+    assert.equal((await s.ok('GET', '/api/roles/scout')).brief, 'Your role: scout.');
+    // an agent given the new role is built from it, once accepted (probation runs it with read and no wakes)
+    await s.ok('POST', '/api/agents', { name: 'scout1', role: 'scout', enabled: false }, USER);
+    assert.equal((await agent('scout1')).supervise, false, 'on probation: no supervision');
+    await s.ok('POST', '/api/agents/scout1/accept', {}, USER);
+    assert.deepEqual([(await agent('scout1')).perms, (await agent('scout1')).supervise], [['read'], true]);
+    // replacing triager keeps its hand-written commands: the API never sets them, so it never drops them
+    const again = await s.ok('PUT', '/api/roles/triager', { label: 'Triager 2', perms: ['read'] }, USER);
+    assert.deepEqual([again.created, again.role.label, again.role.commands], [false, 'Triager 2', ['npm run lint']]);
+    // recorded, and an agent.* event, so it wakes nobody
+    const ev = (await s.ok('GET', '/api/events?types=agent.role_changed&limit=10')).events;
+    assert.deepEqual(ev.map((e) => [e.key, e.before ? 'changed' : 'added', e.recipients.length]), [['scout', 'added', 0], ['triager', 'changed', 0]]);
+    await s.ok('DELETE', '/api/agents/scout1', undefined, USER);
+  });
+
+  it('PUT /api/roles/:key is the human\'s, never takes commands, run, env or grants, and holds no power (INT-370)', async () => {
+    for (const who of [{ agent: 'boss' }, { agent: 'plain' }]) {
+      const r = await s.api('PUT', '/api/roles/sneaky', { label: 'x', perms: ['read'] }, who);
+      assert.deepEqual([r.status, r.body.code], [403, 'HUMAN_ONLY'], `${who.agent}: even agents.manage`);
+    }
+    assert.equal((await s.api('GET', '/api/roles/sneaky')).status, 404, 'nothing written');
+    const put = (key, body) => s.api('PUT', `/api/roles/${key}`, body, USER);
+    assert.deepEqual([(await put('builder', { label: 'x' })).status, (await put('builder', { label: 'x' })).body.code], [409, 'CONFLICT'], 'a built-in never changes');
+    for (const k of ['commands', 'run', 'env', 'inheritEnv', 'grants']) {
+      const r = await put('loaded', { label: 'x', [k]: k === 'env' ? { A: '1' } : ['npm run x'] });
+      assert.deepEqual([r.status, r.body.code], [403, 'NOT_DELEGABLE'], k);
+    }
+    const power = await put('loaded', { perms: ['read', 'review.decide'] });
+    assert.equal(power.status, 400);
+    assert.match(power.body.error, /powers are grants/);
+    assert.equal((await put('loaded', { label: 'x', speed: 9 })).body.code, 'UNKNOWN_FIELD');
+    // cleanRole's own checks, as load makes them
+    const deaf = await put('loaded', { listen: 'never' });
+    assert.equal(deaf.status, 400);
+    assert.match(deaf.body.error, /Role "loaded": "listen"/);
+    assert.equal((await s.api('GET', '/api/roles/loaded')).status, 404, 'nothing written');
+  });
+
+  it('supervise and idleAlarm: the human sets them on POST and PATCH /api/agents, an agent manager never (INT-370)', async () => {
+    const a = await s.ok('POST', '/api/agents', { name: 'watcher', role: 'builder', enabled: false, supervise: true, idleAlarm: { minutes: 15 } }, USER);
+    // stored, but probation holds them off until the human accepts the agent
+    assert.deepEqual([a.supervise, a.idleAlarm], [false, null]);
+    await s.ok('POST', '/api/agents/watcher/accept', {}, USER);
+    assert.deepEqual([(await agent('watcher')).supervise, (await agent('watcher')).idleAlarm], [true, { minutes: 15 }]);
+    // PATCH: false overrides the role, null goes back to it; plain true leaves no minutes behind
+    let r = await s.ok('PATCH', '/api/agents/watcher', { supervise: false, idleAlarm: true }, USER);
+    assert.deepEqual(r.changes.supervise, { from: true, to: false });
+    assert.deepEqual(r.changes.idleAlarmMinutes, { from: 15, to: null });
+    assert.deepEqual([(await agent('watcher')).supervise, (await agent('watcher')).idleAlarm], [false, { minutes: 20 }]);
+    r = await s.ok('PATCH', '/api/agents/watcher', { idleAlarm: null }, USER);
+    assert.equal((await agent('watcher')).idleAlarm, null);
+    // kept in the agent's history, like every other edit
+    const hist = (await agent('watcher')).changes || [];
+    assert.ok(hist.some((c) => c.changes.supervise), 'the change is recorded with before and after');
+    // an agent manager over it, and the agent itself: refused, nothing changes
+    for (const [who, body] of [['boss', { supervise: true }], ['boss', { idleAlarm: true, description: 'and this' }], ['watcher', { idleAlarm: true }]]) {
+      const no = await s.api('PATCH', '/api/agents/watcher', body, { agent: who });
+      assert.equal(no.status, 403, `${who} ${JSON.stringify(body)}`);
+    }
+    assert.equal((await s.api('PATCH', '/api/agents/watcher', { supervise: true }, { agent: 'boss' })).body.code, 'HUMAN_ONLY');
+    assert.deepEqual([(await agent('watcher')).supervise, (await agent('watcher')).idleAlarm, (await agent('watcher')).description], [false, null, BUILTIN.builder.description]);
+    // POST is the human's already; bad values are a 400 for the human too
+    assert.equal((await s.api('POST', '/api/agents', { name: 'w2', supervise: true }, { agent: 'boss' })).body.code, 'HUMAN_ONLY');
+    for (const v of ['yes', { minutes: 2 }, { minutes: 15, extra: 1 }, [true]]) {
+      assert.equal((await s.api('PATCH', '/api/agents/watcher', { idleAlarm: v }, USER)).status, 400, JSON.stringify(v));
+    }
+    assert.equal((await s.api('POST', '/api/agents', { name: 'w3', supervise: 'on' }, USER)).status, 400);
+    await s.ok('DELETE', '/api/agents/watcher', undefined, USER);
+  });
 });

@@ -2771,7 +2771,7 @@ const SCHEMA = {
       'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
-      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.managed', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
+      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.managed', 'agent.role_changed', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
       'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated', 'agent.base_updated', 'item.typing'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
@@ -3034,6 +3034,7 @@ const POLICY = {
   'PATCH /api/permissions/:key': { who: 'admin.permissions' },
   'DELETE /api/permissions/:key': { who: 'admin.permissions' },
   'PUT /api/agents/:name/permissions/:key': { who: 'admin.permissions' },
+  'PUT /api/roles/:key': { who: 'human', why: 'Only the human defines roles: a role sets the tools and wake-ups of every agent that takes it', hint: 'Suggest the role on a card instead' },
   'POST /api/agents': { who: 'human', why: 'Only the human can control standing agents' },
   'DELETE /api/agents/:name': { who: 'human', why: 'Only the human can control standing agents' },
   'POST /api/agents/:name/accept': { who: 'human', why: 'Only the human accepts a new agent: no grant delegates it', hint: 'Ask on a card' },
@@ -4279,6 +4280,30 @@ route('GET', '/api/roles/:key', 'One role in full, with the agents using it and 
   const agents = standing ? standing.list().agents.filter((a) => a.role === r.key).map((a) => ({ name: a.name, differs: a.differsFromRole || {} })) : [];
   return { ...r, agents };
 });
+// The human adds or replaces their own role (INT-370), as they would in agents.json "roles", minus what the API never
+// writes: commands, a run, env and grants stay in the file (commands already there are kept). Powers are grants, never
+// a role's perms. An agent.* event, so nobody is woken; the agents using the role pick it up on the reload.
+const ROLE_BODY = ['label', 'icon', 'description', 'brief', 'listen', 'pickup', 'supervise', 'reviewer', 'throttleMinutes', 'perms', 'model'];
+const ROLE_NEVER = ['commands', 'run', 'env', 'inheritEnv', 'grants'];
+route('PUT', '/api/roles/:key', 'Human: add or replace one of your own roles { label?, icon?, description?, brief?, listen?, pickup?, supervise?, reviewer?, throttleMinutes?, perms?, model? }, stored in agents.json "roles". Never commands, run, env or grants (a role\'s hand-written commands are kept). Built-ins can\'t change (409)', ({ p, body, actor }) => {
+  humanOnly(actor);
+  if (!standing) fail(404, 'No standing agents on this board', { code: 'NOT_FOUND', hint: 'Roles live in .intellagent/agents.json' });
+  const key = String(p.key);
+  if (roleLibrary().view(key)?.builtin) fail(409, `"${key}" is a built-in role and never changes`, { code: 'CONFLICT', hint: 'Pick another name for your own' });
+  const d = body && typeof body === 'object' && !Array.isArray(body) ? body : fail(400, 'Send the role as an object', { code: 'BAD_REQUEST' });
+  const never = Object.keys(d).filter((k) => ROLE_NEVER.includes(k));
+  if (never.length) fail(403, `${never.join(', ')} can't be set through the API`, { code: 'NOT_DELEGABLE', hint: 'Commands, a run, env and grants are written into agents.json by hand; grants go on each agent, never on a role' });
+  const unknown = Object.keys(d).filter((k) => !ROLE_BODY.includes(k));
+  if (unknown.length) fail(400, `Unknown role key(s): ${unknown.join(', ')}`, { code: 'UNKNOWN_FIELD', hint: `A role takes: ${ROLE_BODY.join(', ')}` });
+  if (d.perms != null) {
+    const lib = permLibrary();
+    const bad = [].concat(d.perms).map(String).filter((k) => !lib.holdable(k));
+    if (bad.length) fail(400, `Unknown permission(s): ${bad.join(', ')}${bad.some(lib.isPower) ? ' (powers are grants, given to each agent by the human, never to a role)' : ''}`, { code: 'BAD_REQUEST', hint: 'GET /api/permissions lists what a role may hold' });
+  }
+  const { role, before } = standing.defineRole(key, d);
+  emit({ type: 'agent.role_changed', actor, key, before, after: role, recipients: [] });
+  return { role: { ...role, agents: roleUsers(key) }, created: !before };
+});
 /* The permission library (INT-228): every permission an agent can hold — built-in tools, board powers and
    the human's own (command, tool, folders, bundle, verbal), stored in agents.json under "perms". Everyone
    reads it; only the human changes it, and only its custom entries. */
@@ -4515,12 +4540,14 @@ function cleanLimits(v) {
   if (v.readOnly) out.readOnly = true;
   return out;
 }
-route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, model?, provider?, description?, listen?, throttleMinutes?, maxRunsPerHour?, keepAlive?, limits?: { columns?, readOnly? }, grants?, coordinator? } — permissions from the fixed list, never a command. grants need a board with a user token (the signed-in human)', ({ body, actor, q }) => {
+route('POST', '/api/agents', 'Human: add or update a standing agent { name, role?, perms?, model?, provider?, description?, listen?, throttleMinutes?, maxRunsPerHour?, keepAlive?, supervise?, idleAlarm?: true|false|null|{ minutes }, limits?: { columns?, readOnly? }, grants?, coordinator? } — permissions from the fixed list, never a command. grants need a board with a user token (the signed-in human)', ({ body, actor, q }) => {
   // Grants bypass the human's own approval, so only a request that proves it is the human may set them:
   // the board must have a user token (checked by authenticate for every X-User request).
   if (body.grants !== undefined && !M.auth.userToken) fail(403, 'Grants can be set from the browser only on a board with a sign-in token — run "intellagent token", restart the board and sign in with "intellagent open"; or edit agents.json', { code: 'NO_TOKEN' });
   if (body.limits !== undefined) body.limits = cleanLimits(body.limits);
   if (body.grants !== undefined) body.grants = cleanGrants(body.grants);
+  delete body.idleAlarmMinutes; // only as idleAlarm: { minutes }, checked
+  Object.assign(body, cleanWake(body));
   const a = standing.define(body.name, body, { kind: actor.kind, name: actor.name });
   issueAgentToken(a.name);
   if (a.probation) askForIntroduction(a.name, actor); // the one run a new agent gets: introduce itself, read-only
@@ -4549,6 +4576,29 @@ route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=2
    human's file. Models come from an allowlist, and tool perms and board permissions only ever narrow. */
 const MANAGER_MODELS = Array.isArray(M.managerModels) && M.managerModels.length ? M.managerModels.map(String) : ['haiku', 'sonnet', 'opus'];
 const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context', 'contextItems', 'personality', 'reviewer'];
+// Wake settings (INT-370): each one makes an agent run more often, at the human's cost, so the human sets them on
+// POST and PATCH alike and an agent manager never does (403 HUMAN_ONLY, not among MANAGE_KEYS).
+const WAKE_KEYS = ['supervise', 'idleAlarm'];
+// → the keys present in d, checked: true or false (false overrides the role), null (back to the role's).
+// idleAlarm also takes { minutes } (5-1440), stored as idleAlarm: true with idleAlarmMinutes, as agents.json has it.
+function cleanWake(d) {
+  const out = {};
+  if (d.supervise !== undefined) {
+    if (d.supervise !== null && typeof d.supervise !== 'boolean') fail(400, '"supervise" is true, false or null (the role\'s)', { code: 'BAD_REQUEST' });
+    out.supervise = d.supervise;
+  }
+  if (d.idleAlarm !== undefined) {
+    const v = d.idleAlarm;
+    if (v === null || typeof v === 'boolean') out.idleAlarm = v;
+    else if (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).every((k) => k === 'minutes') && Number.isInteger(v.minutes) && v.minutes >= 5 && v.minutes <= 1440) {
+      out.idleAlarm = true;
+      out.idleAlarmMinutes = v.minutes;
+    } else fail(400, '"idleAlarm" is true, false, null (the role\'s) or { minutes: 5-1440 }', { code: 'BAD_REQUEST' });
+    // minutes go with the switch: plain true/false/null leaves none behind from an earlier { minutes }
+    if (!('idleAlarmMinutes' in out)) out.idleAlarmMinutes = null;
+  }
+  return out;
+}
 // a list of short strings (areas: paths or globs; concerns: phrases)
 const strList = (v, what) => {
   if (v == null) return null;
@@ -4571,14 +4621,16 @@ function manageAgent(target, d, actor) {
   const a = standing.get(target); // 404 if unknown
   const name = a.name;
   const keys = Object.keys(d || {});
-  const bad = keys.filter((k) => !MANAGE_KEYS.includes(k));
+  const bad = keys.filter((k) => !MANAGE_KEYS.includes(k) && !WAKE_KEYS.includes(k));
   if (bad.length) fail(403, `${bad.join(', ')} can't be changed through the API — the human edits agents.json for that`, { code: 'NOT_DELEGABLE', hint: `Changeable: ${MANAGE_KEYS.join(', ')}` });
   const agent = actor.kind !== 'user';
   if (agent) {
     if (grantsOf(actor.name).some((g) => g.power === 'agents.manage') && name.toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent manager never edits its own record', { code: 'OWN_WORK', hint: 'Ask the human' });
     managerOf(actor, name);
+    const wake = keys.filter((k) => WAKE_KEYS.includes(k));
+    if (wake.length) fail(403, `${wake.join(', ')}: how often an agent is woken is the human's to set`, { code: 'HUMAN_ONLY', hint: 'Ask the human on a card' });
   }
-  const cfg = {};
+  const cfg = cleanWake(d || {});
   if ('role' in d) {
     if (d.role != null && !roleLibrary().has(d.role)) fail(400, `Unknown role "${d.role}"`, { code: 'BAD_REQUEST', hint: `Roles: ${roleLibrary().keys().join(', ')}` });
     if (agent && (d.role === 'coordinator' || a.role === 'coordinator') && d.role !== a.role) {
@@ -4719,7 +4771,7 @@ route('POST', '/api/agents/:name/commands/check', 'Human or agents.manage: what 
   if (typeof body?.command !== 'string' || !body.command.trim()) fail(400, 'command is required', { code: 'BAD_REQUEST', hint: 'POST { "command": "npm run measure:board" }' });
   return standing.checkCommand(p.name, body.command);
 });
-route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), context? (sets the "Context" note) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));
+route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), context? (sets the "Context" note), supervise?, idleAlarm? (the human only: true|false|null|{ minutes }) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));
 route('POST', '/api/agents/stop-all', 'Human (or the agents.control grant): stop every agent now — kill runs, pause standing agents, release agent leases and the master lease, send their In Progress tickets back to Ready with a comment', ({ actor }) => {
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
   return stopAllAgents(actor);
