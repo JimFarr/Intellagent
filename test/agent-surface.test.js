@@ -640,10 +640,11 @@ describe('sandbox boards', () => {
   it('a sandbox nobody uses stops itself and list says why; --keep exempts one (INT-374)', async () => {
     const s = await startServer({ agents: { agents: {} } });
     try {
-      const idle = cli(['sandbox', 'idler', '--seed', 'empty', '--idle-hours', '0.0005', '--json'], { cwd: s.dir });
-      const kept = cli(['sandbox', 'keeper', '--seed', 'empty', '--idle-hours', '0.0005', '--keep', '--json'], { cwd: s.dir });
+      // 0.001 h is 3.6 s: long enough to open the stream below before the reader's own timer runs out, even on a loaded machine
+      const idle = cli(['sandbox', 'idler', '--seed', 'empty', '--idle-hours', '0.001', '--json'], { cwd: s.dir });
+      const kept = cli(['sandbox', 'keeper', '--seed', 'empty', '--idle-hours', '0.001', '--keep', '--json'], { cwd: s.dir });
       // someone reading: a tab (or `intellagent wait`) holds a stream open, which counts as use
-      const reader = cli(['sandbox', 'reader', '--seed', 'empty', '--idle-hours', '0.0005', '--json'], { cwd: s.dir });
+      const reader = cli(['sandbox', 'reader', '--seed', 'empty', '--idle-hours', '0.001', '--json'], { cwd: s.dir });
       assert.equal(idle.code, 0, idle.err);
       assert.equal(kept.code, 0, kept.err);
       assert.equal(reader.code, 0, reader.err);
@@ -657,20 +658,23 @@ describe('sandbox boards', () => {
       // polling /api/app is what list does: it must not count as use
       for (let i = 0; i < 40 && await up(idle.json.url); i++) await new Promise((r) => setTimeout(r, 250));
       assert.equal(await up(idle.json.url), false, 'the unused sandbox stopped itself');
+      // the reader started after the idler: wait out its whole idle window too, so only the open stream can be keeping it up
+      await new Promise((r) => setTimeout(r, 4500));
       assert.equal(await up(kept.json.url), true, 'the kept one is still up');
       assert.equal(await up(reader.json.url), true, 'the one with an open stream is still up');
       stream.abort();
       const list = cli(['sandbox', 'list', '--json'], { cwd: s.dir }).json;
       const row = (n) => list.find((x) => x.name === n);
       assert.equal(row('idler').running, false);
-      assert.match(row('idler').stopped.reason, /^idle for 0\.0005 h/);
+      assert.match(row('idler').stopped.reason, /^idle for 0\.001 h/);
       assert.equal(row('keeper').keep, true);
-      assert.match(cli(['sandbox', 'list'], { cwd: s.dir }).out, /idler .*\(stopped: idle for 0\.0005 h/);
+      assert.match(cli(['sandbox', 'list'], { cwd: s.dir }).out, /idler .*\(stopped: idle for 0\.001 h/);
       // starting it again clears the record and keeps its settings
-      const back = cli(['sandbox', 'idler', '--json'], { cwd: s.dir });
+      // (--keep so that a slow machine cannot idle it out again before list reads the record)
+      const back = cli(['sandbox', 'idler', '--keep', '--json'], { cwd: s.dir });
       assert.equal(back.code, 0, back.err);
       assert.equal(cli(['sandbox', 'list', '--json'], { cwd: s.dir }).json.find((x) => x.name === 'idler').stopped, null);
-      assert.equal(JSON.parse(fs.readFileSync(path.join(back.json.dir, 'intellagent.manifest.json'), 'utf8')).sandboxIdleHours, 0.0005);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(back.json.dir, 'intellagent.manifest.json'), 'utf8')).sandboxIdleHours, 0.001);
     } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
   });
 
