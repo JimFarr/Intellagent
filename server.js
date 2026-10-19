@@ -692,7 +692,7 @@ const { QUIET_TYPES, UNANSWERED_DAYS, plainText, mentionsIn } = require("./lib/a
 // Board geometry, reviewer oks and each agent's pending work (INT-382): lib/alerts/, shared with the simulator.
 const { PRIO_RANK, findColumnById, doneColumnId, openBlockersOf, asleep, pickupColumns, replyAfter, ownWork } = require("./lib/alerts/board");
 const { inScope, okStatus, reviewerRule, assignedOks } = require("./lib/alerts/oks").createOks({ verdictStands: (...a) => verdictStands(...a), now: () => Date.now() });
-const { delegationGaps, workFor, stalledFor, untriaged, pendingWork, waitingWork, FOCUS_THROUGH } = require("./lib/alerts/work").createWork({
+const { delegationGaps, workFor, stalledFor, untriaged, pendingWork, waitingWork, unownedTickets, FOCUS_THROUGH } = require("./lib/alerts/work").createWork({
   now: () => Date.now(), boards: () => boards.values(), leaseWarningMinutes: () => M.lease.warningMinutes,
   recipients: alerts, oks: { inScope: (...a) => inScope(...a), okStatus: (...a) => okStatus(...a), reviewerRule: (...a) => reviewerRule(...a), assignedOks: (...a) => assignedOks(...a) },
   agents: {
@@ -4006,7 +4006,8 @@ route('GET', '/metrics', 'Prometheus metrics (text format 0.0.4): tickets per co
   try { want = readLocal(LOCAL_PATH).metricsToken || null; } catch { /* an unreadable local.json lets nobody in */ }
   if (!want) fail(401, 'Prometheus metrics are on, but the board has no metrics token', { auth: 'metrics', code: 'UNAUTHORIZED', hint: 'The human issues one: intellagent token --metrics (the board accepts it at once). Prometheus sends it as a bearer token' });
   if (!tokenEq(tokenOf(req), want)) fail(401, 'This route needs the metrics token (Authorization: Bearer …)', { auth: 'metrics', code: 'UNAUTHORIZED', hint: 'Set authorization.credentials (or bearer_token_file) in the scrape config to the token from: intellagent token --metrics' });
-  reply(res, 200, prometheus({ boards: [...boards.values()], agents: standingAgents(), seq: currentSeq(), version: VERSION, build: BUILD }), { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+  const team = standingAgents().filter((a) => a.enabled).map((a) => a.name);
+  reply(res, 200, prometheus({ boards: [...boards.values()], agents: standingAgents(), seq: currentSeq(), version: VERSION, build: BUILD, unowned: (ctx) => unownedTickets(ctx, team).length }), { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
   return HANDLED;
 });
 route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {

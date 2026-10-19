@@ -78,6 +78,19 @@ describe('alerting simulator', () => {
     assert.equal(runs.flatMap((r) => r.events).filter((e) => e.type === 'comment.added').length, 10);
   });
 
+  it('reports the alerting metrics of the board: wakes by reason, runs that changed nothing, tickets nobody will touch (INT-389)', () => {
+    sim = createSim({ team: { groot: { role: 'builder', behave: agentLike() } } });
+    const t = sim.human.create({ title: 'x', column: 'Ready', assignee: 'groot' });
+    sim.human.create({ title: 'orphan', column: 'Review' });
+    sim.tick('10m');
+    sim.human.comment(t, '@groot thanks!'); // nothing to do: a run that changes nothing
+    sim.tick('10m');
+    const m = sim.metrics();
+    assert.deepEqual(m.wakes, { 'item.assigned': 1, 'comment.added': 1 });
+    assert.equal(m.idleRuns, 1);
+    assert.deepEqual(m.unowned, ['T-2']);
+  });
+
   it('work that appears while an agent waits out its hourly cap is offered once it can run (INT-378)', () => {
     // Lenza, 2026-10-19: the supervisor read only his events; a ticket became decidable while he waited, and the
     // run that followed (for other events) must not count it as seen.

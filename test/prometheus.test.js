@@ -169,7 +169,7 @@ describe('GET /metrics: the numbers', () => {
     try {
       const m = parse((await scrape(s)).text);
       const keys = new Set(m.flatMap((x) => Object.keys(x.labels)));
-      const allowed = new Set(['agent', 'board', 'build', 'column', 'delegated', 'kind', 'le', 'model', 'provider', 'result', 'status', 'verdict', 'version']);
+      const allowed = new Set(['agent', 'board', 'build', 'column', 'delegated', 'kind', 'le', 'model', 'provider', 'reason', 'result', 'status', 'verdict', 'version']);
       assert.deepEqual([...keys].filter((k) => !allowed.has(k)), [], 'no label outside the fixed set');
       assert.ok(m.length < 400, `a bounded number of series on an empty board (${m.length})`);
     } finally { await s.stop(); }
@@ -218,6 +218,37 @@ describe('run records, read incrementally', () => {
     t = totals();
     assert.deepEqual(t.runs.get('a'), { ok: 2, failed: 1 }, 'the roll is not counted twice');
     assert.deepEqual(t.runs.get('b'), { limited: 1 });
+  });
+
+  it('counts wakes by reason and runs that changed nothing; older records without them count as neither (INT-389)', () => {
+    const dir = tmp('ia-prom-wakes-');
+    fs.writeFileSync(path.join(dir, 'agent-stats.jsonl'),
+      rec('a', 'ok', { reasons: ['decide'], writes: 3 }) + rec('a', 'ok', { reasons: ['comment.added'], writes: 0 })
+      + rec('a', 'failed', { reasons: ['start'], writes: 0 }) + rec('a', 'ok', { why: 'item.assigned, comment.added' }));
+    const t = createRunTotals(dir)();
+    assert.deepEqual(t.wakes.get('a'), { decide: 1, 'comment.added': 2, start: 1, 'item.assigned': 1 }, 'an old record falls back to its event types');
+    assert.equal(t.measured.get('a'), 2, 'finished runs with a write count');
+    assert.equal(t.idle.get('a'), 1, 'one finished run changed nothing; a failed run is not idle');
+  });
+
+  it('shows in /metrics: wakes by reason, idle runs, and the open tickets nobody will touch (INT-389)', async () => {
+    const dir = tmp('ia-prom-alerts-');
+    fs.writeFileSync(path.join(dir, 'local.json'), JSON.stringify({ metricsToken: TOKEN }));
+    fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'data', 'agent-stats.jsonl'), rec('drax', 'ok', { reasons: ['decide'], writes: 2 }) + rec('drax', 'ok', { reasons: ['comment.added'], writes: 0 }));
+    const s = await startServer({ dir, manifest: { metrics: { prometheus: true } }, agents: { agents: { drax: { role: 'builder', enabled: false } } } });
+    try {
+      const orphan = await s.ok('POST', '/api/boards/main/items', { title: 'nobody owns this', column: 'Backlog' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${orphan.id}/move`, { column: 'Review' }, USER);
+      await s.ok('POST', '/api/boards/main/items', { title: 'assigned to drax, who is off', column: 'Ready', assignee: 'drax' }, USER);
+      const m = parse((await scrape(s)).text);
+      assert.equal(get(m, 'intellagent_agent_wakes_total', { agent: 'drax', reason: 'decide' }), 1);
+      assert.equal(get(m, 'intellagent_agent_wakes_total', { agent: 'drax', reason: 'comment.added' }), 1);
+      assert.equal(get(m, 'intellagent_agent_measured_runs_total', { agent: 'drax' }), 2);
+      assert.equal(get(m, 'intellagent_agent_idle_runs_total', { agent: 'drax' }), 1);
+      // the Review ticket (unassigned, no question), and drax's: drax is switched off, so nobody will touch it either
+      assert.equal(get(m, 'intellagent_tickets_unowned', { board: 'main' }), 2);
+    } finally { await s.stop(); }
   });
 
   it('shows in /metrics: runs by result, usage-limited runs, tokens by model', async () => {
