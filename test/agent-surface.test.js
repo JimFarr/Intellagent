@@ -1019,6 +1019,17 @@ describe('required reviewers: "N oks from named reviewers" on a grant (INT-230)'
       const ok = await decide(a.id, 'gamora');
       assert.equal(ok.status, 200, JSON.stringify(ok.body));
 
+      // no open review is said before the oks are counted (INT-372): quill's rule isn't met on either ticket
+      // (drax's ok is unverified, and the new one has no reviewers), so the oks would have answered first
+      assert.equal((await decide(a.id, 'quill')).body.code, 'ALREADY_DECIDED');
+      const nr = await s.ok('POST', '/api/boards/main/items', { title: 'never sent for review', column: 'Ready' }, USER);
+      await s.ok('POST', `/api/boards/main/items/${nr.id}/start`, {}, { agent: 'dev' });
+      const none = await decide(nr.id, 'gamora');
+      assert.equal(none.status, 409);
+      assert.equal(none.body.code, 'NO_REVIEW', JSON.stringify(none.body));
+      // …and the grant checks still come before it: no grant is refused as before
+      assert.equal((await decide(nr.id, 'dev')).body.code, 'HUMAN_ONLY', 'no grant at all');
+
       // asking for changes needs no oks
       const b = await inReview('send it back', ['nebula']);
       assert.equal((await decide(b.id, 'gamora', 'changes')).status, 200, 'a delegated "changes" is not held to the rule');
