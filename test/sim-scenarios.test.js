@@ -79,6 +79,21 @@ describe('liveness: nothing gets stuck with nobody told', () => {
   });
 });
 
+describe('a comment never hides work', () => {
+  it('an agent that saw a mention on its assigned ticket without answering still gets the ticket to start (INT-392)', () => {
+    // groot is busy on another ticket when the human asks about T-2 on the card; his run for the mention only reads it
+    const seen = new Set();
+    sim = createSim({ columns: SLEEPING, team: { groot: { role: 'builder', throttleMinutes: 0, behave: (run, act) => {
+      if (run.why.includes('comment.added')) return; // read, no answer
+      for (const n of run.brief.next) if (n.action === 'start' && !seen.has(n.id)) { seen.add(n.id); act.start(n.id); act.review(n.id, { summary: 'done', evidence: 'tests pass' }); }
+    } } } });
+    const t = sim.human.create({ title: 'assigned', column: 'Ready', assignee: 'groot' });
+    sim.human.comment(t, '@groot is the export header in scope?');
+    sim.tick('2h');
+    assert.equal(sim.item(t).columnId, 'review', sim.wakes('groot').join(' | '));
+  });
+});
+
 describe('quiet: nobody is woken for nothing', () => {
   it('an approval wakes nobody, its landing included (INT-386)', () => {
     sim = createSim({ team: { groot: { role: 'builder' } } });
