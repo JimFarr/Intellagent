@@ -22,6 +22,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./metrics.token:/etc/prometheus/intellagent-metrics.token:ro
+      - ./boards:/etc/prometheus/boards:ro   # more boards, one file each (boards/README.md)
       - prometheus-data:/prometheus
     restart: unless-stopped
 

@@ -3,6 +3,10 @@
 global:
   scrape_interval: 30s
 
+# More boards: one file each in ./boards (see boards/README.md).
+scrape_config_files:
+  - /etc/prometheus/boards/*.yml
+
 scrape_configs:
   - job_name: intellagent
     metrics_path: /metrics
