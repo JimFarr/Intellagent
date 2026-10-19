@@ -127,6 +127,30 @@ describe('scheduler (fake clock)', () => {
     assert.equal(started.length, 1);
   });
 
+  it('a resume whose timer was lost is found by the sweep once it is half a minute late, and only then (INT-379)', () => {
+    const { scheduler, agents, started } = rig({ def: { throttleMinutes: 0, maxRunsPerHour: 2 }, state: { status: 'throttled', resumesAt: ago(-10 * MIN), runs: [ago(50 * MIN), ago(40 * MIN)] } });
+    assert.deepEqual(scheduler.checkMissedResumes(), [], 'not due yet');
+    mock.timers.tick(10 * MIN + 20_000);
+    assert.deepEqual(scheduler.checkMissedResumes(), [], 'due, but within the grace of the timer itself');
+    mock.timers.tick(20_000);
+    assert.deepEqual(scheduler.checkMissedResumes(), ['bot']);
+    mock.timers.tick(5000);
+    assert.equal(started.length, 1, 'it runs its queued events');
+    assert.deepEqual(scheduler.checkMissedResumes(), [], 'and is not woken again: nothing queued');
+    assert.equal(agents.bot.queue.length, 0);
+  });
+
+  it('cap of 2: the third event waits for the hour, then runs (INT-379)', () => {
+    const { scheduler, agents, started } = rig({ def: { throttleMinutes: 0, maxRunsPerHour: 2 } });
+    scheduler.dispatch('bot'); mock.timers.tick(5 * MIN);
+    agents.bot.queue.push({ seq: 2, type: 'comment.added' }); scheduler.dispatch('bot'); mock.timers.tick(5 * MIN);
+    agents.bot.queue.push({ seq: 3, type: 'comment.added' }); scheduler.dispatch('bot');
+    assert.equal(started.length, 2);
+    assert.equal(agents.bot.status, 'throttled');
+    mock.timers.tick(50 * MIN + 2000);
+    assert.equal(started.length, 3, 'the third runs once the first is an hour old');
+  });
+
   it('runs older than an hour do not count towards maxRunsPerHour', () => {
     const { scheduler, agents, started } = rig({ def: { throttleMinutes: 0, maxRunsPerHour: 2 }, state: { runs: [ago(90 * MIN), ago(70 * MIN), ago(10 * MIN)] } });
     scheduler.dispatch('bot');
