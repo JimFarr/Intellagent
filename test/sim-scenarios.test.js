@@ -1,7 +1,7 @@
 'use strict';
 // Alerting scenarios (INT-385): how waking should work, as simulator tests on the board's own rules. Each states the
-// behaviour we want. One that the board doesn't meet yet is marked todo with its ticket: it runs and reports, and
-// the build stays green until the fix lands and the todo comes off.
+// behaviour we want. A new one the board doesn't meet yet may be marked todo with its ticket until the fix lands;
+// none is now.
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { createSim } = require('../lib/sim');

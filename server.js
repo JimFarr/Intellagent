@@ -628,9 +628,6 @@ function createBoard(d, actor) {
 
 /* ───────────────────────── transactions ───────────────────────── */
 
-// Every mutation runs inside tx(): it either fully applies (saved + hashed + events emitted) or fully rolls back.
-// The board is serialised twice per write (snapshot, then compare-and-save). The archive only grows, so only
-// transactions that say they touch it ({ archive: true }) snapshot and save it.
 // Autonomy (INT-393): each ticket's journey from pickup to Done, stepped with the events of every change it is in
 const AUTONOMY = require('./lib/alerts/autonomy');
 function stepJourneys(ctx, events) {
@@ -647,19 +644,36 @@ function stepJourneys(ctx, events) {
 }
 // Once per board: journeys for the tickets that moved before journeys were kept, replayed from the event log files
 // still on disk. Events of one change were emitted together, so one actor's events within a moment are one change.
-function backfillJourneys(ctx) {
-  if (ctx.board.journeysBackfilled) return;
+// The event logs, oldest first, read once for every board that still needs its journeys: board id → ticket id → events
+// (an event that names no board counts for each). Read in chunks of lines, so a big log never becomes one string.
+function eventsByBoardItem(boardIds) {
   const files = fs.readdirSync(DATA).filter((f) => /^events(-\d+)?\.jsonl$/.test(f))
     .sort((a, b) => (Number(a.slice(7, -6)) || Infinity) - (Number(b.slice(7, -6)) || Infinity)).map((f) => path.join(DATA, f));
-  const byItem = new Map();
+  const out = new Map(boardIds.map((id) => [id, new Map()]));
+  const take = (l) => {
+    if (!l) return;
+    let e; try { e = JSON.parse(l); } catch { return; }
+    if (!e.itemId) return;
+    for (const [id, byItem] of out) if (!e.board || e.board === id) (byItem.get(e.itemId) || byItem.set(e.itemId, []).get(e.itemId)).push(e);
+  };
+  const buf = Buffer.alloc(1 << 20);
   for (const f of files) {
-    for (const l of fs.readFileSync(f, 'utf8').split('\n')) {
-      if (!l) continue;
-      let e; try { e = JSON.parse(l); } catch { continue; }
-      if (!e.itemId || (e.board && e.board !== ctx.id)) continue;
-      (byItem.get(e.itemId) || byItem.set(e.itemId, []).get(e.itemId)).push(e);
-    }
+    const fd = fs.openSync(f, 'r');
+    try {
+      const dec = new (require('string_decoder').StringDecoder)('utf8'); // a chunk may end inside a character
+      let rest = '';
+      for (let n; (n = fs.readSync(fd, buf, 0, buf.length, null)) > 0;) {
+        const lines = (rest + dec.write(buf.subarray(0, n))).split('\n');
+        rest = lines.pop();
+        lines.forEach(take);
+      }
+      take(rest);
+    } finally { fs.closeSync(fd); }
   }
+  return out;
+}
+function backfillJourneys(ctx, byItem) {
+  if (ctx.board.journeysBackfilled) return;
   const cols = AUTONOMY.columnsOf(ctx.board);
   const replay = (evs) => {
     let j;
@@ -684,35 +698,36 @@ function backfillJourneys(ctx) {
 // The stuck watch (INT-394): every in-flight ticket checked each sweep, the stuck ones kept in board.stuck with when
 // they were first seen; the coordinator's work offers unstick once the board is sure; past its rounds, the human.
 const STUCK = require('./lib/alerts/stuck');
+const STUCK_TIMINGS = STUCK.timingsOf(M.stuck);
+// Who will move each ticket on, from the last sweep, for /metrics' unowned gauge: board id → { hash, owners }. The
+// gauge reuses it while the board is unchanged instead of working out every agent's work again on each scrape.
+const lastOwners = new Map();
 function sweepStuck(ctx) {
   if (M.sandbox) return; // a sandbox runs no agents: nothing to wake, and its human is not to be asked
   // every standing agent, paused or switched off included: an owner that can't run is down, not absent
   const all = standingAgents();
-  const owners = STUCK.ownersOf(Object.fromEntries(all.map((a) => [a.name, workFor(ctx, a.name)])));
   const byName = new Map(all.map((a) => [a.name, a]));
-  const statusOf = (n) => { const a = byName.get(n); return !a ? undefined : a.paused ? 'paused' : !a.enabled ? 'disabled' : a.status; };
-  const sleeping = new Set(ctx.board.columns.filter((c) => c.flags?.sleeping).map((c) => c.id));
   const nowMs = Date.now();
-  const found = {};
-  for (const it of Object.values(ctx.board.items)) {
-    const s = STUCK.assess(it, nowMs, { owners: [...(owners.get(it.id) || [])], running: (n) => !!standing?.isRunning?.(n), status: statusOf, sleeping: (c) => sleeping.has(c) });
-    if (s) found[it.id] = s;
+  const { next, due, owners } = STUCK.sweepBoard(ctx.board, nowMs, {
+    works: Object.fromEntries(all.map((a) => [a.name, workFor(ctx, a.name)])),
+    running: (n) => !!standing?.isRunning?.(n),
+    status: (n) => { const a = byName.get(n); return !a ? undefined : a.paused ? 'paused' : !a.enabled ? 'disabled' : a.status; },
+  }, STUCK_TIMINGS);
+  if (JSON.stringify(next) !== JSON.stringify(ctx.board.stuck || {}) || due.length) {
+    tx(ctx, (events) => {
+      for (const id of due) {
+        openQuestion(ctx, ctx.board.items[id], parseNeedsHuman({ reason: STUCK.humanQuestion(next[id], nowMs, STUCK_TIMINGS) }, SYSTEM), SYSTEM, events);
+        next[id].escalated = new Date(nowMs).toISOString();
+      }
+      ctx.board.stuck = next;
+    });
   }
-  const next = STUCK.sweep(ctx.board.stuck, found, new Date(nowMs).toISOString());
-  const due = Object.entries(next).filter(([, e]) => STUCK.forHuman(e, nowMs));
-  if (JSON.stringify(next) === JSON.stringify(ctx.board.stuck || {}) && !due.length) return;
-  tx(ctx, (events) => {
-    for (const [id, e] of due) {
-      const it = ctx.board.items[id];
-      const hours = Math.round((nowMs - Date.parse(e.since)) / 360_000) / 10;
-      openQuestion(ctx, it, parseNeedsHuman({ reason: `Stuck for ${hours} h (${e.reason.replace('_', ' ')}${e.owner ? `: ${e.owner}` : ''}), and the coordinator could not move it on in ${STUCK.ROUNDS} rounds. What should happen to it?` }, SYSTEM), SYSTEM, events);
-      e.escalated = new Date(nowMs).toISOString();
-    }
-    ctx.board.stuck = next;
-  });
+  lastOwners.set(ctx.id, { hash: ctx.hash, owners });
 }
-setInterval(() => { for (const ctx of boards.values()) { try { sweepStuck(ctx); } catch (e) { console.warn(`stuck watch (${ctx.id}): ${e.message}`); } } }, Math.max(1, Number(M.stuckSweepSeconds) || 300) * 1000).unref();
 
+// Every mutation runs inside tx(): it either fully applies (saved + hashed + events emitted) or fully rolls back.
+// The board is serialised twice per write (snapshot, then compare-and-save). The archive only grows, so only
+// transactions that say they touch it ({ archive: true }) snapshot and save it.
 function tx(ctx, fn, { archive = false } = {}) {
   const parts = boardParts(ctx.board);
   const before = parts.body;
@@ -769,17 +784,17 @@ function getItem(ctx, id) {
 }
 
 // Who an event is for, and the leases that decide it (INT-381): lib/alerts/recipients.js, shared with the simulator.
-const alerts = require("./lib/alerts/recipients").createRecipients({ now: () => Date.now(), isRunning: (n) => !!standing?.isRunning?.(n) });
+const alerts = require('./lib/alerts/recipients').createRecipients({ now: () => Date.now(), isRunning: (n) => !!standing?.isRunning?.(n) });
 const { activeLease, activeMaster, snapshot, recipientsFor, unansweredIn, explainTargets, itemEvent } = alerts;
-const { QUIET_TYPES, UNANSWERED_DAYS, plainText, mentionsIn } = require("./lib/alerts/recipients");
+const { QUIET_TYPES, UNANSWERED_DAYS, plainText, mentionsIn } = require('./lib/alerts/recipients');
 // Board geometry, reviewer oks and each agent's pending work (INT-382): lib/alerts/, shared with the simulator.
-const { PRIO_RANK, findColumnById, doneColumnId, openBlockersOf, asleep, pickupColumns, replyAfter, ownWork } = require("./lib/alerts/board");
-const { inScope, okStatus, reviewerRule, assignedOks } = require("./lib/alerts/oks").createOks({ verdictStands: (...a) => verdictStands(...a), now: () => Date.now() });
-const { delegationGaps, workFor, stalledFor, untriaged, pendingWork, waitingWork, unownedTickets, FOCUS_THROUGH } = require("./lib/alerts/work").createWork({
-  now: () => Date.now(), boards: () => boards.values(), leaseWarningMinutes: () => M.lease.warningMinutes,
+const { PRIO_RANK, findColumnById, doneColumnId, openBlockersOf, asleep, pickupColumns, replyAfter, ownWork } = require('./lib/alerts/board');
+const { inScope, okStatus, reviewerRule, assignedOks } = require('./lib/alerts/oks').createOks({ verdictStands: (...a) => verdictStands(...a), now: () => Date.now() });
+const { delegationGaps, workFor, stalledFor, untriaged, pendingWork, waitingWork, unownedTickets, FOCUS_THROUGH } = require('./lib/alerts/work').createWork({
+  now: () => Date.now(), boards: () => boards.values(), leaseWarningMinutes: () => M.lease.warningMinutes, stuckTimings: STUCK_TIMINGS,
   recipients: alerts, oks: { inScope: (...a) => inScope(...a), okStatus: (...a) => okStatus(...a), reviewerRule: (...a) => reviewerRule(...a), assignedOks: (...a) => assignedOks(...a) },
   agents: {
-    get: (n) => { if (!standing) throw new Error("no standing agents"); return standing.get(n); },
+    get: (n) => { if (!standing) throw new Error('no standing agents'); return standing.get(n); },
     isRunning: (n) => !!standing?.isRunning?.(n), superviseOf: (n) => standing?.superviseOf?.(n) || 0, pickupOf: (n) => standing?.pickupOf?.(n),
     grantsOf: (n) => grantsOf(n), isHelper: (n) => isHelper(n), reviewerPool: () => reviewerPool(),
     // coordinators able to run now: the board's, or a standing agent with the coordinator role, not paused or failed
@@ -2656,6 +2671,7 @@ const warned = new Set();
 setInterval(() => { reconcileLandings().catch((e) => console.warn(`landing sweep: ${e.message}`)); }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => { try { sweepStale(); } catch (e) { console.warn(`stale sweep: ${e.message}`); } }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => { codeState.refresh().catch((e) => console.warn(`code state: ${e.message}`)); }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
+setInterval(() => { for (const ctx of boards.values()) { try { sweepStuck(ctx); } catch (e) { console.warn(`stuck watch (${ctx.id}): ${e.message}`); } } }, Math.max(1, Number(M.stuckSweepSeconds) || 300) * 1000).unref();
 setInterval(() => {
   // a warning is keyed by the lease's expiry: once that has passed, the key can never match again
   for (const k of warned) if (Date.parse(k.slice(k.lastIndexOf('@') + 1)) <= Date.now()) warned.delete(k);
@@ -2667,7 +2683,7 @@ setInterval(() => {
     const seen = ms && Date.parse(presence.get(ms.holder)?.lastSeen || ms.since || ms.claimedAt || 0);
     const idle = ms && ms.kind === 'agent' && !ms.expiresAt && idleMin && Date.now() - seen > idleMin * 60_000 && !standing?.isRunning(ms.holder);
     if ((ms?.expiresAt && Date.parse(ms.expiresAt) <= Date.now()) || idle) {
-      tx(ctx, (events) => { ctx.board.master = null; events.push({ board: ctx.id, type: 'master.expired', actor: SYSTEM, holder: ms.holder, recipients: [ms.holder], ...(idle ? { reason: `idle for ${idleMin} minutes` } : {}) }); });
+      try { tx(ctx, (events) => { ctx.board.master = null; events.push({ board: ctx.id, type: 'master.expired', actor: SYSTEM, holder: ms.holder, recipients: [ms.holder], ...(idle ? { reason: `idle for ${idleMin} minutes` } : {}) }); }); } catch (e) { console.warn(`master expiry: ${e.message}`); }
     }
     try { sweepAsks(ctx); } catch (e) { console.warn(`ask sweep: ${e.message}`); }
     const expired = [];
@@ -3995,9 +4011,10 @@ route('GET', '/api/boards/:board/stuck', 'The stuck watch (INT-394): tickets pic
   const stuck = Object.entries(ctx.board.stuck || {}).map(([id, e]) => {
     const it = ctx.board.items[id];
     return { id, title: it?.title || null, column: it ? ctx.board.columns.find((c) => c.id === it.columnId)?.name : null, assignee: it?.assignee || null, ...e,
-      minutes: Math.round((nowMs - Date.parse(e.since)) / 60_000), sure: STUCK.confirmed(e, nowMs), round: Math.max(0, STUCK.roundOf(e, nowMs)) };
+      minutes: Math.round((nowMs - Date.parse(e.since)) / 60_000), sure: STUCK.confirmed(e, nowMs, STUCK_TIMINGS), round: Math.max(0, STUCK.roundOf(e, nowMs, STUCK_TIMINGS)) };
   }).sort((a, b) => b.minutes - a.minutes);
-  return { stuck, rules: { quietMinutes: STUCK.QUIET_MS / 60_000, sureAfterMinutes: STUCK.CONFIRM_MS / 60_000, roundMinutes: STUCK.ROUND_MS / 60_000, rounds: STUCK.ROUNDS } };
+  const T = STUCK_TIMINGS;
+  return { stuck, rules: { quietMinutes: T.quietMs / 60_000, sureAfterMinutes: T.confirmMs / 60_000, roundMinutes: T.roundMs / 60_000, rounds: T.rounds } };
 });
 route('POST', '/api/boards/:board/items/:id/asks', 'Ask another agent for something, as an obligation instead of an @mention (INT-391): { to, kind: answer|decide|review|fix|assign_reviewer|unblock|other, what, options?, dueMinutes? (default 60) } → { ask }. A work item for its owner; closes itself when done (review: its verdict; fix: its next review request; assign_reviewer: a reviewer assigned) or with …/asks/<askId>/done; escalates once when overdue', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
@@ -4217,7 +4234,7 @@ route('GET', '/metrics', 'Prometheus metrics (text format 0.0.4): tickets per co
   if (!want) fail(401, 'Prometheus metrics are on, but the board has no metrics token', { auth: 'metrics', code: 'UNAUTHORIZED', hint: 'The human issues one: intellagent token --metrics (the board accepts it at once). Prometheus sends it as a bearer token' });
   if (!tokenEq(tokenOf(req), want)) fail(401, 'This route needs the metrics token (Authorization: Bearer …)', { auth: 'metrics', code: 'UNAUTHORIZED', hint: 'Set authorization.credentials (or bearer_token_file) in the scrape config to the token from: intellagent token --metrics' });
   const team = standingAgents().filter((a) => a.enabled).map((a) => a.name);
-  reply(res, 200, prometheus({ boards: [...boards.values()], agents: standingAgents(), seq: currentSeq(), version: VERSION, build: BUILD, unowned: (ctx) => unownedTickets(ctx, team).length }), { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+  reply(res, 200, prometheus({ boards: [...boards.values()], agents: standingAgents(), seq: currentSeq(), version: VERSION, build: BUILD, unowned: (ctx) => { const last = lastOwners.get(ctx.id); return unownedTickets(ctx, team, last?.hash === ctx.hash ? last.owners : null).length; }, stuckTimings: STUCK_TIMINGS }), { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
   return HANDLED;
 });
 route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {
@@ -5008,7 +5025,12 @@ for (const d of fs.readdirSync(BOARDS_DIR)) {
   try { loadBoard(d); } catch (e) { console.warn(`Skipping board "${d}": ${e.message}`); }
 }
 if (!boards.size) seed();
-for (const ctx of boards.values()) { try { backfillJourneys(ctx); } catch (e) { console.warn(`journeys (${ctx.id}): ${e.message}`); } }
+{
+  const todo = [...boards.values()].filter((ctx) => !ctx.board.journeysBackfilled);
+  let logs = new Map();
+  try { if (todo.length) logs = eventsByBoardItem(todo.map((ctx) => ctx.id)); } catch (e) { console.warn(`journeys: ${e.message}`); }
+  for (const ctx of todo) { try { backfillJourneys(ctx, logs.get(ctx.id) || new Map()); } catch (e) { console.warn(`journeys (${ctx.id}): ${e.message}`); } }
+}
 checkPresence();
 // A sandbox has no worktrees: its projectRoot is a real checkout, and landing there would put commits on
 // main that James never approved on the real board (INT-80).

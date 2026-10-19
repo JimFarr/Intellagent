@@ -29,7 +29,12 @@ sim.close();      // always: the simulator owns the clock (node:test mock timers
 ## Writing a scenario
 
 - **Actions**:
-  - `sim.human.…` or `sim.as('groot').…`, each one of: `create`, `comment`, `assign`, `move`, `start`, `review`, `addReviewer`, `verdict`, `decide`, `ask`, `answer`, `request`, `replyRequest`, `archive`.
+  - `sim.human.…` or `sim.as('groot').…`, each one of: `create`, `comment`, `assign`, `move`, `start`, `review`, `addReviewer`, `verdict`, `decide`, `ask`, `answer`, `request`, `replyRequest`, `askAgent`, `answerAsk`, `withdrawAsk`, `archive`.
+  - `sim.pause(name)` / `sim.resume(name)`: the human's Pause and Resume on the Agents page.
+- **Errors**:
+  - A refusal from the simulator (no such ticket, not a reviewer…) is kept on the run as `run.error`.
+  - A bug (`TypeError`, `ReferenceError`, `RangeError`) in the board's rules or a behaviour throws out of `tick()`, so a test fails where it happens. `createSim({ strict: false })` keeps those on the run too.
+  - One simulator at a time: the mock clock belongs to the whole process, so close one (`sim.close()`) before creating the next.
 - **Time**:
   - `sim.tick('90s' | '5m' | '2h')` advances the clock.
   - Every timer due in that time fires at its own moment (the clock moves in one-second steps).

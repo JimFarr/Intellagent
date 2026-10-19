@@ -65,6 +65,27 @@ describe('stuck rules', () => {
     assert.equal(STUCK.forHuman({ ...e, escalated: 'yes' }, at(150)), false, 'asked once');
     assert.equal(STUCK.forHuman({ ...e, reason: 'waiting_on_human' }, at(500)), false, 'already the human\'s');
   });
+
+  it('the manifest tunes the timings; anything missing or nonsense keeps the default', () => {
+    const t = STUCK.timingsOf({ quietMinutes: 20, rounds: 1, roundMinutes: 'soon', sureAfterMinutes: -5 });
+    assert.deepEqual(t, { quietMs: 20 * MIN, confirmMs: STUCK.TIMINGS.confirmMs, roundMs: STUCK.TIMINGS.roundMs, rounds: 1 });
+    assert.deepEqual(STUCK.timingsOf(undefined), STUCK.TIMINGS);
+    assert.equal(STUCK.assess(ticket({ journey: { pickedUpAt: ago(300 * MIN), lastProgressAt: ago(30 * MIN), touches: {} } }), NOW, who(), t)?.reason, 'no_owner', 'quiet after 20 minutes');
+    const e = { since: new Date(NOW).toISOString(), reason: 'no_owner' };
+    assert.equal(STUCK.forHuman(e, NOW + 95 * MIN, t), true, 'one round, then the human');
+  });
+
+  it('one sweep of a board: the ledger, the owners, and what is due for the human', () => {
+    const board = { columns: [{ id: 'doing', flags: {} }, { id: 'later', flags: { sleeping: true } }], stuck: { 'T-1': { since: ago(200 * MIN), reason: 'no_owner' } }, items: {
+      'T-1': ticket({ id: 'T-1', columnId: 'doing' }), 'T-2': ticket({ id: 'T-2', columnId: 'doing' }), 'T-3': ticket({ id: 'T-3', columnId: 'later' }) } };
+    const works = { groot: { next: [{ action: 'start', id: 'T-2' }, { action: 'reply', id: 'T-1' }] } };
+    const { next, due, owners } = STUCK.sweepBoard(board, NOW, { works, running: () => false, status: () => 'idle' });
+    assert.deepEqual(Object.keys(next), ['T-1', 'T-2'], 'asleep is not stuck');
+    assert.deepEqual([next['T-1'].reason, next['T-2'].reason, next['T-2'].owner], ['no_owner', 'owner_quiet', 'groot'], 'a reply owed doesn\'t make an owner');
+    assert.deepEqual(due, ['T-1']);
+    assert.deepEqual([...owners.get('T-2')], ['groot']);
+    assert.match(STUCK.humanQuestion(next['T-1'], NOW), /^Stuck for 3\.3 h \(no owner\), and the coordinator could not move it on in 2 rounds/);
+  });
 });
 
 describe('the stuck watch on the simulator', () => {
@@ -114,5 +135,34 @@ describe('the stuck watch on the simulator', () => {
     sim.tick('6h');
     assert.deepEqual(sim.board.stuck, {});
     assert.ok(!sim.runs.some((r) => r.work.some((w) => w.startsWith('unstick:'))));
+  });
+});
+
+describe('the stuck watch on a real board', () => {
+  const { startServer, USER } = require('./helpers');
+  const B = '/api/boards/main';
+  it('the sweep enters a quiet ticket with why, the route says so, and past its rounds the human is asked once', async () => {
+    // timings in fractions of a minute, and a sweep every second, so the whole watch runs in a few seconds
+    const s = await startServer({ manifest: { stuck: { quietMinutes: 0.02, sureAfterMinutes: 0.02, roundMinutes: 0.02, rounds: 1 }, stuckSweepSeconds: 1 },
+      agents: { agents: { groot: { role: 'builder', enabled: false } } } });
+    try {
+      const t = await s.ok('POST', `${B}/items`, { title: 'goes quiet', column: 'Ready' }, USER);
+      await s.ok('POST', `${B}/items/${t.id}/start`, {}, { agent: 'groot' });
+      let r;
+      for (let i = 0; i < 40; i++) {
+        r = await s.ok('GET', `${B}/stuck`);
+        if (r.stuck.some((e) => e.id === t.id && e.escalated)) break;
+        await new Promise((ok) => setTimeout(ok, 250));
+      }
+      assert.deepEqual(r.rules, { quietMinutes: 0.02, sureAfterMinutes: 0.02, roundMinutes: 0.02, rounds: 1 });
+      const e = r.stuck.find((x) => x.id === t.id);
+      assert.ok(e?.escalated, `escalated: ${JSON.stringify(r.stuck)}`);
+      const qs = (await s.ok('GET', `${B}/items/${t.id}`)).questions;
+      assert.equal(qs.length, 1);
+      assert.match(qs[0].reason, /^Stuck for .* \(held quiet: groot\), and the coordinator could not move it on in 1 rounds/);
+      await new Promise((ok) => setTimeout(ok, 1500));
+      assert.equal((await s.ok('GET', `${B}/items/${t.id}`)).questions.length, 1, 'asked once');
+      assert.equal((await s.ok('GET', `${B}/stuck`)).stuck.find((x) => x.id === t.id)?.reason, 'waiting_on_human');
+    } finally { await s.stop(); }
   });
 });
