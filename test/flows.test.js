@@ -687,6 +687,23 @@ describe('agent flows', () => {
     assert.ok((await s.ok('DELETE', `${B}/test-items`, undefined, USER)).deleted.includes(t2.id), 'archived test tickets go too');
   });
 
+  it('archive then restore passes the same gates as a move: an agent never puts a ticket in or takes it out of Done (INT-413)', async () => {
+    const it = await mk({ title: 'archive-restore gate' });
+    const code = async (method, p, body, as = A) => (await s.api(method, p, body, as)).body.code;
+    await s.ok('POST', `${B}/items/${it.id}/archive`, {}, A);
+    assert.equal(await code('POST', `${B}/archive/${it.id}/restore`, { column: 'Done' }), 'HUMAN_ONLY');
+    assert.ok((await s.ok('GET', `${B}/archive`)).some((x) => x.id === it.id), 'a refused restore leaves it archived');
+    assert.equal((await s.ok('POST', `${B}/archive/${it.id}/restore`, {}, A)).columnId, 'ready', 'back where it was');
+    await s.ok('POST', `${B}/items/${it.id}/move`, { column: 'Done' }, USER);
+    assert.equal(await code('POST', `${B}/items/${it.id}/archive`, {}), 'HUMAN_ONLY', 'archiving out of Done is leaving it');
+    await s.ok('POST', `${B}/items/${it.id}/archive`, {}, USER);
+    assert.equal(await code('POST', `${B}/archive/${it.id}/restore`, { column: 'Ready' }), 'HUMAN_ONLY');
+    // the human still can, either way
+    assert.equal((await s.ok('POST', `${B}/archive/${it.id}/restore`, { column: 'Ready' }, USER)).columnId, 'ready');
+    await s.ok('POST', `${B}/items/${it.id}/archive`, {}, USER);
+    assert.equal((await s.ok('POST', `${B}/archive/${it.id}/restore`, { column: 'Done' }, USER)).columnId, 'done');
+  });
+
   it('"let the agent write it": the writer rewrites everything except what the human set on purpose', async () => {
     const it = await s.ok('POST', `${B}/items`, { title: 'login thing broken??', column: 'Backlog', priority: 'High', agentWrite: true, writer: 'ada', explicit: ['priority'] }, USER);
     assert.deepEqual(it.agentDraft.explicit, ['priority']);

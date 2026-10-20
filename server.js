@@ -2346,6 +2346,8 @@ function archiveItems(ctx, ids, actor, reason = null) {
       if (!item) { if (ctx.archive.items[id]) continue; fail(404, `Item "${id}" not found`); }
       guardWrite(ctx, item, actor);
       const col = ctx.board.columns.find((c) => c.id === item.columnId);
+      // Archiving takes a ticket out of its column: an agent needs the same column.gate a move out would (INT-413).
+      if (col && actor.kind === 'agent' && (col.flags.humanOnlyOut || col.id === doneColumnId(ctx))) grantFor(ctx, actor, 'column.gate', item, `archive tickets out of "${col.name}"`);
       if (col) col.itemIds = col.itemIds.filter((x) => x !== id);
       delete ctx.board.items[id];
       const rec = { ...item, lease: null, archivedAt: now(), archivedBy: actor, archivedFrom: item.columnId, archiveReason: reason };
@@ -2403,13 +2405,17 @@ function restoreItem(ctx, id, d, actor) {
     const col = d.columnId || d.column ? findColumn(b, d.columnId ?? d.column) : b.columns.find((c) => c.id === rec.archivedFrom) || b.columns[0];
     if (!col) fail(400, 'Board has no columns');
     const { archivedAt, archivedBy, archivedFrom, archiveReason, ...item } = rec;
-    enterColumn(item, col.id);
+    // An agent's restore is a move from where the ticket was archived, through the move's gates (INT-413).
+    const from = actor.kind === 'user' ? col : b.columns.find((c) => c.id === archivedFrom) || b.columns[0];
+    if (from.id === col.id && actor.kind !== 'user') { checkColumnPerm(ctx, actor, [col.id]); checkWip(col); }
+    enterColumn(item, from.id);
     item.version++;
     item.updatedAt = now();
     b.items[key] = item;
-    col.itemIds.unshift(key);
+    from.itemIds.unshift(key);
     delete ctx.archive.items[key];
     events.push(itemEvent(ctx, 'item.restored', item, actor, { archivedAt }));
+    if (from.id !== col.id) moveInto(ctx, item, col.id, 0, actor, events);
     return item;
   }, { archive: true });
 }
