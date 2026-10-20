@@ -239,7 +239,9 @@ describe('scheduler (fake clock)', () => {
     scheduler.checkPending('bot');
     assert.equal(queued(), 1);
     agents.bot.queue.length = 0;
-    mock.timers.tick(119 * MIN);
+    mock.timers.tick(1 * MIN);
+    scheduler.checkPending('bot'); // the first look after the run: the baseline
+    mock.timers.tick(118 * MIN);
     scheduler.checkPending('bot');
     assert.equal(queued(), 0, 'not yet two hours');
     mock.timers.tick(2 * MIN);
@@ -258,15 +260,17 @@ describe('scheduler (fake clock)', () => {
     const queued = () => agents.bot.queue.filter((e) => e.type === 'work.pending').length;
     scheduler.checkPending('bot');
     agents.bot.queue.length = 0;
-    scheduler.checkPending('bot');
-    assert.equal(queued(), 0, 'unchanged: quiet');
+    // the woken run can't act and says so on the card: its own comment raises the ticket's version, and is no change
     rev = 4;
     scheduler.checkPending('bot');
-    assert.equal(queued(), 1, 'a blocker done, a comment: offered again');
-    agents.bot.queue.length = 0;
+    assert.equal(queued(), 0, 'its own reply does not spend the change-wake');
     rev = 5;
     scheduler.checkPending('bot');
+    assert.equal(queued(), 1, 'a blocker done, a lease granted: offered again');
+    agents.bot.queue.length = 0;
     rev = 6;
+    scheduler.checkPending('bot');
+    rev = 7;
     scheduler.checkPending('bot');
     assert.equal(queued(), 0, 'one change-wake per piece of work, however often the ticket moves');
   });
@@ -276,13 +280,15 @@ describe('scheduler (fake clock)', () => {
     const { scheduler, core, agents } = rig({ state: { queue: [] } });
     core.deps.pending = () => (on ? [{ key: 'start:INT-1', action: 'start', id: 'INT-1', rev: 1 }] : []);
     scheduler.checkPending('bot');
+    scheduler.checkPending('bot');
+    assert.deepEqual(Object.keys(agents.bot.seenMeta), ['start:INT-1']);
     on = false;
     scheduler.checkPending('bot');
+    assert.deepEqual(agents.bot.seenMeta, {}, 'gone from the list: forgotten');
     agents.bot.queue.length = 0;
     on = true;
     scheduler.checkPending('bot');
     assert.equal(agents.bot.queue.length, 1);
-    assert.deepEqual(Object.keys(agents.bot.seenMeta), ['start:INT-1']);
   });
 
   // INT-213: the state file is written once per event, however many agents it wakes.
