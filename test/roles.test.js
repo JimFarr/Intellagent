@@ -248,7 +248,9 @@ describe('roles as data: on the board', () => {
     assert.equal((await agent('waker')).throttleMinutes, 0);
     // bad shapes: 400 and nothing changes
     for (const body of [{ listen: 'everything' }, { listen: [] }, { listen: [['a']] }, { pickup: 'sometimes' }, { throttleMinutes: -1 }, { throttleMinutes: 2.5 }, { throttleMinutes: '3' }]) {
-      assert.equal((await s.api('PATCH', '/api/agents/waker', body, USER)).status, 400, JSON.stringify(body));
+      const bad = await s.api('PATCH', '/api/agents/waker', body, USER);
+      assert.equal(bad.status, 400, JSON.stringify(body));
+      assert.ok(bad.body.hint, `a hint for ${JSON.stringify(body)}`);
     }
     assert.equal((await agent('waker')).throttleMinutes, 0);
     // an agent manager over it, and the agent itself, are refused

@@ -4684,11 +4684,11 @@ function cleanRunWake(d) {
     out.listen = d.listen;
   }
   if (d.pickup !== undefined) {
-    if (d.pickup !== null && ![true, false, 'ready', 'all'].includes(d.pickup)) fail(400, '"pickup" is false, "ready" (or true), "all", or null (the role\'s)', { code: 'BAD_REQUEST' });
+    if (d.pickup !== null && ![true, false, 'ready', 'all'].includes(d.pickup)) fail(400, '"pickup" is false, "ready" (or true), "all", or null (the role\'s)', { code: 'BAD_REQUEST', hint: 'pickup: "ready" wakes it for unassigned tickets in the pickup columns, "all" for every open column, false for none; null goes back to the role\'s' });
     out.pickup = d.pickup === true ? 'ready' : d.pickup;
   }
   if (d.throttleMinutes !== undefined) {
-    if (d.throttleMinutes !== null && !(Number.isInteger(d.throttleMinutes) && d.throttleMinutes >= 0 && d.throttleMinutes <= 1440)) fail(400, '"throttleMinutes" is whole minutes 0-1440 (0 turns it off), or null (the role\'s)', { code: 'BAD_REQUEST' });
+    if (d.throttleMinutes !== null && !(Number.isInteger(d.throttleMinutes) && d.throttleMinutes >= 0 && d.throttleMinutes <= 1440)) fail(400, '"throttleMinutes" is whole minutes 0-1440 (0 turns it off), or null (the role\'s)', { code: 'BAD_REQUEST', hint: 'send a whole number such as 3; 0 turns the throttle off, null goes back to the role\'s' });
     out.throttleMinutes = d.throttleMinutes;
   }
   return out;
