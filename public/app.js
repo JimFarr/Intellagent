@@ -5526,6 +5526,21 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     return rows ? `<div class="usage-box" aria-label="Account usage">${rows}</div>` : '';
   }
 
+  // The first click on Stop all agents arms it. It stays armed until a second click, a click elsewhere or Escape (INT-340).
+  // The flag on body lets the next redraw (fillAgents) keep the armed look.
+  function armStopAll(stop, body) {
+    stop.classList.add('armed'); stop.lastChild.textContent = 'Click again to stop everything';
+    body._stopArmed = true;
+    const disarm = (ev) => {
+      if (ev?.type === 'click' && stop.contains(ev.target)) return;
+      if (ev?.type === 'keydown' && ev.key !== 'Escape') return;
+      document.removeEventListener('click', disarm, true); document.removeEventListener('keydown', disarm, true);
+      stop.classList.remove('armed'); stop.lastChild.textContent = 'Stop all agents';
+      body._stopArmed = false;
+    };
+    stop._disarm = disarm;
+    document.addEventListener('click', disarm, true); document.addEventListener('keydown', disarm, true);
+  }
   function fillAgents(body) {
     const seen = new Set(state.presence.map((p) => p.name));
     const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
@@ -5571,22 +5586,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       const stop = e.target.closest('[data-stop-all]');
       if (stop) {
         e.stopPropagation();
-        if (!stop.classList.contains('armed')) {
-          stop.classList.add('armed'); stop.lastChild.textContent = 'Click again to stop everything';
-          // Stays armed until the second click; a click elsewhere or Escape disarms it.
-          // The flag on body lets the next redraw (fillAgents) keep the armed look (INT-340)
-          body._stopArmed = true;
-          const disarm = (ev) => {
-            if (ev?.type === 'click' && stop.contains(ev.target)) return;
-            if (ev?.type === 'keydown' && ev.key !== 'Escape') return;
-            document.removeEventListener('click', disarm, true); document.removeEventListener('keydown', disarm, true);
-            stop.classList.remove('armed'); stop.lastChild.textContent = 'Stop all agents';
-            body._stopArmed = false;
-          };
-          stop._disarm = disarm;
-          document.addEventListener('click', disarm, true); document.addEventListener('keydown', disarm, true);
-          return;
-        }
+        if (!stop.classList.contains('armed')) { armStopAll(stop, body); return; }
         stop._disarm?.();
         try {
           const r = await api('POST', '/api/agents/stop-all', {});

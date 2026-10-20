@@ -105,3 +105,67 @@ describe('rule builder: round trip', () => {
     assert.equal(lib.text(rows('@drax')), 'type:issue @drax');
   });
 });
+
+// Stop all agents (INT-340): run the real armStopAll() source against a stand-in document that records its listeners.
+// The second click is the page's own handler (it calls stop._disarm, then posts stop-all), so it is not run here.
+describe('stop all agents: the armed confirm', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const a = src.indexOf('function armStopAll('), b = src.indexOf('function fillAgents(');
+  assert.ok(a > 0 && b > a, 'armStopAll source not found');
+  const make = () => {
+    const listeners = { click: [], keydown: [] };
+    const doc = {
+      addEventListener: (type, fn) => listeners[type].push(fn),
+      removeEventListener: (type, fn) => { listeners[type] = listeners[type].filter((f) => f !== fn); },
+    };
+    const armStopAll = vm.runInNewContext(`${src.slice(a, b)}\narmStopAll`, { document: doc });
+    const inside = { nodeName: 'SPAN' };
+    const classes = new Set();
+    const stop = {
+      classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c) },
+      lastChild: { textContent: 'Stop all agents' },
+      contains: (node) => node === inside,
+    };
+    const body = {};
+    const fire = (type, ev) => [...listeners[type]].forEach((fn) => fn(ev));
+    const count = () => listeners.click.length + listeners.keydown.length;
+    return { armStopAll, stop, body, inside, classes, fire, count };
+  };
+
+  it('the first click arms it: armed look, the second-click label, and the flag the redraw reads', () => {
+    const t = make();
+    t.armStopAll(t.stop, t.body);
+    assert.ok(t.classes.has('armed'));
+    assert.equal(t.stop.lastChild.textContent, 'Click again to stop everything');
+    assert.equal(t.body._stopArmed, true);
+  });
+  it('Escape disarms it, and takes its listeners away', () => {
+    const t = make();
+    t.armStopAll(t.stop, t.body);
+    t.fire('keydown', { type: 'keydown', key: 'a' });
+    assert.ok(t.classes.has('armed'), 'other keys leave it armed');
+    t.fire('keydown', { type: 'keydown', key: 'Escape' });
+    assert.ok(!t.classes.has('armed'));
+    assert.equal(t.stop.lastChild.textContent, 'Stop all agents');
+    assert.equal(t.body._stopArmed, false);
+    assert.equal(t.count(), 0, 'no listener left behind');
+  });
+  it('a click elsewhere disarms it; a click on the button itself does not', () => {
+    const t = make();
+    t.armStopAll(t.stop, t.body);
+    t.fire('click', { type: 'click', target: t.inside });
+    assert.ok(t.classes.has('armed'), 'the second click reaches the page handler, not the disarm');
+    t.fire('click', { type: 'click', target: { nodeName: 'BODY' } });
+    assert.ok(!t.classes.has('armed'));
+    assert.equal(t.count(), 0);
+  });
+  it('a click while armed: the page calls stop._disarm once, which leaves no listener to fire again', () => {
+    const t = make();
+    t.armStopAll(t.stop, t.body);
+    t.stop._disarm();
+    assert.ok(!t.classes.has('armed'));
+    assert.equal(t.count(), 0);
+    t.fire('keydown', { type: 'keydown', key: 'Escape' }); // nothing left to run
+    assert.equal(t.stop.lastChild.textContent, 'Stop all agents');
+  });
+});
