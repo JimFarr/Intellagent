@@ -55,8 +55,8 @@ describe('MCP tool profiles', () => {
   it('full lists every tool; an allow-list lists only the named ones', async () => {
     const full = await measure('full');
     assert.deepEqual(full.names, makeTools().map((t) => t[0]));
-    // 24001 at the trim, plus area_notes and add_note (INT-403), plus suggest_memory (INT-402)
-    assert.ok(full.chars < 24731, `full got bigger than before the trim: ${full.chars}`);
+    // 24001 at the trim, plus area_notes and add_note (INT-403), plus suggest_memory (INT-402), plus ask_agent, answer_ask and withdraw_ask (INT-391)
+    assert.ok(full.chars < 26400, `full got bigger than before the trim: ${full.chars}`);
     assert.deepEqual((await measure('tools=search,get_item,no_such_tool')).names, ['get_item', 'search']);
   });
 
@@ -102,6 +102,13 @@ describe('the CLI for agents', () => {
     assert.match(h.out, /POST \/api\/boards\/<board>\/items\/<ID>\/lease\/handover/);
     assert.match(h.out, /intellagent do hand_over_lease id=INT-12/);
     assert.equal(cli(['help', 'make_coffee']).code, 2);
+  });
+  it('ask_agent, answer_ask and withdraw_ask build the ask routes', () => {
+    const t = Object.fromEntries(makeTools().map((x) => [x[0], x[x.length - 1]]));
+    assert.deepEqual(t.ask_agent({ id: 'INT-1', to: 'stakar', kind: 'decide', what: 'A or B?', options: ['A', 'B'], dueMinutes: 30 }),
+      ['POST', '/api/boards/main/items/INT-1/asks', { to: 'stakar', kind: 'decide', what: 'A or B?', options: ['A', 'B'], dueMinutes: 30 }]);
+    assert.deepEqual(t.answer_ask({ id: 'INT-1', askId: 'ask_x', answer: 'A' }), ['POST', '/api/boards/main/items/INT-1/asks/ask_x/done', { answer: 'A' }]);
+    assert.deepEqual(t.withdraw_ask({ id: 'INT-1', askId: 'ask_x', reason: 'met' }), ['POST', '/api/boards/main/items/INT-1/asks/ask_x/withdraw', { reason: 'met' }]);
   });
   it('help <command> prints that command\'s usage; an unknown word lists commands and operations', () => {
     const h = cli(['help', 'init']);
