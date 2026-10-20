@@ -79,7 +79,7 @@ const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const rid = (p) => `${p}_${crypto.randomBytes(5).toString('hex')}`;
 const slug = (s) => String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'x';
 const str = (v, max) => String(v ?? '').slice(0, max);
-const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const { isObj } = jsonfile;
 const arr = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : String(v).split(',').map((s) => s.trim()).filter(Boolean));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -3856,7 +3856,7 @@ route('POST', '/api/boards/:board/items/bulk', 'Patch many items: { ids: [], pat
   return withGateCommits(ctx, arr(body.ids), actor, () => {
     const out = arr(body.ids).map((id) => {
       try { return { id, ok: true, item: updateItem(ctx, id, body.patch || {}, actor) }; }
-      catch (e) { return { id, ok: false, status: e.status || 500, error: e.message }; }
+      catch (e) { return { id, ok: false, status: e.status || 500, error: e.message, code: e.code, ...e.extra }; }
     });
     return Promise.all(out.map(async (x) => (x.ok ? { ...x, item: await afterLanding(ctx, x.item) } : x)));
   });
