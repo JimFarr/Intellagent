@@ -539,7 +539,8 @@ function persist(ctx, body = boardBody(ctx.board)) {
   maybeBackup(ctx);
   writeFileAtomic(ctx.file, text);
   ctx.hash = sha256(text);
-  writeHash(ctx);
+  // the board is saved by now, so tx() must not roll it back; board.hash is written again on the next save
+  try { writeHash(ctx); } catch (e) { console.warn(`[${ctx.id}] board.hash not saved this time: ${e.message}`); }
 }
 
 function persistArchive(ctx) { writeFileAtomic(ctx.archiveFile, JSON.stringify(ctx.archive)); }
@@ -739,22 +740,30 @@ function tx(ctx, fn, { archive = false } = {}) {
   const events = [];
   const outer = ctx.afterCommit;
   const hooks = ctx.afterCommit = [];
+  const rollback = () => {
+    ctx.board = JSON.parse(before);
+    ctx.board.updatedAt = updatedAt;
+    if (archive) ctx.archive = JSON.parse(beforeArchive);
+  };
   let result;
   try {
     result = fn(events);
     stepJourneys(ctx, events); // inside the try: a journey that fails rolls the change back with it
-  } catch (e) {
-    ctx.board = JSON.parse(before);
-    ctx.board.updatedAt = updatedAt;
-    if (archive) ctx.archive = JSON.parse(beforeArchive);
-    throw e;
-  } finally { ctx.afterCommit = outer; }
+  } catch (e) { rollback(); throw e; } finally { ctx.afterCommit = outer; }
   const afterParts = boardParts(ctx.board);
   const after = afterParts.body;
   const from = ctx.hash;
-  if (after !== before) persist(ctx, after);
   const archived = archive && JSON.stringify(ctx.archive) !== beforeArchive;
-  if (archived) persistArchive(ctx);
+  // A save that fails rolls back too, so the caller's retry can't apply the change twice. The archive is saved
+  // first and put back if the board's save then fails, so the two files on disk never disagree about a ticket.
+  try {
+    if (archived) persistArchive(ctx);
+    if (after !== before) persist(ctx, after);
+  } catch (e) {
+    rollback();
+    if (archived) try { persistArchive(ctx); } catch (e2) { console.warn(`[${ctx.id}] archive not put back: ${e2.message}`); }
+    throw e;
+  }
   // The first event of a write tells the board page what it changed; the others carry the same hash, so the
   // page skips them.
   const sync = after !== before && events[0]?.board === ctx.id ? (archived ? { from, full: true } : syncOf(from, parts, afterParts, ctx.board)) : null;
@@ -2389,7 +2398,8 @@ function deleteItems(ctx, ids, actor) {
       } else delete ctx.archive.items[id];
       for (const a of [...(item.attachments || []), ...(item.comments || []).flatMap((c) => c.attachments || [])]) {
         if (a.kind !== 'file') continue;
-        try { fs.rmSync(path.join(ctx.attachDir, decodeURIComponent(a.url.split('/').pop())), { force: true }); } catch { /* already gone */ }
+        // after the save: a rollback must find the ticket's files still there
+        afterCommit(ctx, () => { try { fs.rmSync(path.join(ctx.attachDir, decodeURIComponent(a.url.split('/').pop())), { force: true }); } catch { /* already gone */ } });
       }
       // no dangling links: other tickets stop waiting on it
       for (const other of [...Object.values(ctx.board.items), ...Object.values(ctx.archive.items)]) {
@@ -2675,7 +2685,8 @@ function savePresenceSoon() {
   if (presenceTimer) return;
   presenceTimer = setTimeout(() => {
     presenceTimer = null;
-    writeFileAtomic(PRESENCE_FILE, JSON.stringify({ updatedAt: now(), agents: Object.fromEntries(presence) }, null, 2));
+    // a throw in a timer has no handler and would end the board; presence is saved again on the next change
+    try { writeFileAtomic(PRESENCE_FILE, JSON.stringify({ updatedAt: now(), agents: Object.fromEntries(presence) }, null, 2)); } catch (e) { console.warn(`presence not saved this time: ${e.message}`); }
   }, 1500);
 }
 
@@ -2782,7 +2793,8 @@ setInterval(() => { for (const ctx of boards.values()) { try { sweepStuck(ctx); 
 setInterval(() => {
   // a warning is keyed by the lease's expiry: once that has passed, the key can never match again
   for (const k of warned) if (Date.parse(k.slice(k.lastIndexOf('@') + 1)) <= Date.now()) warned.delete(k);
-  for (const ctx of boards.values()) {
+  // a save that fails here (a file locked by antivirus) is logged and tried on the next sweep, never thrown from the timer
+  for (const ctx of boards.values()) try {
     const ms = ctx.board.master;
     // An open-ended master lease ends when its holder has gone quiet (crashed, PC restarted) —
     // unless it is a standing agent that is just between runs.
@@ -2827,7 +2839,7 @@ setInterval(() => {
       }
     }
     if (stale.length) archiveItems(ctx, stale, SYSTEM, 'auto-archive');
-  }
+  } catch (e) { console.warn(`lease sweep (${ctx.id}): ${e.message}`); }
   checkPresence();
 }, 5000).unref();
 

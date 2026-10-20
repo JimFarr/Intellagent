@@ -1035,3 +1035,55 @@ describe('typing signal (INT-287)', () => {
     } finally { await t.stop(); }
   });
 });
+
+// A write the OS refuses (antivirus or the indexer holding the file on Windows) must neither end the board nor leave
+// half a change behind (INT-417). The stub fails every write whose file name starts with a name listed in a file.
+describe('a save the OS refuses', () => {
+  let t; let failList;
+  const failWrites = (...names) => fs.writeFileSync(failList, names.join('\n'));
+  before(async () => {
+    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ia-test-'));
+    failList = path.join(dir, 'fail-writes');
+    const stub = path.join(dir, 'fail-writes.js');
+    fs.writeFileSync(stub, `const fs = require('fs'); const path = require('path'); const real = fs.writeFileSync;
+fs.writeFileSync = function (file, ...rest) {
+  let names = []; try { names = fs.readFileSync(${JSON.stringify(failList)}, 'utf8').split('\\n').filter(Boolean); } catch {}
+  if (typeof file === 'string' && names.some((n) => path.basename(file).startsWith(n))) throw Object.assign(new Error('EBUSY: resource busy or locked, open ' + file), { code: 'EBUSY' });
+  return real.call(this, file, ...rest);
+};`);
+    t = await startServer({ dir, env: { NODE_OPTIONS: `--require "${stub.replace(/\\/g, '/')}"` } });
+  });
+  after(() => t.stop());
+
+  test('a timer-side save that fails is logged and the board keeps serving', async () => {
+    failWrites('presence.json');
+    await t.ok('GET', `${B}/work`, undefined, { agent: 'ada' }); // presence changes: saved from a timer 1.5 s later
+    await until(() => t.log().includes('presence not saved this time'), 10000, 'the warning');
+    failWrites();
+    assert.equal((await t.api('GET', '/api')).status, 200, 'the board is still up');
+  });
+
+  test('a failed save rolls the change back, so the retry applies it once', async () => {
+    const it = await t.ok('POST', `${B}/items`, { title: 'locked', column: 'Backlog' }, USER);
+    failWrites('board.json');
+    const r = await t.api('POST', `${B}/items/${it.id}/comments`, { body: 'once' });
+    failWrites();
+    assert.ok(r.status >= 500, `the save failed: ${r.status}`);
+    assert.equal((await t.ok('GET', `${B}/items/${it.id}`)).comments.length, 0, 'nothing kept in memory');
+    await t.ok('POST', `${B}/items/${it.id}/comments`, { body: 'once' });
+    assert.equal((await t.ok('GET', `${B}/items/${it.id}`)).comments.length, 1, 'the retry adds one comment');
+  });
+
+  test('a test ticket whose delete fails to save keeps its attachment', async () => {
+    const it = await t.ok('POST', `${B}/items`, { title: 'throwaway', column: 'Backlog', test: true }, USER);
+    await t.ok('POST', `${B}/items/${it.id}/attachments`, { dataBase64: Buffer.from('hi').toString('base64'), name: 'a.txt' });
+    const url = (await t.ok('GET', `${B}/items/${it.id}`)).attachments[0].url;
+    failWrites('board.json');
+    const r = await t.api('DELETE', `${B}/items/${it.id}`);
+    failWrites();
+    assert.ok(r.status >= 500, `the save failed: ${r.status}`);
+    assert.equal((await fetch(t.base + url)).status, 200, 'the file is still there');
+    await t.ok('DELETE', `${B}/items/${it.id}`);
+    assert.equal((await fetch(t.base + url)).status, 404, 'removed once the delete is saved');
+  });
+});
