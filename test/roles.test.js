@@ -178,6 +178,25 @@ describe('roles as data: on the board', () => {
     await s.ok('DELETE', '/api/agents/scout1', undefined, USER);
   });
 
+  it('the Context page\'s role save (INT-363) changes label, description and brief and nothing else', async () => {
+    // the page builds its PUT from GET /api/roles with ROLE_KEYS, then overwrites the three fields it edits: run that source
+    const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+    const ROLE_KEYS = JSON.parse(src.match(/const ROLE_KEYS = (\[.*?\]);/)[1].replace(/'/g, '"'));
+    const full = { label: 'Keeper', icon: 'bot', description: 'Keeps things', brief: 'Your role: keeper.', listen: ['addressed', 'new-tickets'], pickup: 'all', supervise: true, reviewer: true, throttleMinutes: 7, perms: ['read', 'test'], model: 'sonnet' };
+    assert.deepEqual(Object.keys(full).sort(), [...ROLE_KEYS].sort(), 'every key the page sends is covered here, and none is missing');
+    await s.ok('PUT', '/api/roles/keeper', full, USER);
+    const before = await s.ok('GET', '/api/roles/keeper');
+    const next = Object.fromEntries(ROLE_KEYS.filter((k) => before[k] != null).map((k) => [k, before[k]]));
+    Object.assign(next, { label: 'Keeper 2', description: 'Keeps more', brief: 'Your role: keeper, edited.' });
+    await s.ok('PUT', '/api/roles/keeper', next, USER);
+    const after = await s.ok('GET', '/api/roles/keeper');
+    for (const k of ROLE_KEYS) {
+      if (['label', 'description', 'brief'].includes(k)) assert.notDeepEqual(after[k], before[k], k);
+      else assert.deepEqual(after[k], before[k], `${k} survives the save`);
+    }
+    assert.equal(after.description, 'Keeps more');
+  });
+
   it('PUT /api/roles/:key is the human\'s, never takes commands, run, env or grants, and holds no power (INT-370)', async () => {
     for (const who of [{ agent: 'boss' }, { agent: 'plain' }]) {
       const r = await s.api('PUT', '/api/roles/sneaky', { label: 'x', perms: ['read'] }, who);

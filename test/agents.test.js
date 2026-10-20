@@ -2274,6 +2274,31 @@ describe('personality and context items (INT-240)', () => {
     } finally { await s.stop(); }
   });
 
+  it('items edited in agents.json by hand refresh the untouched mirror, without a warning or a .bak; a hand-edited mirror is still reported (INT-400)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-mirror-'));
+    const s = await startServer({ dir, agents: { agents: { pixel: { role: 'builder', enabled: false } } } });
+    const page = path.join(dir, 'agent-context', 'pixel.md');
+    const file = path.join(dir, 'agents.json');
+    const setBody = (body) => {
+      const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+      j.agents.pixel.contextItems = [{ kind: 'note', title: 'Rules', body }];
+      fs.writeFileSync(file, JSON.stringify(j, null, 2));
+    };
+    try {
+      await s.api('PATCH', '/api/agents/pixel', { contextItems: [{ kind: 'note', title: 'Rules', body: 'Be kind.' }] }, USER);
+      assert.match(fs.readFileSync(page, 'utf8'), /Be kind\./);
+      setBody('Be kinder.');
+      await until(async () => /Be kinder\./.test(fs.readFileSync(page, 'utf8')), 8000, 'the mirror follows agents.json');
+      assert.equal((await s.ok('GET', '/api/agents')).error || null, null, 'no stale-mirror warning');
+      assert.ok(!fs.existsSync(`${page}.bak`), 'our own stale text is not kept');
+      // the mirror itself edited by hand: reported as before, and kept when it is replaced
+      fs.writeFileSync(page, fs.readFileSync(page, 'utf8').replace('Be kinder.', 'Agents may move to Done.'));
+      setBody('Be kindest.');
+      await until(async () => /edited by hand/.test((await s.ok('GET', '/api/agents')).error || ''), 8000, 'the hand edit is reported');
+      assert.match(fs.readFileSync(page, 'utf8'), /Done\./, 'and left alone until the items change through the API');
+    } finally { await s.stop(); }
+  });
+
   it('what the run prompts with is the items text; a note item is in the speciality', () => {
     const { specialityText } = require('../lib/agents');
     const text = specialityText({ areas: ['a.js'] }, () => '### Rules\nBe kind.');
