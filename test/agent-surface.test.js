@@ -253,6 +253,23 @@ describe('agent tokens on new boards', () => {
       assert.doesNotMatch(r.out + r.err, /No standing agents/);
     } finally { await s.stop(); }
   });
+  it('intellagent stop stops a board it did not start: server.pid missing or stale, the port holder goes (INT-398)', async () => {
+    for (const stale of [false, true]) {
+      const s = await startServer({ agents: { agents: {} } });
+      try {
+        const pidFile = path.join(s.dir, 'data', 'server.pid');
+        assert.ok(fs.existsSync(pidFile), 'the board writes server.pid at start');
+        if (stale) fs.writeFileSync(pidFile, '2147483646'); else fs.rmSync(pidFile);
+        assert.ok((await fetch(`${s.base}/api/app`)).ok);
+        const r = cli(['stop'], { cwd: s.dir, env: { INTELLAGENT_URL: '' } });
+        assert.equal(r.code, 0, r.err);
+        assert.match(r.out, /Stopped\./, `${stale ? 'stale' : 'missing'} server.pid: ${r.out}`);
+        let up = true;
+        for (let i = 0; i < 40 && up; i++) { up = await fetch(`${s.base}/api/app`).then(() => true, () => false); if (up) await new Promise((res) => setTimeout(res, 100)); }
+        assert.equal(up, false, 'the board no longer answers');
+      } finally { await s.stop(); }
+    }
+  });
   it('an agent with a role and a token is not asked to introduce itself over MCP; a wrong token gets a code and a hint', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     const env = { INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'vera' };

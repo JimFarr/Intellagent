@@ -297,6 +297,10 @@ async function stop() {
   const pidFile = path.join(path.dirname(mp), 'data', 'server.pid');
   let pid = null;
   try { pid = Number(fs.readFileSync(pidFile, 'utf8')); } catch { /* not started by us */ }
+  // A board that answers is stopped by the process that holds its port: server.pid is missing or stale when
+  // something else started it again after a crash (INT-398). Only when a board answers there, never a stranger.
+  const url = baseUrl(readManifest(mp));
+  if (await alive(url)) pid = require('../lib/kill').pidOnPort(new URL(url).port) || pid;
   if (!pid) { console.log('Not running (no server.pid).'); return; }
   // the whole tree: the board and the agent runs it started (else they live on as orphans beside the next board's)
   console.log(require('../lib/kill').killTree(pid) ? 'Stopped.' : 'Not running.');
