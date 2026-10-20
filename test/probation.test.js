@@ -143,7 +143,7 @@ describe('probation: a new agent may only introduce itself (INT-233)', () => {
     try {
       const a = await agentState(s, 'probe');
       assert.deepEqual([a.perms, a.worktree, a.keepAlive, a.pickup], [['read'], null, false, false]);
-      assert.match(a.run, /--tools "Bash,Read,Grep,Glob"/);
+      assert.match(a.run, /--tools "Bash,Read,Grep,Glob,Skill"/);
       const allowed = a.run.replace(/--disallowedTools.*/, '');
       assert.ok(!/acceptEdits|npm run x|Edit|Write|git/.test(allowed), allowed);
     } finally { await s.stop(); }
@@ -155,7 +155,7 @@ describe('probation: a new agent may only introduce itself (INT-233)', () => {
     } } });
     try {
       const a = await agentState(s, 'own');
-      assert.match(a.run, /^claude -p .*--tools "Bash,Read,Grep,Glob"/);
+      assert.match(a.run, /^claude -p .*--tools "Bash,Read,Grep,Glob,Skill"/);
       assert.ok(!a.run.includes('my-adapter'), 'not sandboxed on disk would mean it could do anything');
       await s.ok('POST', '/api/agents/own/accept', {}, USER);
       assert.equal((await agentState(s, 'own')).run, 'my-adapter --do-anything');

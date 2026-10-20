@@ -1162,12 +1162,12 @@ describe('lean runs', () => {
 
   it('loads only the built-in tools the perms use, and no MCP servers but the board\'s', () => {
     const reader = runFor(['read']);
-    assert.match(reader, / --tools "Bash,Read,Grep,Glob" --strict-mcp-config --allowedTools /);
+    assert.match(reader, / --tools "Bash,Read,Grep,Glob,Skill" --strict-mcp-config --allowedTools /);
     assert.doesNotMatch(reader, /--mcp-config|acceptEdits/);
-    assert.match(runFor(['edit', 'test', 'git']), / --permission-mode acceptEdits --tools "Bash,Read,Grep,Glob,Edit,Write" /);
-    assert.match(runFor(['read', 'web']), / --tools "Bash,Read,Grep,Glob,WebSearch,WebFetch" /);
+    assert.match(runFor(['edit', 'test', 'git']), / --permission-mode acceptEdits --tools "Bash,Read,Grep,Glob,Skill,Edit,Write" /);
+    assert.match(runFor(['read', 'web']), / --tools "Bash,Read,Grep,Glob,Skill,WebSearch,WebFetch" /);
     const b = runFor(['test'], { mcpConfig: '.mcp.json' });
-    assert.match(b, / --strict-mcp-config --mcp-config "\.mcp\.json" --allowedTools "Bash\(intellagent:\*\)" "mcp__intellagent" "Bash\(npm test\)"/);
+    assert.match(b, / --strict-mcp-config --mcp-config "\.mcp\.json" --allowedTools "Bash\(intellagent:\*\)" "mcp__intellagent" "Skill" "Bash\(npm test\)"/);
     assert.match(keepAliveCmd(b), /--allowedTools .* --input-format stream-json/, 'keep-alive flags still follow the variadic lists');
   });
 
