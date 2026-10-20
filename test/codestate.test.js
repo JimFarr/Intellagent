@@ -80,6 +80,7 @@ describe('the brief says when the board is behind main (INT-319)', () => {
         approver: { run: idle, grants: ['review.decide'] },
         lander: { run: idle, grants: ['work.land'] },
         plain: { run: idle },
+        chief: { run: idle, role: 'coordinator' },
       } },
     });
     try {
@@ -95,6 +96,9 @@ describe('the brief says when the board is behind main (INT-319)', () => {
       assert.match(await brief('approver'), /1 commit behind main \(INT-297\)/);
       assert.match(await brief('lander'), /1 commit behind main \(INT-297\)/);
       assert.doesNotMatch(await brief('plain'), /commits? behind main/, 'only holders of the two powers are told');
+      assert.match(await brief('chief'), /1 commit behind main \(INT-297\)/, 'the coordinator is told too (INT-419)');
+      const days = await s.ok('GET', '/api/boards/main/digest?days=1', undefined, USER);
+      assert.match(days[0].behind, /1 commit behind main \(INT-297\)/, 'the digest says it on today');
     } finally { await s.stop(); }
   });
 });

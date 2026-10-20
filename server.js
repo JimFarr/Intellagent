@@ -2278,6 +2278,7 @@ function briefing(ctx, name, base, via = 'cli') {
         'Route by tier when agents have models: **junior** (haiku) gets small, well-specified tickets; **mid** (sonnet) normal features and bugs; **senior** (opus) risky or cross-cutting work and anything with risk: high. Match the code first: give a ticket to the agent whose areas cover the files it touches (and whose concerns fit it); then the role (a designer gets design work); then the tier.',
         ...(helpers.length ? [`Helpers, not for routing: ${helpers.join(', ')}. Only the human assigns them a ticket (403 NOT_ROUTABLE); the builders call on them for chores.`] : [])];
     })(),
+    ...(isCoordinator(ctx, name) && codeState.line() ? ['', `**${codeState.line()}** Say so to the human when a landed fix matters to what you are doing; restarting is theirs.`] : []),
     ...(() => {
       const g = grantsOf(name);
       if (!g.length) return [];
@@ -3989,8 +3990,15 @@ async function workWarnings(ctx, item) {
   return out;
 }
 
-route('GET', '/api/boards/:board/digest', 'Daily digest: end-of-session summaries, newest first, and what each agent learned that day (learned: [{ agent, id, text, from, at }]). ?days=7', ({ p, q }) => {
-  return digest.read(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90));
+route('GET', '/api/boards/:board/digest', 'Daily digest: end-of-session summaries, newest first, and what each agent learned that day (learned: [{ agent, id, text, from, at }]). ?days=7. behind: how far the board runs behind main, when it does', ({ p, q }) => {
+  const days = digest.read(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90));
+  const behind = codeState.line();
+  if (behind) { // on today's day, which the digest gets even when nobody wrote to it yet
+    const today = new Date().toLocaleDateString('en-CA');
+    if (days[0]?.date !== today) days.unshift({ date: today, entries: [] });
+    days[0].behind = behind;
+  }
+  return days;
 });
 route('POST', '/api/boards/:board/digest', 'Append to today\'s digest: { summary (markdown), items?: [ids] }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
