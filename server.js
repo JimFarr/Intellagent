@@ -3232,9 +3232,10 @@ route('GET', '/api', 'This index; ?policies=true adds who may call each write ro
   ...(q.policies === 'true' ? { policies: routes.filter((r) => WRITE.has(r.method)).map((r) => ({ method: r.method, pattern: r.pattern, ...r.policy })) } : {}),
 }));
 
-route('GET', '/api/docs', 'Agent guide (markdown). Start here.', ({ req, res }) => {
+route('GET', '/api/docs', 'Agent guide (markdown). Start here. ?full adds the operators guide (docs/operators.md)', ({ req, res, q }) => {
   const base = `http://${req.headers.host}`;
-  const text = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8').replaceAll('{{BASE}}', base).replaceAll('{{APP}}', app.name);
+  let text = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8').replaceAll('{{BASE}}', base).replaceAll('{{APP}}', app.name);
+  if ('full' in q) text += '\n' + fs.readFileSync(path.join(ROOT, 'docs', 'operators.md'), 'utf8');
   reply(res, 200, text, { 'Content-Type': 'text/markdown; charset=utf-8' });
   return HANDLED;
 });
