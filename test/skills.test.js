@@ -102,4 +102,31 @@ describe('skills (INT-237)', () => {
       assert.ok(fs.existsSync(path.join(to, 'SKILL.md')));
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
+
+  it('deliver: a failed copy is retried next run; board folders are not copied; ids of dots are refused', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-'));
+    try {
+      const src = path.join(tmp, 'src');
+      const wt = path.join(tmp, 'wt');
+      fs.mkdirSync(path.join(src, 'data'), { recursive: true });
+      fs.mkdirSync(path.join(src, 'agent-context'), { recursive: true });
+      fs.mkdirSync(wt, { recursive: true });
+      fs.writeFileSync(path.join(src, 'SKILL.md'), SKILL);
+      fs.writeFileSync(path.join(src, 'data', 'x.json'), '{}');
+      fs.writeFileSync(path.join(src, 'agent-context', 'a.md'), 'x');
+      const ok = (p) => ({ ok: true, abs: path.join(src, p) });
+      const res = skills.resolve([{ id: 'sec', path: '.' }], ok);
+      assert.deepEqual(skills.deliver(wt, res), []);
+      const to = path.join(wt, '.claude', 'skills', 'sec');
+      assert.ok(!fs.existsSync(path.join(to, 'data')) && !fs.existsSync(path.join(to, 'agent-context')));
+      // over the file cap: the copy throws half way, and the next run still owns the folder
+      for (let i = 0; i < 201; i++) fs.writeFileSync(path.join(src, `f${i}.txt`), 'x');
+      assert.match(skills.deliver(wt, res)[0], /more than/);
+      fs.rmSync(path.join(src, 'f0.txt'));
+      for (let i = 1; i < 201; i++) fs.rmSync(path.join(src, `f${i}.txt`));
+      assert.deepEqual(skills.deliver(wt, res), [], 'the half copy had its marker, so it is replaced');
+      const clean = skills.cleanSkills([{ id: '..', path: '.' }, { id: '.', path: '.' }], ok);
+      assert.ok(clean.every((c) => !/^\.+$/.test(c.id)), 'an id of dots is replaced');
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
 });
