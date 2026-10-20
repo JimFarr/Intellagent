@@ -769,6 +769,87 @@ describe('agent memory (INT-243)', () => {
     assert.equal((await m.ok('GET', '/api/profiles/rem/memory')).entries.length, 2);
   });
 
+  test('a suggestion for a colleague is pending work, never memory, until the colleague accepts it (INT-402)', async () => {
+    for (const a of ['fury', 'cpt']) await m.ok('GET', MEM, undefined, as(a));
+    const since = (await m.ok('GET', '/api/app')).seq;
+    const s = await m.ok('POST', '/api/profiles/cpt/memory/suggestions', { text: 'Check the landing state before approving', why: 'INT-9 was approved with a failed landing', from: 'T-9' }, as('fury'));
+    assert.equal(s.by, 'fury');
+    const mem = await m.ok('GET', MEM, undefined, as('cpt'));
+    assert.deepEqual(mem.entries, [], 'nothing in its memory yet');
+    assert.deepEqual(mem.suggestions.map((x) => x.id), [s.id]);
+    const brief = await m.ok('GET', '/api/boards/main/brief', undefined, as('cpt'));
+    assert.doesNotMatch(brief.slice(brief.indexOf('## Your memory')), /landing state/, 'not in the brief as memory');
+    assert.match(brief, /memory suggestion ms_\w+\*\* — fury suggests a note for your memory: "Check the landing state before approving" — because INT-9/, 'only as work, with who and why');
+    assert.match(brief, /To pass a lesson to a colleague, suggest it: /);
+    const work = await m.ok('GET', '/api/boards/main/work', undefined, as('cpt'));
+    assert.deepEqual(work.next.filter((n) => n.action === 'memory_suggestion').map((n) => n.suggestionId), [s.id]);
+    assert.equal((await m.ok('GET', '/api/boards/main/work', undefined, as('fury'))).next.some((n) => n.action === 'memory_suggestion'), false);
+
+    const e = await m.ok('POST', `/api/profiles/me/memory/suggestions/${s.id}/accept`, { text: 'Check landing.state before approving' }, as('cpt'));
+    assert.deepEqual([e.source, e.by, e.suggestedBy, e.suggested, e.from], ['learned', 'cpt', 'fury', s.text, 'T-9']);
+    const after = await m.ok('GET', MEM, undefined, as('cpt'));
+    assert.deepEqual([after.entries.map((x) => x.id), after.suggestions], [[e.id], []]);
+    assert.equal((await m.ok('GET', '/api/boards/main/work', undefined, as('cpt'))).next.some((n) => n.action === 'memory_suggestion'), false, 'the work item goes');
+
+    const evs = (await m.ok('GET', `/api/events?since=${since}&types=memory.suggested,memory.suggestion_accepted`)).events;
+    assert.deepEqual(evs.map((x) => [x.type, x.recipients, x.addressed || []]), [['memory.suggested', ['cpt'], ['cpt']], ['memory.suggestion_accepted', ['fury'], []]], 'only the recipient is addressed; the answer reaches the suggester without waking it');
+    const learned = (await m.ok('GET', '/api/boards/main/digest?days=1')).flatMap((d) => d.learned || []);
+    assert.ok(learned.some((l) => l.id === e.id && l.suggestedBy === 'fury' && l.acceptedBy === 'cpt'), 'the digest lists it with who suggested it');
+  });
+
+  test('a suggestion declined goes back with the reason; the human accepts one as a human entry (INT-402)', async () => {
+    for (const a of ['gam', 'neb', 'drx']) await m.ok('GET', MEM, undefined, as(a));
+    const since = (await m.ok('GET', '/api/app')).seq;
+    const s1 = await m.ok('POST', '/api/profiles/neb/memory/suggestions', { text: 'Run the tests twice', why: 'flaky' }, as('gam'));
+    const d = await m.ok('POST', `/api/profiles/neb/memory/suggestions/${s1.id}/decline`, { reason: 'They are not flaky since INT-12' }, as('neb'));
+    assert.equal(d.declined.reason, 'They are not flaky since INT-12');
+    const ev = (await m.ok('GET', `/api/events?since=${since}&types=memory.suggestion_declined`)).events[0];
+    assert.deepEqual([ev.recipients, ev.reason, ev.addressed], [['gam'], 'They are not flaky since INT-12', undefined]);
+
+    const s2 = await m.ok('POST', '/api/profiles/neb/memory/suggestions', { text: 'Screenshots in both themes', why: 'review sent back twice' }, as('drx'));
+    const h = await m.ok('POST', `/api/profiles/neb/memory/suggestions/${s2.id}/accept`, { pinned: true }, USER);
+    assert.deepEqual([h.source, h.suggestedBy, h.pinned, h.text], ['human', 'drx', true, 'Screenshots in both themes']);
+    const brief = await m.ok('GET', '/api/boards/main/brief', undefined, as('neb'));
+    assert.match(brief, /The human asked you to remember:\n- `m_\w+` 📌 Screenshots in both themes/);
+  });
+
+  test('suggestions: every refusal has a code and a hint, and the flood limits hold (INT-402)', async () => {
+    for (const a of ['sa', 'sb', 'sc', 'sd', 'se', 'sf', 'sg', 'off1']) await m.ok('GET', MEM, undefined, as(a));
+    const S = (to) => `/api/profiles/${to}/memory/suggestions`;
+    const one = await m.ok('POST', S('sa'), { text: 'One', why: 'because' }, as('sb'));
+    await m.ok('PUT', '/api/profiles/off1/memory', { on: false }, USER);
+    const refusals = [
+      [await m.api('POST', S('sb'), { text: 'x', why: 'y' }, as('sb')), 400, 'BAD_REQUEST', 'to itself'],
+      [await m.api('POST', S('me'), { text: 'x', why: 'y' }, as('sb')), 400, 'BAD_REQUEST', 'to "me"'],
+      [await m.api('POST', S('sa'), { text: 'x', why: 'y' }, USER), 400, 'BAD_REQUEST', 'the human adds directly'],
+      [await m.api('POST', S('sa'), { text: 'x' }, as('sc')), 400, 'BAD_REQUEST', 'no why'],
+      [await m.api('POST', S('sa'), { text: 'y'.repeat(1001), why: 'y' }, as('sc')), 413, 'TOO_LARGE', 'too long'],
+      [await m.api('POST', S('nobody-here'), { text: 'x', why: 'y' }, as('sc')), 404, 'NOT_FOUND', 'no such agent'],
+      [await m.api('POST', S('off1'), { text: 'x', why: 'y' }, as('sc')), 409, 'MEMORY_OFF', 'memory off'],
+      [await m.api('POST', S('sa'), { text: 'Two', why: 'again' }, as('sb')), 409, 'CONFLICT', 'one per colleague a day'],
+      [await m.api('POST', `${S('sa')}/${one.id}/accept`, {}, as('sb')), 403, 'FORBIDDEN', 'the suggester accepting it'],
+      [await m.api('POST', `${S('sa')}/${one.id}/accept`, {}, as('sc')), 403, 'FORBIDDEN', 'another agent accepting it'],
+      [await m.api('POST', `${S('sa')}/${one.id}/accept`, { pinned: true }, as('sa')), 403, 'HUMAN_ONLY', 'pinning'],
+      [await m.api('POST', `${S('sa')}/${one.id}/decline`, {}, as('sa')), 400, 'BAD_REQUEST', 'declining without a reason'],
+      [await m.api('POST', `${S('sa')}/ms_nope/accept`, {}, as('sa')), 404, 'NOT_FOUND', 'an unknown suggestion'],
+    ];
+    for (const [r, status, code, what] of refusals) {
+      assert.equal(r.status, status, `${what}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.code, code, what);
+      assert.ok(r.body.hint, `${what}: the refusal has a hint`);
+    }
+    // declined, the pair still waits a day: decline-and-suggest-again is no way round the limit
+    await m.ok('POST', `${S('sa')}/${one.id}/decline`, { reason: 'no' }, as('sa'));
+    assert.equal((await m.api('POST', S('sa'), { text: 'Again', why: 'y' }, as('sb'))).body.code, 'CONFLICT');
+    // at most 5 waiting per agent
+    for (const a of ['sc', 'sd', 'se', 'sf', 'sg']) await m.ok('POST', S('sa'), { text: `From ${a}`, why: 'y' }, as(a));
+    await m.ok('GET', MEM, undefined, as('sh'));
+    const full = await m.api('POST', S('sa'), { text: 'Sixth', why: 'y' }, as('sh'));
+    assert.deepEqual([full.status, full.body.code], [409, 'CONFLICT']);
+    assert.match(full.body.hint, /answers one/);
+    assert.equal((await m.ok('GET', MEM, undefined, as('sa'))).entries.length, 0, 'none of it is memory');
+  });
+
   test('memory never changes what the board allows', async () => {
     const it = await m.ok('POST', '/api/boards/main/items', { title: 'gate', column: 'Ready' }, as('author'));
     await m.ok('POST', `/api/boards/main/items/${it.id}/start`, {}, as('author'));

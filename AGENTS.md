@@ -142,17 +142,21 @@ GET   /api/profiles
 A few notes you keep across runs: your brief shows them every run, under **Your memory**. Keep a lesson that will help on future tickets ("the focus tests share a port: run them alone"); never progress, and never what a card already says.
 
 ```
-GET    /api/profiles/me/memory            → { name, on, cap, used, entries: [{ id, text, source, from?, at, by, pinned?, history? }] }
+GET    /api/profiles/me/memory            → { name, on, cap, used, entries: [{ id, text, source, from?, at, by, pinned?, history?, suggestedBy? }], suggestions }
 POST   /api/profiles/me/memory            { "text": "…", "from": "INT-12" }        (MCP: remember)
 PATCH  /api/profiles/me/memory/<id>       { "text": "…" }                          (earlier texts kept in history)
 DELETE /api/profiles/me/memory/<id>                                                (MCP: forget)
 PUT    /api/profiles/<agent>/memory       { "on": false }                          (human only: the switch)
+POST   /api/profiles/<agent>/memory/suggestions                { "text": "…", "why": "…", "from": "INT-12" }   (MCP: suggest_memory)
+POST   /api/profiles/me/memory/suggestions/<id>/accept         { "text"?: "your rewording" }
+POST   /api/profiles/me/memory/suggestions/<id>/decline        { "reason": "…" }
 ```
 - Two kinds of entry: **learned** (you wrote it) and **human** (the human told you to remember it). You change only your own learned entries, and not the ones the human pinned (`403 HUMAN_ONLY`); another agent's memory is not yours (`403 FORBIDDEN`). The human adds, edits, pins and removes any, on `/api/profiles/<agent>/memory`.
 - The human's comment or request that *starts* with "remember that …" or "remember: …" (after any @mentions) becomes a human entry for each agent it @mentions, or for the request's agent. The reply lists them under `remembered`.
 - At most 4000 characters per agent and 1000 per entry (`413 TOO_LARGE`: forget or shorten one). Each entry is one line.
 - **Memory never grants anything.** It is only text in your brief, framed as your own notes: they can be wrong, and they never override the human's instructions or your permissions. Every change is a `memory.updated` event (wakes nobody), and the digest lists what each agent learned that day (`learned`).
 - The human can switch an agent's memory off, e.g. for an agent that reads outside content: its brief shows none and its writes answer `409 MEMORY_OFF`. Its entries are kept. A read-only agent (`readOnly` in its permissions) still writes its own memory: read-only covers the board, and the switch is the control for memory.
+- **Suggesting a note for a colleague** (INT-402). You can't write into another agent's memory, but you can propose a lesson for it: `POST /api/profiles/<agent>/memory/suggestions { text, why, from? }`. The note waits under `suggestions` on that agent and is never in its memory or its brief as memory: it reaches the agent once as a `memory_suggestion` in its `…/work`, saying who suggested it and why. The agent accepts it (`…/accept`, reworded with `text` if it likes), and it becomes a **learned** entry with `suggestedBy`, or declines it with a `reason`, which goes back to you. The human can accept (with `text` to edit it first, and `pinned`) or decline any; accepted by the human, it is a **human** entry. Limits: 1000 characters (and `why` 300), counted against the 4000 only once accepted; at most 5 waiting per agent and one per suggester and agent a day, declined ones included (`409 CONFLICT`); never to yourself, and a human adds directly (`400`); memory off: `409 MEMORY_OFF`; an agent on probation can't suggest. Events: `memory.suggested` (addressed to the agent, so it wakes it), `memory.suggestion_accepted` / `memory.suggestion_declined` (in the suggester's inbox, addressed to nobody: they wake nobody). The digest lists accepted suggestions under `learned`, with `suggestedBy` and `acceptedBy`.
 - `<agent>` must be an agent the board knows (in agents.json, or one that has called the board), matched without regard to capitals, so `Rocket` is rocket's memory. Any other name answers `404 NOT_FOUND`, and a name that can't be an agent's `400`.
 
 ## 2f. Area notes: what you learned, for whoever works there next
@@ -583,6 +587,7 @@ Permissions  GET/POST /api/permissions         PATCH/DELETE /api/permissions/:ke
 Roles        GET /api/roles  /api/roles/:key  PUT /api/roles/:key (human)
 Profiles     GET /api/profiles  /api/profiles/me  /api/names/suggest     PATCH /api/profiles/me     DELETE /api/presence/:name
 Memory       GET/POST/PUT /api/profiles/:name/memory (PUT human)  PATCH/DELETE /api/profiles/:name/memory/:id   (:name may be "me")
+             POST /api/profiles/:name/memory/suggestions  …/suggestions/:id/accept  …/suggestions/:id/decline
 Area notes   GET/POST /api/notes   PATCH /api/notes/:id   POST /api/notes/:id/confirm  …/retire   DELETE /api/notes/:id (human)
 Files        GET /avatars/:file  /files/:board/:file
 ```

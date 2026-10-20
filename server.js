@@ -802,6 +802,7 @@ const { delegationGaps, workFor, stalledFor, untriaged, pendingWork, waitingWork
     routers: (c) => { try { return standing.list().agents.filter((x) => (x.role === 'coordinator' || x.name === c.board.coordinator) && x.enabled && !x.paused && x.status !== 'failed').map((x) => x.name); } catch { return []; } },
   },
   isCoordinator: (...a) => isCoordinator(...a), approvalsOff: (...a) => approvalsOff(...a), commitsPending: (...a) => commitsPending(...a),
+  memorySuggestions: (...a) => memorySuggestions(...a),
 });
 
 const permsFor = (name) => {
@@ -2240,7 +2241,7 @@ function briefing(ctx, name, base, via = 'cli') {
     ...(w.note ? [`> ${w.note}`] : []),
     ...(w.focus ? [`> 🎯 **Focus board "${w.focus.name}" is active.** ${w.focus.note} Its tickets: ${w.focus.items.join(', ') || '(none yet)'}.`, ''] : []),
     ...(w.next.length
-      ? w.next.map((n, i) => n.requestId ? `${i + 1}. **handle request ${n.requestId}** — ${n.why}` : `${i + 1}. **${n.action.replace(/_/g, ' ')} ${n.id}** "${n.title}" — ${n.why}`)
+      ? w.next.map((n, i) => n.requestId ? `${i + 1}. **handle request ${n.requestId}** — ${n.why}` : n.suggestionId ? `${i + 1}. **memory suggestion ${n.suggestionId}** — ${n.why}: \`${n.call}\`` : `${i + 1}. **${n.action.replace(/_/g, ' ')} ${n.id}** "${n.title}" — ${n.why}`)
       : ['Nothing is waiting for you. Ask the human what to work on, or create tickets for work you were given.']),
     ...(w.waitingOnHuman.length ? ['', `Waiting on the human (don't redo these): ${w.waitingOnHuman.map((x) => `${x.id} "${x.question}"`).join('; ')}`] : []),
     ...(() => {
@@ -2252,6 +2253,7 @@ function briefing(ctx, name, base, via = 'cli') {
     ...memory.briefLines(name, {
       remember: via === 'mcp' ? '`remember { text, from? }`' : via === 'http' ? '`POST /api/profiles/me/memory { text, from? }`' : '`intellagent api POST /api/profiles/me/memory text="…" from=<ID>`',
       forget: via === 'mcp' ? '`forget { id }`' : via === 'http' ? '`DELETE /api/profiles/me/memory/<id>`' : '`intellagent api DELETE /api/profiles/me/memory/<id>`',
+      suggest: via === 'mcp' ? '`suggest_memory { to, text, why, from? }`' : via === 'http' ? '`POST /api/profiles/<agent>/memory/suggestions { text, why, from? }`' : '`intellagent api POST /api/profiles/<agent>/memory/suggestions text="…" why="…" from=<ID>`',
     }),
     ...(() => {
       // Area notes (INT-403): what runs learned about the code this agent works on
@@ -2600,13 +2602,26 @@ function agentLayers(ctx, name) {
   const layers = isStandingAgent(name) ? standing.layersOf(name) : layersFor({ base: baseText() });
   const add = (at, layer, label, text) => { if (text) layers.splice(at, 0, { layer, label, text, chars: text.length }); };
   add(layers.findIndex((l) => l.layer === 'base') + 1, 'rules', 'Board rules', ctx.board.directives?.trim() || '');
-  const mem = memory.briefLines(name, { remember: '`POST /api/profiles/me/memory { text, from? }`', forget: '`DELETE /api/profiles/me/memory/<id>`' });
+  const mem = memory.briefLines(name, { remember: '`POST /api/profiles/me/memory { text, from? }`', forget: '`DELETE /api/profiles/me/memory/<id>`', suggest: '`POST /api/profiles/<agent>/memory/suggestions { text, why, from? }`' });
   add(layers.length, 'memory', mem[0].replace(/^#+\s*/, ''), mem.slice(1).join('\n'));
   return layers;
 }
 // Every change is visible, and wakes nobody: the agent reads its memory in its next brief.
 function memoryChanged(agent, op, actor, entry, extra = {}) {
-  emit({ type: 'memory.updated', actor, agent, op, ...(entry ? { entry: { id: entry.id, text: trimChange(entry.text), source: entry.source, from: entry.from || null, pinned: !!entry.pinned } } : {}), ...extra, recipients: [] });
+  emit({ type: 'memory.updated', actor, agent, op, ...(entry ? { entry: { id: entry.id, text: trimChange(entry.text), source: entry.source, from: entry.from || null, pinned: !!entry.pinned, ...(entry.suggestedBy ? { suggestedBy: entry.suggestedBy } : {}) } } : {}), ...extra, recipients: [] });
+}
+// Suggestions waiting on an agent (INT-402), as work on the default board only: memory is the agent's, not a board's,
+// so it is listed once. Memory off: none (the suggester was refused anyway).
+function memorySuggestions(ctx, name) {
+  if (ctx.id !== M.defaultBoard || !memory.isOn(name)) return [];
+  return memory.list(name).suggestions;
+}
+// A suggestion is addressed to its recipient (it is work: it wakes it once); the answer reaches the suggester's
+// inbox without being addressed to it, so it wakes nobody.
+function suggestionEvent(type, agent, actor, s, extra = {}) {
+  const to = type === 'memory.suggested' ? agent : s.by;
+  emit({ type, actor, agent, suggestion: { id: s.id, text: trimChange(s.text), why: s.why, by: s.by, from: s.from || null }, ...extra,
+    recipients: [to].filter((n) => n !== actor.name), ...(type === 'memory.suggested' ? { addressed: [agent] } : {}) });
 }
 // A human's "@agent remember that …" (a comment or a request) becomes a human entry for each agent it names.
 // Returns what was stored and what wasn't, for the reply; never fails the comment or request itself.
@@ -3130,6 +3145,10 @@ const POLICY = {
   'POST /api/profiles/:name/memory': { who: 'self', readOnly: true },
   'PATCH /api/profiles/:name/memory/:id': { who: 'self', readOnly: true },
   'DELETE /api/profiles/:name/memory/:id': { who: 'self', readOnly: true },
+  // a suggestion is talk: any agent (never into the memory itself, which only the recipient or the human accepts)
+  'POST /api/profiles/:name/memory/suggestions': { who: 'any', readOnly: true },
+  'POST /api/profiles/:name/memory/suggestions/:id/accept': { who: 'self', readOnly: true },
+  'POST /api/profiles/:name/memory/suggestions/:id/decline': { who: 'self', readOnly: true },
   'PUT /api/profiles/:name/memory': { who: 'human', why: 'Only the human switches memory on or off', hint: 'Ask on a card' },
   // area notes (INT-403): anyone keeps them; only an author or the human edits one, only the human removes one
   'POST /api/notes': { who: 'any' },
@@ -5020,7 +5039,7 @@ route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 ch
   ({ body, actor }) => updateProfile(actor.name, body, actor));
 
 // Agent memory (INT-243). :name is an agent, or "me".
-route('GET', '/api/profiles/:name/memory', 'An agent\'s memory ("me": yours): { name, on, cap, used, entries: [{ id, text, source: learned|human, from?, at, by, pinned?, history? }] }', ({ p, actor }) =>
+route('GET', '/api/profiles/:name/memory', 'An agent\'s memory ("me": yours): { name, on, cap, used, entries: [{ id, text, source: learned|human, from?, at, by, pinned?, history?, suggestedBy? }], suggestions: [{ id, text, why, from?, by, at }] (pending: not memory until accepted) }', ({ p, actor }) =>
   memory.list(memoryOwner(p.name, actor)));
 route('POST', '/api/profiles/:name/memory', 'Remember something: { text, from? (ticket id) } — an agent adds a learned entry to its own memory; the human adds a human entry to any agent\'s ({ pinned? } too). Capped per agent; wakes nobody', ({ p, body, actor }) => {
   const name = memoryOwner(p.name, actor);
@@ -5041,6 +5060,28 @@ route('DELETE', '/api/profiles/:name/memory/:id', 'Forget a memory entry — an 
   const e = memory.remove(name, p.id, actor);
   memoryChanged(name, 'removed', actor, e);
   return { forgot: e.id };
+});
+// Suggested entries (INT-402): an agent can't write into a colleague's memory, only propose; the note stays pending
+// (in GET …/memory under "suggestions", and as memory_suggestion work) until the recipient or the human accepts it.
+route('POST', '/api/profiles/:name/memory/suggestions', 'Suggest a note for a colleague\'s memory: { text, why, from? (ticket id) } — pending until that agent or the human accepts it; it wakes the agent once (memory_suggestion in its work). At most 5 waiting per agent and one per colleague a day (409 CONFLICT); memory off: 409 MEMORY_OFF', ({ p, body, actor }) => {
+  if (p.name === 'me') fail(400, 'A suggestion is for a colleague', { hint: 'Name the agent: POST /api/profiles/<agent>/memory/suggestions; your own lesson goes to POST /api/profiles/me/memory' });
+  const name = memoryOwner(p.name, actor);
+  const s = memory.suggest(name, body, actor);
+  suggestionEvent('memory.suggested', name, actor, s);
+  return created(s);
+});
+route('POST', '/api/profiles/:name/memory/suggestions/:id/accept', 'Accept a suggested note: { text? (your rewording), pinned? (human) } — the agent itself (a learned entry) or the human (a human entry); the entry records suggestedBy. Counts against the 4000-character cap from now on', ({ p, body, actor }) => {
+  const name = memoryOwner(p.name, actor);
+  const { entry, suggestion } = memory.acceptSuggestion(name, p.id, body, actor);
+  memoryChanged(name, 'added', actor, entry);
+  suggestionEvent('memory.suggestion_accepted', name, actor, suggestion, { entry: { id: entry.id, text: trimChange(entry.text), source: entry.source } });
+  return created(entry);
+});
+route('POST', '/api/profiles/:name/memory/suggestions/:id/decline', 'Decline a suggested note: { reason } — the agent itself or the human; the reason goes back to whoever suggested it', ({ p, body, actor }) => {
+  const name = memoryOwner(p.name, actor);
+  const s = memory.declineSuggestion(name, p.id, body, actor);
+  suggestionEvent('memory.suggestion_declined', name, actor, s, { reason: s.declined.reason });
+  return s;
 });
 route('GET', '/api/notes', 'Area notes (INT-403): what runs learned about parts of the code. ?path=<file or folder> (a folder note covers what is in it; a folder finds the notes inside it), ?by=, ?from=<ticket>, ?retired=true → { notes: [{ id, area, text, by, from?, at, confirmedBy? }], count }', ({ q }) => {
   const list = notes.list({ path: q.path ?? null, by: q.by || null, from: q.from || null, retired: q.retired === 'true' });
