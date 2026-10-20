@@ -48,6 +48,12 @@ describe('workFor: an agent\'s next actions', () => {
     const ctx = makeBoard([{ id: 'A', columnId: 'ready', assignee: 'groot' }, { id: 'B', columnId: 'backlog', assignee: 'groot' }]);
     assert.deepEqual(actions(makeWorld(ctx, { groot: {} }).workFor(ctx, 'groot')), ['start:A']);
   });
+  it('a mention shows its text with whitespace collapsed, and the letter s left alone (INT-390)', () => {
+    const ctx = makeBoard([{ id: 'A', columnId: 'review', comments: [{ id: 'c1', author: { kind: 'agent', name: 'drax' }, body: '@groot  please\nreview this task', createdAt: iso(-MIN) }] }]);
+    const w = makeWorld(ctx, { groot: {} }).workFor(ctx, 'groot');
+    const m = w.next.find((n) => n.action === 'mention');
+    assert.equal(m.why, 'drax mentioned you: @groot please review this task');
+  });
   it('a blocked assigned ticket is listed after the others and says what it waits on', () => {
     const ctx = makeBoard([{ id: 'X', columnId: 'ready' }, { id: 'A', columnId: 'ready', assignee: 'groot', blockedBy: ['X'] }, { id: 'B', columnId: 'ready', assignee: 'groot' }]);
     const w = makeWorld(ctx, { groot: {} }).workFor(ctx, 'groot');
