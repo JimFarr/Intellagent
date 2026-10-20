@@ -4153,7 +4153,7 @@
       case 'attention.resolved': return `${who} answered ${b(id)}`;
       case 'column.created': return `${who} added column ${b(ev.column?.name || '')}${ev.delegated ? ' for you' : ''}`;
       case 'column.updated': return `${who} updated column ${b(ev.column?.name || '')}${ev.delegated ? ' for you' : ''}`;
-      case 'column.deleted': return `${who} deleted column ${b(ev.columnId || '')}${ev.delegated ? ' for you' : ''}`;
+      case 'column.deleted': return `${who} deleted column ${b(ev.column?.name || ev.columnId || '')}${ev.delegated ? ' for you' : ''}`;
       case 'schema.updated': return `${who} changed the ticket schema${ev.delegated ? ' for you' : ''}`;
       case 'board.updated': return `${who} updated the board${ev.delegated ? ' for you' : ''}`;
       case 'board.external-edit': return 'Board file changed on disk';

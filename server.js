@@ -3821,7 +3821,7 @@ route('DELETE', '/api/boards/:board/columns/:column', 'Delete an EMPTY column (h
     const done = doneColumnId(ctx);
     ctx.board.columns = ctx.board.columns.filter((c) => c !== col);
     keepDone(ctx, actor, del, done);
-    events.push({ board: ctx.id, type: 'column.deleted', actor, columnId: col.id, ...delegatedTag(del) });
+    events.push({ board: ctx.id, type: 'column.deleted', actor, columnId: col.id, column: { id: col.id, name: col.name }, ...delegatedTag(del) });
     adminTrail(ctx, events, actor, del, `Deleted the column "${col.name}"`);
     return { deleted: col.id };
   });

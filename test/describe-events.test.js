@@ -37,4 +37,8 @@ describe('activity words', () => {
     assert.equal(words({ type: 'column.deleted', actor: { name: 'gamora' }, columnId: 'qa', delegated }), 'gamora deleted column qa for you');
     assert.equal(words({ type: 'column.deleted', actor: { name: 'james' }, columnId: 'qa' }), 'james deleted column qa');
   });
+
+  it('a deleted column reads by its name when the event carries one', () => {
+    assert.equal(words({ type: 'column.deleted', actor: { name: 'james' }, columnId: 'qa-2', column: { id: 'qa-2', name: 'QA' } }), 'james deleted column QA');
+  });
 });

@@ -98,7 +98,11 @@ describe('board admin powers (INT-256)', () => {
     assert.equal((await names()).at(-1), 'Done');
     // the human may
     await s.ok('POST', `${B}/columns`, { name: 'Shipped' }, USER);
-    await s.ok('DELETE', `${B}/columns/Shipped`, undefined, USER);
+    const { seq } = await s.ok('GET', '/api/app');
+    const { deleted } = await s.ok('DELETE', `${B}/columns/Shipped`, undefined, USER);
+    const [ev] = (await s.ok('GET', `/api/events?since=${seq}&types=column.deleted`)).events;
+    assert.equal(ev.columnId, deleted, 'columnId kept for older readers');
+    assert.deepEqual(ev.column, { id: deleted, name: 'Shipped' }, 'the name, taken before the delete');
   });
 
   it('Can choose the coordinator never chooses itself', async () => {
