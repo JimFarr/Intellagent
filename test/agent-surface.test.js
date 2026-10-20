@@ -180,6 +180,22 @@ describe('the CLI for agents', () => {
       try { unlock(dir); fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
     }
   });
+  it('open --print and init print the sign-in link; an agent gets no link (INT-334)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-link-'));
+    try {
+      const i = cli(['init', dir, '--name', 'Link', '--prefix', 'LNK', '--template', 'simple', '--no-start', '--port', '7399'], { cwd: dir });
+      assert.equal(i.code, 0, i.err);
+      const token = JSON.parse(fs.readFileSync(path.join(dir, '.intellagent', 'local.json'), 'utf8')).userToken;
+      assert.ok(token);
+      const o = cli(['open', '--print'], { cwd: dir });
+      assert.equal(o.code, 0, o.err);
+      assert.equal(o.out.trim(), `Sign-in link: http://127.0.0.1:7399/#token=${token}`);
+      const a = cli(['open', '--print'], { cwd: dir, env: { INTELLAGENT_AGENT: 'quill' } });
+      assert.equal(a.code, 1);
+      assert.match(a.err, /HUMAN_ONLY/);
+      assert.ok(!a.out.includes(token) && !a.err.includes(token), 'an agent never sees the token');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
   it('--url and --as reach a board from anywhere, for shells that may only run "intellagent …"', () => {
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-nowhere-'));
     const r = cli(['do', 'create_item', 'title=by flag', 'column=Backlog', '--url', s.base, '--as', 'flagged'], { cwd: elsewhere });

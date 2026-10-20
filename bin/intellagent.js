@@ -151,6 +151,7 @@ async function init() {
   await startBackground(manifestPath, url);
   console.log(`\n  ✓ running at ${url}${f['no-open'] ? '' : ' — opening it signed in'}`);
   if (!f['no-open']) openBoard(manifestPath);
+  else if (!asAgent()) console.log(`  Sign-in link: ${signInLink(manifestPath)}`);
   console.log(`\n  Tell your agent: "check the board" — it runs \`intellagent brief\` and takes it from there.`);
   console.log('  Back after a reboot: intellagent autostart on\n');
 }
@@ -172,12 +173,19 @@ async function startBackground(mp, url) {
 }
 
 // Opens the board; the user token rides in the URL fragment (never sent to the server or logged).
-function openBoard(mp = requireManifest()) {
+// The page strips the fragment from the address bar at once, so the link is printed for the human to copy.
+function signInLink(mp) {
   // here, not on the commands: open, start --open and init all come through this (it carries the user token)
   humanOnly('opening the board signed in', OPEN_HINT);
   const u = baseUrl(readManifest(mp));
   const t = userToken(mp);
-  openUrl(t ? `${u}/#token=${t}` : u);
+  return t ? `${u}/#token=${t}` : u;
+}
+
+function openBoard(mp = requireManifest(), { print = false } = {}) {
+  const link = signInLink(mp);
+  console.log(`Sign-in link: ${link}`);
+  if (!print) openUrl(link);
 }
 
 // Give an existing board (made before tokens, or with --no-token) the human's sign-in token, so only
@@ -1013,7 +1021,7 @@ const HELP = `intellagent — a kanban for you and your agents
   stop             stop a board started in the background
   restart          stop this project's board whoever started it, then start it again detached and print its address
   brief            what an agent needs to start: next steps, columns, templates, rules, calls   --agent --via cli|mcp|http
-  open             open the board in a browser (signed in, if the board has a user token)
+  open [--print]   open the board in a browser signed in, and print the sign-in link (--print: only print it)
   merge ID         land an approved ticket's commits from its agent's worktree branch on main
   project [PATH]   show, or set, the folder with the code (a board kept outside the project)
   link BOARD       in a project: use the board kept at BOARD (its folder or manifest)
@@ -1062,7 +1070,7 @@ const HELP = `intellagent — a kanban for you and your agents
 const commands = {
   init, start, stop, restart, status, docs, templates, skill, brief,
   preset: presetCmd,
-  open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(); },
+  open: () => { if (!findManifest()) { console.error(NO_BOARD); process.exit(3); } openBoard(undefined, { print: !!flags(rest).print }); },
   token: tokenCmd,
   project: projectCmd,
   link: linkCmd,
