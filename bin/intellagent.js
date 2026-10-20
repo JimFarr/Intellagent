@@ -946,8 +946,12 @@ async function doOp() {
 
 // intellagent sandbox exec <name> -- <command…>: the CLI of the code that sandbox runs, on its own board, as its
 // human. An agent needs the "run an author's code" permission (the board says: permissions/me runAuthorsCode).
+function sandboxFail(e) {
+  console.error(`error ${e.status || (e.code === 'NO_PERMISSION' || e.code === 'FORBIDDEN' ? 403 : e.code === 'NOT_FOUND' ? 404 : 400)} ${e.code || 'BAD_REQUEST'}: ${e.message}${e.hint ? ` — hint: ${e.hint}` : ''}`); process.exit(1);
+}
+
 async function sandboxExec(sb, mp) {
-  const fail = (e) => { console.error(`error ${e.status || (e.code === 'NO_PERMISSION' || e.code === 'FORBIDDEN' ? 403 : e.code === 'NOT_FOUND' ? 404 : 400)} ${e.code || 'BAD_REQUEST'}: ${e.message}${e.hint ? ` — hint: ${e.hint}` : ''}`); process.exit(1); };
+  const fail = sandboxFail;
   const dash = rest.indexOf('--');
   const before = dash < 0 ? rest.slice(1) : rest.slice(1, dash);
   const args = dash < 0 ? [] : rest.slice(dash + 1);
@@ -1001,7 +1005,7 @@ async function sandboxCmd() {
   const name = sub || defaultAgent(readManifest(mp));
   if (!name) { console.error('Usage: intellagent sandbox <agent name>   (or set INTELLAGENT_AGENT)'); process.exit(2); }
   if (f['idle-hours'] !== undefined && !(Number(f['idle-hours']) >= 0)) { console.error(`--idle-hours takes a number of hours (0 = never stop), not "${f['idle-hours']}"`); process.exit(2); }
-  const r = await sb.start(mp, String(name), { from: String(f.from || 'main'), seed: f.seed ? String(f.seed) : null, fresh: !!f.fresh, keep: f.keep === undefined ? null : f.keep !== 'false', idleHours: f['idle-hours'] === undefined ? null : Number(f['idle-hours']) });
+  const r = await sb.start(mp, String(name), { from: String(f.from || 'main'), seed: f.seed ? String(f.seed) : null, fresh: !!f.fresh, keep: f.keep === undefined ? null : f.keep !== 'false', idleHours: f['idle-hours'] === undefined ? null : Number(f['idle-hours']) }).catch((e) => e.code ? sandboxFail(e) : Promise.reject(e));
   if (f.json) { console.log(JSON.stringify(r, null, 2)); return; }
   console.log(`${name}'s sandbox is running at ${r.url}  (${r.seed === 'kept' ? 'data kept' : `seeded: ${r.seed}${r.from ? `, from the board "${r.from}": its columns, fields and rules, no tickets` : ''}`}; code from ${r.source})`);
   console.log(`  sign in as its human:  ${r.signIn}`);

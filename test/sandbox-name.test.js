@@ -24,3 +24,16 @@ test('sandbox names . and .. are refused before anything on disk changes', async
     assert.ok(!fs.existsSync(path.join(dir, 'sandboxes')));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('the CLI prints the code and hint for sandbox .. and exits 1', () => {
+  const { spawnSync } = require('child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbname-cli-'));
+  try {
+    const mp = path.join(dir, 'intellagent.manifest.json');
+    fs.writeFileSync(mp, '{"name":"real"}\n');
+    const env = { ...process.env, INTELLAGENT_URL: '', INTELLAGENT_AGENT: '' };
+    const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'intellagent.js'), 'sandbox', '..', '--fresh', '--manifest', mp], { cwd: dir, env, encoding: 'utf8', input: '', timeout: 60000 });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /error 400 BAD_REQUEST: .* — hint: /);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
