@@ -1,0 +1,59 @@
+{
+  "name": "software-team",
+  "version": "1.0",
+  "label": "Software team",
+  "description": "The software board plus a team of standing agents, shaped by what we learned building Intellagent with one: a cheap coordinator, builders by tier, reviewers, a lander. Slots, not names: you name each one at install, and fill in the areas it owns.",
+  "extends": "software",
+  "board": {
+    "directives": "- How we use the board, not how the code is written: the code's conventions live in the repo (CLAUDE.md).\n- Pick work from **Ready**; new ideas go to **Backlog**.\n- Every ticket is built on its own branch and lands on main only after review.\n- Request review in five parts and put the evidence in it. Nobody reviews or approves their own work.\n- Decide product questions on the card with the human; technical ones the reviewers and the lead settle.\n- @mention to wake someone; a name without @ wakes nobody."
+  },
+  "team": {
+    "slots": {
+      "coordinator": {
+        "role": "coordinator", "model": "haiku", "supervise": true, "context": "agent-context/coordinator.md",
+        "description": "Triages new tickets, routes them by areas, queue depth and tier, assigns reviewers. Never builds.",
+        "grants": ["agents.control"]
+      },
+      "senior-a": {
+        "role": "builder", "model": "opus", "context": "agent-context/senior-a.md",
+        "description": "Risky or cross-cutting work in its own area: permissions, tokens, data formats. Set its areas at install.",
+        "areas": [], "concerns": ["what can lose data or widen a permission", "a test for every behaviour"]
+      },
+      "senior-b": {
+        "role": "builder", "model": "opus", "context": "agent-context/senior-b.md",
+        "description": "The same, for a second area, so one senior's queue is never the whole team's wait. Set its areas at install.",
+        "areas": [], "concerns": ["what can lose data or widen a permission", "a test for every behaviour"]
+      },
+      "mid": {
+        "role": "builder", "model": "sonnet", "context": "agent-context/mid.md",
+        "description": "Normal features and bugs."
+      },
+      "junior": {
+        "role": "builder", "model": "haiku", "context": "agent-context/junior.md",
+        "description": "Small, well-specified tickets and cleanups."
+      },
+      "designer": {
+        "role": "designer", "model": "sonnet", "context": "agent-context/designer.md",
+        "description": "Screens. Takes its own screenshots in light, dark and at 375 px, in its own sandbox. Give it a browser tool by hand."
+      },
+      "code-reviewer": {
+        "role": "reviewer", "model": "sonnet", "reviewer": true, "context": "agent-context/code-reviewer.md",
+        "description": "Reads the diff line by line, runs the author's tests, gives ok or concerns."
+      },
+      "design-reviewer": {
+        "role": "reviewer", "model": "sonnet", "reviewer": true, "context": "agent-context/design-reviewer.md",
+        "description": "Looks at the screenshots and the running branch. Give it a browser tool by hand."
+      },
+      "lander": {
+        "role": "builder", "model": "sonnet", "pickup": false, "idleAlarm": true, "context": "agent-context/lander.md",
+        "description": "Lands approved work whose cherry-pick conflicted, so an approval never waits on a merge. Woken by the idle-board alarm.",
+        "grants": ["work.land"]
+      },
+      "lead": {
+        "role": "reviewer", "model": "opus", "reviewer": false, "context": "agent-context/lead.md",
+        "description": "Approves technical tickets for the human once every assigned reviewer is ok and the evidence is in. Product tickets stay the human's.",
+        "grants": [{ "power": "review.decide", "minOks": "all" }]
+      }
+    }
+  }
+}
