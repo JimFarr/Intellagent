@@ -232,6 +232,59 @@ describe('scheduler (fake clock)', () => {
     assert.equal(agents.bot.queue.length, 0, 'seen once, left alone');
   });
 
+  it('work an agent left alone is offered once more after reofferMinutes, then stays quiet (INT-397)', () => {
+    const { scheduler, core, agents } = rig({ state: { queue: [] } });
+    core.deps.pending = () => [{ key: 'start:INT-1', action: 'start', id: 'INT-1', rev: 3 }];
+    const queued = () => agents.bot.queue.filter((e) => e.type === 'work.pending').length;
+    scheduler.checkPending('bot');
+    assert.equal(queued(), 1);
+    agents.bot.queue.length = 0;
+    mock.timers.tick(119 * MIN);
+    scheduler.checkPending('bot');
+    assert.equal(queued(), 0, 'not yet two hours');
+    mock.timers.tick(2 * MIN);
+    scheduler.checkPending('bot');
+    assert.equal(queued(), 1, 'offered again once');
+    agents.bot.queue.length = 0;
+    mock.timers.tick(600 * MIN);
+    scheduler.checkPending('bot');
+    assert.equal(queued(), 0, 'left alone again: no third wake');
+  });
+
+  it('work whose ticket changed since it was offered is offered once more, and a busy ticket cannot loop it (INT-397)', () => {
+    let rev = 3;
+    const { scheduler, core, agents } = rig({ def: { reofferMinutes: 0 }, state: { queue: [] } });
+    core.deps.pending = () => [{ key: 'start:INT-1', action: 'start', id: 'INT-1', rev }];
+    const queued = () => agents.bot.queue.filter((e) => e.type === 'work.pending').length;
+    scheduler.checkPending('bot');
+    agents.bot.queue.length = 0;
+    scheduler.checkPending('bot');
+    assert.equal(queued(), 0, 'unchanged: quiet');
+    rev = 4;
+    scheduler.checkPending('bot');
+    assert.equal(queued(), 1, 'a blocker done, a comment: offered again');
+    agents.bot.queue.length = 0;
+    rev = 5;
+    scheduler.checkPending('bot');
+    rev = 6;
+    scheduler.checkPending('bot');
+    assert.equal(queued(), 0, 'one change-wake per piece of work, however often the ticket moves');
+  });
+
+  it('work that left the list and returns starts over (INT-397)', () => {
+    let on = true;
+    const { scheduler, core, agents } = rig({ state: { queue: [] } });
+    core.deps.pending = () => (on ? [{ key: 'start:INT-1', action: 'start', id: 'INT-1', rev: 1 }] : []);
+    scheduler.checkPending('bot');
+    on = false;
+    scheduler.checkPending('bot');
+    agents.bot.queue.length = 0;
+    on = true;
+    scheduler.checkPending('bot');
+    assert.equal(agents.bot.queue.length, 1);
+    assert.deepEqual(Object.keys(agents.bot.seenMeta), ['start:INT-1']);
+  });
+
   // INT-213: the state file is written once per event, however many agents it wakes.
   function crowd(n, wakes = () => true) {
     const saves = [];
