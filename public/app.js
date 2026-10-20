@@ -4727,7 +4727,7 @@
     const show = () => {
       const txt = state.board.directives || '';
       const proj = project.map((r) => `<details class="proj-rules"><summary>${icon('text', 'sm')}<b>${esc(r.file)}</b><span>project conventions · read-only</span></summary><div class="md">${md(r.content)}</div></details>`).join('');
-      body.innerHTML = `${proj ? `<div class="ctx-sub">Project conventions <span class="muted">· CLAUDE.md files in the repo, read-only here</span></div>${proj}<div class="ctx-sub">Board rules <span class="muted">· click to edit</span></div>` : ''}<div class="md desc-view editable ${txt.trim() ? '' : 'empty'}" data-ph="How agents should use this board…" style="margin:0">${md(txt)}</div>`;
+      body.innerHTML = `${proj ? `<div class="ctx-sub">Project conventions <span class="muted">· CLAUDE.md files in the repo, read-only here</span></div>${proj}` : ''}<div class="ctx-sub">Board rules <span class="muted">· click to edit</span></div><div class="md desc-view editable ${txt.trim() ? '' : 'empty'}" data-ph="How agents should use this board…" style="margin:0">${md(txt)}</div>`;
       $('.desc-view', body).onclick = (e) => { if (!e.target.closest('a')) edit(); };
     };
     const edit = () => {
