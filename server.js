@@ -1346,7 +1346,7 @@ function closeQuestions(ctx, item, actor, events, { pick = () => true, reply = n
   syncNeeds(item);
   for (const q of closing) {
     closeWait(item, q, actor, { ...(extra.form ? { form: extra.form } : {}), ...(extra.withdrawn ? { withdrawn: true } : {}) });
-    events.push(itemEvent(ctx, 'attention.resolved', item, actor, { questionId: q.id, raisedBy: q.raisedBy, reason: q.reason, kind: q.kind, reply, open: item.questions.length, mentions: [q.raisedBy], ...extra }));
+    events.push(itemEvent(ctx, 'attention.resolved', item, actor, { questionId: q.id, raisedBy: q.raisedBy, reason: q.reason, kind: q.kind, reply, open: item.questions.length, mentions: [q.raisedBy === SYSTEM.name ? item.assignee || item.workedBy?.at(-1) || q.raisedBy : q.raisedBy], ...extra })); // a board-raised question wakes the ticket's owner (INT-415)
   }
   return closing;
 }
