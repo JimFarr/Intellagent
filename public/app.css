@@ -2524,3 +2524,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .ctx-role-body .ly-text, .ctx-role-body .perm-intro { margin-inline: 0; }
 .ctx-f { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
 .ly-edit { padding: 0 10px 10px; font-size: 12px; }
+.ctx-layer .section-head > span:first-of-type { display: inline-flex; align-items: center; gap: 6px; }
+.ctx-role > summary { flex-wrap: nowrap; }
+.ctx-role > summary .ctx-users { flex: 1 1 0; }
+@media (max-width: 520px) { .ctx-users { display: none; } }

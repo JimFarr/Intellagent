@@ -4790,7 +4790,7 @@
 
   // Settings › Context (INT-363): the layers an agent reads, in the order it reads them, each edited only here.
   const CONTEXT_LAYERS = [
-    ['base', 'Base', 'text', 'What every agent on every board is taught first. Keep your own copy, or use the text Intellagent ships.', mountBase],
+    ['base', 'Base', 'text', 'What every agent on every board is taught first.', mountBase],
     ['rules', 'Board rules', 'pin', 'How agents use this board. They read the project conventions (CLAUDE.md) beside them.', mountRules],
     ['roles', 'Roles', 'bot', 'What an agent in each role is taught, after the base and the board rules. An agent adds its own speciality on its page.', mountRoles],
   ];
