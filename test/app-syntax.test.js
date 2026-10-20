@@ -43,6 +43,35 @@ describe('writing pip: agents', () => {
   });
 });
 
+// The no-reply pip (INT-333): the rule is the whole feature, so run the real quietOf() source.
+describe('no-reply pip', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const a = src.indexOf('const answeredByReaction'), b = src.indexOf('const clock =');
+  assert.ok(a > 0 && b > a);
+  const quiet = (agent, comments = []) => JSON.parse(vm.runInNewContext(
+    `${src.slice(a, b)}\nJSON.stringify(quietOf({ id: 'T-1', comments }))`,
+    { state: { standing: { drax: { name: 'drax', status: 'idle', ...agent } } }, comments }));
+  const ended = (about = { comments: ['T-1'] }) => ({ lastRun: { startedAt: '2026-01-01T10:00:00Z', endedAt: '2026-01-01T10:05:00Z', about } });
+
+  it('an ended run that was woken here and said nothing leaves a trace with its end time', () => {
+    assert.deepEqual(quiet(ended()), [{ name: 'drax', at: '2026-01-01T10:05:00Z' }]);
+  });
+  it('nothing for another ticket, a running agent, or a run that never ended', () => {
+    assert.deepEqual(quiet(ended({ comments: ['T-2'] })), []);
+    assert.deepEqual(quiet({ ...ended(), status: 'running' }), []);
+    assert.deepEqual(quiet({ lastRun: { startedAt: '2026-01-01T10:00:00Z', about: { comments: ['T-1'] } } }), []);
+  });
+  it('it clears when the agent comments after the run began, but not for an older comment or someone else', () => {
+    assert.deepEqual(quiet(ended(), [{ author: { name: 'drax' }, createdAt: '2026-01-01T10:03:00Z' }]), []);
+    assert.equal(quiet(ended(), [{ author: { name: 'drax' }, createdAt: '2026-01-01T09:00:00Z' }]).length, 1);
+    assert.equal(quiet(ended(), [{ author: { name: 'nebula' }, createdAt: '2026-01-01T10:03:00Z' }]).length, 1);
+  });
+  it('a reaction by the agent answers, except seen and queued', () => {
+    assert.deepEqual(quiet(ended(), [{ author: { name: 'james' }, createdAt: '2026-01-01T09:59:00Z', reactions: { '✅': ['drax'] } }]), []);
+    assert.equal(quiet(ended(), [{ author: { name: 'james' }, createdAt: '2026-01-01T09:59:00Z', reactions: { '👀': ['drax'], '⏳': ['drax'] } }]).length, 1);
+  });
+});
+
 // The rule builder (INT-306) lives in the page too: run its real ruleTree and treeText source against a stand-in field list,
 // and check that condition text -> rows -> text gives the same text, and that a text row cannot change how rows group.
 describe('rule builder: round trip', () => {

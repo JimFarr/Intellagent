@@ -177,9 +177,11 @@
   ])];
   // The no-reply pip (INT-333): an agent woken by a comment here whose run ended without a comment from it. It
   // stays until that agent comments here or runs again (a running agent is a writer, above). [{ name, at }]
+  // A reaction other than seen / queued answers a mention, as the board counts it. Reactions carry no time, so one on any comment of the card counts.
+  const answeredByReaction = (c, name) => Object.entries(c.reactions || {}).some(([e, who]) => e !== '👀' && e !== '⏳' && who.includes(name));
   const quietOf = (it) => Object.values(state.standing || {})
     .filter((a) => a.status !== 'running' && a.lastRun?.endedAt && a.lastRun.about?.comments?.includes(it.id)
-      && !it.comments.some((c) => c.author?.name === a.name && c.createdAt > a.lastRun.startedAt))
+      && !it.comments.some((c) => (c.author?.name === a.name && c.createdAt > a.lastRun.startedAt) || answeredByReaction(c, a.name)))
     .map((a) => ({ name: a.name, at: a.lastRun.endedAt }));
   const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const quietPipHTML = (q) => {
