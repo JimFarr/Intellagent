@@ -355,9 +355,10 @@ async function status() {
 
 async function docs() {
   const url = baseUrl();
+  const full = !!flags(rest).full;
   try {
-    if (!url) throw new Error('no board'); process.stdout.write(await (await fetch(`${url}/api/docs`)).text()); }
-  catch { process.stdout.write(fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8')); }
+    if (!url) throw new Error('no board'); process.stdout.write(await (await fetch(`${url}/api/docs${full ? '?full' : ''}`)).text()); }
+  catch { process.stdout.write(fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8') + (full ? '\n' + fs.readFileSync(path.join(ROOT, 'docs', 'operators.md'), 'utf8') : '')); }
 }
 
 function forward(script, args) {
@@ -1033,7 +1034,7 @@ const HELP = `intellagent — a kanban for you and your agents
   token --metrics  issue (or --rotate) the read-only token Prometheus sends to GET /metrics
   token [--rotate] give this board a user token so only you can act as the human (older boards)
   status           where it is and whether it's running
-  docs             print the agent guide
+  docs             print the agent guide (--full adds the operators guide)
   api M PATH [b]   call the API as an agent      (INTELLAGENT_AGENT=name; body: key=value… | json | @file | -)
                    key=@path reads that one value from a file (a long comment: body=@C:/tmp/c.md); key=@@text sends the text "@text"
                    files only from the project, its worktrees and the temp folder; never local.json or the board's data
