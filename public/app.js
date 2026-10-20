@@ -1130,7 +1130,7 @@
       <button class="pill-btn catch-btn" id="catchBtn" title="While you were away|Tickets agents changed since you last looked" hidden>${icon('sparkle')}<span id="catchCount"></span></button>
       <div class="awake" id="awake" role="group" aria-label="Awake agents"></div>
       <label class="search ask-field" id="askField" title="Ask an agent|Plan work, create tickets, explain a blocker — anything not tied to one ticket · A"><span class="ask-av" id="askAv"></span><input id="askIn" readonly autocomplete="off" aria-haspopup="dialog" aria-label="Ask an agent"><kbd>A</kbd><i class="ask-dot" hidden></i></label>
-      <button class="pill-btn hub-btn agents-btn" id="hubBtn" data-tip="Agents & inbox|Your inbox, the digest, agents, standing rules, flow and the archive"><span class="stack-av" id="agentAvs"></span><span id="agentCount"></span><span class="awake-n" id="awakeN" hidden></span><span class="badge" hidden></span><span class="dot" hidden></span></button>
+      <button class="pill-btn hub-btn agents-btn" id="hubBtn" data-tip="Agents & inbox|Your inbox, the digest, agents, context and board rules, flow and the archive"><span class="stack-av" id="agentAvs"></span><span id="agentCount"></span><span class="awake-n" id="awakeN" hidden></span><span class="badge" hidden></span><span class="dot" hidden></span></button>
       <button class="pill-btn icon-btn" id="bulkBtn" title="Select|Pick several tickets to move, re-prioritise or archive">${icon('checks')}</button>
       <button class="pill-btn icon-btn" id="settingsBtn" title="Settings|Themes, card contents, ticket fields and alerts">${icon('sliders')}</button>`;
     $('#boardBtn').onclick = (e) => boardMenu(e.currentTarget);
@@ -4329,12 +4329,12 @@
     ['agentsDrawer', 'Agents', 'bot', () => openAgents()],
     ['permsDrawer', 'Permissions', 'lock', () => openPermissions()],
     ['gridDrawer', 'Who holds what', 'sliders', () => openPermGrid()],
-    ['rulesDrawer', 'Standing rules', 'pin', () => openRules()],
+    ['contextDrawer', 'Context', 'text', () => openContext()],
     ['metricsDrawer', 'Flow', 'activity', () => openMetrics()],
     ['analyticsDrawer', 'Analytics', 'layers', () => openAnalytics()],
     ['archiveDrawer', 'Archive', 'archive', () => openArchive()],
   ];
-  const HUB_PARENT = { agentDrawer: 'agentsDrawer', runLogDrawer: 'agentsDrawer', baseDrawer: 'agentsDrawer' };
+  const HUB_PARENT = { agentDrawer: 'agentsDrawer', runLogDrawer: 'agentsDrawer' };
 
   // Opens (or reuses) the hub on a page and returns that page's body element. Pages keep their old
   // drawer ids, so code that looks for `#agentsDrawer .drawer-body` still finds them.
@@ -4721,14 +4721,13 @@
     }).join('')}`;
   }
 
-  function openRules() {
-    const body = openDrawer('rulesDrawer', 'Standing rules', 'pin');
+  function mountRules(body) {
     let project = [];
     api('GET', B('/directives')).then((r) => { project = r.projectRules || []; if (!body.querySelector('.tbox')) show(); }, () => {});
     const show = () => {
       const txt = state.board.directives || '';
       const proj = project.map((r) => `<details class="proj-rules"><summary>${icon('text', 'sm')}<b>${esc(r.file)}</b><span>project conventions · read-only</span></summary><div class="md">${md(r.content)}</div></details>`).join('');
-      body.innerHTML = `${proj}${proj ? `<div class="section-head" style="margin-top:14px">${icon('pin', 'sm')}<span>Board rules</span><span class="rule"></span></div>` : ''}<div class="md desc-view editable ${txt.trim() ? '' : 'empty'}" data-ph="How agents should use this board…" style="margin:0">${md(txt)}</div>`;
+      body.innerHTML = `${proj ? `<div class="ctx-sub">Project conventions <span class="muted">· CLAUDE.md files in the repo, read-only here</span></div>${proj}<div class="ctx-sub">Board rules <span class="muted">· click to edit</span></div>` : ''}<div class="md desc-view editable ${txt.trim() ? '' : 'empty'}" data-ph="How agents should use this board…" style="margin:0">${md(txt)}</div>`;
       $('.desc-view', body).onclick = (e) => { if (!e.target.closest('a')) edit(); };
     };
     const edit = () => {
@@ -4736,7 +4735,7 @@
       const box = $('.tbox', body);
       const save = async () => {
         const v = $('textarea', box).value;
-        try { await api('PUT', B('/directives'), { directives: v }); state.board.directives = v; renderHeader(); show(); toast('Rules saved', { kind: 'ok', icon: 'check', timeout: 1600 }); scheduleRefresh(0); }
+        try { await api('PUT', B('/directives'), { directives: v }); state.board.directives = v; renderHeader(); show(); toast('Board rules saved', { kind: 'ok', icon: 'check', timeout: 1600 }); scheduleRefresh(0); }
         catch (e) { toast(e.message, { kind: 'error' }); }
       };
       const ta = wireTbox(box, save, { escape: show });
@@ -4746,6 +4745,62 @@
       ta.focus();
     };
     show();
+  }
+
+  /* Roles on the Context page (INT-363): the templates agents are built from. The built-ins are read-only; the
+     human's own (agents.json "roles") edit their label, description and brief, which is all the page changes:
+     the rest of the role is sent back as it was, since PUT replaces the role. */
+  const ROLE_KEYS = ['label', 'icon', 'description', 'brief', 'listen', 'pickup', 'supervise', 'reviewer', 'throttleMinutes', 'perms', 'model'];
+  async function mountRoles(host) {
+    let roles;
+    try { roles = (await api('GET', '/api/roles')).roles || []; } catch (e) { host.innerHTML = `<div class="empty-note">${esc(hintOf(e))}</div>`; return; }
+    if (!host.isConnected) return;
+    const open = new Set();
+    const draw = () => {
+      host.innerHTML = roles.map((r) => {
+        const users = (r.agents || []).map((a) => esc(a.name || a)).join(', ');
+        const head = `<summary><b class="ly-label">${esc(r.label || r.key)}</b><span class="mini-chip">${r.builtin ? `${icon('lock', 'sm')}built in` : `${icon('pencil', 'sm')}yours`}</span><span class="muted ctx-users">${users ? `used by ${users}` : 'no agent uses it'}</span><span class="grow"></span>${icon('chev', 'ly-chev')}</summary>`;
+        const body = r.builtin
+          ? `${r.description ? `<p class="perm-intro">${esc(r.description)}</p>` : ''}<pre class="ly-text">${esc(r.brief || '')}</pre>`
+          : `<label class="ctx-f"><span>Label</span><input class="inp" data-role-f="label" value="${esc(r.label || '')}"></label>
+            <label class="ctx-f"><span>Description</span><input class="inp" data-role-f="description" value="${esc(r.description || '')}"></label>
+            <label class="ctx-f"><span>Brief</span><textarea class="inp spec-ctx" data-role-f="brief" spellcheck="true">${esc(r.brief || '')}</textarea></label>
+            <div class="spec-foot"><span class="spec-state muted" aria-live="polite"></span><span class="grow"></span><button class="btn primary sm" type="button" data-role-save="${esc(r.key)}">${icon('check', 'sm')}Save</button></div>`;
+        return `<details class="ly ctx-role" data-role-key="${esc(r.key)}" ${open.has(r.key) ? 'open' : ''}>${head}<div class="ctx-role-body">${body}</div></details>`;
+      }).join('') || '<div class="empty-note">No roles</div>';
+      $$('textarea', host).forEach(autosize);
+    };
+    host.addEventListener('toggle', (e) => { const d = e.target.closest?.('[data-role-key]'); if (d) d.open ? open.add(d.dataset.roleKey) : open.delete(d.dataset.roleKey); }, true);
+    host.onclick = async (e) => {
+      const b = e.target.closest('[data-role-save]');
+      if (!b) return;
+      const r = roles.find((x) => x.key === b.dataset.roleSave), d = b.closest('[data-role-key]');
+      const next = Object.fromEntries(ROLE_KEYS.filter((k) => r[k] != null).map((k) => [k, r[k]]));
+      for (const f of $$('[data-role-f]', d)) next[f.dataset.roleF] = f.value;
+      b.disabled = true;
+      try {
+        const res = await api('PUT', `/api/roles/${encodeURIComponent(r.key)}`, next);
+        Object.assign(r, res.role);
+        toast(`Role ${r.label || r.key} saved: its agents get it from their next session`, { icon: 'check', kind: 'ok', timeout: 4000 });
+      } catch (err) { toast(hintOf(err), { kind: 'error', wrap: true }); }
+      b.disabled = false;
+    };
+    draw();
+  }
+
+  // Settings › Context (INT-363): the layers an agent reads, in the order it reads them, each edited only here.
+  const CONTEXT_LAYERS = [
+    ['base', 'Base', 'text', 'What every agent on every board is taught first. Keep your own copy, or use the text Intellagent ships.', mountBase],
+    ['rules', 'Board rules', 'pin', 'How agents use this board. They read the project conventions (CLAUDE.md) beside them.', mountRules],
+    ['roles', 'Roles', 'bot', 'What an agent in each role is taught, after the base and the board rules. An agent adds its own speciality on its page.', mountRoles],
+  ];
+  function openContext(focus) {
+    const body = openDrawer('contextDrawer', 'Context', 'text');
+    body.innerHTML = `<p class="perm-intro">What an agent reads on its first turn, in this order. Each layer is edited here and nowhere else; an agent's page shows them read-only. <em>Card rules</em> are a different thing: they say how a card looks, and live in Settings › Card rules.</p>
+      ${CONTEXT_LAYERS.map(([id, title, ic, intro], i) => `<section class="section ctx-layer" id="ctx-${id}" aria-labelledby="ctx-h-${id}"><div class="section-head">${icon(ic, 'sm')}<span id="ctx-h-${id}"><span class="ly-n">${i + 1}</span> ${title}</span><span class="rule"></span></div>
+        <p class="perm-intro">${intro}</p><div class="ctx-host" data-ctx="${id}"></div></section>`).join('')}`;
+    for (const [id, , , , mount] of CONTEXT_LAYERS) mount($(`[data-ctx="${id}"]`, body));
+    if (focus) { const s = $(`#ctx-${focus}`, body); s?.scrollIntoView({ block: 'start' }); s?.setAttribute('tabindex', '-1'); s?.focus({ preventScroll: true }); }
   }
 
   async function openArchive() {
@@ -5156,8 +5211,7 @@
     }
     return html;
   }
-  async function openBaseContext() {
-    const body = openDrawer('baseDrawer', 'Base context', 'text');
+  async function mountBase(body) {
     body.innerHTML = '<div class="empty-note">Loading…</div>';
     let v;
     try { v = await api('GET', '/api/agents/base-context'); } catch (e) { body.innerHTML = `<div class="empty-note">${esc(e.message)}</div>`; return; }
@@ -5230,9 +5284,22 @@
   // same layers the runner joins). Fetched once when the page opens; a redraw leaves it alone (data-keep).
   // The speciality layer has no label of its own (its text brings its heading into the prompt), so the page names it
   const LAYER_NAMES = { agent: 'Speciality: areas, concerns and context page' };
+  // Read-only here: each row says where its layer is edited (INT-363)
+  const LAYER_EDIT = { base: ['base', 'Edit on the Context page'], rules: ['rules', 'Edit on the Context page'], role: ['roles', 'Edit on the Context page'] };
+  const layerEdit = (layer) => {
+    const [target, label] = LAYER_EDIT[layer] || [];
+    if (target) return `<div class="ly-edit"><button class="btn sm ghost" type="button" data-ctx-open="${target}">${icon('pencil', 'sm')}${label}</button></div>`;
+    if (layer === 'agent') return `<div class="ly-edit"><button class="btn sm ghost" type="button" data-ctx-spec>${icon('pencil', 'sm')}Edit below</button></div>`;
+    return '<div class="ly-edit muted">Kept by the agent itself</div>';
+  };
   function layersSection(name) {
     const root = el(`<div class="section layers"><div class="section-head">${icon('layers', 'sm')}<span>Context layers</span><span class="rule"></span></div>
       <p class="perm-intro ly-intro">What it is taught on its first turn, in this order.</p><div class="ly-list">${'<div class="act sk" aria-hidden="true"><i></i><span></span><time></time></div>'.repeat(3)}</div></div>`);
+    root.addEventListener('click', (e) => {
+      const c = e.target.closest('[data-ctx-open]');
+      if (c) { openContext(c.dataset.ctxOpen); return; }
+      if (e.target.closest('[data-ctx-spec]')) { const s = $('.spec'); s?.scrollIntoView({ block: 'start' }); $('input, textarea', s)?.focus({ preventScroll: true }); }
+    });
     api('GET', `/api/agents/${encodeURIComponent(name)}/layers?board=${encodeURIComponent(state.boardId)}`).then((r) => {
       const total = r.layers.reduce((s, l) => s + l.chars, 0);
       const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
@@ -5240,7 +5307,7 @@
       $('.ly-list', root).innerHTML = r.layers.length ? r.layers.map((l, i) => `<details class="ly" data-layer="${esc(l.layer)}"><summary>
           <span class="ly-n">${i + 1}</span><b class="ly-label">${esc(l.label || LAYER_NAMES[l.layer] || l.layer)}</b><span class="grow"></span>
           <span class="mini-chip ly-size">${l.chars.toLocaleString()} chars · ${pct(l.chars)}%</span>${icon('chev', 'ly-chev')}<span class="ly-bar" aria-hidden="true"><i style="width:${Math.max(2, pct(l.chars))}%"></i></span></summary>
-          <pre class="ly-text">${esc(l.text)}</pre></details>`).join('') : '<div class="empty-note">Nothing yet</div>';
+          <pre class="ly-text">${esc(l.text)}</pre>${layerEdit(l.layer)}</details>`).join('') : '<div class="empty-note">Nothing yet</div>';
     }, (e) => { $('.ly-list', root).innerHTML = `<div class="empty-note">${esc(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message)}</div>`; });
     return root;
   }
@@ -5767,7 +5834,7 @@
     fillIdleAlarm($('[data-idle]', body));
     fillBaseRow($('[data-base]', body));
     body.onclick = async (e) => {
-      if (e.target.closest('[data-open-base]')) { e.stopPropagation(); openBaseContext(); return; }
+      if (e.target.closest('[data-open-base]')) { e.stopPropagation(); openContext('base'); return; }
       const co = e.target.closest('[data-coord]');
       if (co) {
         e.stopPropagation();
@@ -6489,7 +6556,7 @@
       { section: A, label: 'Needs you', icon: 'ask', hint: String(needsIds().length), run: () => { const ids = needsIds(); if (ids.length) openItem(ids[0], cardEls.get(ids[0]), { rail: true }); } },
       { section: A, label: 'Inbox', icon: 'bell', run: openInbox },
       { section: A, label: 'While you were away', icon: 'sparkle', run: openCatchup },
-      { section: A, label: 'Standing rules', icon: 'pin', run: openRules },
+      { section: A, label: 'Board rules', icon: 'pin', run: () => openContext('rules') },
       { section: A, label: 'Digest', icon: 'news', run: openDigest },
       activeMaster()
         ? { section: A, label: `Release the board (${activeMaster().holder})`, icon: 'x', run: () => api('DELETE', B('/master')).then(() => scheduleRefresh(0), (e) => toast(e.message, { kind: 'error' })) }
