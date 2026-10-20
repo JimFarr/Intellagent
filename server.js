@@ -78,8 +78,11 @@ const now = () => new Date().toISOString();
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const rid = (p) => `${p}_${crypto.randomBytes(5).toString('hex')}`;
 const slug = (s) => String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'x';
+// A column permission names a column by its id, or by the name its id was made from, never by its name now:
+// agents may rename columns (INT-418).
+const namesColumn = (refs, colId) => arr(refs).some((r) => slug(r) === colId);
 const str = (v, max) => String(v ?? '').slice(0, max);
-const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const { isObj } = jsonfile;
 const arr = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : String(v).split(',').map((s) => s.trim()).filter(Boolean));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -536,7 +539,8 @@ function persist(ctx, body = boardBody(ctx.board)) {
   maybeBackup(ctx);
   writeFileAtomic(ctx.file, text);
   ctx.hash = sha256(text);
-  writeHash(ctx);
+  // the board is saved by now, so tx() must not roll it back; board.hash is written again on the next save
+  try { writeHash(ctx); } catch (e) { console.warn(`[${ctx.id}] board.hash not saved this time: ${e.message}`); }
 }
 
 function persistArchive(ctx) { writeFileAtomic(ctx.archiveFile, JSON.stringify(ctx.archive)); }
@@ -736,22 +740,30 @@ function tx(ctx, fn, { archive = false } = {}) {
   const events = [];
   const outer = ctx.afterCommit;
   const hooks = ctx.afterCommit = [];
+  const rollback = () => {
+    ctx.board = JSON.parse(before);
+    ctx.board.updatedAt = updatedAt;
+    if (archive) ctx.archive = JSON.parse(beforeArchive);
+  };
   let result;
   try {
     result = fn(events);
     stepJourneys(ctx, events); // inside the try: a journey that fails rolls the change back with it
-  } catch (e) {
-    ctx.board = JSON.parse(before);
-    ctx.board.updatedAt = updatedAt;
-    if (archive) ctx.archive = JSON.parse(beforeArchive);
-    throw e;
-  } finally { ctx.afterCommit = outer; }
+  } catch (e) { rollback(); throw e; } finally { ctx.afterCommit = outer; }
   const afterParts = boardParts(ctx.board);
   const after = afterParts.body;
   const from = ctx.hash;
-  if (after !== before) persist(ctx, after);
   const archived = archive && JSON.stringify(ctx.archive) !== beforeArchive;
-  if (archived) persistArchive(ctx);
+  // A save that fails rolls back too, so the caller's retry can't apply the change twice. The archive is saved
+  // first and put back if the board's save then fails, so the two files on disk never disagree about a ticket.
+  try {
+    if (archived) persistArchive(ctx);
+    if (after !== before) persist(ctx, after);
+  } catch (e) {
+    rollback();
+    if (archived) try { persistArchive(ctx); } catch (e2) { console.warn(`[${ctx.id}] archive not put back: ${e2.message}`); }
+    throw e;
+  }
   // The first event of a write tells the board page what it changed; the others carry the same hash, so the
   // page skips them.
   const sync = after !== before && events[0]?.board === ctx.id ? (archived ? { from, full: true } : syncOf(from, parts, afterParts, ctx.board)) : null;
@@ -1003,7 +1015,7 @@ function adminGate(ctx, actor, power, what, target = {}) {
   const fits = (where) => !where || Object.entries(where).every(([k, want]) => {
     const wants = [].concat(want).map((v) => String(v).toLowerCase());
     if (k === 'board') return wants.includes(String(ctx.id).toLowerCase());
-    if (k === 'column' && target.column) return wants.includes(String(target.column.id).toLowerCase()) || wants.includes(String(target.column.name).toLowerCase());
+    if (k === 'column' && target.column) return namesColumn(wants, target.column.id);
     return false;
   });
   const g = mine.find((x) => fits(x.where));
@@ -1082,10 +1094,8 @@ function checkColumnPerm(ctx, actor, colIds) {
   if (actor.kind !== 'agent') return;
   const p = permsFor(actor.name);
   if (!p?.columns) return;
-  const allowed = arr(p.columns).map((x) => String(x).toLowerCase());
   for (const id of colIds) {
-    const col = ctx.board.columns.find((c) => c.id === id);
-    if (!allowed.includes(id) && !allowed.includes(col?.name.toLowerCase())) {
+    if (!namesColumn(p.columns, id)) {
       fail(403, `${actor.name} may only change items in: ${arr(p.columns).join(', ')}`);
     }
   }
@@ -1193,6 +1203,14 @@ function readablePath(actor, raw) {
   if (path.basename(norm(real)) === 'local.json' || inside(DATA)) fail(403, 'The board never reads its own tokens or data as an attachment', { code: 'FORBIDDEN', hint });
   if (actor.kind !== 'user' && ![PROJECT_ROOT, path.join(path.dirname(MANIFEST_PATH), 'worktrees'), os.tmpdir()].some(inside)) {
     fail(403, `${real} is outside the folders agents may attach from`, { code: 'FORBIDDEN', hint });
+  }
+  // The files an agent's run may not read (lib/agents/config.js PROTECTED): agents.json, context pages, the base
+  // context, git hooks. Attaching one would hand it back through /files (INT-418).
+  const agentsFile = path.join(path.dirname(MANIFEST_PATH), M.agentsFile || 'agents.json');
+  const parts = norm(real).split(path.sep);
+  if (actor.kind !== 'user' && (path.basename(norm(real)) === 'agents.json' || parts.includes('agent-context') || parts.join('/').includes('.git/hooks/')
+    || [agentsFile, path.join(path.dirname(agentsFile), 'base-context.md')].some((f) => norm(f) === norm(real)))) {
+    fail(403, 'Agents never attach the board\'s agent definitions, context pages or git hooks', { code: 'FORBIDDEN', hint });
   }
   return real;
 }
@@ -2007,7 +2025,7 @@ function moveBlocker(ctx, item, to, actor) {
   if (to.flags.wipLimit > 0 && to.itemIds.length >= to.flags.wipLimit) return { code: 'WIP_LIMIT', reason: `"${to.name}" is at its WIP limit (${to.flags.wipLimit})` };
   const perms = actor.kind === 'agent' ? permsFor(actor.name) : null;
   if (perms?.readOnly) return { code: 'FORBIDDEN', reason: 'You are read-only on this board' };
-  if (perms?.columns && !perms.columns.some((c) => [to.id, to.name.toLowerCase()].includes(String(c).toLowerCase()))) return { code: 'FORBIDDEN', reason: `You may not change items in "${to.name}"` };
+  if (perms?.columns && !namesColumn(perms.columns, to.id)) return { code: 'FORBIDDEN', reason: `You may not change items in "${to.name}"` };
   return null;
 }
 
@@ -2344,6 +2362,8 @@ function archiveItems(ctx, ids, actor, reason = null) {
       if (!item) { if (ctx.archive.items[id]) continue; fail(404, `Item "${id}" not found`); }
       guardWrite(ctx, item, actor);
       const col = ctx.board.columns.find((c) => c.id === item.columnId);
+      // Archiving takes a ticket out of its column: an agent needs the same column.gate a move out would (INT-413).
+      if (col && actor.kind === 'agent' && (col.flags.humanOnlyOut || col.id === doneColumnId(ctx))) grantFor(ctx, actor, 'column.gate', item, `archive tickets out of "${col.name}"`);
       if (col) col.itemIds = col.itemIds.filter((x) => x !== id);
       delete ctx.board.items[id];
       const rec = { ...item, lease: null, archivedAt: now(), archivedBy: actor, archivedFrom: item.columnId, archiveReason: reason };
@@ -2376,7 +2396,8 @@ function deleteItems(ctx, ids, actor) {
       } else delete ctx.archive.items[id];
       for (const a of [...(item.attachments || []), ...(item.comments || []).flatMap((c) => c.attachments || [])]) {
         if (a.kind !== 'file') continue;
-        try { fs.rmSync(path.join(ctx.attachDir, decodeURIComponent(a.url.split('/').pop())), { force: true }); } catch { /* already gone */ }
+        // after the save: a rollback must find the ticket's files still there
+        afterCommit(ctx, () => { try { fs.rmSync(path.join(ctx.attachDir, decodeURIComponent(a.url.split('/').pop())), { force: true }); } catch { /* already gone */ } });
       }
       // no dangling links: other tickets stop waiting on it
       for (const other of [...Object.values(ctx.board.items), ...Object.values(ctx.archive.items)]) {
@@ -2401,13 +2422,17 @@ function restoreItem(ctx, id, d, actor) {
     const col = d.columnId || d.column ? findColumn(b, d.columnId ?? d.column) : b.columns.find((c) => c.id === rec.archivedFrom) || b.columns[0];
     if (!col) fail(400, 'Board has no columns');
     const { archivedAt, archivedBy, archivedFrom, archiveReason, ...item } = rec;
-    enterColumn(item, col.id);
+    // An agent's restore is a move from where the ticket was archived, through the move's gates (INT-413).
+    const from = actor.kind === 'user' ? col : b.columns.find((c) => c.id === archivedFrom) || b.columns[0];
+    if (from.id === col.id && actor.kind !== 'user') { checkColumnPerm(ctx, actor, [col.id]); checkWip(col); }
+    enterColumn(item, from.id);
     item.version++;
     item.updatedAt = now();
     b.items[key] = item;
-    col.itemIds.unshift(key);
+    from.itemIds.unshift(key);
     delete ctx.archive.items[key];
     events.push(itemEvent(ctx, 'item.restored', item, actor, { archivedAt }));
+    if (from.id !== col.id) moveInto(ctx, item, col.id, 0, actor, events);
     return item;
   }, { archive: true });
 }
@@ -2658,7 +2683,8 @@ function savePresenceSoon() {
   if (presenceTimer) return;
   presenceTimer = setTimeout(() => {
     presenceTimer = null;
-    writeFileAtomic(PRESENCE_FILE, JSON.stringify({ updatedAt: now(), agents: Object.fromEntries(presence) }, null, 2));
+    // a throw in a timer has no handler and would end the board; presence is saved again on the next change
+    try { writeFileAtomic(PRESENCE_FILE, JSON.stringify({ updatedAt: now(), agents: Object.fromEntries(presence) }, null, 2)); } catch (e) { console.warn(`presence not saved this time: ${e.message}`); }
   }, 1500);
 }
 
@@ -2765,7 +2791,8 @@ setInterval(() => { for (const ctx of boards.values()) { try { sweepStuck(ctx); 
 setInterval(() => {
   // a warning is keyed by the lease's expiry: once that has passed, the key can never match again
   for (const k of warned) if (Date.parse(k.slice(k.lastIndexOf('@') + 1)) <= Date.now()) warned.delete(k);
-  for (const ctx of boards.values()) {
+  // a save that fails here (a file locked by antivirus) is logged and tried on the next sweep, never thrown from the timer
+  for (const ctx of boards.values()) try {
     const ms = ctx.board.master;
     // An open-ended master lease ends when its holder has gone quiet (crashed, PC restarted) —
     // unless it is a standing agent that is just between runs.
@@ -2810,7 +2837,7 @@ setInterval(() => {
       }
     }
     if (stale.length) archiveItems(ctx, stale, SYSTEM, 'auto-archive');
-  }
+  } catch (e) { console.warn(`lease sweep (${ctx.id}): ${e.message}`); }
   checkPresence();
 }, 5000).unref();
 
@@ -3002,12 +3029,14 @@ function checkAuth(req, q, actor, pathname, policy) {
     if (A.userToken && !tokenEq(tok, A.userToken)) fail(401, 'This board needs the user token', { auth: 'user', code: 'UNAUTHORIZED', hint: 'Sign in with the link from intellagent open' });
     return;
   }
-  const need = A.agentTokens?.[actor.name];
+  // names match without regard to case, as grants and probation do: "Gatekeeper" must send gatekeeper's token (INT-418)
+  const tokenFor = (tokens) => Object.entries(tokens || {}).find(([k]) => k.toLowerCase() === actor.name.toLowerCase())?.[1];
+  const need = tokenFor(A.agentTokens);
   const tokenHint = `Send the token the human issued with: intellagent token --agent ${actor.name} (the CLI and MCP tools send it by themselves; elsewhere set INTELLAGENT_TOKEN)`;
   if (need) { if (!tokenEq(tok, need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); return; }
   if (A.requireAgentTokens) {
     // a token issued since the board started (intellagent token --agent) counts without a restart
-    const fresh = readLocalAgentTokens()[actor.name];
+    const fresh = tokenFor(readLocalAgentTokens());
     if (fresh) { A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh }; if (tokenEq(tok, fresh)) return; fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); }
     fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name} (the CLI and MCP tools then send it by themselves)` });
   }
@@ -3201,9 +3230,10 @@ route('GET', '/api', 'This index; ?policies=true adds who may call each write ro
   ...(q.policies === 'true' ? { policies: routes.filter((r) => WRITE.has(r.method)).map((r) => ({ method: r.method, pattern: r.pattern, ...r.policy })) } : {}),
 }));
 
-route('GET', '/api/docs', 'Agent guide (markdown). Start here.', ({ req, res }) => {
+route('GET', '/api/docs', 'Agent guide (markdown). Start here. ?full adds the operators guide (docs/operators.md)', ({ req, res, q }) => {
   const base = `http://${req.headers.host}`;
-  const text = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8').replaceAll('{{BASE}}', base).replaceAll('{{APP}}', app.name);
+  let text = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8').replaceAll('{{BASE}}', base).replaceAll('{{APP}}', app.name);
+  if ('full' in q) text += '\n' + fs.readFileSync(path.join(ROOT, 'docs', 'operators.md'), 'utf8');
   reply(res, 200, text, { 'Content-Type': 'text/markdown; charset=utf-8' });
   return HANDLED;
 });
@@ -3475,8 +3505,7 @@ function rebalanceTicket(ctx, it, pickup) {
 function rebalanceTeam(ctx, agents) {
   return agents.map((a) => {
     const p = a.state === 'removed' ? null : permsFor(a.name);
-    const allowed = p?.columns ? arr(p.columns).map((x) => String(x).toLowerCase()) : null;
-    const columns = allowed ? ctx.board.columns.filter((c) => allowed.includes(c.id) || allowed.includes(c.name.toLowerCase())).map((c) => c.id) : null;
+    const columns = p?.columns ? ctx.board.columns.filter((c) => namesColumn(p.columns, c.id)).map((c) => c.id) : null;
     return { ...a, edits: !!a.edits && !p?.readOnly, columns };
   });
 }
@@ -3848,7 +3877,7 @@ route('POST', '/api/boards/:board/items/bulk', 'Patch many items: { ids: [], pat
   return withGateCommits(ctx, arr(body.ids), actor, () => {
     const out = arr(body.ids).map((id) => {
       try { return { id, ok: true, item: updateItem(ctx, id, body.patch || {}, actor) }; }
-      catch (e) { return { id, ok: false, status: e.status || 500, error: e.message }; }
+      catch (e) { return { id, ok: false, status: e.status || 500, error: e.message, code: e.code, ...e.extra }; }
     });
     return Promise.all(out.map(async (x) => (x.ok ? { ...x, item: await afterLanding(ctx, x.item) } : x)));
   });
@@ -4693,7 +4722,7 @@ route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=2
    agent. What it may change is a fixed list; the run command, grants, enabled, env and cwd stay with the
    human's file. Models come from an allowlist, and tool perms and board permissions only ever narrow. */
 const MANAGER_MODELS = Array.isArray(M.managerModels) && M.managerModels.length ? M.managerModels.map(String) : ['haiku', 'sonnet', 'opus'];
-const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context', 'contextItems', 'personality', 'reviewer'];
+const MANAGE_KEYS = ['label', 'glyph', 'color', 'alignment', 'description', 'role', 'model', 'perms', 'permissions', 'areas', 'concerns', 'context', 'contextItems', 'skills', 'personality', 'reviewer'];
 // Wake settings (INT-370): each one makes an agent run more often, at the human's cost, so the human sets them on
 // POST and PATCH alike and an agent manager never does (403 HUMAN_ONLY, not among MANAGE_KEYS).
 const WAKE_KEYS = ['supervise', 'idleAlarm', 'listen', 'pickup', 'throttleMinutes'];
@@ -4837,6 +4866,12 @@ function manageAgent(target, d, actor) {
   if ('concerns' in d) cfg.concerns = strList(d.concerns, 'concerns');
   if ('reviewer' in d) cfg.reviewer = d.reviewer ? true : null;
   if ('personality' in d) cfg.personality = cleanPersonality(d.personality);
+  if ('skills' in d) {
+    // A skill is read into the agent's worktree and prompt on every run, like a context file: the human's to attach
+    if (agent) fail(403, 'Skills are the human\'s: a skill is instructions copied into the agent\'s worktree before every run', { code: 'HUMAN_ONLY', hint: 'Ask the human to attach it on the Agents page, or with PATCH /api/agents/<name> { skills }' });
+    cfg.skills = standing.cleanSkills(d.skills) || [];
+    if (!cfg.skills.length) cfg.skills = null;
+  }
   if ('context' in d && 'contextItems' in d) fail(400, 'Send either context (the one "Context" note) or contextItems, not both', { code: 'BAD_REQUEST', hint: 'contextItems is the whole list; context only sets its "Context" note' });
   if ('context' in d || 'contextItems' in d) {
     // The whole list goes through manage, so the history holds it in full and Revert puts the old list back.
@@ -4894,6 +4929,11 @@ route('GET', '/api/agents/:name/context', "An agent's context as the text its pr
   managerOf(actor, a.name, { self: true });
   return { agent: a.name, file: a.contextFile, items: a.contextItems, text: standing.contextOf(a.name) };
 });
+route('GET', '/api/agents/:name/skills', "An agent's skills (SKILL.md files the human attached): each { id, path, on, name, description } read from the file now, or an error when it can't be read. Human, the agent itself, or agents.manage over it", ({ p, actor }) => {
+  const a = standing.get(p.name);
+  managerOf(actor, a.name, { self: true });
+  return { agent: a.name, skills: a.skills || [] };
+});
 route('GET', '/api/agents/:name/preview', "Human or agents.manage: the first-turn prompt the board would send this agent now (role brief, speciality, personality, context items, rules), built by the code a real run uses → { agent, prompt, layers }", ({ p, actor }) => {
   const a = standing.get(p.name); // 404 if unknown
   managerOf(actor, a.name, { self: true });
@@ -4910,7 +4950,7 @@ route('POST', '/api/agents/:name/commands/check', 'Human or agents.manage: what 
   if (typeof body?.command !== 'string' || !body.command.trim()) fail(400, 'command is required', { code: 'BAD_REQUEST', hint: 'POST { "command": "npm run measure:board" }' });
   return standing.checkCommand(p.name, body.command);
 });
-route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), context? (sets the "Context" note), supervise?, idleAlarm? (the human only: true|false|null|{ minutes }), listen? (the human only: addressed|inbox|human|new-tickets, a filter object or a list), pickup? (the human only: false|ready|all), throttleMinutes? (the human only: 0-1440) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));
+route('PATCH', '/api/agents/:name', 'Change a standing agent: { label?, glyph?, color?, alignment?, description?, role?, model?, perms?, permissions?: { columns?, readOnly? }, personality?: { explains?, speed?, autonomy? 0-4, text? }, contextItems?: [{ kind: note|file|link, title, body|path|url, on? }] (the whole list; file and link items are the human\'s), skills?: [{ path of a SKILL.md or its folder, id?, on? }] (the whole list; the human\'s only: copied into the agent\'s worktree before each run), context? (sets the "Context" note), supervise?, idleAlarm? (the human only: true|false|null|{ minutes }), listen? (the human only: addressed|inbox|human|new-tickets, a filter object or a list), pickup? (the human only: false|ready|all), throttleMinutes? (the human only: 0-1440) } — the human, or an agent with the agents.manage grant (models from the allowlist, perms/permissions only narrow, never itself). Every change is kept with before/after and can be reverted', ({ p, body, actor }) => manageAgent(p.name, body, actor));
 route('POST', '/api/agents/stop-all', 'Human (or the agents.control grant): stop every agent now — kill runs, pause standing agents, release agent leases and the master lease, send their In Progress tickets back to Ready with a comment', ({ actor }) => {
   if (actor.kind !== 'user' && !grantsOf(actor.name).some((g) => g.power === 'agents.control')) humanOnly(actor);
   return stopAllAgents(actor);

@@ -1674,6 +1674,49 @@ describe('a lander (work.land) gets approved work onto main', () => {
     }
   });
 
+  it('a landing that fails on a conflict leaves an unrelated uncommitted edit in the main checkout as it was (INT-347)', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-keep-'));
+    const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(dir, 'README.md'), 'hi\n');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    const s = await startServer({ dir, manifest: { staleSweepSeconds: 0.4 }, agents: { defaults: fast, agents: {
+      bob: { run: run('commit'), worktree: true },
+    } } });
+    try {
+      const b = await s.ok('POST', `${B}/items`, { title: 'for bob', column: 'Ready', assignee: 'bob' }, USER);
+      await until(async () => (await comments(s, b.id)).some((c) => c.startsWith('bob: committed')), 10000, 'bob committed');
+      await until(async () => (await agentState(s, 'bob')).status === 'idle', 6000, 'bob idle');
+      await s.ok('POST', `${B}/items/${b.id}/review`, { summary: 'done', evidence: 'e' }, { agent: 'bob' });
+      // main has its own version of the ticket's file, committed: the cherry-pick conflicts and is undone
+      fs.writeFileSync(path.join(dir, `work-${b.id}.txt`), "main's own\n");
+      git('add', '.');
+      git('commit', '-q', '-m', 'A file in the way');
+      // and the human has an edit in a tracked file the ticket does not touch, not committed
+      fs.writeFileSync(path.join(dir, 'README.md'), 'hi, and my own edit\n');
+      await s.ok('POST', `${B}/items/${b.id}/review/decision`, { verdict: 'approve' }, USER);
+      const card = await s.ok('GET', `${B}/items/${b.id}`);
+      assert.equal(card.landing.state, 'failed');
+      // the cherry-pick conflicts and is undone with reset --keep; the merge fallback needs a clean checkout, so it says DIRTY
+      assert.match(card.landing.reason, /instead needs a clean main checkout \(uncommitted: README\.md\)/);
+      const text = (f) => fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n'); // git on Windows may convert line endings
+      assert.equal(text('README.md'), 'hi, and my own edit\n', 'the edit survives the undo');
+      assert.equal(text(`work-${b.id}.txt`), "main's own\n", 'main is back where it was');
+      assert.match(git('status', '--porcelain'), /^\s?M README\.md$/m);
+      assert.ok(!git('status', '--porcelain').includes('UU'), 'no cherry-pick left open');
+    } finally {
+      await s.stop();
+      try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
+    }
+  });
+
   it('a verified ok still counts after the ticket has landed: review facts keep oks and allOk (INT-263)', async () => {
     const fs = require('fs');
     const os = require('os');

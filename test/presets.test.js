@@ -208,7 +208,7 @@ describe('presets: preset add, diff and update on a board that exists', () => {
     assert.match(skill, /without `--yes` once/);
     const guide = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8');
     assert.match(guide, /`--preset <name\|folder>` instead/);
-    assert.match(guide, /speed bump, not a wall: the CLI trusts `INTELLAGENT_AGENT`/);
+    assert.match(fs.readFileSync(path.join(ROOT, 'docs', 'operators.md'), 'utf8'), /speed bump, not a wall: the CLI trusts `INTELLAGENT_AGENT`/);
   });
   it('the setup skill asks what the board is for first, recommends a team, walks the features, and its step references hold (INT-254)', () => {
     const skill = fs.readFileSync(path.join(ROOT, 'skills', 'intellagent-setup', 'SKILL.md'), 'utf8');

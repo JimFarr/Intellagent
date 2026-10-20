@@ -124,6 +124,13 @@ describe('board API', () => {
     // avatars by path too
     const av = await s.api('PATCH', '/api/profiles/me', { imagePath: path.join(s.dir, 'local.json') });
     assert.equal(av.status, 403);
+    // the files an agent's run may not read: agents.json, context pages, the base context (INT-418)
+    fs.mkdirSync(path.join(s.dir, 'agent-context'), { recursive: true });
+    for (const f of ['agents.json', 'agent-context/ann.md', 'base-context.md']) {
+      fs.writeFileSync(path.join(s.dir, f), '{"env":{"KEY":"secret"}}');
+      await refused(path.join(s.dir, f));
+    }
+    assert.equal((await att(path.join(s.dir, 'agents.json'), USER)).status, 201, 'the human still can');
   });
 
   test('leases lock other agents but never the human', async () => {
@@ -533,6 +540,30 @@ describe('the UI stream never carries the token in its URL (INT-209)', () => {
     assert.equal(bot.status, 403, 'an agent opens the stream with its own token');
     assert.equal((await bot.json()).code, 'HUMAN_ONLY');
     assert.equal((await stream('/api/stream?ui=1')).status, 401, 'no ticket, no token: no stream');
+  });
+});
+
+describe('agent names and column names give no way round tokens or column permissions (INT-418)', () => {
+  let t;
+  before(async () => { t = await startServer({ manifest: { auth: { agentTokens: { gatekeeper: 'g-secret' } }, permissions: { ann: { columns: ['Backlog', 'Ready'] } } } }); });
+  after(async () => { await t.stop(); });
+
+  test('a token is asked for whatever case the name is sent in', async () => {
+    const get = (agent, tok) => fetch(`${t.base}${B}/summary`, { headers: { 'x-agent': agent, ...(tok ? { authorization: `Bearer ${tok}` } : {}) } });
+    assert.equal((await get('Gatekeeper')).status, 401, 'no token under another case');
+    assert.equal((await get('GATEKEEPER', 'g-secret')).status, 200);
+    assert.equal((await get('someone-else')).status, 200, 'an agent with no token on this board still needs none');
+  });
+
+  test('renaming a column does not move a column permission with the name', async () => {
+    const ann = { agent: 'ann' };
+    const it = await t.ok('POST', `${B}/items`, { title: 'perm', column: 'Ready' }, ann);
+    await t.ok('PATCH', `${B}/columns/ready`, { name: 'Queue' }, ann);
+    await t.ok('PATCH', `${B}/columns/in-progress`, { name: 'Ready' }, ann);
+    const moved = await t.api('POST', `${B}/items/${it.id}/move`, { column: 'in-progress' }, ann);
+    assert.equal(moved.status, 403, 'In Progress, now named Ready, is still not ann\'s');
+    await t.ok('POST', `${B}/items/${it.id}/move`, { column: 'backlog' }, ann);
+    await t.ok('POST', `${B}/items/${it.id}/move`, { column: 'ready' }, ann); // "Ready" in the permission is still the column made as Ready
   });
 });
 
@@ -1002,5 +1033,57 @@ describe('typing signal (INT-287)', () => {
       assert.match(r.body.hint, /status/);
       assert.equal((await t.api('POST', `${B}/items/NOPE-1/typing`, {}, USER)).status, 404);
     } finally { await t.stop(); }
+  });
+});
+
+// A write the OS refuses (antivirus or the indexer holding the file on Windows) must neither end the board nor leave
+// half a change behind (INT-417). The stub fails every write whose file name starts with a name listed in a file.
+describe('a save the OS refuses', () => {
+  let t; let failList;
+  const failWrites = (...names) => fs.writeFileSync(failList, names.join('\n'));
+  before(async () => {
+    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ia-test-'));
+    failList = path.join(dir, 'fail-writes');
+    const stub = path.join(dir, 'fail-writes.js');
+    fs.writeFileSync(stub, `const fs = require('fs'); const path = require('path'); const real = fs.writeFileSync;
+fs.writeFileSync = function (file, ...rest) {
+  let names = []; try { names = fs.readFileSync(${JSON.stringify(failList)}, 'utf8').split('\\n').filter(Boolean); } catch {}
+  if (typeof file === 'string' && names.some((n) => path.basename(file).startsWith(n))) throw Object.assign(new Error('EBUSY: resource busy or locked, open ' + file), { code: 'EBUSY' });
+  return real.call(this, file, ...rest);
+};`);
+    t = await startServer({ dir, env: { NODE_OPTIONS: `--require "${stub.replace(/\\/g, '/')}"` } });
+  });
+  after(() => t.stop());
+
+  test('a timer-side save that fails is logged and the board keeps serving', async () => {
+    failWrites('presence.json');
+    await t.ok('GET', `${B}/work`, undefined, { agent: 'ada' }); // presence changes: saved from a timer 1.5 s later
+    await until(() => t.log().includes('presence not saved this time'), 10000, 'the warning');
+    failWrites();
+    assert.equal((await t.api('GET', '/api')).status, 200, 'the board is still up');
+  });
+
+  test('a failed save rolls the change back, so the retry applies it once', async () => {
+    const it = await t.ok('POST', `${B}/items`, { title: 'locked', column: 'Backlog' }, USER);
+    failWrites('board.json');
+    const r = await t.api('POST', `${B}/items/${it.id}/comments`, { body: 'once' });
+    failWrites();
+    assert.ok(r.status >= 500, `the save failed: ${r.status}`);
+    assert.equal((await t.ok('GET', `${B}/items/${it.id}`)).comments.length, 0, 'nothing kept in memory');
+    await t.ok('POST', `${B}/items/${it.id}/comments`, { body: 'once' });
+    assert.equal((await t.ok('GET', `${B}/items/${it.id}`)).comments.length, 1, 'the retry adds one comment');
+  });
+
+  test('a test ticket whose delete fails to save keeps its attachment', async () => {
+    const it = await t.ok('POST', `${B}/items`, { title: 'throwaway', column: 'Backlog', test: true }, USER);
+    await t.ok('POST', `${B}/items/${it.id}/attachments`, { dataBase64: Buffer.from('hi').toString('base64'), name: 'a.txt' });
+    const url = (await t.ok('GET', `${B}/items/${it.id}`)).attachments[0].url;
+    failWrites('board.json');
+    const r = await t.api('DELETE', `${B}/items/${it.id}`);
+    failWrites();
+    assert.ok(r.status >= 500, `the save failed: ${r.status}`);
+    assert.equal((await fetch(t.base + url)).status, 200, 'the file is still there');
+    await t.ok('DELETE', `${B}/items/${it.id}`);
+    assert.equal((await fetch(t.base + url)).status, 404, 'removed once the delete is saved');
   });
 });

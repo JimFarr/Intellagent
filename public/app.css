@@ -2150,6 +2150,19 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .appr-who { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
 .appr-who span { color: var(--muted); min-width: 0; }
 .stop-row { display: flex; justify-content: flex-end; margin: 0 0 10px; }
+.usage-box { margin: 0 0 12px; display: grid; gap: 6px; }
+.usage-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+.um-who { font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .04em; }
+.um { display: inline-flex; align-items: center; gap: 7px; border-radius: 6px; }
+.um-l { color: var(--text); }
+.um-bar { position: relative; width: 84px; height: 6px; border-radius: 99px; overflow: hidden; background: color-mix(in oklab, var(--text) 12%, transparent); flex: none; }
+.um-bar i { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--ok); }
+.um.warm .um-bar i { background: var(--warn); }
+.um.hot .um-bar i { background: var(--danger); }
+.um b { color: var(--text); font: 600 12px var(--mono); min-width: 3ch; }
+.um small { font-size: 11px; }
+.um-held { padding: 1px 8px; border-radius: 99px; font-size: 11px; color: color-mix(in oklab, var(--warn) 80%, var(--text)); background: color-mix(in oklab, var(--warn) 16%, transparent); }
+.um:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Permissions page (INT-244): the library grouped by kind. Enforced ones carry a lock on a solid card; verbal ones
    are words only, so they are dashed, warm-tinted, carry a speech mark and say "not enforced" in full. */

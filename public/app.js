@@ -1455,6 +1455,7 @@
       const [pres, st] = await Promise.all([api('GET', '/api/presence'), api('GET', '/api/agents')]);
       state.presence = pres;
       state.standing = Object.fromEntries(st.agents.map((a) => [a.name, a]));
+      state.usage = st.usage || {};
     } catch { return; }
     // run-state dots on every avatar already on screen (cards only re-render when they change)
     for (const av of $$('.avatar[data-name]')) {
@@ -5807,6 +5808,27 @@
     while (at) { const n = at.nextSibling; at.remove(); at = n; }
   }
 
+  // The account's usage per window (INT-307), from GET /api/agents `usage`: a meter each, the reset time beside it.
+  // Utilization is 0..1. Nothing is drawn until a run has reported some.
+  const USAGE_WINDOWS = { five_hour: '5-hour', seven_day: 'Week' };
+  function usageHTML() {
+    const rows = Object.entries(state.usage || {}).map(([provider, u]) => {
+      const ws = Object.entries(u.windows || {}).filter(([, w]) => w.utilization != null);
+      if (!ws.length) return '';
+      const meters = ws.map(([k, w]) => {
+        const pct = Math.round(Math.min(1, Math.max(0, w.utilization)) * 100);
+        const at = w.resetsAt ? new Date(w.resetsAt) : null;
+        const day = at && at.toDateString() !== new Date().toDateString() ? `${at.toLocaleDateString([], { weekday: 'short' })} ` : '';
+        const reset = at ? `resets ${day}${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+        const label = USAGE_WINDOWS[k] || k.replace(/_/g, ' ');
+        const cls = w.utilization >= (u.holdAbove || 0.9) ? 'hot' : w.utilization >= 0.7 ? 'warm' : '';
+        return `<div class="um ${cls}" role="meter" aria-label="${esc(label)} usage" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-valuetext="${pct}% used${reset ? `, ${reset}` : ''}" tabindex="0"><span class="um-l">${esc(label)}</span><span class="um-bar"><i style="width:${pct}%"></i></span><b>${pct}%</b><small>${esc(reset)}</small></div>`;
+      }).join('');
+      return `<div class="usage-row"><span class="um-who">${esc(provider)}</span>${meters}${u.heldBack ? `<span class="um-held" title="Held back|Above ${Math.round((u.holdAbove || 0) * 100)}% of the 5-hour window: agents do not pick up new tickets or supervise until it resets">Optional work held</span>` : ''}</div>`;
+    }).join('');
+    return rows ? `<div class="usage-box" aria-label="Account usage">${rows}</div>` : '';
+  }
+
   function fillAgents(body) {
     const seen = new Set(state.presence.map((p) => p.name));
     const rows = [...Object.keys(state.standing).filter((n) => !seen.has(n)).map((name) => ({ name, connections: {}, leases: [], subscriptions: [], online: false })), ...state.presence]
@@ -5824,7 +5846,7 @@
     // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266).
     const first = !body._agentsFilled;
     body._agentsFilled = true;
-    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(`<div class="focusbar codebar code-row" ${state.app.behind ? '' : 'hidden'}>${codeBehindHTML()}</div>` + stopRow + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row" data-admin data-keep="admin"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + '<div class="coord-row base-row" data-base data-keep="base"></div>' + addBtn + (rows.length ? rows.map((p, i) => {
+    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(`<div class="focusbar codebar code-row" ${state.app.behind ? '' : 'hidden'}>${codeBehindHTML()}</div>` + stopRow + usageHTML() + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row" data-admin data-keep="admin"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + '<div class="coord-row base-row" data-base data-keep="base"></div>' + addBtn + (rows.length ? rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
       const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
