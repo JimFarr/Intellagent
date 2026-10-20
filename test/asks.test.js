@@ -36,13 +36,16 @@ describe('ask rules', () => {
     assert.deepEqual(ASKS.overdueAsks(item, NOW + 31 * 60_000).map((x) => x.id), ['q']);
     a.escalated = 'then';
     assert.deepEqual(ASKS.overdueAsks(item, NOW + 31 * 60_000), []);
+    const up = ASKS.escalationOf(ASKS.newAsk({ id: 'q2', by: 'groot', to: 'stakar', what: 'x', now: NOW }), 'gamora', { id: 'up', now: NOW }).ask;
+    assert.deepEqual(ASKS.overdueAsks({ asks: [up] }, NOW + 999 * 60_000), [], 'an escalation never escalates again');
   });
-  it('escalates to the coordinator, or to the human when the coordinator is the asker or the owner', () => {
+  it('escalates to the coordinator; when that is the asker or the owner it makes nothing (the human is never asked)', () => {
     const a = ASKS.newAsk({ id: 'q', by: 'groot', to: 'stakar', what: 'v1 or v2?', now: NOW });
     const up = ASKS.escalationOf(a, 'gamora', { id: 'up', now: NOW });
     assert.deepEqual([up.ask.to, up.ask.kind, up.ask.escalates, up.ask.by], ['gamora', 'unblock', 'q', 'intellagent']);
-    assert.match(ASKS.escalationOf(a, 'stakar', { id: 'up', now: NOW }).question, /groot asked stakar and it is overdue/);
-    assert.ok(ASKS.escalationOf(a, null, { id: 'up', now: NOW }).question);
+    assert.deepEqual(ASKS.escalationOf(a, 'stakar', { id: 'up', now: NOW }), {}, 'the coordinator is the owner');
+    assert.deepEqual(ASKS.escalationOf(a, 'groot', { id: 'up', now: NOW }), {}, 'the coordinator is the asker: ask.overdue wakes it');
+    assert.deepEqual(ASKS.escalationOf(a, null, { id: 'up', now: NOW }), {});
   });
   it('finishing one end of an escalation finishes the other, with the human\'s questions it had opened', () => {
     const fresh = () => {

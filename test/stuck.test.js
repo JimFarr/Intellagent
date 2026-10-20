@@ -64,6 +64,7 @@ describe('stuck rules', () => {
     assert.deepEqual([STUCK.forCoordinator(e, at(95)), STUCK.roundOf(e, at(95))], [true, 1]);
     assert.deepEqual([STUCK.forCoordinator(e, at(150)), STUCK.forHuman(e, at(150))], [false, true]);
     assert.equal(STUCK.forHuman({ ...e, escalated: 'yes' }, at(150)), false, 'asked once');
+    assert.equal(STUCK.forHuman({ ...e, asked: true }, at(150)), false, 'an ask about it is within its time: the human waits');
     assert.equal(STUCK.forHuman({ ...e, reason: 'waiting_on_human' }, at(500)), false, 'already the human\'s');
   });
 
@@ -105,9 +106,11 @@ describe('the stuck watch on the simulator', () => {
     const t = sim.human.create({ title: 'goes quiet', column: 'Ready', assignee: 'groot' });
     sim.tick('12h');
     const unstick = sim.runs.filter((r) => r.agent === 'gamora' && r.work.some((w) => w.startsWith('unstick:')));
-    assert.equal(unstick.length, 1, `the coordinator is woken once: ${sim.wakes('gamora').join(' | ')}`);
+    // once per round (INT-414): the ask is overdue after the first, and its ask.overdue mentions the coordinator, which is not a second wake for the same round
+    assert.equal(unstick.length, 2, `the coordinator is woken once per round: ${sim.wakes('gamora').join(' | ')}`);
     const asks = sim.item(t).asks.filter((a) => a.by === 'gamora');
-    assert.deepEqual(asks.map((a) => [a.to, a.kind]), [['groot', 'answer']], 'it asks the silent owner');
+    assert.ok(asks.length && asks.every((a) => a.to === 'groot' && a.kind === 'answer'), 'it asks the silent owner');
+    assert.ok(!sim.item(t).asks.some((a) => a.escalates), 'the coordinator\'s own overdue ask makes no escalation');
     const human = sim.item(t).questions;
     assert.equal(human.length, 1, 'unanswered, the human is asked once');
     assert.equal(sim.board.stuck[t].reason, 'waiting_on_human', 'and it is the human\'s now');

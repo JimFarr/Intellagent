@@ -1947,8 +1947,6 @@ function sweepAsks(ctx) {
       if (up.ask) {
         ASKS.addAsk(it, up.ask, ASK_RULES);
         events.push(itemEvent(ctx, 'ask.created', it, SYSTEM, { ask: { ...up.ask }, escalates: a.id, mentions: [up.ask.to] }));
-      } else {
-        a.questionId = openQuestion(ctx, it, parseNeedsHuman({ reason: up.question }, { kind: 'system', name: a.by }), SYSTEM, events).id;
       }
       it.version++;
     }
