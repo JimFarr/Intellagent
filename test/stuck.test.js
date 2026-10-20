@@ -111,7 +111,13 @@ describe('the stuck watch on the simulator', () => {
     assert.equal(human.length, 1, 'unanswered, the human is asked once');
     assert.equal(sim.board.stuck[t].reason, 'waiting_on_human', 'and it is the human\'s now');
     const asked = Date.parse(human[0].raisedAt);
-    assert.deepEqual(sim.runs.filter((r) => Date.parse(r.at) > asked).map((r) => r.agent), [], 'after that nothing wakes anyone for it: no loop');
+    // The owner's unanswered ask is offered to it once more after reofferMinutes (INT-397); then nothing wakes anyone
+    const after = () => sim.runs.filter((r) => Date.parse(r.at) > asked);
+    assert.ok(after().every((r) => r.agent === 'groot' && r.work.every((w) => w.startsWith('ask:'))), 'only that one re-offer');
+    const once = after().length;
+    assert.ok(once <= 1, 'at most once');
+    sim.tick('24h');
+    assert.equal(after().length, once, 'after that nothing wakes anyone for it: no loop');
   });
 
   it('a ticket whose owner is paused is owner_down, not no_owner', () => {

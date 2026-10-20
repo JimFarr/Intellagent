@@ -404,15 +404,16 @@ describe('standing agents pick up work already on the board', () => {
       const [, offer] = await runs();
       assert.equal(offer.why, 'work.pending');
       assert.deepEqual(offer.items, [queued.id]);
-      // A comment wakes it again; the queue it already saw and left alone stays quiet
+      // A comment wakes it again, and the ticket changed (INT-397), so the queue is offered once more; after that,
+      // left alone, it stays quiet
       await s.ok('POST', `${B}/items/${queued.id}/comments`, { body: '@maker a note' }, USER);
-      await settled(3, 'a comment run');
+      await settled(4, 'a comment run, and the changed ticket offered once more');
       // It finishes another ticket: free again, so the queue is offered again, once
       const other = await s.ok('POST', `${B}/items`, { title: 'its current work', column: 'Backlog' }, USER);
       await s.ok('POST', `${B}/items/${other.id}/lease`, { minutes: 10 }, MAKER);
       await s.ok('POST', `${B}/items/${other.id}/review`, { summary: 'done', evidence: 'tests pass' }, MAKER);
       await s.ok('POST', `${B}/items/${other.id}/comments`, { body: '@maker thanks' }, USER);
-      await settled(5, 'queue offered again after a finished ticket');
+      await settled(6, 'queue offered again after a finished ticket');
       const last = (await runs()).at(-1);
       assert.equal(last.why, 'work.pending');
       assert.deepEqual(last.items, [queued.id]);
