@@ -5454,9 +5454,10 @@
   const GRID_KIND_ORDER = ['builtin', 'power', 'command', 'tool', 'folders', 'bundle', 'verbal'];
   const GRID_MODE = { off: 'off', on: 'on', rules: 'on, with rules' };
   const gridOks = (g) => (g.minOks != null || g.from ? ` · needs ${g.minOks === 'all' ? 'all' : g.minOks ?? 'every'} ok${g.from ? ` from ${g.from.join(', ')}` : ''}` : '');
-  function openPermGrid() {
+  function openPermGrid(agent) {
     const body = openDrawer('gridDrawer', 'Who holds what', 'sliders');
     body._reload = () => fillPermGrid(body);
+    body._focusAgent = agent;
     fillPermGrid(body);
   }
   async function fillPermGrid(body) {
@@ -5505,6 +5506,11 @@
     $('.pg-scroll', body).innerHTML = table;
     body._grid = g;
     if (at) $(`.pg-cell[data-agent="${CSS.escape(at[0])}"][data-key="${CSS.escape(at[1])}"]`, body)?.focus({ preventScroll: true });
+    if (body._focusAgent) { // opened from an agent's page: land on that agent's row, once
+      const c = $(`.pg-cell[data-agent="${CSS.escape(body._focusAgent)}"]`, body);
+      body._focusAgent = null;
+      if (c) { c.focus(); c.scrollIntoView({ block: 'center', inline: 'nearest' }); }
+    }
     const sel = body._sel;
     if (sel) $(`.pg-cell[data-agent="${CSS.escape(sel[0])}"][data-key="${CSS.escape(sel[1])}"]`, body)?.setAttribute('aria-current', 'true');
     if (sel && !$('.pg-pan.dirty', body)) gridPanel(body, sel[0], sel[1], me, { quiet: true });
@@ -6299,7 +6305,7 @@
     speed: ['Careful', 'Fast'],
     autonomy: ['Asks first', 'Decides'],
   };
-  const AGENT_TABS = [['identity', 'Identity', 'user'], ['personality', 'Personality', 'sparkle'], ['role', 'Role and areas', 'target'], ['context', 'Context', 'text'], ['commands', 'Commands', 'sliders'], ['preview', 'Preview', 'eye']];
+  const AGENT_TABS = [['identity', 'Identity', 'user'], ['personality', 'Personality', 'sparkle'], ['role', 'Role and areas', 'target'], ['context', 'Context', 'text'], ['wake', 'Wake-ups', 'clock'], ['commands', 'Commands', 'sliders'], ['preview', 'Preview', 'eye']];
   const hintOf = (e) => (e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message);
 
   function specialityEditor(name) {
@@ -6314,6 +6320,24 @@
       return `<div class="pe-dial"><div class="pe-ends"><label for="pe-${k}-${id}">${esc(DIAL_ENDS[k][0])}</label><label class="pe-set"><input type="checkbox" data-dial-set="${k}" ${set ? 'checked' : ''}> say something</label><span>${esc(DIAL_ENDS[k][1])}</span></div>
         <input type="range" id="pe-${k}-${id}" data-dial="${k}" min="0" max="4" step="1" value="${set ? pers[k] : 2}" ${set ? '' : 'disabled'} style="--p:${(set ? pers[k] : 2) * 25}%"></div>`;
     };
+    // wake-ups: a setting the agent does not override shows the role's value, and "Role default" sends null to go back to it
+    const own = (k) => Object.prototype.hasOwnProperty.call(a.differsFromRole || {}, k);
+    const roleHas = (k) => (a.differsFromRole?.[k] ? a.differsFromRole[k].role : a[k]);
+    function wakePane() {
+      const sel = (key, label, help, opts, now) => `<label class="spec-label" for="pe-w-${key}-${id}">${label} <span class="muted">— ${help}</span></label>
+        <select class="inp pe-wake" id="pe-w-${key}-${id}" data-wake="${key}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === now ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+      const custom = own('listen') && (typeof a.listen !== 'string' || !LISTEN_LABEL[a.listen]);
+      const listenNow = !own('listen') ? '' : custom ? '__custom' : a.listen;
+      const pickupNow = !own('pickup') ? '' : a.pickup === 'all' ? 'all' : a.pickup ? 'ready' : 'off';
+      const pickupWord = (v) => (v === 'all' ? 'every open column' : v ? 'the pickup columns' : 'none');
+      return `<div class="muted pe-note">What wakes the agent, and how often. Kept in its history; used from its next run.</div>
+        ${sel('listen', 'Wakes on', 'which events start a run', [['', `Role default (${listenLabel(roleHas('listen'))})`], ...Object.entries(LISTEN_LABEL), ...(custom ? [['__custom', `Custom: ${listenLabel(a.listen)} (kept unless you pick another)`]] : [])], listenNow)}
+        ${sel('pickup', 'Picks up unassigned tickets', 'wakes it for work nobody has', [['', `Role default (${pickupWord(roleHas('pickup'))})`], ['off', 'No'], ['ready', 'In the pickup columns'], ['all', 'In every open column']], pickupNow)}
+        <label class="spec-label" for="pe-w-throttle-${id}">Throttle <span class="muted">— minutes events wait to arrive together in one run (0 wakes at once)</span></label>
+        <input class="inp pe-wake" type="number" min="0" max="1440" step="1" id="pe-w-throttle-${id}" data-wake="throttle" placeholder="role default (${esc(String(roleHas('throttleMinutes') ?? 3))})" value="${own('throttleMinutes') ? esc(String(a.throttleMinutes)) : ''}">
+        ${sel('supervise', 'Supervises', 'hears about tickets other agents were given and have not started', [['', `Role default (${roleHas('supervise') ? 'yes' : 'no'})`], ['on', 'Yes'], ['off', 'No']], !own('supervise') ? '' : a.supervise ? 'on' : 'off')}
+        <div class="muted pe-note"><button type="button" class="btn sm ghost" data-open-grid>See this agent's row in the permissions grid</button></div>`;
+    }
     const pane = (k, html) => `<div class="pe-pane" role="tabpanel" id="pepane-${k}-${id}" aria-labelledby="petab-${k}-${id}" data-pane="${k}" ${k === 'identity' ? '' : 'hidden'}>${html}</div>`;
     const root = el(`<div class="section spec"><div class="section-head">${icon('target', 'sm')}<span>Edit ${esc(prof.label || name)}</span><span class="rule"></span></div>
       <nav class="tabs pe-tabs" role="tablist" aria-label="Agent settings">${AGENT_TABS.map(([k, l, ic], i) => `<button type="button" role="tab" id="petab-${k}-${id}" aria-controls="pepane-${k}-${id}" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}" data-pt="${k}" class="${i === 0 ? 'on' : ''}">${icon(ic, 'sm')}<span>${l}</span></button>`).join('')}</nav>
@@ -6335,7 +6359,8 @@
           <div class="spec-chips" data-k="concerns"></div>
           <div class="spec-add"><input class="inp" data-add="concerns" aria-label="Add a concern" placeholder="e.g. accessibility contrast, dark/light parity, performance" autocomplete="off"><button class="btn sm ghost" type="button" data-add-btn="concerns">${icon('plus', 'sm')}Add</button></div>
           <label class="spec-toggle"><input type="checkbox" data-reviewer ${a.reviewer ? 'checked' : ''}> <span><b>Can review</b> other agents' work in its areas — the receptionist may assign it; it comments, you approve</span></label>
-          <div class="muted pe-note">What it may do is the permissions grid; its wake-ups (${esc(listenLabel(a.listen))}) are set in agents.json.</div>`)}
+          <div class="muted pe-note">What it may do is the <button type="button" class="btn sm ghost" data-open-grid>permissions grid</button>; when it wakes is the Wake-ups tab.</div>`)}
+        ${pane('wake', wakePane())}
         ${pane('context', `<div class="muted pe-note">Read on each session's first turn. Switch an item off to keep it without sending it.</div>
           <div class="pe-items" data-items><div class="muted">Loading…</div></div>
           <div class="spec-add pe-addrow"><button class="btn sm ghost" type="button" data-add-item="note">${icon('plus', 'sm')}Note</button><button class="btn sm ghost" type="button" data-add-item="file">${icon('plus', 'sm')}Repo file</button><button class="btn sm ghost" type="button" data-add-item="link">${icon('plus', 'sm')}Link</button></div>`)}
@@ -6457,6 +6482,7 @@
       const t = e.target;
       if (t.dataset.dialSet) { $(`[data-dial="${t.dataset.dialSet}"]`, root).disabled = !t.checked; touch('personality'); }
       else if (t.matches('[data-reviewer], [data-role]')) touch('role');
+      else if (t.matches('[data-wake]')) touch('wake');
     });
     root.addEventListener('keydown', (e) => {
       const k = e.target.dataset?.add;
@@ -6486,6 +6512,7 @@
         drawItems(); touch('context');
         return;
       }
+      if (e.target.closest('[data-open-grid]')) { openPermGrid(name); return; }
       if (e.target.closest('[data-cmd-check]')) { checkCmd(); return; }
       if (e.target.closest('[data-pv]')) { loadPreview(); return; }
       if (e.target.closest('[data-spec-save]')) {
@@ -6507,6 +6534,13 @@
           body.personality = Object.keys(per).length ? per : null;
         }
         if (st.touched.has('role')) Object.assign(body, { role: $('[data-role]', root).value || null, areas: st.areas, concerns: st.concerns, reviewer: $('[data-reviewer]', root).checked });
+        if (st.touched.has('wake')) {
+          const w = (k) => $(`[data-wake="${k}"]`, root).value.trim();
+          if (w('listen') !== '__custom') body.listen = w('listen') || null;
+          body.pickup = w('pickup') === '' ? null : w('pickup') === 'off' ? false : w('pickup');
+          body.supervise = w('supervise') === '' ? null : w('supervise') === 'on';
+          body.throttleMinutes = w('throttle') === '' ? null : Number(w('throttle'));
+        }
         if (st.touched.has('context') && st.items) body.contextItems = st.items.map(({ check, ...it }) => it);
         saveBtn.disabled = true;
         try {
