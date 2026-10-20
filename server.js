@@ -78,6 +78,9 @@ const now = () => new Date().toISOString();
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 const rid = (p) => `${p}_${crypto.randomBytes(5).toString('hex')}`;
 const slug = (s) => String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'x';
+// A column permission names a column by its id, or by the name its id was made from, never by its name now:
+// agents may rename columns (INT-418).
+const namesColumn = (refs, colId) => arr(refs).some((r) => slug(r) === colId);
 const str = (v, max) => String(v ?? '').slice(0, max);
 const { isObj } = jsonfile;
 const arr = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : String(v).split(',').map((s) => s.trim()).filter(Boolean));
@@ -1003,7 +1006,7 @@ function adminGate(ctx, actor, power, what, target = {}) {
   const fits = (where) => !where || Object.entries(where).every(([k, want]) => {
     const wants = [].concat(want).map((v) => String(v).toLowerCase());
     if (k === 'board') return wants.includes(String(ctx.id).toLowerCase());
-    if (k === 'column' && target.column) return wants.includes(String(target.column.id).toLowerCase()) || wants.includes(String(target.column.name).toLowerCase());
+    if (k === 'column' && target.column) return namesColumn(wants, target.column.id);
     return false;
   });
   const g = mine.find((x) => fits(x.where));
@@ -1082,10 +1085,8 @@ function checkColumnPerm(ctx, actor, colIds) {
   if (actor.kind !== 'agent') return;
   const p = permsFor(actor.name);
   if (!p?.columns) return;
-  const allowed = arr(p.columns).map((x) => String(x).toLowerCase());
   for (const id of colIds) {
-    const col = ctx.board.columns.find((c) => c.id === id);
-    if (!allowed.includes(id) && !allowed.includes(col?.name.toLowerCase())) {
+    if (!namesColumn(p.columns, id)) {
       fail(403, `${actor.name} may only change items in: ${arr(p.columns).join(', ')}`);
     }
   }
@@ -1193,6 +1194,14 @@ function readablePath(actor, raw) {
   if (path.basename(norm(real)) === 'local.json' || inside(DATA)) fail(403, 'The board never reads its own tokens or data as an attachment', { code: 'FORBIDDEN', hint });
   if (actor.kind !== 'user' && ![PROJECT_ROOT, path.join(path.dirname(MANIFEST_PATH), 'worktrees'), os.tmpdir()].some(inside)) {
     fail(403, `${real} is outside the folders agents may attach from`, { code: 'FORBIDDEN', hint });
+  }
+  // The files an agent's run may not read (lib/agents/config.js PROTECTED): agents.json, context pages, the base
+  // context, git hooks. Attaching one would hand it back through /files (INT-418).
+  const agentsFile = path.join(path.dirname(MANIFEST_PATH), M.agentsFile || 'agents.json');
+  const parts = norm(real).split(path.sep);
+  if (actor.kind !== 'user' && (path.basename(norm(real)) === 'agents.json' || parts.includes('agent-context') || parts.join('/').includes('.git/hooks/')
+    || [agentsFile, path.join(path.dirname(agentsFile), 'base-context.md')].some((f) => norm(f) === norm(real)))) {
+    fail(403, 'Agents never attach the board\'s agent definitions, context pages or git hooks', { code: 'FORBIDDEN', hint });
   }
   return real;
 }
@@ -2009,7 +2018,7 @@ function moveBlocker(ctx, item, to, actor) {
   if (to.flags.wipLimit > 0 && to.itemIds.length >= to.flags.wipLimit) return { code: 'WIP_LIMIT', reason: `"${to.name}" is at its WIP limit (${to.flags.wipLimit})` };
   const perms = actor.kind === 'agent' ? permsFor(actor.name) : null;
   if (perms?.readOnly) return { code: 'FORBIDDEN', reason: 'You are read-only on this board' };
-  if (perms?.columns && !perms.columns.some((c) => [to.id, to.name.toLowerCase()].includes(String(c).toLowerCase()))) return { code: 'FORBIDDEN', reason: `You may not change items in "${to.name}"` };
+  if (perms?.columns && !namesColumn(perms.columns, to.id)) return { code: 'FORBIDDEN', reason: `You may not change items in "${to.name}"` };
   return null;
 }
 
@@ -3010,12 +3019,14 @@ function checkAuth(req, q, actor, pathname, policy) {
     if (A.userToken && !tokenEq(tok, A.userToken)) fail(401, 'This board needs the user token', { auth: 'user', code: 'UNAUTHORIZED', hint: 'Sign in with the link from intellagent open' });
     return;
   }
-  const need = A.agentTokens?.[actor.name];
+  // names match without regard to case, as grants and probation do: "Gatekeeper" must send gatekeeper's token (INT-418)
+  const tokenFor = (tokens) => Object.entries(tokens || {}).find(([k]) => k.toLowerCase() === actor.name.toLowerCase())?.[1];
+  const need = tokenFor(A.agentTokens);
   const tokenHint = `Send the token the human issued with: intellagent token --agent ${actor.name} (the CLI and MCP tools send it by themselves; elsewhere set INTELLAGENT_TOKEN)`;
   if (need) { if (!tokenEq(tok, need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); return; }
   if (A.requireAgentTokens) {
     // a token issued since the board started (intellagent token --agent) counts without a restart
-    const fresh = readLocalAgentTokens()[actor.name];
+    const fresh = tokenFor(readLocalAgentTokens());
     if (fresh) { A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh }; if (tokenEq(tok, fresh)) return; fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); }
     fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name} (the CLI and MCP tools then send it by themselves)` });
   }
@@ -3483,8 +3494,7 @@ function rebalanceTicket(ctx, it, pickup) {
 function rebalanceTeam(ctx, agents) {
   return agents.map((a) => {
     const p = a.state === 'removed' ? null : permsFor(a.name);
-    const allowed = p?.columns ? arr(p.columns).map((x) => String(x).toLowerCase()) : null;
-    const columns = allowed ? ctx.board.columns.filter((c) => allowed.includes(c.id) || allowed.includes(c.name.toLowerCase())).map((c) => c.id) : null;
+    const columns = p?.columns ? ctx.board.columns.filter((c) => namesColumn(p.columns, c.id)).map((c) => c.id) : null;
     return { ...a, edits: !!a.edits && !p?.readOnly, columns };
   });
 }

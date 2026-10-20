@@ -124,6 +124,13 @@ describe('board API', () => {
     // avatars by path too
     const av = await s.api('PATCH', '/api/profiles/me', { imagePath: path.join(s.dir, 'local.json') });
     assert.equal(av.status, 403);
+    // the files an agent's run may not read: agents.json, context pages, the base context (INT-418)
+    fs.mkdirSync(path.join(s.dir, 'agent-context'), { recursive: true });
+    for (const f of ['agents.json', 'agent-context/ann.md', 'base-context.md']) {
+      fs.writeFileSync(path.join(s.dir, f), '{"env":{"KEY":"secret"}}');
+      await refused(path.join(s.dir, f));
+    }
+    assert.equal((await att(path.join(s.dir, 'agents.json'), USER)).status, 201, 'the human still can');
   });
 
   test('leases lock other agents but never the human', async () => {
@@ -533,6 +540,30 @@ describe('the UI stream never carries the token in its URL (INT-209)', () => {
     assert.equal(bot.status, 403, 'an agent opens the stream with its own token');
     assert.equal((await bot.json()).code, 'HUMAN_ONLY');
     assert.equal((await stream('/api/stream?ui=1')).status, 401, 'no ticket, no token: no stream');
+  });
+});
+
+describe('agent names and column names give no way round tokens or column permissions (INT-418)', () => {
+  let t;
+  before(async () => { t = await startServer({ manifest: { auth: { agentTokens: { gatekeeper: 'g-secret' } }, permissions: { ann: { columns: ['Backlog', 'Ready'] } } } }); });
+  after(async () => { await t.stop(); });
+
+  test('a token is asked for whatever case the name is sent in', async () => {
+    const get = (agent, tok) => fetch(`${t.base}${B}/summary`, { headers: { 'x-agent': agent, ...(tok ? { authorization: `Bearer ${tok}` } : {}) } });
+    assert.equal((await get('Gatekeeper')).status, 401, 'no token under another case');
+    assert.equal((await get('GATEKEEPER', 'g-secret')).status, 200);
+    assert.equal((await get('someone-else')).status, 200, 'an agent with no token on this board still needs none');
+  });
+
+  test('renaming a column does not move a column permission with the name', async () => {
+    const ann = { agent: 'ann' };
+    const it = await t.ok('POST', `${B}/items`, { title: 'perm', column: 'Ready' }, ann);
+    await t.ok('PATCH', `${B}/columns/ready`, { name: 'Queue' }, ann);
+    await t.ok('PATCH', `${B}/columns/in-progress`, { name: 'Ready' }, ann);
+    const moved = await t.api('POST', `${B}/items/${it.id}/move`, { column: 'in-progress' }, ann);
+    assert.equal(moved.status, 403, 'In Progress, now named Ready, is still not ann\'s');
+    await t.ok('POST', `${B}/items/${it.id}/move`, { column: 'backlog' }, ann);
+    await t.ok('POST', `${B}/items/${it.id}/move`, { column: 'ready' }, ann); // "Ready" in the permission is still the column made as Ready
   });
 });
 
