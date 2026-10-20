@@ -1932,6 +1932,14 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .c-pip .avatar { width: 16px; height: 16px; font-size: 9px; }
 .c-pip .avatar + .avatar { margin-left: -5px; }
 .c-pip .ai-dots { margin-left: 3px; }
+/* No-reply state (INT-333): the run that woke this agent ended without a comment. Same pill, but the border is dashed
+   and quiet, the dots stand still as hollow rings and the time follows. No motion at all, so nothing to reduce. */
+.c-pip.quiet { gap: 3px; border-style: dashed; border-color: var(--border); background: none; color: var(--muted); font-size: 11px; line-height: 16px; }
+.c-pip.quiet .avatar { opacity: .75; }
+.c-pip.quiet .ai-dots { margin-left: 1px; gap: 2px; }
+.c-pip.quiet .ai-dots b { width: 4px; height: 4px; background: none; border: 1px solid var(--muted); box-sizing: border-box; animation: none; opacity: 1; }
+.c-pip.quiet .pip-at { margin-left: 2px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .c-pip.quiet .pip-at { display: none; } } /* 375 px: the pill stays avatar + rings; the time is in its tooltip and label */
 .ask-empty { display: grid; gap: 10px; padding: 4px 6px 2px; font-size: 12.5px; }
 .ask-ex { display: flex; flex-wrap: wrap; gap: 6px; }
 .ask-ex button { border: var(--bw) solid var(--border); background: none; border-radius: 99px; padding: 4px 10px; font: 12px var(--font); color: var(--muted); cursor: pointer; transition: color .15s, border-color .15s, background .15s; }

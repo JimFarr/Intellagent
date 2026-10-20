@@ -175,6 +175,17 @@
     ...thinkers('comments', it.id, (n, since) => it.comments.some((c) => c.author?.name === n && c.createdAt > since)),
     ...(typingNow.get(it.id)?.keys() || []),
   ])];
+  // The no-reply pip (INT-333): an agent woken by a comment here whose run ended without a comment from it. It
+  // stays until that agent comments here or runs again (a running agent is a writer, above). [{ name, at }]
+  const quietOf = (it) => Object.values(state.standing || {})
+    .filter((a) => a.status !== 'running' && a.lastRun?.endedAt && a.lastRun.about?.comments?.includes(it.id)
+      && !it.comments.some((c) => c.author?.name === a.name && c.createdAt > a.lastRun.startedAt))
+    .map((a) => ({ name: a.name, at: a.lastRun.endedAt }));
+  const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const quietPipHTML = (q) => {
+    const words = q.map((x) => `${nameOf(x.name)} woke, no reply (ended ${clock(x.at)})`).join('; ');
+    return `<span class="c-pip quiet" role="img" aria-label="${esc(words)}" title="No reply|${esc(words)}">${q.slice(0, 2).map((x) => avatar({ name: x.name })).join('')}${dotsHTML}<span class="pip-at">${clock(q[0].at)}</span></span>`;
+  };
   const pipHTML = (names) => {
     const who = names.length > 2 ? `${names.length} people are` : `${names.map(nameOf).join(' and ')} ${names.length > 1 ? 'are' : 'is'}`;
     return `<span class="c-pip" role="img" aria-label="${esc(who)} writing a comment" title="Writing|${esc(who)} writing a comment">${names.slice(0, 2).map((n) => avatar({ name: n })).join('')}${dotsHTML}</span>`;
@@ -1451,13 +1462,14 @@
     for (const r of $$('.ring[data-claim]')) setRunRing(r);
     renderPresenceButton();
     // a run starting or ending adds / removes "thinking" bubbles in the open threads
-    const think = JSON.stringify(Object.values(state.standing).filter((a) => a.status === 'running').map((a) => [a.name, a.lastRun?.about, a.stalled]));
+    const think = JSON.stringify(Object.values(state.standing).filter((a) => a.status === 'running').map((a) => [a.name, a.lastRun?.about, a.stalled]))
+      + JSON.stringify(Object.values(state.standing).filter((a) => a.status !== 'running').map((a) => [a.name, a.lastRun?.endedAt])); // a run that ended may leave a no-reply pip (INT-333)
     if (think !== state.thinkSig) {
       state.thinkSig = think;
       $('#requestsDrawer .drawer-body')?._redraw?.();
       if (state.modal?.kind === 'item' && !state.modal.create) state.modal.refresh();
       // the same runs drive the writing pip on cards (INT-286): redraw those that had one or now should
-      const woken = Object.values(state.standing).filter((a) => a.status === 'running').flatMap((a) => a.lastRun?.about?.comments || []);
+      const woken = Object.values(state.standing).flatMap((a) => a.lastRun?.about?.comments || []);
       for (const id of new Set([...pipShown, ...woken])) updateCard(cardEls.get(id), state.board?.items[id]);
     }
     // the minutes on a "writing a reply" bubble count up between redraws (INT-191)
@@ -2028,7 +2040,7 @@
     c.classList.toggle('review', it.needsHuman?.kind === 'review');
     c.classList.toggle('unseen', !!(state.boardId && seenFor(state.boardId).items[it.id]));
     markFresh(c, it.id);
-    const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), settings.stub.writing && writersOf(it).join(','), Math.floor(idleDays(it)), JSON.stringify(state.looks[it.id] || null), state.board.cardRules?.length && JSON.stringify(state.board.cardRules).length, JSON.stringify(approvalCol(it)?.flags.gates || null)].join('|');
+    const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), settings.stub.writing && writersOf(it).join(','), settings.stub.writing && quietOf(it).map((x) => x.name + x.at).join(','),Math.floor(idleDays(it)), JSON.stringify(state.looks[it.id] || null), state.board.cardRules?.length && JSON.stringify(state.board.cardRules).length, JSON.stringify(approvalCol(it)?.flags.gates || null)].join('|');
     if (c._sig === sig) return;
     const changed = c._v != null && c._v !== it.version;
     c._sig = sig;
@@ -2123,7 +2135,8 @@
     }
     if (s.lease && lease) top.push(ringHTML(lease));
     const writers = s.writing ? writersOf(it).filter((n) => n !== settings.userName) : [];
-    if (writers.length) { top.push(pipHTML(writers)); pipShown.add(it.id); } else pipShown.delete(it.id);
+    const quiet = s.writing ? quietOf(it).filter((x) => !writers.includes(x.name)) : [];
+    if (writers.length || quiet.length) { if (writers.length) top.push(pipHTML(writers)); if (quiet.length) top.push(quietPipHTML(quiet)); pipShown.add(it.id); } else pipShown.delete(it.id);
     const meta = [];
     if (stub('parent') && it.parent && !inGroup) meta.push(`<span class="chip parent" title="Parent|Grouped with other #${esc(it.parent)} tickets" style="--tagc:${tagColor(it.parent)}">${esc(it.parent)}</span>`);
     if (stub('blockedBy') && blockers.length) meta.push(`<span class="chip blocked" title="Blocked|Waiting on ${esc(blockers.join(', '))}">${icon('lock', 'sm')}${blockers.length}</span>`);
