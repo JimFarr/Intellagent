@@ -1709,7 +1709,7 @@ describe('a lander (work.land) gets approved work onto main', () => {
       const text = (f) => fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n'); // git on Windows may convert line endings
       assert.equal(text('README.md'), 'hi, and my own edit\n', 'the edit survives the undo');
       assert.equal(text(`work-${b.id}.txt`), "main's own\n", 'main is back where it was');
-      assert.match(git('status', '--porcelain'), /^ M README\.md$/m);
+      assert.match(git('status', '--porcelain'), /^\s?M README\.md$/m);
       assert.ok(!git('status', '--porcelain').includes('UU'), 'no cherry-pick left open');
     } finally {
       await s.stop();
