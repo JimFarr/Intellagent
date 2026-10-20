@@ -64,4 +64,4 @@ Allow just this, nothing broader:
 ```json
 { "permissions": { "allow": ["Bash(intellagent *)", "mcp__intellagent__get_briefing", "mcp__intellagent__get_my_work", "mcp__intellagent__get_item", "mcp__intellagent__start_work", "mcp__intellagent__set_status", "mcp__intellagent__add_comment", "mcp__intellagent__ask_human", "mcp__intellagent__request_review", "mcp__intellagent__wait_for_events", "mcp__intellagent__finish_session"] } }
 ```
-`mcp__intellagent` alone allows every tool the server lists. The server lists only the core by default (`INTELLAGENT_MCP_PROFILE=full` for all 60; `INTELLAGENT_MCP_TOOLS=a,b` for your own set).
+`mcp__intellagent` alone allows every tool the server lists. The server lists only the core by default (`INTELLAGENT_MCP_PROFILE=full` for all 63; `INTELLAGENT_MCP_TOOLS=a,b` for your own set).
