@@ -245,6 +245,14 @@ describe('agent tokens on new boards', () => {
       assert.doesNotMatch(r.stdout + r.stderr, /not iterable/);
     } finally { await s.stop(); }
   });
+  it('intellagent agents lists the agents of a board that requires tokens (INT-399)', async () => {
+    const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: { builder: { listen: 'addressed' } } } });
+    try {
+      const r = cli(['agents'], { cwd: s.dir, env: { INTELLAGENT_URL: '' } });
+      assert.match(r.out, /^builder\s/m, r.out + r.err);
+      assert.doesNotMatch(r.out + r.err, /No standing agents/);
+    } finally { await s.stop(); }
+  });
   it('an agent with a role and a token is not asked to introduce itself over MCP; a wrong token gets a code and a hint', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     const env = { INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'vera' };
