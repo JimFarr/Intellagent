@@ -291,3 +291,54 @@ test('reap stops only a process marked agent, and every refusal has a code and a
     assert.throws(() => reapable(list, pid), (e) => e.status === status && e.code === code && typeof e.hint === 'string' && e.hint.length > 0, `pid ${pid}`);
   }
 });
+
+test('POST /reap on real processes: a plain one is refused, a missing one is not found, one from a worktree is stopped (INT-395)', { timeout: 120_000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-reap-'));
+  const port = await require('./helpers').freePort();
+  const env = { ...process.env, INTELLAGENT_LEASES_PORT: String(port), INTELLAGENT_LEASES_FILE: path.join(dir, 'leases.json'), INTELLAGENT_LEASES_CAPACITY: JSON.stringify({ cpu: 12, gpuMB: 0 }) };
+  const base = `http://127.0.0.1:${port}`;
+  const server = spawn(process.execPath, [path.join(__dirname, '..', 'leases-server.js')], { env, stdio: 'ignore' });
+  // an agent's leftover: a script under a .worktrees folder; the person's program: the same script from elsewhere
+  const idle = 'setInterval(() => {}, 1000);\n';
+  fs.mkdirSync(path.join(dir, '.worktrees', 'drax'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.worktrees', 'drax', 'idle.js'), idle);
+  fs.writeFileSync(path.join(dir, 'idle.js'), idle);
+  const agentProc = spawn(process.execPath, [path.join(dir, '.worktrees', 'drax', 'idle.js')], { stdio: 'ignore' });
+  const plainProc = spawn(process.execPath, [path.join(dir, 'idle.js')], { stdio: 'ignore' });
+  // never a process: Windows pids are multiples of 4 (an ended child's pid is soon reused, by another test's board too)
+  const gone = 2147483647;
+  const reap = async (pid) => {
+    const r = await fetch(`${base}/reap`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pid }) });
+    return { status: r.status, body: await r.json() };
+  };
+  try {
+    for (let i = 0; ; i++) {
+      try { if ((await fetch(`${base}/status`)).ok) break; } catch { /* not up yet */ }
+      if (i > 100) throw new Error('lease program did not start');
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (process.platform !== 'win32') {
+      const r = await reap(agentProc.pid);
+      assert.equal(r.status, 501);
+      assert.equal(r.body.code, 'UNSUPPORTED');
+      assert.ok(r.body.hint);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1000)); // the process counters list a new process within a second
+    const plain = await reap(plainProc.pid);
+    assert.equal(plain.status, 403, JSON.stringify(plain.body));
+    assert.equal(plain.body.code, 'NOT_AGENTS');
+    assert.match(plain.body.hint, /agent: true/);
+    assert.equal(plainProc.exitCode, null, 'the person\'s program still runs');
+    const missing = await reap(gone);
+    assert.equal(missing.status, 404, JSON.stringify(missing.body));
+    assert.match(missing.body.hint, /leases machine/);
+    const exited = new Promise((r) => agentProc.on('exit', r));
+    const stopped = await reap(agentProc.pid);
+    assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+    assert.equal(stopped.body.stopped, agentProc.pid);
+    await exited;
+  } finally {
+    for (const p of [agentProc, plainProc, server]) p.kill();
+  }
+});
