@@ -1936,7 +1936,7 @@ function withdrawAsk(ctx, id, askId, d, actor) {
     return it;
   });
 }
-// Overdue asks escalate once (lib/alerts/asks.js escalationOf): to the coordinator, or to the human.
+// Overdue asks escalate once (lib/alerts/asks.js escalationOf): to the coordinator; never to the human, and an escalation never escalates.
 function sweepAsks(ctx) {
   if (M.sandbox || !Object.values(ctx.board.items).some((it) => ASKS.overdueAsks(it, Date.now()).length)) return;
   tx(ctx, (events) => {
