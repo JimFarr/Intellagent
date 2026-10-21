@@ -427,7 +427,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by (agent) (intellagent_agent_status{job=\"$job\",status=\"idle\"}) * 1 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"running\"}) * 2 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"waiting\"}) * 3 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"throttled\"}) * 4 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"failed\"}) * 5 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"paused\"}) * 6 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"queued\"}) * 7 + max by (agent) (intellagent_agent_status{job=\"$job\",status=\"retrying\"}) * 8",
+          "expr": "sum by (agent) (intellagent_agent_status{job=\"$job\",status=\"idle\"} * 1 or intellagent_agent_status{job=\"$job\",status=\"running\"} * 2 or intellagent_agent_status{job=\"$job\",status=\"waiting\"} * 3 or intellagent_agent_status{job=\"$job\",status=\"throttled\"} * 4 or intellagent_agent_status{job=\"$job\",status=\"failed\"} * 5 or intellagent_agent_status{job=\"$job\",status=\"paused\"} * 6 or intellagent_agent_status{job=\"$job\",status=\"queued\"} * 7 or intellagent_agent_status{job=\"$job\",status=\"retrying\"} * 8)",
           "legendFormat": "{{agent}}",
           "refId": "A"
         }
