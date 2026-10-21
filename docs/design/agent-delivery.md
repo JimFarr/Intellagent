@@ -38,7 +38,7 @@ board change ─► event log (unchanged: history, the UI's live feed, the audit
 - **Events stop being the delivery mechanism.** An @mention is conversation: it reaches the agent as a `reply` item once. An assignment, an answer, a verdict, concerns, a lease request or a request are each already an item.
 - **Asks** (`POST …/items/<ID>/asks { to, what, kind, dueMinutes }`) are stored items with an owner and a due time.
   - **Answered:** by doing the thing (a verdict answers a verdict ask; a new review request answers a fix ask) or by `…/asks/<id>/done`.
-  - **Overdue:** escalated once, to the coordinator, or to the human when there is none.
+  - **Overdue:** escalated once, to the coordinator; an escalation never escalates again and the human is not asked (with no coordinator, or when it is the asker or owner, `ask.overdue` wakes the asker).
   - **chase and supervise** create asks instead of asking an agent to write a comment.
 - **The queue holds item keys.** It is small and can't drift from the board. A restart recomputes the ledger.
 

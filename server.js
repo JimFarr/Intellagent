@@ -1989,7 +1989,7 @@ function closeAsks(ctx, it, events, trigger, actor) {
     if (linked.questionIds.length) closeQuestions(ctx, it, actor, events, { pick: (q) => linked.questionIds.includes(q.id), reply: 'The ask was answered' });
   }
 }
-// Overdue asks escalate once (lib/alerts/asks.js escalationOf): to the coordinator, or to the human.
+// Overdue asks escalate once (lib/alerts/asks.js escalationOf): to the coordinator; never to the human, and an escalation never escalates.
 function sweepAsks(ctx) {
   if (M.sandbox || !Object.values(ctx.board.items).some((it) => ASKS.overdueAsks(it, Date.now()).length)) return;
   tx(ctx, (events) => {
