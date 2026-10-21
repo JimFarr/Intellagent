@@ -66,6 +66,11 @@ describe('stuck rules', () => {
     assert.equal(STUCK.forHuman({ ...e, escalated: 'yes' }, at(150)), false, 'asked once');
     assert.equal(STUCK.forHuman({ ...e, asked: true }, at(150)), false, 'an ask about it is within its time: the human waits');
     assert.equal(STUCK.forHuman({ ...e, reason: 'waiting_on_human' }, at(500)), false, 'already the human\'s');
+    // INT-425: a ticket nobody owns is the coordinator's every round, and never the human's
+    const loose = { since: new Date(NOW).toISOString(), reason: 'no_owner' };
+    assert.deepEqual([STUCK.forCoordinator(loose, at(150)), STUCK.roundOf(loose, at(150))], [true, 2], 'past the rounds: still the coordinator\'s');
+    assert.equal(STUCK.forCoordinator(loose, at(600)), true);
+    assert.equal(STUCK.forHuman(loose, at(600)), false, 'never asks the human for an owner');
   });
 
   it('the manifest tunes the timings; anything missing or nonsense keeps the default', () => {
@@ -73,7 +78,7 @@ describe('stuck rules', () => {
     assert.deepEqual(t, { quietMs: 20 * MIN, confirmMs: STUCK.TIMINGS.confirmMs, roundMs: STUCK.TIMINGS.roundMs, rounds: 1 });
     assert.deepEqual(STUCK.timingsOf(undefined), STUCK.TIMINGS);
     assert.equal(STUCK.assess(ticket({ journey: { pickedUpAt: ago(300 * MIN), lastProgressAt: ago(30 * MIN), touches: {} } }), NOW, who(), t)?.reason, 'no_owner', 'quiet after 20 minutes');
-    const e = { since: new Date(NOW).toISOString(), reason: 'no_owner' };
+    const e = { since: new Date(NOW).toISOString(), reason: 'owner_quiet', owner: 'groot' };
     assert.equal(STUCK.forHuman(e, NOW + 95 * MIN, t), true, 'one round, then the human');
   });
 
@@ -84,7 +89,7 @@ describe('stuck rules', () => {
     const { next, due, owners } = STUCK.sweepBoard(board, NOW, { works, running: () => false, status: () => 'idle' });
     assert.deepEqual(Object.keys(next), ['T-1', 'T-2'], 'asleep is not stuck');
     assert.deepEqual([next['T-1'].reason, next['T-2'].reason, next['T-2'].owner], ['no_owner', 'owner_quiet', 'groot'], 'a reply owed doesn\'t make an owner');
-    assert.deepEqual(due, ['T-1']);
+    assert.deepEqual(due, [], 'T-1 only needs an owner: that is the coordinator\'s job, never the human\'s (INT-425)');
     assert.deepEqual([...owners.get('T-2')], ['groot']);
     assert.match(STUCK.humanQuestion(next['T-1'], NOW, undefined, board.items['T-1']), /^Quiet for 1\.5 h \(no owner\), and the coordinator could not move it on in 2 rounds/);
   });
