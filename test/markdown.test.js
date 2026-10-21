@@ -1,18 +1,15 @@
 'use strict';
 // The card markdown renderer (md, inline) never lets the ticket-ref, mention or emphasis passes reach inside a tag's
 // attributes: a rule that rewrote an href or alt would be one step from stored XSS from any agent comment.
-const { describe, it } = require('node:test');
+const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
-// The renderer lives inside the browser app; evaluate just that slice of public/app.js.
-const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
-const escLine = /^ {2}const esc = .*$/m.exec(src)[0];
-const from = src.indexOf('  /* ═════════════════════════ markdown'), to = src.indexOf("  document.addEventListener('click'", from);
 // as if the board were open at this address, so the renderer can tell its own images from other hosts'
-const location = { href: 'http://127.0.0.1:7420/', origin: 'http://127.0.0.1:7420' };
-const { md } = new Function('location', `${escLine}\n${src.slice(from, to)}; return { md };`)(location);
+globalThis.location = { href: 'http://127.0.0.1:7420/', origin: 'http://127.0.0.1:7420' };
+let md;
+before(async () => { ({ md } = await import(pathToFileURL(path.join(__dirname, '..', 'public', 'js', 'markdown.js')).href)); });
 
 // Every attribute value in the output, and the output with them blanked.
 const attrs = (html) => [...html.matchAll(/\s[\w-]+="([^"]*)"/g)].map((m) => m[1]);
@@ -20,7 +17,7 @@ const text = (html) => html.replace(/<[^>]*>/g, '');
 
 describe('markdown renderer', () => {
   it('evaluates the renderer', () => {
-    assert.ok(from > 0 && to > from, 'markers around the markdown block in public/app.js');
+    assert.equal(typeof md, 'function');
     assert.equal(md('**a**'), '<p><strong>a</strong></p>');
   });
 

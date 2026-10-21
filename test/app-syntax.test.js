@@ -10,7 +10,8 @@ const vm = require('node:vm');
 describe('browser app', () => {
   it('public/app.js parses as a script (a duplicate top-level const fails here, by name)', () => {
     const file = path.join(__dirname, '..', 'public', 'app.js');
-    const src = fs.readFileSync(file, 'utf8');
+    // import lines are only legal in a module; the rest of the file is checked as a script
+    const src = fs.readFileSync(file, 'utf8').replace(/^import .*$/gm, '');
     assert.doesNotThrow(() => new vm.Script(src, { filename: file }), 'public/app.js must parse');
   });
 });

@@ -1,16 +1,19 @@
 'use strict';
 // The activity lists say "for you" on every change an agent made with a delegated power, board admin included, and
 // name a deleted column: a delegated rules or column change must not read like an ordinary edit.
-const { describe, it } = require('node:test');
+const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
 // The event-to-words function lives inside the browser app; evaluate just that slice of public/app.js.
 const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
-const escLine = /^ {2}const esc = .*$/m.exec(src)[0];
 const from = src.indexOf('  function describe(ev, html = false) {'), to = src.indexOf('\n  }\n', from) + '\n  }\n'.length;
-const { describe: words } = new Function('nameOf', `${escLine}\n${src.slice(from, to)}; return { describe };`)((n) => n);
+let words;
+before(async () => {
+  const { esc } = await import(require('node:url').pathToFileURL(path.join(__dirname, '..', 'public', 'js', 'util.js')).href);
+  ({ describe: words } = new Function('nameOf', 'esc', `${src.slice(from, to)}; return { describe };`)((n) => n, esc));
+});
 
 const delegated = { power: 'admin.rules', onBehalfOf: 'human' };
 

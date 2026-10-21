@@ -5122,6 +5122,12 @@ for (const [urlPath, file] of Object.entries(STATIC)) {
   });
 }
 
+// The client's ES modules (INT-285): public/js/<name>.js, served as they are.
+route('GET', '/js/:file', null, ({ res, p }) => {
+  if (!/^[\w-]+\.js$/.test(p.file)) fail(404, 'Not found');
+  return serveFile(res, path.join(PUBLIC, 'js', p.file), STATIC_TYPES.js);
+});
+
 /* Probation (INT-233): an agent nobody has met yet may only introduce itself. An ALLOW-list, so a route added
    tomorrow is closed to it by default: reads, its own profile, the reply to the request that asks for its
    introduction, and (when the human named a ticket at creation) an intro comment on that ticket. Everything else
