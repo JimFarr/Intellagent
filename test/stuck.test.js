@@ -21,6 +21,7 @@ describe('stuck rules', () => {
     assert.deepEqual(STUCK.assess(ticket(), NOW, who({ owners: ['groot'], status: () => 'disabled' })), { reason: 'owner_down', owner: 'groot' }, 'switched off is down too');
     assert.deepEqual(STUCK.assess(ticket({ lease: { claimant: 'groot', expiresAt: ago(-30 * MIN), leasedAt: ago(100 * MIN) } }), NOW, who()), { reason: 'held_quiet', owner: 'groot' });
     assert.deepEqual(STUCK.assess(ticket({ questions: [{ kind: 'question' }] }), NOW, who()), { reason: 'waiting_on_human' });
+    assert.deepEqual(STUCK.assess(ticket({ questions: [{ kind: 'question', raisedBy: 'intellagent' }] }), NOW, who()), { reason: 'no_owner' }, 'a question the board raised itself hides nothing (INT-415)');
   });
 
   it('not stuck: recent progress, an owner running right now, not picked up, done, asleep or a test ticket', () => {
@@ -123,6 +124,22 @@ describe('the stuck watch on the simulator', () => {
     assert.equal(after().length, once, 'after that nothing wakes anyone for it: no loop');
   });
 
+  it('a question the board raised itself leaves the owner its work, and its answer wakes the owner at once (INT-415)', () => {
+    sim = createSim({
+      // no coordinator: after its rounds the board asks the human itself
+      team: { groot: { role: 'builder', behave: (run, act) => { for (const n of run.brief.next) if (n.action === 'start') act.start(n.id); } } },
+    });
+    const t = sim.human.create({ title: 'goes quiet', column: 'Ready', assignee: 'groot' });
+    sim.tick('12h');
+    const [q] = sim.item(t).questions;
+    assert.equal(q?.raisedBy, 'intellagent', 'the board asked the human');
+    assert.equal(sim.board.stuck[t].reason, 'held_quiet', 'and the ticket still says why it is stuck');
+    const runs = sim.runs.length;
+    sim.human.answer(t, 'carry on');
+    sim.tick('1m');
+    assert.ok(sim.runs.slice(runs).some((r) => r.agent === 'groot'), 'the owner is woken by the answer, not at the next sweep');
+  });
+
   it('a ticket whose owner is paused is owner_down, not no_owner', () => {
     sim = createSim({ team: { groot: { role: 'builder', behave: (run, act) => { for (const n of run.brief.next) if (n.action === 'start') act.start(n.id); } } } });
     const t = sim.human.create({ title: 'x', column: 'Ready', assignee: 'groot' });
@@ -171,7 +188,7 @@ describe('the stuck watch on a real board', () => {
       assert.match(qs[0].reason, /^Quiet for .* h \(held quiet: groot\), and the coordinator could not move it on in 1 rounds/);
       await new Promise((ok) => setTimeout(ok, 1500));
       assert.equal((await s.ok('GET', `${B}/items/${t.id}`)).questions.length, 1, 'asked once');
-      assert.equal((await s.ok('GET', `${B}/stuck`)).stuck.find((x) => x.id === t.id)?.reason, 'waiting_on_human');
+      assert.equal((await s.ok('GET', `${B}/stuck`)).stuck.find((x) => x.id === t.id)?.reason, 'held_quiet', 'the board\'s question doesn\'t hide why (INT-415)');
     } finally { await s.stop(); }
   });
 });
