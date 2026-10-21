@@ -267,3 +267,30 @@ describe('presets: installing the team (INT-302 step 2)', () => {
     assert.equal(presets.plan(p, lock.parts, { columns: [], schema: {} }).some((s) => s.state === 'gone'), false);
   });
 });
+
+describe('the shipped software-team preset (INT-304)', () => {
+  const p = presets.load(path.join(__dirname, '..', 'presets', 'software-team'), null);
+  const slots = p.team.slots;
+
+  it('loads and validates, extending software, with one page per slot and no agent names', () => {
+    assert.equal(presets.validate(p), null);
+    assert.equal(p.extends, 'software');
+    assert.deepEqual(Object.keys(slots), ['coordinator', 'senior-a', 'senior-b', 'mid', 'junior', 'designer', 'code-reviewer', 'design-reviewer', 'lander', 'lead']);
+    for (const k of Object.keys(slots)) assert.ok(p.team.files[k], `slot ${k} has a context page`);
+    assert.doesNotMatch(JSON.stringify(p.team.files), /\b(rocket|gamora|yondu|kraglin|nebula|stakar|drax)\b/i, 'slots, not our names');
+  });
+
+  it('proposes the playbook grants only to the slots that need them, and leaves the areas to the setup skill', () => {
+    const grants = Object.fromEntries(Object.entries(slots).filter(([, s]) => s.grants).map(([k, s]) => [k, s.grants]));
+    assert.deepEqual(grants, { coordinator: ['agents.control'], lander: ['work.land'], lead: [{ power: 'review.decide', minOks: 'all' }] });
+    assert.deepEqual([slots['senior-a'].areas, slots['senior-b'].areas], [[], []]);
+    assert.equal(slots.lander.idleAlarm, true);
+  });
+
+  it('the lander page keeps its duties and the coordinator page its five routing rules', () => {
+    assert.match(p.team.files.lander, /hunks, never whole files/);
+    assert.match(p.team.files.lander, /Push every landing/);
+    assert.match(p.team.files.lander, /revert of the revert/);
+    assert.equal((p.team.files.coordinator.match(/^\d\. /gm) || []).length, 5);
+  });
+});
