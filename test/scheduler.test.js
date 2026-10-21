@@ -196,6 +196,22 @@ describe('scheduler (fake clock)', () => {
     assert.equal(agents.bot.limitedUntil, undefined);
   });
 
+  it('a second agent refused for the same reset still waits and runs at it (INT-416)', () => {
+    const { scheduler, core, agents, started } = rig({ def: { throttleMinutes: 0, provider: 'anthropic' } });
+    core.defs.two = { name: 'two', enabled: true, settleSeconds: 3, throttleMinutes: 0, maxRunsPerHour: 20, provider: 'anthropic' };
+    agents.two = { status: 'running', cursor: 0, queue: [{ seq: 2, type: 'comment.added' }], inflight: null, runs: [], failures: 0, lastRun: null };
+    core.running.set('two', {}); // mid-run when the first one is refused
+    const until = Date.now() + 30 * MIN;
+    scheduler.holdForLimit('bot', until);
+    assert.equal(agents.two.status, 'running', 'a running agent is left to finish');
+    core.running.delete('two');
+    scheduler.holdForLimit('two', until); // its own run is refused for the same reset
+    assert.equal(agents.two.status, 'waiting');
+    assert.equal(agents.two.resumesAt, new Date(until).toISOString());
+    mock.timers.tick(30 * MIN + 2000);
+    assert.equal(started.length, 2, 'both run once the limit resets');
+  });
+
   it('a paused agent is not started, and says so', () => {
     const { scheduler, agents, started } = rig({ state: { paused: true } });
     scheduler.dispatch('bot');
@@ -915,6 +931,20 @@ describe('a run that is catching up its worktree (fake clock)', () => {
     assert.equal(agents.bot.lastRun.code, 'stopped');
     assert.equal(agents.bot.failures, 0);
     assert.equal(agents.bot.status, 'paused');
+  });
+
+  it('resume all before the stopped run has exited: the agent is not left paused with events queued (INT-416)', async () => {
+    const { scheduler, core, agents, settle, calls } = live();
+    scheduler.dispatch('bot');
+    scheduler.api.stopAll();
+    scheduler.api.resumeAll();
+    settle().res({ path: os.tmpdir(), branch: 'agent/bot', main: 'main', note: null });
+    await flush();
+    assert.equal(agents.bot.lastRun.code, 'stopped');
+    assert.notEqual(agents.bot.status, 'paused', 'it was resumed');
+    mock.timers.tick(10);
+    assert.equal(calls.length, 2, 'and it runs again with its events');
+    assert.equal(core.running.size <= 1, true);
   });
 });
 

@@ -1332,6 +1332,16 @@ describe('token usage', () => {
     assert.deepEqual(usageOf({ usage: { prompt_tokens: 10, completion_tokens: 0 } }), { input: 10, output: 0, cacheRead: 0, cacheCreated: 0 });
   });
 
+  it('a timeoutMinutes of null or 0 falls back to the default, with a warning, instead of killing every run at once (INT-416)', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { nulled: { run: run('ok'), timeoutMinutes: null }, zero: { run: run('ok'), timeoutMinutes: 0 }, set: { run: run('ok'), timeoutMinutes: 5 } } } });
+    try {
+      const { agents, error } = await s.ok('GET', '/api/agents');
+      const t = (n) => agents.find((x) => x.name === n).timeoutMinutes;
+      assert.deepEqual([t('nulled'), t('zero'), t('set')], [60, 60, 5]);
+      assert.match(error, /"nulled": timeoutMinutes must be a positive number/);
+    } finally { await s.stop(); }
+  });
+
   it('an agent has a provider: anthropic for a claude run, its own otherwise; only Anthropic models get a tier; a run is told its model (INT-247)', async () => {
     const s = await startServer({ agents: { defaults: fast, agents: {
       senior: { role: 'builder', model: 'opus', enabled: false },
