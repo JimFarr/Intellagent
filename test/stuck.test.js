@@ -113,15 +113,15 @@ describe('the stuck watch on the simulator', () => {
     assert.ok(!sim.item(t).asks.some((a) => a.escalates), 'the coordinator\'s own overdue ask makes no escalation');
     const human = sim.item(t).questions;
     assert.equal(human.length, 1, 'unanswered, the human is asked once');
-    assert.equal(sim.board.stuck[t].reason, 'waiting_on_human', 'and it is the human\'s now');
+    assert.equal(sim.board.stuck[t].reason, 'held_quiet', 'the board\'s own question does not make it the human\'s (INT-415)');
     const asked = Date.parse(human[0].raisedAt);
-    // The owner's unanswered ask is offered to it once more after reofferMinutes (INT-397); then nothing wakes anyone
-    const after = () => sim.runs.filter((r) => Date.parse(r.at) > asked);
-    assert.ok(after().every((r) => r.agent === 'groot' && r.work.every((w) => w.startsWith('ask:'))), 'only that one re-offer');
-    const once = after().length;
-    assert.ok(once <= 1, 'at most once');
+    // INT-415: the board's question leaves the owner its work, so a silent owner may keep re-claiming its lapsed lease at its own pace;
+    // what must not happen is anyone else being woken, a second question or an escalation
     sim.tick('24h');
-    assert.equal(after().length, once, 'after that nothing wakes anyone for it: no loop');
+    const after = sim.runs.filter((r) => Date.parse(r.at) > asked);
+    assert.ok(after.every((r) => r.agent === 'groot'), `only the owner runs: ${after.map((r) => `${r.agent}:${r.work}`).join(' | ')}`);
+    assert.equal(sim.item(t).questions.length, 1, 'the human is not asked again');
+    assert.ok(!sim.item(t).asks.some((a) => a.escalates), 'and nothing escalates');
   });
 
   it('a question the board raised itself leaves the owner its work, and its answer wakes the owner at once (INT-415)', () => {
