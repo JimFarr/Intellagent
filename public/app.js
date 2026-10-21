@@ -3,6 +3,7 @@
 
 import { $, $$, esc, el, clamp, hashStr, hue, initials, ICONS, icon } from './js/util.js';
 import { md } from './js/markdown.js';
+import { tip, hideTip, focusTip, tipPausedWhen } from './js/tooltips.js';
 import { eventIcon, describe as describeEvent } from './js/events.js';
 import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/themes.js';
 
@@ -849,7 +850,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     $('#catchBtn').onclick = openCatchup;
     $('#awake').onclick = (e) => { const b = e.target.closest('[data-wake]'); if (b) openAgents(b.dataset.wake); };
     // keyboard focus shows the same tooltip as hover
-    $('#awake').addEventListener('focusin', (e) => { const b = e.target.closest('[data-wake]'); if (b?.matches(':focus-visible')) { hideTip(); tipFor = b; showTip(b); } });
+    $('#awake').addEventListener('focusin', (e) => { const b = e.target.closest('[data-wake]'); if (b?.matches(':focus-visible')) focusTip(b); });
     $('#awake').addEventListener('focusout', hideTip);
     wireAskField();
     // Opens on whatever it is signalling: unread inbox, then a new digest entry, else the agents list
@@ -7137,48 +7138,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     };
   }
 
-  /* ═════════════════════════ tooltips ═════════════════════════ */
-  // One themed tooltip for the whole app. Any element with title="Title|Explanation" (or data-tip) gets it:
-  // the native title is moved aside on hover so the browser's own tooltip never appears.
-  const tip = el('<div class="tip" role="tooltip"></div>');
-  let tipTimer = null;
-  let tipFor = null;
-  let warmUntil = 0;
-  function hideTip() {
-    clearTimeout(tipTimer);
-    if (tip.classList.contains('show')) warmUntil = Date.now() + 450;
-    tip.classList.remove('show');
-    tipFor = null;
-  }
-  function showTip(t) {
-    if (!t.isConnected || drag || !t.dataset.tip) return;
-    const [title, desc] = t.dataset.tip.split('|');
-    tip.innerHTML = desc ? `<b>${esc(title)}</b><span>${esc(desc)}</span>` : `<b>${esc(title)}</b>`;
-    tip.style.left = '0px';
-    tip.style.top = '0px';
-    const r = t.getBoundingClientRect();
-    const tr = tip.getBoundingClientRect();
-    let top = r.top - tr.height - 9;
-    let place = 'top';
-    if (top < 8) { top = r.bottom + 9; place = 'bottom'; }
-    const left = clamp(r.left + r.width / 2 - tr.width / 2, 8, innerWidth - tr.width - 8);
-    Object.assign(tip.style, { left: `${left}px`, top: `${top}px` });
-    tip.style.setProperty('--ax', `${clamp(r.left + r.width / 2 - left, 12, tr.width - 12)}px`);
-    tip.dataset.place = place;
-    tip.classList.add('show');
-  }
-  document.addEventListener('pointerover', (e) => {
-    const t = e.target.closest?.('[title], [data-tip]');
-    if (!t || t === tipFor) return;
-    if (t.hasAttribute('title')) { const v = t.getAttribute('title'); if (v) t.dataset.tip = v; t.removeAttribute('title'); }
-    if (!t.dataset.tip) return;
-    hideTip();
-    tipFor = t;
-    tipTimer = setTimeout(() => showTip(t), Date.now() < warmUntil ? 40 : 550);
-  }, true);
-  document.addEventListener('pointerout', (e) => { if (tipFor && !tipFor.contains(e.relatedTarget)) hideTip(); }, true);
-  for (const ev of ['pointerdown', 'keydown', 'wheel']) addEventListener(ev, hideTip, true);
-  addEventListener('scroll', hideTip, true);
+  /* ═════════════════════════ tooltips (public/js/tooltips.js) ═════════════════════════ */
+  tipPausedWhen(() => !!drag);
 
   /* ═════════════════════════ keyboard + boot ═════════════════════════ */
 
