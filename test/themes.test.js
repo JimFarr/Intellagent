@@ -6,10 +6,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// The theme table lives inside the browser app; evaluate just that slice of public/app.js.
-const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
-const from = src.indexOf('  // Palette colours are'), to = src.indexOf('  // Strength of each generated pattern');
-const { THEMES, THEME_KINDS, themeGroups, contrast, oklab } = new Function(`${src.slice(from, to)}; return { THEMES, THEME_KINDS, themeGroups, contrast, oklab };`)();
+// The theme table is an ES module of the browser app (public/js/themes.js), loaded here the way the page loads it.
+const { THEMES, THEME_KINDS, themeGroups, contrast, oklab } = require('../public/js/themes.js');
 
 // color-mix(in oklab, x p, y): back from oklab to #rrggbb.
 const fromOklab = ([L, a, b]) => {
@@ -31,7 +29,6 @@ const GROUP_TEXT = [
 
 describe('theme palettes', () => {
   it('evaluates the theme table', () => {
-    assert.ok(from > 0 && to > from, 'markers around the theme table in public/app.js');
     assert.ok(Object.keys(THEMES).length > 30);
   });
 
