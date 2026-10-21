@@ -29,10 +29,10 @@ const presets = require('../lib/presets');
 const jsonfile = require('../lib/jsonfile');
 
 const ROOT = path.join(__dirname, '..');
-// --url <address> and --as <name> anywhere on the line: the board to talk to and who you are, like
-// INTELLAGENT_URL and INTELLAGENT_AGENT, for a shell that may only run commands starting with "intellagent"
+// --url <address>, --as <name> and --manifest <path> anywhere on the line: the board to talk to, who you are
+// and which board folder's manifest and tokens to use, like INTELLAGENT_URL, INTELLAGENT_AGENT and INTELLAGENT_MANIFEST, for a shell that may only run commands starting with "intellagent"
 // (a standing agent reaching its sandbox).
-for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_AGENT']]) {
+for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_AGENT'], ['--manifest', 'INTELLAGENT_MANIFEST']]) {
   const a = process.argv;
   const stop = a.indexOf('--'); // after -- (sandbox exec) the words belong to the command it runs
   const i = a.findIndex((x, n) => n > 1 && (stop < 0 || n < stop) && (x === flag || x.startsWith(`${flag}=`)));

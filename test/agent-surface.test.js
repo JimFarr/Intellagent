@@ -210,6 +210,14 @@ describe('the CLI for agents', () => {
     assert.equal(r.json.author.name, 'flagged');
     assert.equal(cli(['api', 'GET', '/api/profiles/me', `--url=${s.base}`, '--as=flagged'], { cwd: elsewhere }).json.name, 'flagged');
   });
+  it('--manifest finds a board (its URL and tokens) from any folder, with no environment', () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-nowhere-'));
+    const manifest = path.join(s.dir, 'intellagent.manifest.json');
+    const r = cli(['api', 'GET', '/api/profiles/me', '--manifest', manifest, '--as', 'flagged'], { cwd: elsewhere });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.json.name, 'flagged');
+    assert.equal(cli(['api', 'GET', '/api/profiles/me', `--manifest=${manifest}`, '--as=flagged'], { cwd: elsewhere }).json.name, 'flagged');
+  });
 });
 
 describe('agent tokens on new boards', () => {
