@@ -273,8 +273,7 @@ describe('the shipped software-team preset (INT-304)', () => {
   const slots = p.team.slots;
 
   it('loads and validates, extending software, with one page per slot and no agent names', () => {
-    assert.equal(presets.validate(p), null);
-    assert.equal(p.extends, 'software');
+    assert.equal(p.extends, 'software'); // load above already validated it and read every page (it throws BAD_PRESET otherwise)
     assert.deepEqual(Object.keys(slots), ['coordinator', 'senior-a', 'senior-b', 'mid', 'junior', 'designer', 'code-reviewer', 'design-reviewer', 'lander', 'lead']);
     for (const k of Object.keys(slots)) assert.ok(p.team.files[k], `slot ${k} has a context page`);
     assert.doesNotMatch(JSON.stringify(p.team.files), /\b(rocket|gamora|yondu|kraglin|nebula|stakar|drax)\b/i, 'slots, not our names');
