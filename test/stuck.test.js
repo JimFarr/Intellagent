@@ -120,6 +120,8 @@ describe('the stuck watch on the simulator', () => {
     sim.tick('24h');
     const after = sim.runs.filter((r) => Date.parse(r.at) > asked);
     assert.ok(after.every((r) => r.agent === 'groot'), `only the owner runs: ${after.map((r) => `${r.agent}:${r.work}`).join(' | ')}`);
+    // measured: 49, one per 30-minute lease lapse over the ~25 h since the question; a wake loop would be far more
+    assert.ok(after.length <= 52, `the owner runs once per lease lapse, not in a loop: ${after.length} runs`);
     assert.equal(sim.item(t).questions.length, 1, 'the human is not asked again');
     assert.ok(!sim.item(t).asks.some((a) => a.escalates), 'and nothing escalates');
   });
