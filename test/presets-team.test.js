@@ -281,7 +281,7 @@ describe('the shipped software-team preset (INT-304)', () => {
 
   it('proposes the playbook grants only to the slots that need them, and leaves the areas to the setup skill', () => {
     const grants = Object.fromEntries(Object.entries(slots).filter(([, s]) => s.grants).map(([k, s]) => [k, s.grants]));
-    assert.deepEqual(grants, { coordinator: ['agents.control'], lander: ['work.land'], lead: [{ power: 'review.decide', minOks: 'all' }] });
+    assert.deepEqual(grants, { coordinator: ['agents.control'], lander: ['work.land'], lead: [{ power: 'review.decide', minOks: 'all', where: { 'fields.risk': ['low', 'medium'] } }] });
     assert.deepEqual([slots['senior-a'].areas, slots['senior-b'].areas], [[], []]);
     assert.equal(slots.lander.idleAlarm, true);
   });

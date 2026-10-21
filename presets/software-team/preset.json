@@ -52,7 +52,7 @@
       "lead": {
         "role": "reviewer", "model": "opus", "reviewer": false, "context": "agent-context/lead.md",
         "description": "Approves technical tickets for the human once every assigned reviewer is ok and the evidence is in. Product tickets stay the human's.",
-        "grants": [{ "power": "review.decide", "minOks": "all" }]
+        "grants": [{ "power": "review.decide", "minOks": "all", "where": { "fields.risk": ["low", "medium"] } }]
       }
     }
   }
