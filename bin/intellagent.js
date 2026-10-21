@@ -132,6 +132,9 @@ async function init() {
   console.log(`\n  ✓ ${path.relative(process.cwd(), manifestPath) || manifestPath}`);
   console.log(`    board "${name}" · ${preset ? `${preset.label || preset.name} preset` : `${TEMPLATES[template].label} template`} · tickets ${manifest.idPrefix}-1, ${manifest.idPrefix}-2… · port ${port}`);
 
+  if (preset?.team?.slots) {
+    console.log(`    ${f.agents ? '--agents is ignored by init: ' : ''}no agents installed yet. The slots (${Object.keys(preset.team.slots).join(', ')}) are places, not people: once the board runs, add each agent you want with "intellagent agents add <name> --role <role>"; set idleAlarm and supervise in agents.json by hand.`);
+  }
   if (!f['no-mcp']) {
     const mcpPath = path.join(dir, '.mcp.json');
     let mcp = {};
