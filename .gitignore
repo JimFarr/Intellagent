@@ -13,3 +13,5 @@ mcp-*.json
 docs/grafana/metrics.token
 docs/grafana/boards/*.yml
 docs/grafana/boards/*.token
+# a preset's own context pages ship with it (INT-304)
+!presets/*/agent-context/
