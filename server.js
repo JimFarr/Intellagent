@@ -408,12 +408,6 @@ function enterColumn(item, colId) {
   if (item.flow.length > FLOW_MAX) item.flow.splice(0, item.flow.length - FLOW_MAX);
 }
 
-// Closed "needs you" requests, kept for metrics (how long agents waited on the human).
-function closeWait(item, prev, actor, more = {}) {
-  (item.waits ||= []).push({ id: prev.id || null, reason: prev.reason || null, raisedBy: prev.raisedBy, raisedAt: prev.raisedAt, resolvedAt: now(), by: actor.name, kind: prev.kind || 'question', ...more });
-  if (item.waits.length > 30) item.waits.shift();
-}
-
 /* ticket templates: per-board presets for new tickets ("Bug", "Feature"…) */
 function normTicketTemplate(t, base = {}) {
   if (!isObj(t)) fail(400, 'Template must be an object');
@@ -719,10 +713,7 @@ function sweepStuck(ctx) {
   }, STUCK_TIMINGS);
   if (JSON.stringify(next) !== JSON.stringify(ctx.board.stuck || {}) || due.length) {
     tx(ctx, (events) => {
-      for (const id of due) {
-        openQuestion(ctx, ctx.board.items[id], parseNeedsHuman({ reason: STUCK.humanQuestion(next[id], nowMs, STUCK_TIMINGS, ctx.board.items[id]) }, SYSTEM), SYSTEM, events);
-        next[id].escalated = new Date(nowMs).toISOString();
-      }
+      askAboutStuck(ctx, events, due, next, nowMs, STUCK_TIMINGS);
       ctx.board.stuck = next;
     });
   }
@@ -799,6 +790,10 @@ function getItem(ctx, id) {
 // Who an event is for, and the leases that decide it (INT-381): lib/alerts/recipients.js, shared with the simulator.
 const alerts = require('./lib/alerts/recipients').createRecipients({ now: () => Date.now(), isRunning: (n) => !!standing?.isRunning?.(n) });
 const { activeLease, activeMaster, snapshot, recipientsFor, unansweredIn, explainTargets, itemEvent } = alerts;
+// Questions, verdicts and asks settled on a ticket: shared with the alerting simulator (lib/alerts/ticket.js)
+const TICKET = require('./lib/alerts/ticket');
+const { addWorker, sameName } = TICKET;
+const { syncNeeds, openQuestion, closeQuestions, finishAsk, closeAsks, askAboutStuck, recordVerdict: writeVerdict } = TICKET.createTicketWrites({ itemEvent, rid, now });
 const { QUIET_TYPES, UNANSWERED_DAYS, plainText, mentionsIn } = require('./lib/alerts/recipients');
 // Board geometry, reviewer oks and each agent's pending work (INT-382): lib/alerts/, shared with the simulator.
 const { PRIO_RANK, findColumnById, doneColumnId, openBlockersOf, asleep, pickupColumns, replyAfter, ownWork } = require('./lib/alerts/board');
@@ -1319,36 +1314,6 @@ function formSummary(form, values) {
   const show = (f, v) => v == null ? '—' : f.type === 'yesno' ? (v ? 'Yes' : 'No')
     : f.options ? [].concat(v).map((x) => f.options.find((o) => o.value === x)?.label ?? x).join(', ') : String(v);
   return form.filter((f) => f.type !== 'note').map((f) => `**${f.label}:** ${show(f, values[f.key])}`).join('\n');
-}
-
-// A ticket can carry several open questions. `needsHuman` mirrors the oldest one so older clients,
-// filters and the UI's "needs you" flag keep working.
-function syncNeeds(item) { item.questions ||= item.needsHuman ? [{ id: rid('q'), ...item.needsHuman }] : []; item.needsHuman = item.questions[0] || null; }
-
-// Open a question (an identical open one from the same asker is reused). Returns it.
-function openQuestion(ctx, item, q, actor, events) {
-  syncNeeds(item);
-  const same = item.questions.find((x) => x.raisedBy === q.raisedBy && x.reason === q.reason && x.kind === q.kind
-    && JSON.stringify(x.form || null) === JSON.stringify(q.form || null));
-  if (same) return same;
-  item.questions.push(q);
-  syncNeeds(item);
-  events.push(itemEvent(ctx, 'attention.raised', item, actor, { questionId: q.id, reason: q.reason, kind: q.kind, open: item.questions.length }));
-  return q;
-}
-
-// Close questions (all, or those matching `pick`), each with its own event; the reply is posted once.
-function closeQuestions(ctx, item, actor, events, { pick = () => true, reply = null, extra = {} } = {}) {
-  syncNeeds(item);
-  const closing = item.questions.filter(pick);
-  if (!closing.length) return [];
-  item.questions = item.questions.filter((q) => !closing.includes(q));
-  syncNeeds(item);
-  for (const q of closing) {
-    closeWait(item, q, actor, { ...(extra.form ? { form: extra.form } : {}), ...(extra.withdrawn ? { withdrawn: true } : {}) });
-    events.push(itemEvent(ctx, 'attention.resolved', item, actor, { questionId: q.id, raisedBy: q.raisedBy, reason: q.reason, kind: q.kind, reply, open: item.questions.length, mentions: [q.raisedBy === SYSTEM.name ? item.assignee || item.workedBy?.at(-1) || q.raisedBy : q.raisedBy], ...extra })); // a board-raised question wakes the ticket's owner (INT-415)
-  }
-  return closing;
 }
 
 function createItem(ctx, d, actor) {
@@ -1914,8 +1879,7 @@ const ASKS = require('./lib/alerts/asks');
 // The manifest may tune them: "asks": { "dueMinutes": 60, "maxDueMinutes": 10080, "keep": 50 }
 const ASK_RULES = { ...ASKS.RULES, ...(isObj(M.asks) ? M.asks : {}) };
 // The coordinator that takes an overdue ask: the board's, else a standing agent with the coordinator role
-const coordinatorOf = (ctx) => ctx.board.coordinator || standingAgents().find((a) => a.enabled && a.role === 'coordinator')?.name || null;
-const sameName = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+const coordinatorOf = (ctx) => TICKET.coordinatorOf(ctx.board, standingAgents());
 function createAsk(ctx, id, d, actor) {
   const asked = str(d.to || '', 64).trim();
   if (!asked) fail(400, '"to" is required: the agent you need something from', { hint: 'To ask the human, use POST …/attention' });
@@ -1946,15 +1910,6 @@ function getAsk(it, askId) {
   if (a.state !== 'open') fail(409, `That ask is already ${a.state}`, { code: 'CONFLICT' });
   return a;
 }
-// Finish an ask and what is linked to it (its escalation, the ask an escalation was for, the human's question an
-// overdue one opened), each said on the board.
-function finishAsk(ctx, it, a, fields, actor, events) {
-  const { closed, questionIds } = ASKS.finish(it, a, fields, now());
-  const type = fields.state === 'withdrawn' ? 'ask.withdrawn' : 'ask.done';
-  events.push(itemEvent(ctx, type, it, actor, { ask: { ...a }, ...(type === 'ask.done' ? { mentions: [a.by].filter((n) => !sameName(n, actor.name)) } : {}) }));
-  for (const x of closed) events.push(itemEvent(ctx, type, it, actor, { ask: { ...x } }));
-  if (questionIds.length) closeQuestions(ctx, it, actor, events, { pick: (q) => questionIds.includes(q.id), reply: `The ask was ${fields.state === 'withdrawn' ? 'withdrawn' : 'answered'}: ${fields.answer || ''}` });
-}
 // Answer an ask: its owner (or the asker, the coordinator or the human, to close it for them). The answer goes on
 // the card and to the asker.
 function answerAsk(ctx, id, askId, d, actor) {
@@ -1980,14 +1935,6 @@ function withdrawAsk(ctx, id, askId, d, actor) {
     it.version++;
     return it;
   });
-}
-// Something happened on the ticket that does what an ask asked for: close those asks (and what is linked to them).
-function closeAsks(ctx, it, events, trigger, actor) {
-  for (const { ask, linked } of ASKS.closeBy(it, trigger, now())) {
-    events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...ask }, mentions: [ask.by].filter((n) => !sameName(n, actor.name)) }));
-    for (const x of linked.closed) events.push(itemEvent(ctx, 'ask.done', it, actor, { ask: { ...x } }));
-    if (linked.questionIds.length) closeQuestions(ctx, it, actor, events, { pick: (q) => linked.questionIds.includes(q.id), reply: 'The ask was answered' });
-  }
 }
 // Overdue asks escalate once (lib/alerts/asks.js escalationOf): to the coordinator, or to the human.
 function sweepAsks(ctx) {
@@ -2044,11 +1991,6 @@ function transitions(ctx, item, actor) {
     }),
     review: reviewColumn(ctx)?.name || null,
   };
-}
-
-// Who last worked a ticket: the five most recent, each once.
-function addWorker(item, name) {
-  if (!(item.workedBy || []).includes(name)) item.workedBy = [...(item.workedBy || []), name].slice(-5);
 }
 
 function makeLease(item, claimant, minutes, status, cur) {
@@ -2596,8 +2538,8 @@ const { reviewColumn, REVIEW_PARTS, reviewerPool, authorsOf, addReviewer, remove
   decideReview, recordVerdict, startLanding, landingOf, markLandedByHand, reconcileLandings } = createReviews({
   fail, str, rid, now, tx, getItem, itemEvent, trimChange, mentionsIn, M, SYSTEM, boards,
   findColumn, doneColumnId, workingColumn, moveInto, guardWrite, helperOwns, parseNeedsHuman, syncNeeds, openQuestion,
-  closeQuestions, afterCommit, isCoordinator, ticketCommits, agentBranch, grantsOf, grantFor, reviewerRule, assignedOks,
-  openBlockersOf, reviewWithdrawnUndecided, landers, closeAsks: (...a) => closeAsks(...a), getStanding: () => standing, getWorktrees: () => worktrees });
+  closeQuestions, writeVerdict, afterCommit, isCoordinator, ticketCommits, agentBranch, grantsOf, grantFor, reviewerRule, assignedOks,
+  openBlockersOf, reviewWithdrawnUndecided, landers, closeAsks, getStanding: () => standing, getWorktrees: () => worktrees });
 // Whose memory a route means: "me" is the calling agent; any other name must be an agent the board knows (a
 // standing agent, one that has called the board, or one with a profile or a memory), matched without regard to
 // capitals so "Rocket" is rocket's memory.
