@@ -21,6 +21,7 @@ const SCRIPT = [
   ['groot', 'start', 'T-1'],
   ['groot', 'comment', 'T-1', 'On it. @gamora fyi'],
   ['groot', 'ask', 'T-1', 'Which endpoint?'],
+  ['groot', 'ask', 'T-1', 'Which endpoint?'], // the same question again is reused, raising nothing (INT-420)
   ['human', 'answer', 'T-1', 'The v2 one'],
   ['groot', 'review', 'T-1', { summary: 'done', evidence: 'tests pass' }],
   ['human', 'addReviewer', 'T-1', 'nebula'],
