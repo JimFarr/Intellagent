@@ -66,6 +66,21 @@ describe('GET /api/app and the restart (INT-319)', () => {
       assert.ok(r.body.hint);
     } finally { await s.stop(); }
   });
+  it('the human\'s restart brings the board back: the restart is not in the tree that stop kills', async () => {
+    const s = await startServer();
+    const { pidOnPort, killTree } = require('../lib/kill');
+    const port = new URL(s.base).port;
+    try {
+      const before = pidOnPort(port);
+      assert.deepEqual(await s.ok('POST', '/api/app/restart', {}, USER), { restarting: true });
+      let after = null;
+      for (const end = Date.now() + 30_000; Date.now() < end && !after; await new Promise((r) => setTimeout(r, 500))) {
+        const pid = pidOnPort(port);
+        if (pid && pid !== before && (await s.api('GET', '/api/app').catch(() => ({}))).status === 200) after = pid;
+      }
+      assert.ok(after, `a new board answers on ${port}`);
+    } finally { killTree(pidOnPort(port)); await s.stop(); }
+  });
 });
 
 describe('the brief says when the board is behind main (INT-319)', () => {

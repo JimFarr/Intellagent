@@ -3250,7 +3250,10 @@ route('POST', '/api/app/restart', 'Human only: restart the board so it runs the 
   const env = { ...process.env, INTELLAGENT_MANIFEST: MANIFEST_PATH };
   delete env.INTELLAGENT_AGENT; // the CLI's restart is the human's
   setTimeout(() => {
-    try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'bin', 'intellagent.js'), 'restart'], { cwd: path.dirname(MANIFEST_PATH), env, detached: true, stdio: 'ignore', windowsHide: true }).unref(); }
+    // Started through a go-between that exits at once: stop kills the board's whole process tree (taskkill /T on
+    // Windows), and a restart that is the board's own child would die with it, before it starts the new board.
+    const restart = `require('child_process').spawn(process.execPath, ${JSON.stringify([path.join(__dirname, 'bin', 'intellagent.js'), 'restart'])}, { detached: true, stdio: 'ignore', windowsHide: true }).unref()`;
+    try { require('child_process').spawn(process.execPath, ['-e', restart], { cwd: path.dirname(MANIFEST_PATH), env, detached: true, stdio: 'ignore', windowsHide: true }).unref(); }
     catch (e) { console.warn(`restart: ${e.message}`); }
   }, 300);
   return { restarting: true };
