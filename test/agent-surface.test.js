@@ -935,6 +935,16 @@ describe('reviews carry evidence, and the human can preview the work', () => {
     } finally { await s.stop(); }
   });
 
+  it('GET /api/app and the board carry metrics.grafanaUrl for an http(s) URL, and nothing for others (INT-434)', async () => {
+    for (const [url, want] of [['https://grafana.example/d/x', 'https://grafana.example/d/x'], ['javascript:alert(1)', undefined], ['', undefined], [undefined, undefined]]) {
+      const s = await startServer({ manifest: { metrics: { grafanaUrl: url } }, agents: { agents: {} } });
+      try {
+        assert.equal((await s.ok('GET', '/api/app')).grafanaUrl, want);
+        assert.equal((await s.ok('GET', '/api/boards/main')).app.grafanaUrl, want);
+      } finally { await s.stop(); }
+    }
+  });
+
   it('on a board whose code is Intellagent, Preview runs the work on a temporary board with the tickets', async () => {
     const s = await startServer({ manifest: { projectRoot: ROOT }, agents: { agents: {} } });
     try {

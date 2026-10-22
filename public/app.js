@@ -4968,7 +4968,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         </dl></article>`;
     };
     const tickets = a.tickets.slice(0, 10);
-    body.innerHTML = `<div class="an-top">${win}<span class="grow"></span>${state.app.grafanaUrl ? `<a class="btn sm" href="${esc(state.app.grafanaUrl)}" target="_blank" rel="noopener">${icon('ext', 'sm')}Open in Grafana</a>` : ''}</div>
+    body.innerHTML = `<div class="an-top">${win}<span class="grow"></span>${/^https?:\/\//i.test(state.app.grafanaUrl || '') ? `<a class="btn sm" href="${esc(state.app.grafanaUrl)}" target="_blank" rel="noopener">${icon('ext', 'sm')}Open in Grafana</a>` : ''}</div>
       ${empty ? `<div class="empty-note">${icon('activity')}<span>No agent has run or changed state in the last ${days} days.</span></div>` : `
       <dl class="an-totals perm-facts"><dt>Runs</dt><dd>${a.totals.runs}</dd><dt>Tokens</dt><dd>${anTok(a.totals.tokens)}</dd><dt>Cost</dt><dd>${anCost(a.totals)}</dd></dl>
       ${(a.suggestions || []).filter((s) => s.kind === 'waiting-on-human').map(anTip).join('')}

@@ -333,10 +333,12 @@ let previewOk = null;
 const previewable = () => (previewOk ??= !M.sandbox && (() => { try { return jsonfile.read(path.join(PROJECT_ROOT, 'package.json')).name === 'intellagent' && fs.existsSync(path.join(PROJECT_ROOT, 'server.js')); } catch { return false; } })());
 // The commit this board started from, and how far main has moved since (INT-319). Re-read on the sweep.
 const codeState = require('./lib/codestate').createCodeState({ dir: process.env.INTELLAGENT_CODE_DIR || __dirname, mainBranch: () => { try { return worktrees?.mainBranch() || null; } catch { return null; } } });
+// The Analytics page's Open in Grafana link (INT-434): only an http(s) URL from the manifest, never javascript:
+const grafanaLink = () => (/^https?:\/\//i.test(M.metrics?.grafanaUrl || '') ? { grafanaUrl: M.metrics.grafanaUrl } : {});
 const appInfo = () => ({
   name: app.name, version: VERSION, build: BUILD, defaultBoard: M.defaultBoard,
   lease: M.lease, serverTime: now(), seq: currentSeq(), preview: previewable(), sandbox: !!M.sandbox,
-  ...(/^https?:\/\//i.test(M.metrics?.grafanaUrl || '') ? { grafanaUrl: M.metrics.grafanaUrl } : {}),
+  ...grafanaLink(),
   code: ROOT, ...(FOREIGN_CODE ? { foreignCode: true } : {}),
   ...codeState.snapshot(),
 });
@@ -2405,7 +2407,7 @@ function itemView(ctx, item, archived = false, blocksOf = null) {
 function boardView(ctx) {
   return {
     hash: ctx.hash, seq: currentSeq(), serverTime: now(),
-    app: { name: app.name, version: VERSION, build: BUILD },
+    app: { name: app.name, version: VERSION, build: BUILD, ...grafanaLink() },
     archivedCount: Object.keys(ctx.archive.items).length,
     board: ctx.board,
   };
