@@ -2,6 +2,16 @@
 
 The board can serve its numbers to Prometheus at `GET /metrics`, and `intellagent.json` here is a dashboard for them. Prometheus keeps the history; the board only reports where things stand now.
 
+## Quickstart: one command
+
+Do step 1 below (the manifest also needs `"allowedHosts": ["host.docker.internal"]`), save the token to `docs/grafana/metrics.token`, then from `docs/grafana/`:
+
+```
+docker compose up -d
+```
+
+Prometheus (`127.0.0.1:9090`) scrapes the board and Grafana (`http://localhost:3000`) opens on the dashboard, already provisioned. Both listen on this PC only. Steps 2 and 3 below are for your own Prometheus and Grafana.
+
 ## 1. Switch it on
 
 It is off until you say so, and then it asks for a token.
@@ -45,7 +55,7 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:7420/metrics
 
 In Grafana: **Dashboards › New › Import**, upload `docs/grafana/intellagent.json`, and pick your Prometheus data source when it asks. Set the **Board** variable if you run more than one.
 
-It has three rows: **Flow** (tickets per column, done per day, cycle time p50/p90, landings), **Agents** (status timeline, runs by result, run time, tokens per model, estimated cost, usage-limit holds) and **Waiting on the human** (open questions, the oldest wait).
+It has three rows: **Flow** (tickets per column, done per day, cycle time p50/p90, landings), **Agents** (status timeline, runs by result, run time, queue per agent, tokens per model, estimated cost in total and per model, usage-limit holds) and **Waiting on the human** (open questions, the oldest wait).
 
 The **estimated cost** multiplies tokens by the prices in the dashboard's variables (USD per million tokens). The defaults are placeholders: set your own per model family, because the board does not know what you pay.
 

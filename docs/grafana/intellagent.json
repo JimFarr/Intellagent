@@ -730,6 +730,87 @@
       ]
     },
     {
+      "id": 40,
+      "type": "timeseries",
+      "title": "Queue per agent",
+      "description": "Events waiting for each agent when the board last reported.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (agent) (intellagent_agent_queue{job=\"$job\"})",
+          "legendFormat": "{{agent}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "bargauge",
+      "title": "Estimated cost per model",
+      "description": "Tokens in the dashboard's time range per model, times the prices set in the variables above. An estimate with your own prices. Cost per ticket is not shown: the board never exports ticket ids.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 49,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by (model) (increase(intellagent_agent_tokens_total{job=\"$job\",kind=\"input\"}[$__range])) * $price_input + sum by (model) (increase(intellagent_agent_tokens_total{job=\"$job\",kind=\"output\"}[$__range])) * $price_output + sum by (model) (increase(intellagent_agent_tokens_total{job=\"$job\",kind=\"cache_read\"}[$__range])) * $price_cache_read + sum by (model) (increase(intellagent_agent_tokens_total{job=\"$job\",kind=\"cache_write\"}[$__range])) * $price_cache_write) / 1e6",
+          "legendFormat": "{{model}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "id": 13,
       "type": "row",
       "title": "Waiting on the human",
