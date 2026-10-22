@@ -15,7 +15,7 @@ const MIN = 60_000;
 function makeBoard(items = [], extra = {}) {
   const columns = ['backlog', 'ready', 'in-progress', 'review', 'done'].map((id) => ({
     id, name: { backlog: 'Backlog', ready: 'Ready', 'in-progress': 'In Progress', review: 'Review', done: 'Done' }[id],
-    flags: { sleeping: id === 'backlog', pickup: id === 'ready' }, itemIds: [],
+    flags: { sleeping: id === 'backlog', pickup: id === 'ready', working: id === 'in-progress' }, itemIds: [],
   }));
   const board = { columns, items: {}, requests: [], focusBoards: [], activeFocus: null, master: null, ...extra };
   for (const it of items) {
@@ -160,6 +160,23 @@ describe('waitingWork and stalledFor', () => {
       { id: 'C', columnId: 'ready', questions: [{ kind: 'question', raisedBy: 'groot' }] }, { id: 'D', columnId: 'backlog' },
     ]);
     assert.deepEqual(makeWorld(ctx).waitingWork().map((w) => w.id), ['A']);
+  });
+  it('waitingWork with quietMs also lists quiet In Progress tickets and what each waits on (INT-429)', () => {
+    const old = iso(-3 * 60 * MIN);
+    const q = { updatedAt: old, enteredColumnAt: old };
+    const ctx = makeBoard([
+      { id: 'Q', columnId: 'in-progress', assignee: 'groot', ...q },
+      { id: 'H', columnId: 'in-progress', assignee: 'groot', ...q, questions: [{ kind: 'question', raisedBy: 'groot' }] },
+      { id: 'L', columnId: 'in-progress', assignee: 'groot', ...q, lease: { claimant: 'rocket', expiresAt: iso(60 * MIN) } },
+      { id: 'X', columnId: 'ready' }, { id: 'B', columnId: 'in-progress', assignee: 'groot', ...q, blockedBy: ['X'] },
+      { id: 'F', columnId: 'in-progress', assignee: 'groot' }, // moved an hour ago: not quiet yet
+    ]);
+    const w = makeWorld(ctx);
+    assert.deepEqual(w.waitingWork().map((x) => x.id), ['X'], 'no quietMs: Ready-only, as before');
+    const got = Object.fromEntries(w.waitingWork(null, 120 * MIN).map((x) => [x.id, x.parked]));
+    assert.deepEqual(Object.keys(got).sort(), ['B', 'H', 'L', 'Q', 'X']);
+    assert.match(got.H, /question/); assert.match(got.L, /leased by rocket/); assert.match(got.B, /blocked by X/); assert.match(got.Q, /groot has gone quiet/);
+    assert.equal(got.X, undefined, 'free Ready work carries no parked reason');
   });
   it('a supervisor hears of an idle agent\'s untouched ticket, and of a paused agent\'s at once', () => {
     const ctx = makeBoard([{ id: 'A', columnId: 'ready', assignee: 'groot' }, { id: 'B', columnId: 'ready', assignee: 'rocket', updatedAt: iso(-MIN), enteredColumnAt: iso(-MIN) }]);

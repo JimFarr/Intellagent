@@ -405,6 +405,17 @@ describe('the idle-board alarm (fake clock)', () => {
     assert.deepEqual(alarms[0].waiting, ['T-1']);
   });
 
+  it('asks for parked work with its own wait, and the event says what each parked ticket waits on (INT-429)', () => {
+    const { scheduler, core, board, agents } = alarmRig();
+    const asked = [];
+    core.deps.waiting = (b, quietMs) => { asked.push(quietMs); return board.waiting; };
+    board.waiting = [{ board: 'main', id: 'T-9', title: 'parked', assignee: 'worker', parked: 'a question to the human is open' }];
+    scheduler.checkIdle();
+    advance(20 * MIN + 1000);
+    assert.ok(asked.length && asked.every((q) => q === 20 * MIN), 'the alarm passes its minutes');
+    assert.equal(agents.watch.queue[0].waiting[0].parked, 'a question to the human is open');
+  });
+
   it('the same waiting tickets alarm again only after twice the wait each time, however often its nudge wakes a builder', () => {
     const { scheduler, alarms, builderRuns } = alarmRig();
     scheduler.checkIdle();

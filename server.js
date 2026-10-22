@@ -5301,7 +5301,7 @@ standing = require('./lib/agents').createAgents({
   env: { INTELLAGENT_MANIFEST: MANIFEST_PATH, INTELLAGENT_URL: `http://${M.host === '0.0.0.0' ? '127.0.0.1' : M.host}:${M.port}` },
   emit, matchesFilter, parseFilter, recent: () => recent, seq: currentSeq,
   pending: (name, def) => pendingWork(name, def.pickup === true ? 'ready' : def.pickup || false),
-  waiting: (board) => waitingWork(board),
+  waiting: (board, quietMs) => waitingWork(board, quietMs),
   idleAlarms: () => [...boards.values()].map((ctx) => ({ board: ctx.id, ...idleAlarmOf(ctx) })),
   onIdleAlarm: (board, rec) => recordIdleAlarm(board, rec),
   // a sandbox's agents never run: moving its tickets between them would only confuse a preview
