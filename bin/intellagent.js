@@ -159,8 +159,19 @@ async function init() {
   console.log('  Back after a reboot: intellagent autostart on\n');
 }
 
+// This CLI is an agent's worktree and the board is a live one: refuse to start it on this code (INT-405). Agents
+// try their code on a sandbox; a sandbox, and a throwaway board in the temp folder (tests), may run it.
+function refuseForeignStart(mp) {
+  const m = readManifest(mp);
+  const tmp = path.relative(os.tmpdir(), path.resolve(mp));
+  if (m?.sandbox || !(tmp.startsWith('..') || path.isAbsolute(tmp)) || !require('../lib/locate').foreignCode(ROOT, mp, m)) return;
+  console.error(`error 403 FORBIDDEN: ${ROOT} is an agent's worktree, and ${mp} is a live board — hint: try your code on your own board: intellagent sandbox <you> --from <you>. To start this board, use the installed intellagent (not node ${path.join(ROOT, 'bin', 'intellagent.js')})`);
+  process.exit(1);
+}
+
 // Starts the server detached (logs to .intellagent/data/server.log) and waits until it answers.
 async function startBackground(mp, url) {
+  refuseForeignStart(mp);
   if (await alive(url)) return;
   const data = path.join(path.dirname(mp), 'data');
   fs.mkdirSync(data, { recursive: true });
@@ -286,6 +297,7 @@ async function start() {
   const f = flags(rest);
   if (f.open) humanOnly('intellagent start --open (opening the board signed in)', OPEN_HINT); // before anything boots
   const mp = requireManifest();
+  refuseForeignStart(mp);
   const url = baseUrl(readManifest(mp));
   if (await alive(url)) { console.log(`Already running at ${url}`); if (f.open) openBoard(mp); return; }
   if (f.background) { await startBackground(mp, url); console.log(`Running at ${url} (logs: .intellagent/data/server.log)`); if (f.open) openBoard(mp); return; }
@@ -316,6 +328,7 @@ async function stop() {
 async function restart() {
   humanOnly('intellagent restart');
   const mp = requireManifest();
+  refuseForeignStart(mp); // before stop: never stop a board this code would not start again
   const url = baseUrl(readManifest(mp));
   await stop();
   for (let i = 0; i < 50 && (await alive(url)); i++) await new Promise((res) => setTimeout(res, 100));

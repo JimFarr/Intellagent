@@ -22,7 +22,7 @@ const PUBLIC = path.join(ROOT, 'public');
 
 const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join(ROOT, 'intellagent.manifest.json'));
 const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
-const { readLocal, updateLocal } = require('./lib/locate');
+const { readLocal, updateLocal, foreignCode } = require('./lib/locate');
 const cardrules = require('./lib/cardrules');
 const jsonfile = require('./lib/jsonfile');
 const MANIFEST_DEFAULTS = {
@@ -69,6 +69,8 @@ function loadManifest() {
 
 const M = loadManifest();
 const DATA = M.dataDir;
+// This board runs code from an agent's worktree, not its own installation (INT-405): said in the log and GET /api/app
+const FOREIGN_CODE = foreignCode(ROOT, MANIFEST_PATH, M);
 const BOARDS_DIR = path.join(DATA, 'boards');
 fs.mkdirSync(BOARDS_DIR, { recursive: true });
 
@@ -334,6 +336,7 @@ const codeState = require('./lib/codestate').createCodeState({ dir: process.env.
 const appInfo = () => ({
   name: app.name, version: VERSION, build: BUILD, defaultBoard: M.defaultBoard,
   lease: M.lease, serverTime: now(), seq: currentSeq(), preview: previewable(), sandbox: !!M.sandbox,
+  code: ROOT, ...(FOREIGN_CODE ? { foreignCode: true } : {}),
   ...codeState.snapshot(),
 });
 
@@ -5367,7 +5370,10 @@ server.listen(M.port, M.host, () => {
   console.log(`\n  ${app.name}  v${VERSION} (${BUILD})`);
   console.log(`  board   ${base}`);
   console.log(`  agents  ${base}/api/docs`);
-  console.log(`  data    ${DATA}\n`);
+  console.log(`  data    ${DATA}`);
+  console.log(`  code    ${ROOT}`);
+  console.log(`  started ${now()} (pid ${process.pid})\n`);
+  if (FOREIGN_CODE) console.warn(`WARNING: this board runs code from an agent's worktree (${ROOT}), not its own installation: unreviewed code. Restart it from the installed intellagent: intellagent restart\n`);
   try { fs.writeFileSync(path.join(DATA, 'server.pid'), String(process.pid)); } catch { /* read-only data dir */ }
 });
 
