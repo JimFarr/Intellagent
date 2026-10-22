@@ -336,6 +336,7 @@ const codeState = require('./lib/codestate').createCodeState({ dir: process.env.
 const appInfo = () => ({
   name: app.name, version: VERSION, build: BUILD, defaultBoard: M.defaultBoard,
   lease: M.lease, serverTime: now(), seq: currentSeq(), preview: previewable(), sandbox: !!M.sandbox,
+  ...(/^https?:\/\//i.test(M.metrics?.grafanaUrl || '') ? { grafanaUrl: M.metrics.grafanaUrl } : {}),
   code: ROOT, ...(FOREIGN_CODE ? { foreignCode: true } : {}),
   ...codeState.snapshot(),
 });
