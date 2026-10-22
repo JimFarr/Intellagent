@@ -2469,6 +2469,17 @@ describe('stopping a board stops what it started', () => {
   });
 });
 
+describe('the board.idle line (INT-429)', () => {
+  it('says parked tickets are parked and why, and prints nothing extra for free ones', () => {
+    const { eventLine } = require('../lib/agents/prompt');
+    const line = eventLine({ type: 'board.idle', idleMinutes: 20, waitingCount: 2, builders: [{ name: 'w', status: 'idle' }],
+      waiting: [{ id: 'T-1', title: 'free', assignee: null }, { id: 'T-2', title: 'stuck', assignee: 'w', parked: 'blocked by T-1' }] });
+    assert.match(line, /wait to be started or are parked/);
+    assert.match(line, /T-2 "stuck" — assigned to w — parked: blocked by T-1/);
+    assert.doesNotMatch(line.split('\n').find((l) => l.includes('T-1 "free"')), /parked/);
+  });
+});
+
 describe('base context and prompt layers (INT-251)', () => {
   const { REVIEW_PARTS, createBase, shipped } = require('../lib/agents/base');
   const { promptFor, layersFor } = require('../lib/agents/prompt');
