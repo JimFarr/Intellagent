@@ -2541,3 +2541,6 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .ctx-role > summary { flex-wrap: nowrap; }
 .ctx-role > summary .ctx-users { flex: 1 1 0; }
 @media (max-width: 520px) { .ctx-users { display: none; } }
+
+/* Ticket triggers (INT-435): the card chip, and in the drawer a button that lists them */
+.chip.m-trig { cursor: pointer; }

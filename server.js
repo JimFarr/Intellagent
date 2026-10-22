@@ -2737,6 +2737,59 @@ setInterval(() => { reconcileLandings().catch((e) => console.warn(`landing sweep
 setInterval(() => { try { sweepStale(); } catch (e) { console.warn(`stale sweep: ${e.message}`); } }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => { codeState.refresh().catch((e) => console.warn(`code state: ${e.message}`)); }, Math.max(1, Number(M.staleSweepSeconds) || 300) * 1000).unref();
 setInterval(() => { for (const ctx of boards.values()) { try { sweepStuck(ctx); } catch (e) { console.warn(`stuck watch (${ctx.id}): ${e.message}`); } } }, Math.max(1, Number(M.stuckSweepSeconds) || 300) * 1000).unref();
+
+// Ticket triggers (INT-435): a fast sweep checks every active trigger; what fires is buffered per agent to wake and
+// sent as one trigger.fired event listing its cards: at once for priority "now", after the batch window for "batch".
+const TRIGGERS = require('./lib/alerts/triggers');
+const TRIGGER_BATCH_MS = Math.max(0.01, Number(M.triggers?.batchMinutes) || 15) * 60_000;
+// Is the PC free for a timing run? No machine lease held and the processor under the trigger's threshold, read from
+// the machine's lease program; null when it can't be read, so a machine trigger never fires on a guess.
+async function machineReading() {
+  try {
+    const r = await fetch('http://127.0.0.1:7499/machine', { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    const m = await r.json();
+    return { leases: (m.ledger?.leases || []).length, busyPercent: Number(m.cpu?.busyPercent ?? NaN) };
+  } catch { return null; }
+}
+async function sweepTriggers(ctx) {
+  if (M.sandbox) return; // a sandbox runs no agents: nobody to wake
+  const live = (it) => !it.test && !it.journey?.doneAt;
+  const sleeping = new Set(ctx.board.columns.filter((c) => c.flags?.sleeping).map((c) => c.id));
+  // every picked-up card gets the idle check unless someone removed it there (idleCheck: false)
+  const wantIdle = Object.values(ctx.board.items).filter((it) => live(it) && it.journey?.pickedUpAt && !sleeping.has(it.columnId)
+    && it.idleCheck !== false && !TRIGGERS.activeOn(it).some((t) => t.when.kind === 'idle'));
+  const items = Object.values(ctx.board.items).filter((it) => live(it) && TRIGGERS.activeOn(it).length);
+  if (!items.length && !wantIdle.length && !(ctx.board.triggerQueue || []).length) return;
+  const needsMachine = items.some((it) => TRIGGERS.activeOn(it).some((t) => t.when.kind === 'machine'));
+  const machine = needsMachine ? await machineReading() : null;
+  const nowMs = Date.now();
+  tx(ctx, (events) => {
+    let queue = ctx.board.triggerQueue || [];
+    const idleMinutes = Number(M.triggers?.idleMinutes) > 0 ? Number(M.triggers.idleMinutes) : 60;
+    for (const it of wantIdle) { it.triggers = [...(it.triggers || []).filter((x) => x.active), TRIGGERS.idleDefault({ id: rid('tr'), minutes: idleMinutes, nowIso: now() })]; }
+    for (const it of Object.values(ctx.board.items)) {
+      if (!live(it)) continue;
+      for (const t of TRIGGERS.activeOn(it)) {
+        const machineFree = machine && Number.isFinite(machine.busyPercent) ? machine.leases === 0 && machine.busyPercent < t.when.busyBelow : null;
+        const r = TRIGGERS.evaluate(t, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt), machineFree });
+        Object.assign(t, r.set);
+        if (!r.fire) continue;
+        t.firedAt = new Date(nowMs).toISOString();
+        queue = TRIGGERS.enqueue(queue, { wake: t.wake || null, itemId: it.id, triggerId: t.id, priority: t.priority, why: r.why, note: t.note || null, firedAt: t.firedAt });
+      }
+    }
+    const { send, keep } = TRIGGERS.due(queue, nowMs, TRIGGER_BATCH_MS);
+    ctx.board.triggerQueue = keep;
+    for (const [named, list] of Object.entries(send)) {
+      const wake = named === 'null' ? coordinatorOf(ctx) : named; // no agent named: the coordinator's
+      if (!wake) { ctx.board.triggerQueue.push(...list); continue; } // nobody to wake yet: kept for when there is
+      const cards = list.filter((e) => ctx.board.items[e.itemId]).map((e) => ({ id: e.itemId, title: ctx.board.items[e.itemId].title, why: e.why, note: e.note, priority: e.priority, owner: ctx.board.items[e.itemId].assignee || null, firedAt: e.firedAt }));
+      if (cards.length) events.push({ board: ctx.id, type: 'trigger.fired', actor: SYSTEM, wake, cards, recipients: [wake], addressed: [wake] });
+    }
+  });
+}
+setInterval(() => { for (const ctx of boards.values()) sweepTriggers(ctx).catch((e) => console.warn(`triggers (${ctx.id}): ${e.message}`)); }, Math.max(1, Number(M.triggers?.sweepSeconds) || 60) * 1000).unref();
 setInterval(() => {
   // a warning is keyed by the lease's expiry: once that has passed, the key can never match again
   for (const k of warned) if (Date.parse(k.slice(k.lastIndexOf('@') + 1)) <= Date.now()) warned.delete(k);
@@ -2834,7 +2887,7 @@ const SCHEMA = {
     seq: 'integer cursor', ts: 'ISO', board: 'string', hash: 'board hash after the change',
     type: ['item.created', 'item.updated', 'item.moved', 'item.reordered', 'item.archived', 'item.restored', 'comment.added',
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
-      'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
+      'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'trigger.fired', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.managed', 'agent.role_changed', 'admin.reverted', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
@@ -3085,6 +3138,8 @@ const POLICY = {
   [`POST ${B_}/items/:id/asks`]: { who: 'any', readOnly: true, held: true },
   [`POST ${B_}/items/:id/asks/:askId/done`]: { who: ['self', 'coordinator'], readOnly: true, held: true },
   [`POST ${B_}/items/:id/asks/:askId/withdraw`]: { who: ['self', 'coordinator'], readOnly: true, held: true },
+  [`POST ${B_}/items/:id/triggers`]: { who: 'any', held: true },
+  [`DELETE ${B_}/items/:id/triggers/:triggerId`]: { who: 'any', held: true },
   [`DELETE ${B_}/items/:id/attention`]: { who: ['self', 'coordinator'], readOnly: true, held: true },
   [`DELETE ${B_}/items/:id`]: { who: 'any' },
   [`DELETE ${B_}/test-items`]: { who: 'human', why: 'Only a human can delete all test tickets at once — delete them one by one' },
@@ -4121,6 +4176,41 @@ route('POST', '/api/boards/:board/items/:id/asks', 'Ask another agent for someth
 route('POST', '/api/boards/:board/items/:id/asks/:askId/done', 'Answer an ask: { answer } — its owner, the asker, the coordinator or the human', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   return itemView(ctx, answerAsk(ctx, p.id, p.askId, body, actor));
+});
+route('POST', '/api/boards/:board/items/:id/triggers', 'A trigger on the card (INT-435): it waits on a condition and wakes an agent when it holds. { when: { machine: "exclusive", busyBelow? } | { quietFor: "30m" } | { every: "15m" } | { until: ISO time }, priority: now|batch (default batch), wake?: agent (default the coordinator), note? } → the trigger. A card with an active trigger is waiting on purpose: the stuck watch escalates it to nobody', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  const bad = (m) => fail(400, m);
+  const when = TRIGGERS.parseWhen(body.when, bad);
+  const priority = body.priority ?? 'batch';
+  if (!TRIGGERS.PRIORITIES.includes(priority)) bad('"priority" is now or batch');
+  let wake = body.wake == null || body.wake === '' ? null : String(body.wake).trim();
+  if (wake) {
+    const a = standingAgents().find((x) => x.name.toLowerCase() === wake.toLowerCase());
+    if (!a) bad(`"${wake}" is not a standing agent`);
+    if (isHelper(a.name)) fail(403, `${a.name} is a helper: triggers wake the agents that route or do the work`, { code: 'NOT_ROUTABLE', hint: 'Leave "wake" out: the coordinator gets it' });
+    wake = a.name;
+  }
+  return tx(ctx, () => {
+    const it = getItem(ctx, p.id);
+    if (TRIGGERS.activeOn(it).length >= TRIGGERS.MAX_PER_TICKET) fail(409, `${it.id} has ${TRIGGERS.MAX_PER_TICKET} active triggers already`, { code: 'CONFLICT', hint: 'Remove one first: DELETE …/triggers/<id>' });
+    const t = { id: rid('tr'), when, priority, ...(wake ? { wake } : {}), ...(body.note ? { note: str(body.note, 300) } : {}), by: actor.name, at: now(), active: true };
+    it.triggers = [...(it.triggers || []).filter((x) => x.active), t];
+    it.version++;
+    return t;
+  });
+});
+route('DELETE', '/api/boards/:board/items/:id/triggers/:triggerId', 'Remove a trigger from the card: its condition no longer matters (anyone; any queued firing of it goes too)', ({ p }) => {
+  const ctx = getCtx(p.board);
+  return tx(ctx, () => {
+    const it = getItem(ctx, p.id);
+    const t = (it.triggers || []).find((x) => x.id === p.triggerId);
+    if (!t) fail(404, `No trigger "${p.triggerId}" on ${it.id}`, { hint: `GET /api/boards/${ctx.id}/items/${it.id} lists them under triggers` });
+    it.triggers = it.triggers.filter((x) => x !== t);
+    if (t.default) it.idleCheck = false; // removed on purpose: the sweep doesn't put it back
+    ctx.board.triggerQueue = (ctx.board.triggerQueue || []).filter((e) => e.triggerId !== t.id);
+    it.version++;
+    return { removed: t.id };
+  });
 });
 route('POST', '/api/boards/:board/items/:id/asks/:askId/withdraw', 'Take back an ask you made: { reason } — the asker, the coordinator or the human', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);

@@ -906,6 +906,18 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const t = costs?.by.get(id);
     return t ? `<span>·</span><span class="chip m-cost" title="${esc(costTip(t))}">${icon('activity', 'sm')}${esc(costText(t))}</span>` : '';
   }
+  // Ticket triggers (INT-435): what each one waits on, in words, and the chip that lists them
+  const mins = (ms) => (ms % 3_600_000 ? `${Math.round(ms / 60_000)} min` : `${ms / 3_600_000} h`);
+  function triggerText(t) {
+    const w = t.when || {};
+    const what = w.kind === 'machine' ? 'the machine is free' : w.kind === 'idle' ? `idle ${mins(w.ms)}` : w.kind === 'quietFor' ? `quiet for ${mins(w.ms)}`
+      : w.kind === 'every' ? `every ${mins(w.ms)}` : w.kind === 'until' ? `at ${new Date(w.at).toLocaleString()}` : w.kind;
+    return `${what} → ${t.wake || 'coordinator'}${t.priority === 'now' ? ' (now)' : ''}${t.note ? `: ${t.note}` : ''}`;
+  }
+  function triggerChip(it, cls = '') {
+    const ts = (it.triggers || []).filter((t) => t.active);
+    return ts.length ? `<span class="chip trig ${cls}" data-trig title="Triggers|${esc(ts.map(triggerText).join('\n'))}">${icon('bell', 'sm')}${ts.length}</span>` : '';
+  }
   function showCost(m) {
     // asked at most once a minute per ticket, answered or not, so a failed fetch can't refill the modal in a loop
     if (m.create || (m.costFor === m.id && Date.now() - m.costAt < COST_KEEP_MS)) return;
@@ -1851,6 +1863,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const meta = [];
     if (stub('parent') && it.parent && !inGroup) meta.push(`<span class="chip parent" title="Parent|Grouped with other #${esc(it.parent)} tickets" style="--tagc:${tagColor(it.parent)}">${esc(it.parent)}</span>`);
     if (stub('blockedBy') && blockers.length) meta.push(`<span class="chip blocked" title="Blocked|Waiting on ${esc(blockers.join(', '))}">${icon('lock', 'sm')}${blockers.length}</span>`);
+    const trig = triggerChip(it);
+    if (trig) meta.push(trig);
     for (const f of fields.filter((x) => x.stub === 'meta')) {
       const v = it.fields[f.key];
       const t = fieldText(f, v);
@@ -3022,7 +3036,14 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const col = colById(it.columnId);
     const rx = $('.m-reacts', main) || (() => { const d = el('<div class="m-reacts"></div>'); $('.m-sub', main).after(d); wireReactions(d, m.id); return d; })();
     rx.innerHTML = reactionsHTML(it.reactions, { add: !m.archived, notes: it.reactionNotes });
-    $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${nameHTML(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}${m.create ? '' : costChip(it.id)}`;
+    $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${nameHTML(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}${m.create ? '' : costChip(it.id)}${m.create || m.archived ? '' : triggerChip(it, 'm-trig')}`;
+    // the triggers chip opens the list; picking one removes it
+    $('.m-sub', main).onclick = (e) => {
+      const chip = e.target.closest('[data-trig]');
+      if (!chip) return;
+      menu(chip, (it.triggers || []).filter((t) => t.active).map((t) => ({ label: `Remove: ${triggerText(t)}`, icon: 'x',
+        run: async () => { try { await api('DELETE', I(it.id, `/triggers/${encodeURIComponent(t.id)}`)); scheduleRefresh(0); } catch (err) { toast(err.message, { kind: 'error' }); } } })));
+    };
     showCost(m);
 
     // needs-you banner

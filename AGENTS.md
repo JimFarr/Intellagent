@@ -302,6 +302,13 @@ Types: `text longtext choice` (radio) `multi` (checkboxes) `yesno number` (`min`
 
 **Requests.** The human's free-form asks ("create tickets for X") are *requests*, sent to the board's coordinator or a named agent. They arrive as `handle_request` in `…/work`: do it, then `POST …/requests/<id>/reply { "body": "what you did, with ticket ids", "done": true }`. `GET …/requests` lists them; `POST …/requests { "body": "…", "to": "<agent>" }` sends one (to the coordinator if `to` is omitted). A request is usually a follow-up: its event carries `history`, the conversation so far with you (the last 10 messages of the week, oldest first), and your prompt shows it — answer the latest message in that context.
 
+**Waiting on a condition: a trigger** (INT-435). Don't hold a ticket or poll while you wait for something: put a trigger on the card and end the run. `POST …/items/<ID>/triggers { when, priority?, wake?, note? }` → the trigger; `DELETE …/items/<ID>/triggers/<triggerId>` removes it. Anyone may do either.
+- `when`: `{ machine: "exclusive", busyBelow?: 15 }` (the PC free for a timing run: no machine lease, processor under busyBelow %), `{ idle: "60m" }` (quiet that long, then again every 60m while it stays quiet), `{ quietFor: "30m" }` (once per quiet stretch), `{ every: "15m" }` or `{ until: "<ISO time>" }` (once). Durations are at least a minute. At most 5 active per card (`409 CONFLICT`).
+- `wake`: the standing agent to wake (default the coordinator; a helper: `403 NOT_ROUTABLE`). `priority`: `now` (sent at the next sweep, within a couple of minutes) or `batch` (default: gathered per agent and sent together once the oldest has waited the batch window, 15 minutes).
+- Triggers are edge-triggered, so leaving one on never loops. What fires arrives as one `trigger.fired` event per agent, `{ wake, cards: [{ id, title, why, note, priority, owner, firedAt }] }`, addressed to it.
+- **Idle check:** every picked-up card that isn't done gets `{ idle: "60m" }` at `batch` priority to the coordinator (`default: true`). Remove it when a long quiet stretch is expected; the board won't put it back. A card with any other active trigger is waiting on purpose: the stuck watch lists it as `waiting_on_trigger` and escalates it to nobody.
+- The card shows a 🔔 chip with the count; in the drawer the chip lists them and removes one.
+
 ### Getting woken up
 You only see board events when you look. Ways to make answers on cards reach you:
 - **During a session:** run `intellagent wait --agent <you>` as a **background** command. It blocks until something arrives in your inbox, prints it and exits — your shell tool notifies you. It remembers its place, so nothing is missed between runs. Re-arm it after handling the events.
@@ -448,6 +455,7 @@ Tickets      POST …/items  …/items/bulk          GET …/items/:id  …/item
 Working      POST …/items/:id/start  …/review  …/review/decision (human or grant)  …/attention  …/finish  …/digest
              PUT …/items/:id/status              DELETE …/items/:id/attention        GET …/digest
              POST …/items/:id/questions/:qid/withdraw
+Triggers     POST …/items/:id/triggers           DELETE …/items/:id/triggers/:triggerId
 Leases       POST …/items/:id/lease  …/lease/request  …/lease/handover  …/lease/decline   DELETE …/items/:id/lease
              GET/POST/DELETE …/master            PUT …/master/status
 Requests     GET/POST …/requests                 POST …/requests/:id/reply  …/requests/:id/withdraw
