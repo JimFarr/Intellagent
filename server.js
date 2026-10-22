@@ -842,6 +842,7 @@ const NOTES = require('./lib/notes');
 const { createMetrics } = require('./lib/metrics');
 const { createAnalytics, waitingOnHuman } = require('./lib/analytics');
 const { createPrometheus } = require('./lib/prometheus');
+const { createOtlpExport } = require('./lib/otlp');
 const { createDigest } = require('./lib/digest');
 const { createFocusBoards } = require('./lib/focus');
 const { createRequests } = require('./lib/requests');
@@ -4326,10 +4327,20 @@ route('GET', '/metrics', 'Prometheus metrics (text format 0.0.4): tickets per co
   try { want = readLocal(LOCAL_PATH).metricsToken || null; } catch { /* an unreadable local.json lets nobody in */ }
   if (!want) fail(401, 'Prometheus metrics are on, but the board has no metrics token', { auth: 'metrics', code: 'UNAUTHORIZED', hint: 'The human issues one: intellagent token --metrics (the board accepts it at once). Prometheus sends it as a bearer token' });
   if (!tokenEq(tokenOf(req), want)) fail(401, 'This route needs the metrics token (Authorization: Bearer …)', { auth: 'metrics', code: 'UNAUTHORIZED', hint: 'Set authorization.credentials (or bearer_token_file) in the scrape config to the token from: intellagent token --metrics' });
-  const team = standingAgents().filter((a) => a.enabled).map((a) => a.name);
-  reply(res, 200, prometheus({ boards: [...boards.values()], agents: standingAgents(), seq: currentSeq(), version: VERSION, build: BUILD, unowned: (ctx) => { const last = lastOwners.get(ctx.id); return unownedTickets(ctx, team, last?.hash === ctx.hash ? last.owners : null).length; }, stuckTimings: STUCK_TIMINGS }), { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+  reply(res, 200, prometheus(metricsState()), { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
   return HANDLED;
 });
+function metricsState() {
+  const team = standingAgents().filter((a) => a.enabled).map((a) => a.name);
+  return { boards: [...boards.values()], agents: standingAgents(), seq: currentSeq(), version: VERSION, build: BUILD, unowned: (ctx) => { const last = lastOwners.get(ctx.id); return unownedTickets(ctx, team, last?.hash === ctx.hash ? last.owners : null).length; }, stuckTimings: STUCK_TIMINGS };
+}
+// OTLP export (INT-432): the same metrics and one span per run, pushed to a collector. Off unless metrics.otlp.
+if (M.metrics?.otlp) {
+  const otlp = createOtlpExport({ config: M.metrics.otlp, dataDir: DATA, families: () => prometheus.families(metricsState()), version: VERSION });
+  setTimeout(otlp.tick, 1000).unref(); // the collector sees the board soon after it starts, not one interval later
+  setInterval(otlp.tick, otlp.intervalMs).unref();
+  console.log(`OTLP export to ${otlp.endpoint} every ${otlp.intervalMs / 1000} s`);
+}
 route('GET', '/api/agents/roles', 'Roles and permissions available for standing agents (the short form; GET /api/roles has each role in full)', () => {
   return { roles: Object.fromEntries(roleLibrary().list().map((v) => [v.key, { label: v.label, icon: v.icon, description: v.description, perms: v.perms, listen: v.listen }])), perms: permLibrary().labels() };
 });
