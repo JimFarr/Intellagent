@@ -421,6 +421,26 @@ describe('the idle-board alarm (fake clock)', () => {
     assert.equal(alarms.length, 3);
   });
 
+  it('keeps checking every alarm-minutes when nothing waits, and alarms once work appears (INT-430)', () => {
+    const { scheduler, alarms, board } = alarmRig();
+    board.waiting = [];
+    scheduler.checkIdle();
+    advance(70 * MIN); // no run, no manual check: only the timer
+    assert.equal(alarms.length, 0);
+    board.waiting = [{ board: 'main', id: 'T-9', title: 'nine', assignee: null }];
+    advance(20 * MIN + 5000);
+    assert.deepEqual(alarms.map((a) => a.waiting), [['T-9']]);
+  });
+
+  it('the repeat back-off for the same tickets is capped at 4x the wait (INT-430)', () => {
+    const { scheduler, alarms } = alarmRig();
+    scheduler.checkIdle();
+    advance(24 * 60 * MIN);
+    const gaps = alarms.slice(1).map((a, i) => (a.at - alarms[i].at) / MIN);
+    assert.ok(alarms.length >= 10, `${alarms.length} alarms in a day`);
+    assert.ok(Math.max(...gaps) <= 81, `largest gap ${Math.max(...gaps)} min`);
+  });
+
   it('a different set of waiting tickets alarms once the builders have been quiet long enough', () => {
     const { scheduler, alarms, board, builderRuns } = alarmRig();
     scheduler.checkIdle();
