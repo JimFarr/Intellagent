@@ -2766,7 +2766,8 @@ async function sweepTriggers(ctx) {
   const nowMs = Date.now();
   tx(ctx, (events) => {
     let queue = ctx.board.triggerQueue || [];
-    const idleMinutes = Number(M.triggers?.idleMinutes) > 0 ? Number(M.triggers.idleMinutes) : 60;
+    // the same floor as a repeating trigger set through the API: each firing costs the coordinator a run
+    const idleMinutes = Number(M.triggers?.idleMinutes) > 0 ? Math.max(5, Number(M.triggers.idleMinutes)) : 60;
     // version bumped so an open board redraws the card with its bell
     for (const it of wantIdle) { it.triggers = [...(it.triggers || []).filter((x) => x.active), TRIGGERS.idleDefault({ id: rid('tr'), minutes: idleMinutes, nowIso: now() })]; it.version++; }
     for (const it of Object.values(ctx.board.items)) {
