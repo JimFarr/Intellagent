@@ -32,6 +32,14 @@ const bauhausCss = (rule, extra = '') => `.card::before { display: none; } .colu
 const BAUHAUS_POSTER = { md: 'grid', card: 0, col: 0, modal: 0, ctl: 20, bw: 2, shadow: 'hard', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'ribbon', enter: 'pop', lanes: 'solid', chips: 'pill', heads: 'caps', bg: 'none', texture: true, avatar: 'round', titleW: 700, font: "'Archivo'", display: "'Archivo'" };
 const BAUHAUS_STUDIO = { md: 'grid', card: 2, col: 2, modal: 4, ctl: 4, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'caps', bg: 'none', texture: false, avatar: 'square', titleW: 600, font: "'Inter'", display: "'Archivo'", colAlpha: 100 };
 const STUDIO_CSS = '.col-name { font-weight: 700; letter-spacing: .1em; font-size: 12px; } .c-title { font-size: 14px; } .app-name { font-weight: 700; letter-spacing: -.01em; }';
+// Clear: thin lines, no shadows or motion to speak of, sentence-case headings. The type shows as a line on top and
+// "needs you" as a bar on the left, so the two never compete for one place. Links are underlined at full strength,
+// every control shows a focus ring, and form fields get an edge of 3:1 so they can be found.
+const CLEAR_STYLE = { card: 6, col: 10, modal: 12, ctl: 6, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'normal', bg: 'none', texture: false, avatar: 'round', titleW: 500, font: "'Inter'", display: "'Inter'", colAlpha: 100 };
+const CLEAR_CSS = '.c-title { font-size: 14px; line-height: 1.45; } .col-name { font-weight: 600; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 700; }'
+  + ' .md a { border-bottom-color: currentColor; }'
+  + ' :is(button, a, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
+  + ' :is(.inp, textarea, .dd) { border-color: color-mix(in oklab, var(--muted) 70%, var(--border)); }';
 export const THEMES = {
   // The first look, now one theme among many: its key stays, so a saved pick still finds it.
   intellagent: T('Amethyst', 'dark', ['#0d0e1a', '#161829', '#1d2035', '#eceefe', '#8e93b8', '#2b2f4a', '#8b7bff', '#2fe0c4', '#ff6b8b', '#6aa8ff', '#ffc857', '#3ddc97', '#ffb454', '#ff5d73', '#7b5cff', '#00d4b0', '#ff5fa2']),
@@ -72,6 +80,13 @@ export const THEMES = {
   midnight: T('Midnight Pro', 'dark', ['#08090c', '#101116', '#15161c', '#ededf0', '#8a8f98', '#23252d', '#5e6ad2', '#4cb782', '#eb5757', '#5e6ad2', '#f2c94c', '#4cb782', '#f2994a', '#eb5757', '#5e6ad2', '#26b5ce', '#8e4ec6'],
     { card: 8, col: 14, modal: 16, ctl: 8, tape: 'none', cards: 'clean', typeInd: 'dot', attn: 'glow', enter: 'rise', lanes: 'outline', chips: 'tag', bg: 'aurora', titleW: 500, display: "'Inter'" },
     '.col-name { font-weight: 500; font-size: 13px; color: var(--muted); } .c-title { font-size: 13.5px; }'),
+  // Clear (INT-451): calm and legible. Neutral greys, one blue for what you can act on, violet only for what
+  // needs you; text 12:1 or more, secondary text 5.9:1 or more on every surface. Type and status colours were
+  // picked to stay apart under protan, deutan and tritan vision, and each also has its own shape or place.
+  clear: T('Clear', 'light', ['#f6f7f9', '#eef0f3', '#ffffff', '#16191f', '#555c68', '#ccd1d8', '#1f5fcc', '#6b3fc4', '#b8326e', '#1f5fcc', '#8f6200', '#00788c', '#946000', '#b3123f', '#9db8f0', '#c3b2ea', '#9fd0d8'],
+    CLEAR_STYLE, CLEAR_CSS),
+  'clear-dark': T('Clear Dark', 'dark', ['#15171b', '#1b1e23', '#22262c', '#e7e9ed', '#a5abb6', '#3a404b', '#7aa7ff', '#b49cff', '#f27aa5', '#7aa7ff', '#e3b14d', '#4cc3d6', '#f0b955', '#ff5c76', '#3d5a99', '#5b4a8f', '#2f6f78'],
+    CLEAR_STYLE, CLEAR_CSS),
   paper: T('Paper', 'light', ['#f3efe6', '#ece6d9', '#fbf8f2', '#2b2a26', '#7b756a', '#d9d1c0', '#b4532a', '#2f6f62', '#b4362a', '#2f5d8a', '#b98a1b', '#3d7a4a', '#c06a2b', '#b4362a', '#e8d9bd', '#d9e4d6', '#efd3c8'],
     { md: 'paper', card: 2, col: 4, modal: 6, ctl: 4, shadow: 'flat', tape: 'none', cards: 'clean', typeInd: 'top', attn: 'ribbon', enter: 'fade', lanes: 'lane', chips: 'outline', heads: 'caps', bg: 'doodles', display: "'Fraunces', serif", colAlpha: 90 },
     '.c-title { font-family: var(--display); font-size: 15.5px; } .board { background-image: repeating-linear-gradient(transparent 0 27px, color-mix(in oklab, var(--accent-2) 9%, transparent) 27px 28px); background-size: auto; } .col-name { font-style: italic; }'),
@@ -152,12 +167,12 @@ const AV_STYLE = {
   solarized: 'tint', github: 'flat', slate: 'tint', graphite: 'ring', midnight: 'ring', paper: 'ring', brutalist: 'stamp', cork: 'flat',
   blueprint: 'ring', vision: 'gem', phosphor: 'ring', swiss: 'flat', bauhaus: 'flat', soft: 'pebble', dusk: 'pebble', moss: 'pebble',
   'bauhaus-night': 'flat', 'bauhaus-mono': 'flat', 'bauhaus-noir': 'flat', 'bauhaus-studio': 'tint', 'bauhaus-studio-dark': 'tint',
-  clay: 'pebble', tide: 'tint', bloom: 'gem', iridescent: 'gem', riso: 'stamp',
+  clay: 'pebble', tide: 'tint', bloom: 'gem', iridescent: 'gem', riso: 'stamp', clear: 'tint', 'clear-dark': 'tint',
 };
 for (const [k, v] of Object.entries(AV_STYLE)) if (THEMES[k]) THEMES[k].style.avStyle ??= v;
 // …and what a column does when a ticket is dragged over it.
 const DROP_STYLE = {
-  vision: 'tint', tide: 'tint', iridescent: 'tint', liquid: 'tint', cloud: 'tint', daylight: 'tint', latte: 'tint',
+  vision: 'tint', tide: 'tint', iridescent: 'tint', liquid: 'tint', cloud: 'tint', daylight: 'tint', latte: 'tint', clear: 'tint', 'clear-dark': 'tint',
   soft: 'lift', dusk: 'lift', clay: 'lift', pop: 'lift', brutalist: 'lift', bauhaus: 'lift', riso: 'lift', aqua: 'lift',
   'bauhaus-night': 'lift', 'bauhaus-mono': 'lift', 'bauhaus-noir': 'lift', 'bauhaus-studio': 'dashed', 'bauhaus-studio-dark': 'dashed',
   blueprint: 'dashed', phosphor: 'dashed', swiss: 'dashed', paper: 'dashed', graphite: 'dashed',
@@ -173,14 +188,14 @@ const GROUP_LOOK = {
   swiss: 'spine', bauhaus: 'spine', brutalist: 'spine',
   'bauhaus-night': 'spine', 'bauhaus-mono': 'spine', 'bauhaus-noir': 'spine', 'bauhaus-studio': 'rule', 'bauhaus-studio-dark': 'rule',
   phosphor: 'foot', blueprint: 'foot',
-  github: 'rule', slate: 'rule', graphite: 'rule', midnight: 'rule', nord: 'rule',
+  github: 'rule', slate: 'rule', graphite: 'rule', midnight: 'rule', nord: 'rule', clear: 'rule', 'clear-dark': 'rule',
   dracula: 'rail', tokyo: 'rail', synthwave: 'rail', gruvbox: 'rail', pop: 'rail', iridescent: 'rail',
 };
 for (const [k, v] of Object.entries(GROUP_LOOK)) if (THEMES[k]) THEMES[k].style.groups ??= v;
 // …and the kind it is listed under in Appearance (INT-222): pick a kind, then a theme. Every theme is in one.
 export const THEME_KINDS = [
   ['bauhaus', 'Bauhaus', ['bauhaus-studio', 'bauhaus-studio-dark', 'bauhaus', 'bauhaus-night', 'bauhaus-mono', 'bauhaus-noir']],
-  ['product', 'Product', ['intellagent', 'daylight', 'slate', 'graphite', 'midnight']],
+  ['product', 'Product', ['clear', 'clear-dark', 'intellagent', 'daylight', 'slate', 'graphite', 'midnight']],
   ['editor', 'Editor classics', ['github', 'solarized', 'latte', 'nord', 'dracula', 'mocha', 'tokyo', 'gruvbox', 'rosepine']],
   ['soft', 'Soft & organic', ['cloud', 'soft', 'clay', 'tide', 'dusk', 'moss', 'bloom']],
   ['print', 'Print & retro', ['paper', 'swiss', 'brutalist', 'riso', 'pop', 'cork', 'aqua', 'blueprint', 'phosphor']],
