@@ -6461,6 +6461,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         });
       };
       return `<div class="theme-pick"><div class="theme-kinds" role="group" aria-label="Kind of theme">${kinds}</div><div class="tiles theme-tiles">${tiles}</div></div>
+        <p class="set-note">Kept in this browser. A new browser or profile starts with the default look.</p>
         <div class="look-sticky">${previewStage('style')}</div>
         <h3>Style</h3>
         <div class="choices">
