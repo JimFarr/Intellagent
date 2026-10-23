@@ -324,8 +324,15 @@ test('POST /reap on real processes: a plain one is refused, a missing one is not
       assert.ok(r.body.hint);
       return;
     }
-    await new Promise((r) => setTimeout(r, 1000)); // the process counters list a new process within a second
-    const plain = await reap(plainProc.pid);
+    // a new process shows in the Windows process list some time after it starts: ask until it is not "not found"
+    const listed = async (pid) => {
+      for (let i = 0; ; i++) {
+        const r = await reap(pid);
+        if (r.status !== 404 || i >= 150) return r;
+        await new Promise((res) => setTimeout(res, 200));
+      }
+    };
+    const plain = await listed(plainProc.pid);
     assert.equal(plain.status, 403, JSON.stringify(plain.body));
     assert.equal(plain.body.code, 'NOT_AGENTS');
     assert.match(plain.body.hint, /agent: true/);
@@ -334,7 +341,7 @@ test('POST /reap on real processes: a plain one is refused, a missing one is not
     assert.equal(missing.status, 404, JSON.stringify(missing.body));
     assert.match(missing.body.hint, /leases machine/);
     const exited = new Promise((r) => agentProc.on('exit', r));
-    const stopped = await reap(agentProc.pid);
+    const stopped = await listed(agentProc.pid);
     assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
     assert.equal(stopped.body.stopped, agentProc.pid);
     await exited;
