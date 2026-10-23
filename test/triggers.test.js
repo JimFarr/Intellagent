@@ -50,6 +50,14 @@ describe('trigger rules', () => {
     const r = T.due(q, NOW + MIN, 15 * MIN);
     assert.deepEqual([r.send.null.map((e) => e.itemId), r.keep], [['A', 'B'], []], 'a "now" takes the waiting ones with it');
   });
+  it('the idle check holds while the card waits on the human; a trigger set on purpose never does', () => {
+    const idle = T.idleDefault({ id: 'd', minutes: 60, nowIso: 'x' });
+    const mine = trig({ every: '15m' });
+    const review = { questions: [{ kind: 'review', raisedBy: 'groot' }] };
+    assert.deepEqual([T.holds(idle, review), T.holds(mine, review)], [true, false]);
+    assert.equal(T.holds(idle, { questions: [{ raisedBy: 'intellagent' }] }), false, 'the board\'s own question is not the human\'s wait');
+    assert.equal(T.holds(idle, { questions: [] }), false);
+  });
   it('the stuck watch steps aside for a card waiting on a trigger, not for the default idle check', () => {
     const it0 = { id: 'T-1', journey: { pickedUpAt: new Date(NOW - 300 * MIN).toISOString(), lastProgressAt: new Date(NOW - 90 * MIN).toISOString() }, comments: [], questions: [], asks: [] };
     const who = { owners: [], running: () => false, status: () => 'idle', sleeping: () => false };

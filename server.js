@@ -2773,6 +2773,7 @@ async function sweepTriggers(ctx) {
     for (const it of Object.values(ctx.board.items)) {
       if (!live(it)) continue;
       for (const t of TRIGGERS.activeOn(it)) {
+        if (TRIGGERS.holds(t, it)) continue;
         const machineFree = machine && Number.isFinite(machine.busyPercent) ? machine.leases === 0 && machine.busyPercent < t.when.busyBelow : null;
         const r = TRIGGERS.evaluate(t, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt), machineFree });
         Object.assign(t, r.set);
