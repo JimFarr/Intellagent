@@ -19,8 +19,9 @@ describe('trigger rules', () => {
     assert.deepEqual(T.parseWhen({ idle: '1h' }, bad), { kind: 'idle', ms: 60 * MIN });
     assert.deepEqual(T.parseWhen({ every: '15m' }, bad), { kind: 'every', ms: 15 * MIN });
     assert.throws(() => T.parseWhen({ every: '30s' }, bad), /at least 5 minutes/);
-    assert.throws(() => T.parseWhen({ idle: '2m' }, bad), /at least 5 minutes/, 'each firing costs a run: repeating ones wait 5 min');
-    assert.deepEqual(T.parseWhen({ quietFor: '1m' }, bad), { kind: 'quietFor', ms: MIN }, 'once per quiet stretch: a minute is enough');
+    assert.throws(() => T.parseWhen({ idle: '4m' }, bad), /at least 5 minutes/);
+    assert.deepEqual(T.parseWhen({ every: '5m' }, bad), { kind: 'every', ms: 5 * MIN });
+    assert.deepEqual(T.parseWhen({ quietFor: '1m' }, bad), { kind: 'quietFor', ms: MIN });
     assert.throws(() => T.parseWhen({ every: '15m', idle: '1h' }, bad), /exactly one/);
     assert.throws(() => T.parseWhen({ sometime: 'soon' }, bad), /unknown condition/);
   });
