@@ -2767,7 +2767,8 @@ async function sweepTriggers(ctx) {
   tx(ctx, (events) => {
     let queue = ctx.board.triggerQueue || [];
     const idleMinutes = Number(M.triggers?.idleMinutes) > 0 ? Number(M.triggers.idleMinutes) : 60;
-    for (const it of wantIdle) { it.triggers = [...(it.triggers || []).filter((x) => x.active), TRIGGERS.idleDefault({ id: rid('tr'), minutes: idleMinutes, nowIso: now() })]; }
+    // version bumped so an open board redraws the card with its bell
+    for (const it of wantIdle) { it.triggers = [...(it.triggers || []).filter((x) => x.active), TRIGGERS.idleDefault({ id: rid('tr'), minutes: idleMinutes, nowIso: now() })]; it.version++; }
     for (const it of Object.values(ctx.board.items)) {
       if (!live(it)) continue;
       for (const t of TRIGGERS.activeOn(it)) {

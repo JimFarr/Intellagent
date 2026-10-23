@@ -43,10 +43,10 @@ async function scrape(s, token = TOKEN) {
 }
 
 // A board with metrics on and a metrics token (and a user token, to prove the metrics token opens nothing else).
-async function board({ user = false } = {}) {
+async function board({ user = false, agents } = {}) {
   const dir = tmp('ia-prom-');
   fs.writeFileSync(path.join(dir, 'local.json'), JSON.stringify({ ...(user ? { userToken: 'user-secret' } : {}), metricsToken: TOKEN }));
-  return startServer({ dir, manifest: { metrics: { prometheus: true } } });
+  return startServer({ dir, agents, manifest: { metrics: { prometheus: true } } });
 }
 
 describe('GET /metrics: switch and token', () => {
@@ -297,6 +297,18 @@ describe('run records, read incrementally', () => {
       assert.equal(get(m, 'intellagent_agent_usage_limited_total', { agent: 'drax' }), 1);
       assert.equal(get(m, 'intellagent_agent_tokens_total', { agent: 'drax', model: 'opus', kind: 'input' }), 20);
       assert.equal(get(m, 'intellagent_agent_run_seconds_count', { agent: 'drax' }), 2);
+    } finally { await s.stop(); }
+  });
+});
+
+describe('agent status (INT-426)', () => {
+  it('every agent has a series for each of the eight statuses the Grafana panel maps, exactly one of them 1', async () => {
+    const s = await board({ agents: { agents: { groot: { role: 'builder', enabled: false } } } });
+    try {
+      const rows = parse((await scrape(s)).text).filter((x) => x.name === 'intellagent_agent_status' && x.labels.agent === 'groot');
+      const panel = ['idle', 'running', 'waiting', 'throttled', 'failed', 'paused', 'queued', 'retrying'];
+      assert.deepEqual(panel.filter((st) => !rows.some((r) => r.labels.status === st)), [], 'a status the panel maps is never exported');
+      assert.equal(rows.filter((r) => r.value === 1).length, 1);
     } finally { await s.stop(); }
   });
 });

@@ -918,6 +918,66 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const ts = (it.triggers || []).filter((t) => t.active);
     return ts.length ? `<span class="chip trig ${cls}" data-trig title="Triggers|${esc(ts.map(triggerText).join('\n'))}">${icon('bell', 'sm')}${ts.length}</span>` : '';
   }
+  // The drawer's triggers tab: the card's triggers, each removable, and a builder for a new one
+  const TRIG_KINDS = [
+    ['machine', 'Machine free', 'When the PC is free for a timing run: no machine lease held and the processor quiet'],
+    ['idle', 'Idle', 'When the card has been idle this long, then again every time it stays idle that long'],
+    ['quietFor', 'Quiet for', 'Once, when the card has been quiet this long; again after it moves and goes quiet again'],
+    ['every', 'Every', 'Every time this much time passes'],
+    ['until', 'At', 'Once, at this time'],
+  ];
+  const trigBuilderHTML = () => `<div class="trg-new"><div class="section-head">${icon('plus', 'sm')}<span>New trigger</span><span class="rule"></span></div>
+    <div class="seg trg-kind">${TRIG_KINDS.map(([k, label, tipText], i) => `<button class="${i === 1 ? 'on' : ''}" data-k="${k}" title="${esc(label)}|${esc(tipText)}">${esc(label)}</button>`).join('')}</div>
+    <div class="trg-row"><input class="inp trg-dur" placeholder="60m, 2h, 1d" value="60m" spellcheck="false"><input class="inp trg-at" type="datetime-local" hidden>
+      <span class="trg-lbl">wake</span><button class="dd trg-wake" title="Who is woken|The coordinator unless you pick an agent">Coordinator${icon('chev', 'sm')}</button>
+      <div class="seg mini trg-prio"><button class="on" data-p="batch" title="Batch|Sent with others, within the batch window (15 min)">Batch</button><button data-p="now" title="Now|Sent at the next sweep, within a couple of minutes">Now</button></div></div>
+    <input class="inp trg-note" maxlength="300" placeholder="Note for whoever is woken (optional)">
+    <div class="trg-row"><span class="trg-hint">${esc(TRIG_KINDS[1][2])}</span><button class="btn primary sm trg-add">${icon('bell', 'sm')}Add trigger</button></div></div>`;
+  function renderTriggers(m, it) {
+    const box = $('.tab-triggers', m.root);
+    if (!box) return;
+    const ts = (it.triggers || []).filter((t) => t.active);
+    $('.t-n', m.root).textContent = ts.length || '';
+    $('.trg-list', box).innerHTML = ts.length ? ts.map((t) => `<div class="trg">${icon(t.when?.kind === 'machine' ? 'activity' : 'clock', 'sm')}<div><div>${esc(triggerText(t))}</div>
+      <div class="trg-meta">${t.default ? 'the board’s idle check' : `by ${esc(t.by)}`} · ${rel(t.at)}${t.firedAt ? ` · fired ${rel(t.firedAt)}` : ''}</div></div>
+      ${m.archived ? '' : `<button class="icon-x" data-trg-del="${esc(t.id)}" title="Remove|${t.default ? 'The board won’t put the idle check back on this card' : 'Remove this trigger'}">${icon('x', 'sm')}</button>`}</div>`).join('')
+      : `<div class="empty-note">${icon('bell')}<span>Nothing set. A trigger wakes an agent when its condition holds.</span></div>`;
+    $('.trg-new', box).hidden = !!m.archived;
+    if (m.trgWired) return;
+    m.trgWired = true;
+    const pick = { kind: 'idle', priority: 'batch', wake: null };
+    box.addEventListener('click', async (e) => {
+      const del = e.target.closest('[data-trg-del]');
+      const kind = e.target.closest('.trg-kind button');
+      const prio = e.target.closest('.trg-prio button');
+      if (del) {
+        try { await api('DELETE', I(m.id, `/triggers/${encodeURIComponent(del.dataset.trgDel)}`)); scheduleRefresh(0); } catch (err) { toast(err.message, { kind: 'error' }); }
+      } else if (kind) {
+        pick.kind = kind.dataset.k;
+        $$('.trg-kind button', box).forEach((b) => b.classList.toggle('on', b === kind));
+        $('.trg-dur', box).hidden = pick.kind === 'machine' || pick.kind === 'until';
+        $('.trg-at', box).hidden = pick.kind !== 'until';
+        $('.trg-hint', box).textContent = TRIG_KINDS.find(([k]) => k === pick.kind)[2];
+      } else if (prio) {
+        pick.priority = prio.dataset.p;
+        $$('.trg-prio button', box).forEach((b) => b.classList.toggle('on', b === prio));
+      } else if (e.target.closest('.trg-wake')) {
+        const btn = $('.trg-wake', box);
+        const set = (name) => { pick.wake = name; btn.innerHTML = `${esc(name || 'Coordinator')}${icon('chev', 'sm')}`; };
+        menu(btn, [{ label: 'Coordinator', icon: 'bot', cls: pick.wake ? '' : 'on', run: () => set(null) },
+          ...Object.values(state.standing || {}).filter((a) => !a.helper).map((a) => ({ label: a.name, icon: 'bot', cls: a.name === pick.wake ? 'on' : '', run: () => set(a.name) }))]);
+      } else if (e.target.closest('.trg-add')) {
+        const at = $('.trg-at', box).value;
+        const when = pick.kind === 'machine' ? { machine: 'exclusive' } : pick.kind === 'until' ? { until: at ? new Date(at).toISOString() : '' } : { [pick.kind]: $('.trg-dur', box).value.trim() };
+        const note = $('.trg-note', box).value.trim();
+        try {
+          await api('POST', I(m.id, '/triggers'), { when, priority: pick.priority, ...(pick.wake ? { wake: pick.wake } : {}), ...(note ? { note } : {}) });
+          $('.trg-note', box).value = '';
+          scheduleRefresh(0);
+        } catch (err) { toast(err.message, { kind: 'error' }); }
+      }
+    });
+  }
   function showCost(m) {
     // asked at most once a minute per ticket, answered or not, so a failed fetch can't refill the modal in a loop
     if (m.create || (m.costFor === m.id && Date.now() - m.costAt < COST_KEEP_MS)) return;
@@ -2690,10 +2750,11 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       <div class="m-sub"></div>
       ${shown('description') ? `<div class="desc"><div class="md desc-view ${editDesc ? 'editable' : ''}" data-ph="${editDesc ? 'Description…' : '—'}"></div><div class="desc-edit" hidden>${tboxHTML({ mono: true, okTitle: 'Save (Ctrl+Enter)', hint: 'Ctrl+Enter · Esc' })}</div></div>` : ''}
       ${shown('attachments') ? `<div class="section"><div class="section-head">${icon('clip', 'sm')}<span>${esc(bi('attachments').label)}</span><span class="att-n"></span><span class="rule"></span></div><div class="atts"></div></div>` : ''}
-      <nav class="tabs"><button data-t="comments" class="on">${icon('msg', 'sm')}<span class="n c-n">0</span></button><button data-t="activity">${icon('activity', 'sm')}</button></nav>
+      <nav class="tabs"><button data-t="comments" class="on">${icon('msg', 'sm')}<span class="n c-n">0</span></button><button data-t="activity">${icon('activity', 'sm')}</button>${m.create ? '' : `<button data-t="triggers" title="Triggers|What this card waits on, and who it wakes">${icon('bell', 'sm')}<span class="n t-n"></span></button>`}</nav>
       <div class="tab-comments"><div class="cmts"></div>
         <div class="cmt-compose">${tboxHTML({ ph: 'Comment…', okIcon: 'send', okTitle: 'Send (Ctrl+Enter)', tools: `<label class="tb-btn" title="Attach">${icon('clip')}<input type="file" multiple hidden></label>` })}</div></div>
-      <div class="tab-activity" hidden></div>`;
+      <div class="tab-activity" hidden></div>
+      ${m.create ? '' : `<div class="tab-triggers" hidden><div class="trg-list"></div>${trigBuilderHTML()}</div>`}`;
     wireModalBody(m);
     renderRail(m);
     fillModal(m, true);
@@ -2888,6 +2949,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         $$('.tabs button', main).forEach((b) => b.classList.toggle('on', b === t));
         $('.tab-comments', main).hidden = m.tab !== 'comments';
         $('.tab-activity', main).hidden = m.tab !== 'activity';
+        const trg = $('.tab-triggers', main);
+        if (trg) trg.hidden = m.tab !== 'triggers';
         if (m.tab === 'activity') loadActivity(m);
       };
     }
@@ -3036,14 +3099,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const col = colById(it.columnId);
     const rx = $('.m-reacts', main) || (() => { const d = el('<div class="m-reacts"></div>'); $('.m-sub', main).after(d); wireReactions(d, m.id); return d; })();
     rx.innerHTML = reactionsHTML(it.reactions, { add: !m.archived, notes: it.reactionNotes });
-    $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${nameHTML(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}${m.create ? '' : costChip(it.id)}${m.create || m.archived ? '' : triggerChip(it, 'm-trig')}`;
-    // the triggers chip opens the list; picking one removes it
-    $('.m-sub', main).onclick = (e) => {
-      const chip = e.target.closest('[data-trig]');
-      if (!chip) return;
-      menu(chip, (it.triggers || []).filter((t) => t.active).map((t) => ({ label: `Remove: ${triggerText(t)}`, icon: 'x',
-        run: async () => { try { await api('DELETE', I(it.id, `/triggers/${encodeURIComponent(t.id)}`)); scheduleRefresh(0); } catch (err) { toast(err.message, { kind: 'error' }); } } })));
-    };
+    $('.m-sub', main).innerHTML = `${avatar(it.author)}<span>${nameHTML(it.author?.name)}</span><span>·</span><span title="${esc(it.createdAt)}">${rel(it.createdAt)}</span>${col ? `<span>·</span><span class="chip" style="color:${esc(col.color)}">${esc(col.name)}</span>` : ''}${m.archived ? `<span class="chip">${icon('archive', 'sm')}${esc(rel(it.archivedAt))}</span>` : ''}${m.create ? '' : costChip(it.id)}`;
+    if (!m.create) renderTriggers(m, it);
     showCost(m);
 
     // needs-you banner

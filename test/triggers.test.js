@@ -18,7 +18,9 @@ describe('trigger rules', () => {
     assert.deepEqual(T.parseWhen({ machine: 'exclusive' }, bad), { kind: 'machine', busyBelow: 15 });
     assert.deepEqual(T.parseWhen({ idle: '1h' }, bad), { kind: 'idle', ms: 60 * MIN });
     assert.deepEqual(T.parseWhen({ every: '15m' }, bad), { kind: 'every', ms: 15 * MIN });
-    assert.throws(() => T.parseWhen({ every: '30s' }, bad), /at least a minute/);
+    assert.throws(() => T.parseWhen({ every: '30s' }, bad), /at least 5 minutes/);
+    assert.throws(() => T.parseWhen({ idle: '2m' }, bad), /at least 5 minutes/, 'each firing costs a run: repeating ones wait 5 min');
+    assert.deepEqual(T.parseWhen({ quietFor: '1m' }, bad), { kind: 'quietFor', ms: MIN }, 'once per quiet stretch: a minute is enough');
     assert.throws(() => T.parseWhen({ every: '15m', idle: '1h' }, bad), /exactly one/);
     assert.throws(() => T.parseWhen({ sometime: 'soon' }, bad), /unknown condition/);
   });
@@ -55,6 +57,16 @@ describe('trigger rules', () => {
     assert.deepEqual(STUCK.assess({ ...it0, triggers: [idle, trig({ machine: 'exclusive' })] }, NOW, who), { reason: 'waiting_on_trigger' });
     assert.equal(STUCK.forCoordinator({ since: new Date(NOW - 999 * MIN).toISOString(), reason: 'waiting_on_trigger' }, NOW), false);
   });
+});
+
+it('the woken agent\'s prompt lists each card: why, the note, its assignee', () => {
+  const { eventLine } = require('../lib/agents/prompt');
+  const line = eventLine({ type: 'trigger.fired', wake: 'gamora', cards: [
+    { id: 'LNZ-72', title: 'Timing run', why: 'the machine is free', note: 'run the quiet benchmark', priority: 'now', owner: 'natasha' },
+    { id: 'LNZ-35', title: 'Heat solver', why: 'idle for 61 min', note: null, priority: 'batch', owner: null }] });
+  assert.match(line, /^trigger\.fired — /);
+  assert.match(line, /· LNZ-72 "Timing run" — the machine is free \(note: run the quiet benchmark\) \[assigned to natasha\] \[now\]/);
+  assert.match(line, /· LNZ-35 "Heat solver" — idle for 61 min$/m);
 });
 
 describe('triggers on a real board', () => {

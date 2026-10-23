@@ -175,13 +175,9 @@ async function startBackground(mp, url) {
   if (await alive(url)) return;
   const data = path.join(path.dirname(mp), 'data');
   fs.mkdirSync(data, { recursive: true });
-  const log = fs.openSync(path.join(data, 'server.log'), 'a');
-  const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
-    cwd: path.dirname(mp), detached: true, windowsHide: true, stdio: ['ignore', log, log],
-    env: { ...process.env, INTELLAGENT_MANIFEST: mp },
-  });
-  child.unref();
-  for (let i = 0; i < 50; i++) { if (await alive(url)) return; await new Promise((res) => setTimeout(res, 100)); }
+  // outside whoever runs this command, so the board doesn't end with their session (lib/launch.js)
+  require('../lib/launch').launch({ command: process.execPath, args: [path.join(ROOT, 'server.js')], cwd: path.dirname(mp), env: { INTELLAGENT_MANIFEST: mp }, log: path.join(data, 'server.log') });
+  for (let i = 0; i < 200; i++) { if (await alive(url)) return; await new Promise((res) => setTimeout(res, 100)); }
   console.error(`The board did not start; see ${path.join(data, 'server.log')}`);
   process.exit(1);
 }
@@ -871,7 +867,7 @@ function autostart() {
   const project = path.basename(dir) || 'board';
   const id = `intellagent-${project.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   if (process.platform !== 'win32') {
-    const line = `@reboot cd "${dir}" && "${process.execPath}" "${__filename}" start`;
+    const line = `@reboot cd "${dir}" && "${process.execPath}" "${__filename}" start --background`;
     console.log(sub === 'on' ? `Add this line with \`crontab -e\` (or a launchd/systemd unit):\n\n  ${line}\n` : 'Autostart is managed by your crontab/launchd/systemd on this OS.');
     return;
   }
@@ -883,7 +879,7 @@ function autostart() {
       `' Starts the Intellagent board for ${dir} at login (hidden). Remove with: intellagent autostart off`,
       'Set sh = CreateObject("WScript.Shell")',
       `sh.CurrentDirectory = "${dir}"`,
-      `sh.Run "${q(process.execPath)} ${q(__filename)} start", 0, False`,
+      `sh.Run "${q(process.execPath)} ${q(__filename)} start --background", 0, False`,
     ].join('\r\n');
     fs.writeFileSync(file, vbs);
     console.log(`On: the board starts hidden when you log in.\n  ${file}`);
