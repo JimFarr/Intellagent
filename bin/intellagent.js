@@ -243,7 +243,7 @@ function tokenCmd() {
     return;
   }
   if (local.userToken && !f.rotate) {
-    console.log(`This board already has a user token (${path.relative(process.cwd(), file) || file}).\n  intellagent open           signs this browser in; it stays signed in by itself\n  intellagent token --rotate replaces it (signs every browser out)`);
+    console.log(`This board already has a user token (${path.relative(process.cwd(), file) || file}).\n  intellagent open           signs this browser in. A browser stays signed in by itself.\n  intellagent token --rotate replaces it (signs every browser out)`);
     return;
   }
   updateLocal(file, (l) => { l.userToken = crypto.randomBytes(18).toString('base64url'); });
