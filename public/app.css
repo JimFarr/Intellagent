@@ -1463,6 +1463,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .mx { grid-column: 2; display: flex; gap: 3px; font: 10px var(--mono); color: var(--muted); margin-top: 4px; }
 .mx span { flex: 1; min-width: 0; height: 14px; position: relative; }
 .mx span:not(:empty) { overflow: visible; white-space: nowrap; }
+.mx span:last-child:not(:empty) { direction: rtl; } /* the last label grows leftwards, not out of the chart */
 @media (max-width: 480px) { .mx { font-size: 9px; } .mday .mv { font-size: 8.5px; } }
 .magent { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
 .magent b { margin-left: auto; font-variant-numeric: tabular-nums; }

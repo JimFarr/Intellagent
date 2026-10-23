@@ -1031,14 +1031,15 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         <p class="mcap">Median time a ticket stays in each column, with how many are there now and the oldest. Bars are scaled to the longest column.</p>
         ${m.columns.map((c) => `<div class="mbar"><span class="mb-name"><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span class="mb-track"><b style="width:${((c.medianStayHours || 0) / maxStay) * 100}%;background:${esc(c.color)}"></b></span><span class="mb-val">${dur(c.medianStayHours)}</span><span class="mb-sub">${c.count} now${c.oldestHours != null ? ` · oldest ${dur(c.oldestHours)}` : ''}</span></div>`).join('')}</div>
       <div class="section"><div class="section-head">${icon('check', 'sm')}<span>Done per day</span><span class="rule"></span></div>
-        <p class="mcap">Tickets that reached ${esc(state.board.columns.at(-1)?.name || 'the last column')}, one bar per day, last ${m.days} days. Today is the bar on the right.</p>
+        <p class="mcap">Tickets that reached ${esc(state.board.columns.at(-1)?.name || 'the last column')}, one bar per 24 hours, last ${m.days} days, each named by the day it ends. Today is the bar on the right.</p>
         ${(() => {
           const n = m.perDay.length;
           const top = Math.max(1, ...m.perDay);
-          const dayOf = (i) => new Date(Date.now() - (n - 1 - i) * 86_400_000);
+          // the server's buckets are 24 hours each from m.from; a bar is named by the day its window ends (INT-375)
+          const dayOf = (i) => new Date(Date.parse(m.from) + (i + 1) * 86_400_000 - 1);
           const long = (d) => d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
           const short = (d) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-          const every = n > 10 ? 7 : 1;
+          const every = n > 10 ? 10 : 1;
           return `<div class="mchart" role="img" aria-label="Tickets done per day, last ${m.days} days: ${m.perDay.reduce((a, b) => a + b, 0)} in total, at most ${top} in one day">
             <span class="my-axis"><b>${top}</b><b>0</b></span>
             <div class="mdays">${m.perDay.map((v, i) => `<span class="mday" title="${esc(long(dayOf(i)))}: ${v} done"><i style="height:${(v / top) * 100}%"></i><b class="mv">${v || ''}</b></span>`).join('')}</div>
