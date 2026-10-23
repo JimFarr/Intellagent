@@ -3890,6 +3890,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     if (ev.type === 'item.moved' && ev.columnId === 'done') refreshCodeState();
     if (ev.type === 'app.renamed') { state.app.name = ev.to; renderHeader(); }
     if (ev.type === 'profile.updated') refreshProfiles();
+    if (ev.type?.startsWith('memory.')) $('#agentDrawer .mem')?._reload?.();
     if (ev.type === 'board.created' || ev.type === 'board.updated' || ev.type?.startsWith('item.')) refreshBoards();
     if (ev.board === state.boardId && ev.hash && ev.hash !== state.hash && !applySync(ev)) scheduleRefresh();
     const m = state.modal;
@@ -4942,6 +4943,72 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     }, (e) => { $('.ly-list', root).innerHTML = `<div class="empty-note">${esc(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message)}</div>`; });
     return root;
   }
+  /* An agent's memory (INT-407, on INT-243's and INT-402's /api/profiles/<name>/memory): its entries, the human's
+     first, and the notes colleagues suggested, which the human accepts (reworded, pinned) or declines with a reason. */
+  function memorySection(name) {
+    const url = `/api/profiles/${encodeURIComponent(name)}/memory`;
+    const root = el(`<div class="section mem"><div class="section-head">${icon('pin', 'sm')}<span>Memory</span><span class="rule"></span></div><div class="mem-body"><div class="act sk" aria-hidden="true"><i></i><span></span><time></time></div></div></div>`);
+    const fail = (e) => toast(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message, { kind: 'error' });
+    const dirty = () => $$('textarea, input[type=text]', root).some((x) => x.value !== x.defaultValue);
+    const view = (m) => {
+      const mine = m.entries.slice().sort((a, b) => (b.source === 'human') - (a.source === 'human') || !!b.pinned - !!a.pinned);
+      const chips = (x) => `${x.source === 'human' ? '<span class="mini-chip">you</span>' : ''}${x.pinned ? `<span class="mini-chip">${icon('pin', 'sm')}pinned</span>` : ''}${x.suggestedBy ? `<span class="mini-chip">suggested by ${esc(nameOf(x.suggestedBy))}</span>` : ''}${x.from ? `<span class="mini-chip link" data-open="${esc(x.from)}">${esc(x.from)}</span>` : ''}`;
+      const entry = (x) => `<div class="mem-row" data-mem="${esc(x.id)}"><div class="mem-text">${esc(x.text)}</div><div class="mem-meta">${chips(x)}<span class="grow"></span>
+        <button class="btn sm ghost" data-mem-pin aria-pressed="${!!x.pinned}" title="${x.pinned ? 'Unpin|The agent can change or remove it again' : 'Pin|The agent can no longer change or remove it'}">${icon('pin', 'sm')}<span>${x.pinned ? 'Unpin' : 'Pin'}</span></button>
+        <button class="btn sm ghost" data-mem-edit>${icon('pencil', 'sm')}<span>Edit</span></button>
+        <button class="btn sm ghost" data-mem-del>${icon('trash', 'sm')}<span>Remove</span></button></div></div>`;
+      const sug = (s) => `<div class="mem-row sug" data-sug="${esc(s.id)}"><div class="mem-meta"><span class="mini-chip">${avatar({ kind: 'agent', name: s.by }, 'sm')}${esc(nameOf(s.by))}</span>${s.from ? `<span class="mini-chip link" data-open="${esc(s.from)}">${esc(s.from)}</span>` : ''}<span class="muted">${rel(s.at)}</span></div>
+        ${s.why ? `<div class="mem-why">${esc(s.why)}</div>` : ''}
+        <textarea class="inp mem-edit" rows="3" maxlength="1000" aria-label="Note text, from ${esc(nameOf(s.by))}">${esc(s.text)}</textarea>
+        <div class="mem-meta"><label class="mem-pinbox"><input type="checkbox" data-sug-pin> Pin</label><span class="grow"></span>
+          <input class="inp mem-reason" type="text" maxlength="300" placeholder="Why not (goes back to ${esc(nameOf(s.by))})" aria-label="Reason for declining" hidden>
+          <button class="btn sm ghost" data-sug-decline>${icon('x', 'sm')}<span>Decline</span></button><button class="btn sm primary" data-sug-accept>${icon('check', 'sm')}<span>Accept</span></button></div></div>`;
+      return `<p class="perm-intro ly-intro"><label class="mem-pinbox"><input type="checkbox" data-mem-on ${m.on ? 'checked' : ''}> Memory on</label> · ${m.used.toLocaleString()} of ${m.cap.toLocaleString()} characters${m.on ? '' : '. Off: its brief shows none and it cannot write'}</p>
+        ${m.suggestions.length ? `<div class="mem-sub">Suggested by colleagues</div><div class="ly-list">${m.suggestions.map(sug).join('')}</div>` : ''}
+        <div class="ly-list">${mine.length ? mine.map(entry).join('') : '<div class="empty-note">Nothing remembered yet</div>'}</div>`;
+    };
+    const load = async () => {
+      try { $('.mem-body', root).innerHTML = view(await api('GET', url)); } catch (e) { $('.mem-body', root).innerHTML = `<div class="empty-note">${esc(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message)}</div>`; }
+    };
+    // a live memory.* event reloads, unless someone is mid-edit
+    root._reload = () => { if (!dirty()) load(); };
+    const call = async (method, path, body) => { try { await api(method, url + path, body); await load(); } catch (e) { fail(e); } };
+    root.addEventListener('change', (e) => { if (e.target.matches('[data-mem-on]')) api('PUT', url, { on: e.target.checked }).then(load, (err) => { fail(err); load(); }); });
+    root.addEventListener('click', (e) => {
+      const t = e.target;
+      const row = t.closest('[data-mem]'), sug = t.closest('[data-sug]');
+      const open = t.closest('[data-open]');
+      if (open) { openItem(open.dataset.open); return; }
+      const pin = row && t.closest('[data-mem-pin]');
+      if (pin) { call('PATCH', `/${row.dataset.mem}`, { pinned: pin.getAttribute('aria-pressed') !== 'true' }); return; }
+      const del = row && t.closest('[data-mem-del]');
+      if (del) {
+        if (del.dataset.armed !== '1') { del.dataset.armed = '1'; $('span', del).textContent = 'Click to confirm'; setTimeout(() => { if (del.isConnected) { del.dataset.armed = ''; $('span', del).textContent = 'Remove'; } }, 3000); return; }
+        call('DELETE', `/${row.dataset.mem}`); return;
+      }
+      if (row && t.closest('[data-mem-edit]')) {
+        const box = $('.mem-text', row);
+        box.outerHTML = `<textarea class="inp mem-edit" rows="3" maxlength="1000" aria-label="Edit note">${esc(box.textContent)}</textarea>`;
+        $('.mem-meta', row).innerHTML = '<span class="grow"></span><button class="btn sm ghost" data-mem-cancel>Cancel</button><button class="btn sm primary" data-mem-save>Save</button>';
+        $('textarea', row).focus();
+        return;
+      }
+      if (row && t.closest('[data-mem-cancel]')) { load(); return; }
+      if (row && t.closest('[data-mem-save]')) { call('PATCH', `/${row.dataset.mem}`, { text: $('textarea', row).value.trim() }); return; }
+      if (sug && t.closest('[data-sug-accept]')) { call('POST', `/suggestions/${sug.dataset.sug}/accept`, { text: $('textarea', sug).value.trim(), pinned: $('[data-sug-pin]', sug).checked }); return; }
+      if (sug && t.closest('[data-sug-decline]')) {
+        const r = $('.mem-reason', sug);
+        if (r.hidden) { r.hidden = false; r.focus(); return; }
+        call('POST', `/suggestions/${sug.dataset.sug}/decline`, { reason: r.value.trim() || 'No reason given' });
+      }
+    });
+    root.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.matches('.mem-reason')) $('[data-sug-decline]', e.target.closest('[data-sug]')).click();
+      if (e.key === 'Escape' && e.target.matches('.mem-edit') && e.target.closest('[data-mem]')) { e.stopPropagation(); load(); }
+    });
+    load();
+    return root;
+  }
   /* The permission library (INT-244, on INT-228's /api/permissions): every permission an agent can hold, grouped
      by kind. Built-ins and powers are read-only; the human adds, edits and removes their own. A verbal permission
      is only words, so it looks different everywhere: dashed, a speech mark instead of a lock, and the warning. */
@@ -5844,6 +5911,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   async function openAgent(name) {
     const body = openDrawer('agentDrawer', state.profiles[name]?.label || name, 'bot'); // named as the hero names it (INT-269)
     let spec = null; // the Speciality editor survives redraws (a half-typed edit must not vanish)
+    let mem = null; // and the memory panel
     let layers = null; // so do the context layers, with whichever ones are open
     let showDone = false; // Assigned lists open tickets; the done ones wait behind "N done — show" (INT-269)
     // Open tickets grouped by column in board order, then one line for the done ones.
@@ -5872,7 +5940,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         ${p.description || state.standing[name]?.description ? `<div class="md ah-desc">${md(p.description || state.standing[name].description)}</div>` : ''}
         ${state.standing[name] ? standingSection(state.standing[name]) : ''}
         ${state.standing[name] ? '<div class="spec-slot" data-keep="spec"></div>' : ''}
-        ${p.kind === 'user' ? '' : '<div class="layers-slot" data-keep="layers"></div>'}
+        ${p.kind === 'user' ? '' : '<div class="layers-slot" data-keep="layers"></div><div class="mem-slot" data-keep="mem"></div>'}
         ${section('Holding', 'clock', (pres?.leases || []).map((l) => chip(l.id, 'clock')).join(''))}
         ${assignedSection(items.filter((i) => i.assignee === name), chip)}
         ${section('Listening to', 'radio', Object.entries(state.listeners).filter(([, ns]) => ns.includes(name)).map(([id]) => chip(id, 'radio')).join(''))}
@@ -5884,6 +5952,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       if (slot) { spec ||= specialityEditor(name); spec.dataset.keep = 'spec'; slot.replaceWith(spec); }
       const lslot = $('.layers-slot', body);
       if (lslot) { layers ||= layersSection(name); layers.dataset.keep = 'layers'; lslot.replaceWith(layers); }
+      const mslot = $('.mem-slot', body);
+      if (mslot) { mem ||= memorySection(name); mem.dataset.keep = 'mem'; mslot.replaceWith(mem); }
     };
     draw();
     body.addEventListener('agent-saved', () => draw());

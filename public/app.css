@@ -2392,6 +2392,16 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 /* Context layers on the agent page (INT-277): one row per layer, its size and share of the whole */
 .ly-list { display: grid; gap: 6px; }
+.mem-row { display: grid; gap: 6px; padding: 8px 10px; border-radius: var(--r-ctl); border: 1px solid color-mix(in oklab, var(--border) 85%, transparent); background: color-mix(in oklab, var(--surface) 70%, transparent); }
+.mem-row.sug { border-style: dashed; border-color: color-mix(in oklab, var(--accent) 55%, var(--border)); }
+.mem-text, .mem-why { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.mem-why { color: var(--muted); font-size: 12.5px; }
+.mem-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.mem-edit { width: 100%; resize: vertical; font: inherit; }
+.mem-reason { flex: 1 1 160px; min-width: 0; }
+.mem-sub { margin: 8px 2px 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.mem-pinbox { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.mem-body > .ly-list { margin-bottom: 10px; }
 .ly { border-radius: var(--r-ctl); border: 1px solid color-mix(in oklab, var(--border) 85%, transparent); background: color-mix(in oklab, var(--surface) 70%, transparent); }
 .ly > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; list-style: none; min-width: 0; font-size: 13px; }
 .ly > summary::-webkit-details-marker { display: none; }
