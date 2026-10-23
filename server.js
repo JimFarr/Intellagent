@@ -1607,11 +1607,14 @@ function addComment(ctx, id, d, actor) {
     // Without an @mention it goes to whoever worked the ticket last.
     const intent = d.intent === 'explain' ? 'explain' : null;
     const c = { id: rid('c'), author: actor, body: str(d.body, 20_000), createdAt: now(), ...(atts.length ? { attachments: atts } : {}), ...(intent ? { intent } : {}), ...(d.replyTo ? { replyTo: str(d.replyTo, 40) } : {}) };
+    // an agent on probation mentions nobody: its introduction reaches the human, not other agents (INT-233).
+    // Kept on the comment, so the work lists skip it too, also once the agent is accepted (INT-409).
+    const quiet = actor.kind === 'agent' && !!standing?.probationOf(actor.name);
+    if (quiet) c.mentionsNobody = true;
     item.comments.push(c);
     item.version++;
     item.updatedAt = c.createdAt;
-    // an agent on probation mentions nobody: its introduction reaches the human, not other agents (INT-233)
-    const mentions = actor.kind === 'agent' && standing?.probationOf(actor.name) ? [] : intent ? explainTargets(item, c) : mentionsIn(c.body);
+    const mentions = quiet ? [] : intent ? explainTargets(item, c) : mentionsIn(c.body);
     events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(c.body), attachments: atts.length, ...(intent ? { intent } : {}) }, mentions, ...(intent ? { intent } : {}) }));
     // An agent that names another agent without @ has alerted nobody: say so in the reply (not stored), so it
     // can comment again with the @mention if it meant to.
