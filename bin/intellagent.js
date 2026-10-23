@@ -243,7 +243,7 @@ function tokenCmd() {
     return;
   }
   if (local.userToken && !f.rotate) {
-    console.log(`This board already has a user token (${path.relative(process.cwd(), file) || file}).\n  intellagent open           signs the browser in\n  intellagent token --rotate replaces it (signs every browser out)`);
+    console.log(`This board already has a user token (${path.relative(process.cwd(), file) || file}).\n  intellagent open           signs this browser in; it stays signed in by itself\n  intellagent token --rotate replaces it (signs every browser out)`);
     return;
   }
   updateLocal(file, (l) => { l.userToken = crypto.randomBytes(18).toString('base64url'); });
@@ -1034,7 +1034,7 @@ async function sandboxCmd() {
   const r = await sb.start(mp, String(name), { from: String(f.from || 'main'), seed: f.seed ? String(f.seed) : null, fresh: !!f.fresh, keep: f.keep === undefined ? null : f.keep !== 'false', idleHours: f['idle-hours'] === undefined ? null : Number(f['idle-hours']) }).catch((e) => e.code ? sandboxFail(e) : Promise.reject(e));
   if (f.json) { console.log(JSON.stringify(r, null, 2)); return; }
   console.log(`${name}'s sandbox is running at ${r.url}  (${r.seed === 'kept' ? 'data kept' : `seeded: ${r.seed}${r.from ? `, from the board "${r.from}": its columns, fields and rules, no tickets` : ''}`}; code from ${r.source})`);
-  console.log(`  sign in as its human:  ${r.signIn}`);
+  console.log(`  sign-in link for its human:  ${r.signIn}`);
   console.log(`  talk to it as an agent: intellagent brief --url ${r.url}   (or INTELLAGENT_URL=${r.url})`);
   console.log('  standing agents never run in a sandbox; your real board is untouched.');
   console.log(`  stop it: intellagent sandbox stop ${name}`);
@@ -1056,7 +1056,7 @@ const HELP = `intellagent — a kanban for you and your agents
   stop             stop a board started in the background
   restart          stop this project's board whoever started it, then start it again detached and print its address
   brief            what an agent needs to start: next steps, columns, templates, rules, calls   --agent --via cli|mcp|http
-  open [--print]   open the board in a browser signed in, and print the sign-in link (--print: only print it)
+  open [--print]   open the board in a browser, signed in, and print the sign-in link, which signs in another browser (--print: only print it)
   merge ID         land an approved ticket's commits from its agent's worktree branch on main
   project [PATH]   show, or set, the folder with the code (a board kept outside the project)
   link BOARD       in a project: use the board kept at BOARD (its folder or manifest)

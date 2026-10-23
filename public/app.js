@@ -5601,7 +5601,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     tokenPrompt = new Promise((resolve) => {
       const root = el(`<div class="scrim" style="z-index:700"><div class="modal token-modal pop">${icon('lock', 'big')}<div style="font:700 16px var(--display)">${esc(state.app.name)}</div>
         <div class="row2"><input class="inp" type="password" placeholder="Access token" autocomplete="off"><button class="btn primary">${icon('check')}</button></div>
-        <div class="token-hint">Ask the board's human for a sign-in link</div></div></div>`);
+        <div class="token-hint">Ask the board's human for a sign-in link. A browser stays signed in by itself; a sign-in link signs in another browser.</div></div></div>`);
       document.body.append(root);
       syncScrimmed();
       const inp = $('input', root);
