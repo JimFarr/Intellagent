@@ -1172,7 +1172,6 @@ describe('lean runs', () => {
   });
 
   it('denies Claude\'s file tools on the board\'s own files, and no Bash rule lets node --test take flags (INT-195)', async () => {
-    const { PERMS } = require('../lib/agents');
     const r = runFor(['edit', 'test'], { protect: ['C:\\board\\local.json'], protectWrites: ['C:\\board\\data\\**'] });
     const deny = /--disallowedTools (.*)$/.exec(r)[1];
     for (const t of ['Read', 'Edit', 'Write']) {
@@ -1183,13 +1182,35 @@ describe('lean runs', () => {
       assert.ok(deny.includes('"Edit(//c/board/data/**)"') && deny.includes('"Write(//c/board/data/**)"'));
       assert.ok(!deny.includes('Read(//c/board/data'), 'a run still reads its own events file in data/');
     }
-    // Claude Code's Bash rules: "Bash(x)" is exactly x, "Bash(x:*)" is x followed by anything
-    const fits = (rule, cmd) => { const m = /^Bash\((.*)\)$/.exec(rule); if (!m) return false; return m[1].endsWith(':*') ? cmd.startsWith(m[1].slice(0, -2)) : cmd === m[1]; };
-    const rules = [...Object.values(PERMS).flatMap((p) => p.tools), 'Bash(intellagent:*)'];
-    for (const cmd of ['node --test --import x', 'node --test --import=data:text/javascript,x', 'node --test x.js']) {
-      assert.deepEqual(rules.filter((t) => fits(t, cmd)), [], cmd);
+    // Claude Code's Bash rules: "Bash(x)" is exactly x, "Bash(x:*)" is x followed by anything, "Bash(x*)" is x then
+    // anything; a deny beats an allow
+    const fits = (rule, cmd) => {
+      const m = /^Bash\((.*)\)$/.exec(rule); if (!m) return false;
+      if (m[1].endsWith(':*')) return cmd === m[1].slice(0, -2) || cmd.startsWith(`${m[1].slice(0, -2)} `);
+      return m[1].endsWith('*') ? cmd.startsWith(m[1].slice(0, -1)) : cmd === m[1];
+    };
+    const run = runFor(['test']);
+    // what the agent really gets: the run's tool lists, read back as argv through the same shell the runner uses
+    const lists = run.slice(run.indexOf(' --allowedTools '));
+    const argv = JSON.parse(require('child_process').execSync(`"${process.execPath}" -e "console.log(JSON.stringify(process.argv.slice(1)))" --${lists}`, { encoding: 'utf8' }));
+    const at = argv.indexOf('--disallowedTools');
+    const rules = argv.slice(1, at), denied = argv.slice(at + 1);
+    assert.ok(denied.includes('Bash(node --test "-*)') && denied.includes("Bash(node --test '-*)"), 'quotes reach Claude intact');
+    const allowed = (cmd) => rules.some((t) => fits(t, cmd)) && !denied.some((t) => fits(t, cmd));
+    for (const cmd of ['node --test --import x', 'node --test --import=data:text/javascript,x', 'node --test "--import=x"', "node --test '-r' x", 'node --test -r x']) {
+      assert.ok(!allowed(cmd), cmd);
     }
-    assert.ok(rules.some((t) => fits(t, 'node --test')) && rules.some((t) => fits(t, 'npm test')), 'plain test runs still fit');
+    for (const cmd of ['node --test', 'npm test', 'node --test x.js', 'node --test test/a.test.js test/b.test.js']) assert.ok(allowed(cmd), `${cmd} fits (INT-431)`);
+    assert.ok(!runFor(['test'], { commands: ['node --test --test-reporter=spec:*'] }).includes('Bash(node --test -*)'), 'a flag the human allows by name is not denied');
+    // the rule relies on node reading options only up to the first file: a flag after it is a file pattern, never run
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'int431-'));
+    fs.writeFileSync(path.join(dir, 'a.test.js'), "require('node:test')('t', () => {});\n");
+    const { NODE_TEST_CONTEXT, ...env } = process.env;
+    const spawn = (args) => { const o = require('child_process').spawnSync(process.execPath, args, { cwd: dir, encoding: 'utf8', env }); return o.stdout + o.stderr; };
+    const flag = "--import=data:text/javascript,console.log('INT431-RAN')";
+    assert.match(spawn(['--test', flag, 'a.test.js']), /INT431-RAN/, 'the probe works: a flag before the file runs');
+    assert.doesNotMatch(spawn(['--test', 'a.test.js', flag]), /INT431-RAN/, 'a flag after the file is not an option');
+    fs.rmSync(dir, { recursive: true, force: true });
 
     // on a board: runs built from a role carry the rules with the board's real paths; a custom run is left alone
     const s = await startServer({ agents: { agents: { b: { role: 'builder', enabled: false }, c: { run: 'claude -p "mine"', enabled: false } } } });
