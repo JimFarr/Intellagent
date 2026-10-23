@@ -1198,6 +1198,10 @@ describe('lean runs', () => {
       const b = agents.find((a) => a.name === 'b').run;
       assert.match(b, /--disallowedTools .*"Read\(\/\/.*agents\.json\)"/);
       assert.match(b, /"Edit\(\/\/.*\/data\/\*\*\)"/);
+      // the manifest holds the agents' permissions and the board's auth: read, never written by an agent's file tools
+      assert.match(b, /"Edit\(\/\/[^"]*\/intellagent\.manifest\.json\)"/);
+      assert.match(b, /"Write\(\/\/[^"]*\/intellagent\.manifest\.json\)"/);
+      assert.doesNotMatch(b, /"Read\(\/\/[^"]*\/intellagent\.manifest\.json\)"/);
       assert.equal(agents.find((a) => a.name === 'c').run, 'claude -p "mine"', "the human's own run wins");
     } finally { await s.stop(); }
   });
