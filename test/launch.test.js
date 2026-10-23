@@ -11,14 +11,15 @@ it('starts the program with the caller\'s environment plus env, output in the lo
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-launch-'));
   const log = path.join(dir, 'out.log');
   process.env.IA_LAUNCH_TEST_INHERITED = 'inherited';
-  launch({ command: process.execPath, args: ['-e', 'console.log(process.env.IA_LAUNCH_TEST_INHERITED, process.env.IA_EXTRA, process.pid); setTimeout(() => {}, 60000)'], cwd: os.tmpdir(), env: { IA_EXTRA: 'extra' }, log });
+  const jobFile = launch({ command: process.execPath, args: ['-e', 'console.log(process.env.IA_LAUNCH_TEST_INHERITED, process.env.IA_EXTRA, process.pid); setTimeout(() => {}, 60000)'], cwd: os.tmpdir(), env: { IA_EXTRA: 'extra' }, log });
   let out = '';
   for (const end = Date.now() + 20_000; Date.now() < end && !out.trim(); await new Promise((r) => setTimeout(r, 200))) out = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
   const [inherited, extra, pid] = out.trim().split(' ');
   try {
     assert.deepEqual([inherited, extra], ['inherited', 'extra']);
     assert.doesNotThrow(() => process.kill(Number(pid), 0), 'still running after the go-between exited');
-    assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith('intellagent-launch-')), [], 'the job file (it holds the environment) is deleted');
+    // only this launch's file: other tests launch boards at the same time
+    if (jobFile) assert.equal(fs.existsSync(jobFile), false, 'the job file (it holds the environment) is deleted');
   } finally {
     try { process.kill(Number(pid)); } catch { /* gone */ }
     // it holds the log open until it has exited
