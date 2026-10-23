@@ -1178,6 +1178,9 @@ describe('lean runs', () => {
     for (const t of ['Read', 'Edit', 'Write']) {
       for (const p of ['**/.intellagent/local.json', '**/agents.json', '**/agent-context/**', '**/.git/hooks/**']) assert.ok(deny.includes(`"${t}(${p})"`), `${t}(${p})`);
     }
+    // any manifest, a worktree's tracked copy too (it reaches the live one when it lands): written never, read always
+    assert.ok(deny.includes('"Edit(**/intellagent.manifest.json)"') && deny.includes('"Write(**/intellagent.manifest.json)"'));
+    assert.ok(!deny.includes('Read(**/intellagent.manifest.json)'));
     if (process.platform === 'win32') {
       assert.ok(deny.includes('"Read(//c/board/local.json)"'), 'absolute paths in the POSIX form Claude Code matches');
       assert.ok(deny.includes('"Edit(//c/board/data/**)"') && deny.includes('"Write(//c/board/data/**)"'));
