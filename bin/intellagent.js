@@ -32,6 +32,7 @@ const ROOT = path.join(__dirname, '..');
 // --url <address>, --as <name> and --manifest <path> anywhere on the line: the board to talk to, who you are
 // and which board folder's manifest and tokens to use, like INTELLAGENT_URL, INTELLAGENT_AGENT and INTELLAGENT_MANIFEST, for a shell that may only run commands starting with "intellagent"
 // (a standing agent reaching its sandbox).
+const given = new Set();
 for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_AGENT'], ['--manifest', 'INTELLAGENT_MANIFEST']]) {
   const a = process.argv;
   const stop = a.indexOf('--'); // after -- (sandbox exec) the words belong to the command it runs
@@ -40,7 +41,20 @@ for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_A
   const inline = a[i].startsWith(`${flag}=`);
   const v = inline ? a[i].slice(flag.length + 1) : a[i + 1];
   a.splice(i, inline ? 1 : 2);
-  if (v) process.env[env] = v;
+  if (v) { process.env[env] = v; given.add(flag); }
+}
+// --manifest names the board: a standing run's INTELLAGENT_URL and INTELLAGENT_TOKEN are its own board's, so they
+// give way to that board's address (unless --url is given too) and to the agent's token in its local.json
+if (given.has('--manifest')) {
+  const mp = path.resolve(process.env.INTELLAGENT_MANIFEST);
+  if (!fs.existsSync(mp) || fs.statSync(mp).isDirectory()) {
+    const near = [path.join(mp, '.intellagent', 'intellagent.manifest.json'), path.join(mp, 'intellagent.manifest.json'), path.join(path.dirname(mp), '.intellagent', 'intellagent.manifest.json')].find((p) => fs.existsSync(p));
+    console.error(`error 400 BAD_REQUEST: no manifest at ${mp} — hint: ${near ? `did you mean ${near}?` : "--manifest takes the path of a board's intellagent.manifest.json (in a project, inside its .intellagent folder)"}`);
+    process.exit(2);
+  }
+  if (!given.has('--url')) delete process.env.INTELLAGENT_URL;
+  const own = require('../lib/locate').localSecrets(path.resolve(process.env.INTELLAGENT_MANIFEST)).agentTokens?.[process.env.INTELLAGENT_AGENT];
+  if (own) delete process.env.INTELLAGENT_TOKEN;
 }
 const [cmd = 'help', ...rest] = process.argv.slice(2);
 
