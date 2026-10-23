@@ -5,6 +5,7 @@ import { $, $$, esc, el, clamp, hashStr, hue, initials, ICONS, icon } from './js
 import { md } from './js/markdown.js';
 import { tip, hideTip, focusTip, tipPausedWhen } from './js/tooltips.js';
 import { eventIcon, describe as describeEvent } from './js/events.js';
+import { state, settings, settingsStore, BASE_THEME, DEFAULTS, stored, AUTH, tokenStore } from './js/state.js';
 import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/themes.js';
 
 (() => {
@@ -201,47 +202,13 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   const FXK = { topo: 1.05, squiggles: 0.62, doodles: 0.7, confetti: 1.3, halftone: 0.7, 'halftone-light': 0.55 };
   const fxk = (kind, mode) => FXK[`${kind}-${mode}`] ?? FXK[kind] ?? 1;
   const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['mesh', 'Mesh'], ['stars', 'Stars'], ['topo', 'Topo'], ['halftone', 'Halftone'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['confetti', 'Confetti'], ['none', 'None']];
-  // The default, and the fallback for a missing or unknown theme: Bauhaus Studio, or its dark twin.
-  const BASE_THEME = matchMedia('(prefers-color-scheme: light)').matches ? 'bauhaus-studio' : 'bauhaus-studio-dark';
   const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES[BASE_THEME]).style });
   // A user setting of "theme" (or unset) defers to the theme's own choice.
   const pick = (k) => (settings[k] != null && settings[k] !== 'theme' ? settings[k] : themeStyle()[k]);
 
-  // The only place that touches localStorage: a missing or unreadable value gives the fallback, and a failed write is dropped.
-  // `raw` keeps a plain string (the token) as it is instead of JSON.
-  const stored = (key, fallback, raw = false) => ({
-    get() {
-      try { return (raw ? localStorage.getItem(key) : JSON.parse(localStorage.getItem(key))) || fallback; } catch { return fallback; }
-    },
-    save(value) {
-      try { localStorage.setItem(key, raw ? value : JSON.stringify(value)); } catch { /* private mode */ }
-    },
-  });
-
-  const KEY = 'intellagent.settings.v1';
-  const settingsStore = stored(KEY, {});
-  const DEFAULTS = {
-    theme: BASE_THEME,
-    v3: true, bg: 'theme', cards: 'theme', tape: 'theme', attn: 'theme', enter: 'theme', lanes: 'theme', texture: 'theme', md: 'theme', avStyle: 'theme', drop: 'theme', groups: 'theme', toast: 'theme',
-    density: 'cozy', colw: 300, ageDays: '7',
-    motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full',
-    stub: { id: true, type: true, priority: true, parent: true, author: true, lease: true, comments: true, attachments: true, blocked: true, properties: false, description: false, thumbnail: true, fields: true, assignee: true, status: true, checklist: true, listeners: true, writing: true },
-    grouping: 'stack', saveMode: 'accept', userName: 'You', notify: false, notifyHidden: true, sound: false, toasts: true,
-    metrics: true, metricsDays: 7,
-  };
-  function loadSettings() {
-    try {
-      const s = settingsStore.get();
-      if (!s.v2) { if (s.cards === 'sticky') s.cards = 'theme'; s.v2 = true; }
-      if (!s.v3) { s.bg = 'theme'; s.texture = 'theme'; s.v3 = true; } // themes now pick background + texture
-      return { ...DEFAULTS, ...s, stub: { ...DEFAULTS.stub, ...(s.stub || {}) } };
-    } catch { return JSON.parse(JSON.stringify(DEFAULTS)); }
-  }
-  let settings = loadSettings();
-  let settingsVersion = 0;
   function saveSettings() {
     settingsStore.save(settings);
-    settingsVersion++;
+    state.settingsVersion++;
     applySettings();
     render();
   }
@@ -586,25 +553,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     };
   })();
   /* ═════════════════════════ state + api ═════════════════════════ */
-
-  const state = {
-    app: { name: 'Intellagent' }, boards: [], boardId: null, board: null, hash: null, seq: 0, offset: 0, archivedCount: 0,
-    presence: [], standing: {}, profiles: {}, listeners: {}, listenersSig: '', looks: {}, looksSig: '', inbox: [], bulk: false, selected: new Set(), focusId: null, query: '', expanded: new Set(), folded: new Set(),
-    modal: null, live: false, refreshing: false, refreshAgain: false,
-  };
-
-  const TOKEN_KEY = 'intellagent.token';
-  const tokenStore = stored(TOKEN_KEY, '', true);
-  const AUTH = { token: tokenStore.get() };
-  // `intellagent open` passes the user token in the fragment (#token=…): keep it, then drop it from the address bar.
-  {
-    const m = /^#token=([\w-]+)/.exec(location.hash);
-    if (m) {
-      AUTH.token = m[1];
-      tokenStore.save(m[1]);
-      history.replaceState(null, '', location.pathname);
-    }
-  }
 
   async function api(method, url, body) {
     const res = await fetch(url, {
@@ -1426,7 +1374,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
 
   async function refreshProfiles() {
     try { state.profiles = await api('GET', '/api/profiles'); } catch { return; }
-    settingsVersion++;
+    state.settingsVersion++;
     render();
     renderPresenceButton();
     state.modal?.refresh();
@@ -1839,7 +1787,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     c.classList.toggle('review', it.needsHuman?.kind === 'review');
     c.classList.toggle('unseen', !!(state.boardId && seenFor(state.boardId).items[it.id]));
     markFresh(c, it.id);
-    const sig = [it.version, settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), settings.stub.writing && writersOf(it).join(','), settings.stub.writing && quietOf(it).map((x) => x.name + x.at).join(','),Math.floor(idleDays(it)), JSON.stringify(state.looks[it.id] || null), state.board.cardRules?.length && JSON.stringify(state.board.cardRules).length, JSON.stringify(approvalCol(it)?.flags.gates || null)].join('|');
+    const sig = [it.version, state.settingsVersion, state.board.schema && JSON.stringify(state.board.schema).length, lease?.claimant, lease?.expiresAt, lease?.status, blockers.length, inGroup, state.listeners[it.id]?.join(','), settings.stub.writing && writersOf(it).join(','), settings.stub.writing && quietOf(it).map((x) => x.name + x.at).join(','),Math.floor(idleDays(it)), JSON.stringify(state.looks[it.id] || null), state.board.cardRules?.length && JSON.stringify(state.board.cardRules).length, JSON.stringify(approvalCol(it)?.flags.gates || null)].join('|');
     if (c._sig === sig) return;
     const changed = c._v != null && c._v !== it.version;
     c._sig = sig;
