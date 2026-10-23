@@ -98,6 +98,11 @@ describe('probation: a new agent may only introduce itself (INT-233)', () => {
       await s.ok('POST', `${B}/items/${t.id}/comments`, { body: 'Hello. @vet please take a look, I am new.', intro: true }, as('newbie'));
       const ev = (await s.ok('GET', `/api/events?since=${seq}&types=comment.added`)).events.at(-1);
       assert.ok(!(ev.recipients || []).includes('vet'), 'the mention is text: it alerts nobody');
+      // nor does the work scan read it back as a mention (INT-409), even once the newcomer is accepted
+      const mentionsOfVet = async () => ((await s.ok('GET', `${B}/work?agent=vet`)).mentions || []).filter((m) => m.id === t.id);
+      assert.deepEqual(await mentionsOfVet(), [], "not in vet's work");
+      await s.ok('POST', '/api/agents/newbie/accept', {}, USER);
+      assert.deepEqual(await mentionsOfVet(), [], 'not after acceptance either');
       await new Promise((r) => setTimeout(r, 800));
       assert.equal((await agentState(s, 'vet')).queued, 0);
     } finally { await s.stop(); }
