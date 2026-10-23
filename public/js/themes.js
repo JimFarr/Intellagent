@@ -35,7 +35,7 @@ const STUDIO_CSS = '.col-name { font-weight: 700; letter-spacing: .1em; font-siz
 // Clear: thin lines, no shadows or motion to speak of, sentence-case headings. The type shows as a line on top and
 // "needs you" as a bar on the left, so the two never compete for one place. Links are underlined at full strength,
 // every control shows a focus ring, and form fields get an edge of 3:1 so they can be found.
-const CLEAR_STYLE = { card: 6, col: 10, modal: 12, ctl: 6, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'top', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'normal', bg: 'none', texture: false, avatar: 'round', titleW: 500, font: "'Inter'", display: "'Inter'", colAlpha: 100 };
+const CLEAR_STYLE = { card: 6, col: 10, modal: 12, ctl: 6, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'normal', bg: 'none', texture: false, avatar: 'round', titleW: 500, font: "'Inter'", display: "'Inter'", colAlpha: 100 };
 const CLEAR_CSS = '.c-title { font-size: 14px; line-height: 1.45; } .col-name { font-weight: 600; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 700; }'
   + ' .md a { border-bottom-color: currentColor; }'
   + ' :is(button, a, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
