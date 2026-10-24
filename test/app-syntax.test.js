@@ -23,7 +23,7 @@ describe('writing pip: agents', () => {
   const cut = (from, to) => { const a = src.indexOf(from); const b = src.indexOf(to, a); assert.ok(a > 0 && b > a, `${from} not found`); return src.slice(a, b); };
   const make = (standing) => {
     const w = vm.runInNewContext(
-      `${cut('const thinkers =', 'const dotsHTML')}\nconst typingNow = new Map();\n${cut('const writersOf =', 'const pipHTML')}\n({ writersOf: (it) => JSON.stringify(writersOf(it)) })`,
+      `${cut('const thinkers =', 'const replyWords')}\nconst typingNow = new Map();\n${cut('const writersOf =', 'const pipHTML')}\n({ writersOf: (it) => JSON.stringify(writersOf(it)) })`,
       { state: { standing } });
     return { writersOf: (it) => JSON.parse(w.writersOf(it)) }; // out of the vm's realm, so deepEqual compares plain arrays
   };
