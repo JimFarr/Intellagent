@@ -178,7 +178,7 @@ describe('the CLI for agents', () => {
         const r = cli(args, { cwd: dir, env });
         assert.equal(r.code, 1, args.join(' '));
         assert.match(r.err, /HUMAN_ONLY/);
-        assert.match(r.err, /an agent cannot sign in to a board/);
+        assert.match(r.err, /an agent signs in only to a board in its own sandbox folder/);
         assert.match(r.err, /tell whoever started this run/);
         assert.ok(!/ask the human on the card \(intellagent do ask_human id=<ID> reason="…"\)$/.test(r.err.trim()), 'not the card-only hint');
       }
@@ -202,6 +202,42 @@ describe('the CLI for agents', () => {
       assert.match(a.err, /HUMAN_ONLY/);
       assert.ok(!a.out.includes(token) && !a.err.includes(token), 'an agent never sees the token');
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('an agent gets the sign-in link of a board in its own sandbox folder, and of no other (INT-360)', () => {
+    const real = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-own-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-outside-'));
+    const quill = { INTELLAGENT_AGENT: 'quill' };
+    const tokenOf = (d) => JSON.parse(fs.readFileSync(path.join(d, '.intellagent', 'local.json'), 'utf8')).userToken;
+    const init = (d) => { const r = cli(['init', d, '--name', 'B', '--prefix', 'BB', '--template', 'simple', '--no-start', '--no-mcp', '--no-claude', '--port', '7398'], { cwd: os.tmpdir() }); assert.equal(r.code, 0, r.err); return tokenOf(d); };
+    try {
+      fs.writeFileSync(path.join(real, 'intellagent.manifest.json'), JSON.stringify({ port: 7397, seed: 'empty' }));
+      const site = path.join(real, 'sandboxes', 'quill', 'docs-site');
+      const token = init(site);
+      const own = cli(['open', '--print'], { cwd: site, env: quill });
+      assert.equal(own.code, 0, own.err);
+      assert.equal(own.out.trim(), `Sign-in link: http://127.0.0.1:7398/#token=${token}`);
+      const refused = (cwd, env, t) => {
+        const r = cli(['open', '--print'], { cwd, env });
+        assert.equal(r.code, 1, `${cwd} as ${env.INTELLAGENT_AGENT}`);
+        assert.match(r.err, /HUMAN_ONLY/);
+        assert.ok(!r.out.includes(t) && !r.err.includes(t), 'no token');
+      };
+      refused(site, { INTELLAGENT_AGENT: 'rocket' }, token); // another agent's sandbox folder
+      refused(site, { INTELLAGENT_RUN: 'run_x' }, token); // a run with no name
+      const realToken = 'real-board-token';
+      fs.writeFileSync(path.join(real, 'local.json'), JSON.stringify({ userToken: realToken }));
+      refused(real, quill, realToken); // the real board itself
+      // sandboxes/quill/ under a folder that is no board does not count
+      const fake = path.join(outside, 'sandboxes', 'quill', 'b');
+      refused(fake, quill, init(fake));
+      // a junction from inside the sandbox folder to a board elsewhere does not count
+      const elsewhere = path.join(outside, 'theirs');
+      const theirs = init(elsewhere);
+      fs.symlinkSync(elsewhere, path.join(real, 'sandboxes', 'quill', 'link'), 'junction');
+      refused(path.join(real, 'sandboxes', 'quill', 'link'), quill, theirs);
+    } finally {
+      for (const d of [real, outside]) fs.rmSync(d, { recursive: true, force: true });
+    }
   });
   it('--url and --as reach a board from anywhere, for shells that may only run "intellagent …"', () => {
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-nowhere-'));

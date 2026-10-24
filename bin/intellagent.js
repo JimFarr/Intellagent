@@ -84,8 +84,12 @@ function agentPrompt(url, agent, board = 'main') {
 
 async function init() {
   const f = flags(rest);
-  if (asAgent() && !f['no-open']) { f['no-open'] = true; console.log(`(Running as ${asAgent()}: the board won't be opened signed in. Whoever owns the board signs in by running "intellagent open" in the project folder from their own terminal; tell whoever started this run.)`); }
   const dir = path.resolve(f._[0] || '.');
+  if (asAgent() && !f['no-open']) {
+    f['no-open'] = true;
+    // in its own sandbox folder the agent gets the link printed after the start (INT-360)
+    if (!require('../lib/sandbox').ownSandbox(dir, process.env.INTELLAGENT_AGENT)) console.log(`(Running as ${asAgent()}: the board won't be opened signed in. Whoever owns the board signs in by running "intellagent open" in the project folder from their own terminal; tell whoever started this run.)`);
+  }
   const folder = path.join(dir, '.intellagent');
   const manifestPath = path.join(folder, 'intellagent.manifest.json');
   if (fs.existsSync(manifestPath)) {
@@ -168,7 +172,7 @@ async function init() {
   await startBackground(manifestPath, url);
   console.log(`\n  ✓ running at ${url}${f['no-open'] ? '' : ' — opening it signed in'}`);
   if (!f['no-open']) openBoard(manifestPath);
-  else if (!asAgent()) console.log(`  Sign-in link: ${signInLink(manifestPath)}`);
+  else if (mayOpen(manifestPath)) console.log(`  Sign-in link: ${signInLink(manifestPath)}`);
   console.log(`\n  Tell your agent: "check the board" — it runs \`intellagent brief\` and takes it from there.`);
   console.log('  Back after a reboot: intellagent autostart on\n');
 }
@@ -198,9 +202,11 @@ async function startBackground(mp, url) {
 
 // Opens the board; the user token rides in the URL fragment (never sent to the server or logged).
 // The page strips the fragment from the address bar at once, so the link is printed for the human to copy.
+const mayOpen = (mp) => !asAgent() || require('../lib/sandbox').ownSandbox(path.dirname(mp), process.env.INTELLAGENT_AGENT);
 function signInLink(mp) {
-  // here, not on the commands: open, start --open and init all come through this (it carries the user token)
-  humanOnly('opening the board signed in', OPEN_HINT);
+  // here, not on the commands: open, start --open and init all come through this (it carries the user token).
+  // An agent may sign in to a board in its own sandbox folder only (INT-360).
+  if (!mayOpen(mp)) humanOnly('opening the board signed in', OPEN_HINT);
   const u = baseUrl(readManifest(mp));
   const t = userToken(mp);
   return t ? `${u}/#token=${t}` : u;
@@ -305,8 +311,8 @@ function openUrl(url) {
 
 async function start() {
   const f = flags(rest);
-  if (f.open) humanOnly('intellagent start --open (opening the board signed in)', OPEN_HINT); // before anything boots
   const mp = requireManifest();
+  if (f.open && !mayOpen(mp)) humanOnly('intellagent start --open (opening the board signed in)', OPEN_HINT); // before anything boots
   refuseForeignStart(mp);
   const url = baseUrl(readManifest(mp));
   if (await alive(url)) { console.log(`Already running at ${url}`); if (f.open) openBoard(mp); return; }
@@ -772,7 +778,7 @@ function asAgent() {
 // Commands that act as the human (with the user token from local.json) or write the human's files refuse to
 // run as an agent: a standing agent's shell may run "intellagent …", and it must not merge, steer other agents
 // or change grants that way.
-const OPEN_HINT = 'an agent cannot sign in to a board. Whoever owns the board runs "intellagent open" in the project folder in their own terminal; tell whoever started this run. If a card exists, ask there (intellagent do ask_human id=<ID> reason="…")';
+const OPEN_HINT = 'an agent signs in only to a board in its own sandbox folder (sandboxes/<agent>/ of a board). Whoever owns the board runs "intellagent open" in the project folder in their own terminal; tell whoever started this run. If a card exists, ask there (intellagent do ask_human id=<ID> reason="…")';
 function humanOnly(what, hint = 'ask the human on the card (intellagent do ask_human id=<ID> reason="…")') {
   const agent = asAgent();
   if (!agent) return;

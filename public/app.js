@@ -566,7 +566,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     });
     let data = null;
     try { data = await res.json(); } catch { /* empty */ }
-    if (res.status === 401 && data?.auth === 'user' && await promptToken()) return api(method, url, body);
+    if (res.status === 401 && data?.auth === 'user' && await promptToken(!!AUTH.token)) return api(method, url, body);
     if (!res.ok) { const e = new Error(data?.error || res.statusText); e.status = res.status; e.data = data; throw e; }
     return data;
   }
@@ -5596,12 +5596,15 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   /* ═════════════════════════ token prompt ═════════════════════════ */
 
   let tokenPrompt = null;
-  function promptToken() {
+  // refused: a token was sent and the board said no (another board's, or replaced since), not "none sent" (INT-360)
+  function promptToken(refused = false) {
     if (tokenPrompt) return tokenPrompt;
     tokenPrompt = new Promise((resolve) => {
       const root = el(`<div class="scrim" style="z-index:700"><div class="modal token-modal pop">${icon('lock', 'big')}<div style="font:700 16px var(--display)">${esc(state.app.name)}</div>
         <div class="row2"><input class="inp" type="password" placeholder="Access token" autocomplete="off"><button class="btn primary">${icon('check')}</button></div>
-        <div class="token-hint">This browser is not signed in. Ask the board's human for a sign-in link; once signed in, a browser stays signed in by itself.</div></div></div>`);
+        <div class="token-hint${refused ? ' refused' : ''}">${refused
+          ? 'This token was refused: it is from another board, or it has been replaced. Ask the board\'s human for a fresh sign-in link (<code>intellagent open</code> in this board\'s folder).'
+          : 'This browser is not signed in. Ask the board\'s human for a sign-in link; once signed in, a browser stays signed in by itself.'}</div></div></div>`);
       document.body.append(root);
       syncScrimmed();
       const inp = $('input', root);

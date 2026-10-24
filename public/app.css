@@ -1419,6 +1419,7 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 
 .token-hint { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
 .token-hint code { font: 11.5px var(--mono); color: var(--text); }
+.token-hint.refused { color: color-mix(in oklab, var(--danger) 65%, var(--text)); } /* mixed with the text colour: readable on light themes too */
 
 /* several open questions on one ticket */
 .m-ask + .m-ask { margin-top: 10px; }
