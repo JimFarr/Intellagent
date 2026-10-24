@@ -83,9 +83,9 @@ export const THEMES = {
   // Clear (INT-451): calm and legible. Neutral greys, one blue for what you can act on, violet only for what
   // needs you; text 12:1 or more, secondary text 5.9:1 or more on every surface. Type and status colours were
   // picked to stay apart under protan, deutan and tritan vision, and each also has its own shape or place.
-  clear: T('Clear', 'light', ['#f6f7f9', '#eef0f3', '#ffffff', '#16191f', '#555c68', '#ccd1d8', '#1f5fcc', '#6b3fc4', '#b8326e', '#1f5fcc', '#8f6200', '#00788c', '#946000', '#b3123f', '#9db8f0', '#c3b2ea', '#9fd0d8'],
+  clear: T('Clear', 'light', ['#f6f7f9', '#eef0f3', '#ffffff', '#16191f', '#555c68', '#ccd1d8', '#3a64ae', '#674fa7', '#a54b6e', '#3a64ae', '#856635', '#397582', '#896535', '#9e3b4a', '#a5b8e0', '#c1b5dd', '#accdd3'],
     CLEAR_STYLE, CLEAR_CSS),
-  'clear-dark': T('Clear Dark', 'dark', ['#15171b', '#1b1e23', '#22262c', '#e7e9ed', '#a5abb6', '#3a404b', '#7aa7ff', '#b49cff', '#f27aa5', '#7aa7ff', '#e3b14d', '#4cc3d6', '#f0b955', '#ff5c76', '#3d5a99', '#5b4a8f', '#2f6f78'],
+  'clear-dark': T('Clear Dark', 'dark', ['#15171b', '#1b1e23', '#22262c', '#e7e9ed', '#a5abb6', '#3a404b', '#89a9e6', '#b2a3e8', '#de8aa6', '#89a9e6', '#d7b475', '#75becb', '#e3bd7d', '#e57682', '#475c87', '#5a4f7f', '#446c72'],
     CLEAR_STYLE, CLEAR_CSS),
   paper: T('Paper', 'light', ['#f3efe6', '#ece6d9', '#fbf8f2', '#2b2a26', '#7b756a', '#d9d1c0', '#b4532a', '#2f6f62', '#b4362a', '#2f5d8a', '#b98a1b', '#3d7a4a', '#c06a2b', '#b4362a', '#e8d9bd', '#d9e4d6', '#efd3c8'],
     { md: 'paper', card: 2, col: 4, modal: 6, ctl: 4, shadow: 'flat', tape: 'none', cards: 'clean', typeInd: 'top', attn: 'ribbon', enter: 'fade', lanes: 'lane', chips: 'outline', heads: 'caps', bg: 'doodles', display: "'Fraunces', serif", colAlpha: 90 },
