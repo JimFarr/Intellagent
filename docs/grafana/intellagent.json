@@ -146,6 +146,33 @@
             "value": "3.75"
           }
         ]
+      },
+      {
+        "name": "agent",
+        "label": "Agent",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(intellagent_agent_status{job=\"$job\"}, agent)",
+        "query": {
+          "qryType": 1,
+          "query": "label_values(intellagent_agent_status{job=\"$job\"}, agent)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "sort": 1
       }
     ]
   },
@@ -345,8 +372,7 @@
     {
       "id": 7,
       "type": "state-timeline",
-      "title": "Agent status",
-      "description": "One lane per standing agent, coloured by status. Idle is the faint track; colour shows activity. Hover a lane for the agent and times.",
+      "title": "$agent",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -354,13 +380,13 @@
       "gridPos": {
         "x": 0,
         "y": 18,
-        "w": 24,
-        "h": 10
+        "w": 6,
+        "h": 3
       },
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "fillOpacity": 85,
+            "fillOpacity": 90,
             "lineWidth": 0
           },
           "color": {
@@ -413,14 +439,20 @@
                 }
               }
             }
-          ]
+          ],
+          "displayName": " "
         },
         "overrides": []
       },
       "options": {
         "mergeValues": true,
         "showValue": "never",
-        "rowHeight": 0.7
+        "rowHeight": 1,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
       },
       "targets": [
         {
@@ -428,11 +460,15 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by (agent) (intellagent_agent_status{job=\"$job\",status=\"idle\"} * 1 or intellagent_agent_status{job=\"$job\",status=\"running\"} * 2 or intellagent_agent_status{job=\"$job\",status=\"waiting\"} * 3 or intellagent_agent_status{job=\"$job\",status=\"throttled\"} * 4 or intellagent_agent_status{job=\"$job\",status=\"failed\"} * 5 or intellagent_agent_status{job=\"$job\",status=\"paused\"} * 6 or intellagent_agent_status{job=\"$job\",status=\"queued\"} * 7 or intellagent_agent_status{job=\"$job\",status=\"retrying\"} * 8)",
+          "expr": "sum by (agent) (intellagent_agent_status{job=\"$job\",agent=~\"$agent\",status=\"idle\"} * 1 or intellagent_agent_status{job=\"$job\",agent=~\"$agent\",status=\"running\"} * 2 or intellagent_agent_status{job=\"$job\",agent=~\"$agent\",status=\"waiting\"} * 3 or intellagent_agent_status{job=\"$job\",agent=~\"$agent\",status=\"throttled\"} * 4 or intellagent_agent_status{job=\"$job\",agent=~\"$agent\",status=\"failed\"} * 5 or intellagent_agent_status{job=\"$job\",agent=~\"$agent\",status=\"paused\"} * 6 or intellagent_agent_status{job=\"$job\",agent=~\"$agent\",status=\"queued\"} * 7 or intellagent_agent_status{job=\"$job\",agent=~\"$agent\",status=\"retrying\"} * 8)",
           "legendFormat": "{{agent}}",
           "refId": "A"
         }
-      ]
+      ],
+      "repeat": "agent",
+      "repeatDirection": "h",
+      "maxPerRow": 4,
+      "transparent": true
     },
     {
       "id": 8,
