@@ -346,7 +346,7 @@
       "id": 7,
       "type": "state-timeline",
       "title": "Agent status",
-      "description": "One lane per standing agent, coloured by status (running green, waiting yellow, queued blue, throttled orange, failed red, paused purple; idle is the faint track). The Now strip beside it names each lane again and spells out its status. Hover anywhere for every lane at that moment.",
+      "description": "One lane per standing agent, coloured by status. Idle is the faint track; colour shows activity. Hover a lane for the agent and times.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -354,7 +354,7 @@
       "gridPos": {
         "x": 0,
         "y": 18,
-        "w": 20,
+        "w": 24,
         "h": 10
       },
       "fieldConfig": {
@@ -420,16 +420,7 @@
       "options": {
         "mergeValues": true,
         "showValue": "never",
-        "rowHeight": 0.7,
-        "legend": {
-          "showLegend": false,
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
+        "rowHeight": 0.7
       },
       "targets": [
         {
@@ -442,109 +433,6 @@
           "refId": "A"
         }
       ]
-    },
-    {
-      "id": 42,
-      "type": "state-timeline",
-      "title": "Now",
-      "description": "The last 15 minutes of each lane, beside Agent status: the same lanes in the same order, named again at the right-hand end, with the current status written in.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "gridPos": {
-        "x": 20,
-        "y": 18,
-        "w": 4,
-        "h": 10
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "fillOpacity": 85,
-            "lineWidth": 0
-          },
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "text"
-          },
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "1": {
-                  "text": "idle",
-                  "color": "rgba(128, 128, 128, 0.18)",
-                  "index": 0
-                },
-                "2": {
-                  "text": "running",
-                  "color": "green",
-                  "index": 1
-                },
-                "3": {
-                  "text": "waiting",
-                  "color": "yellow",
-                  "index": 2
-                },
-                "4": {
-                  "text": "throttled",
-                  "color": "orange",
-                  "index": 3
-                },
-                "5": {
-                  "text": "failed",
-                  "color": "red",
-                  "index": 4
-                },
-                "6": {
-                  "text": "paused",
-                  "color": "purple",
-                  "index": 5
-                },
-                "7": {
-                  "text": "queued",
-                  "color": "blue",
-                  "index": 6
-                },
-                "8": {
-                  "text": "retrying",
-                  "color": "dark-orange",
-                  "index": 7
-                }
-              }
-            }
-          ]
-        },
-        "overrides": []
-      },
-      "options": {
-        "mergeValues": true,
-        "showValue": "always",
-        "rowHeight": 0.7,
-        "legend": {
-          "showLegend": false,
-          "displayMode": "list",
-          "placement": "right"
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by (agent) (intellagent_agent_status{job=\"$job\",status=\"idle\"} * 1 or intellagent_agent_status{job=\"$job\",status=\"running\"} * 2 or intellagent_agent_status{job=\"$job\",status=\"waiting\"} * 3 or intellagent_agent_status{job=\"$job\",status=\"throttled\"} * 4 or intellagent_agent_status{job=\"$job\",status=\"failed\"} * 5 or intellagent_agent_status{job=\"$job\",status=\"paused\"} * 6 or intellagent_agent_status{job=\"$job\",status=\"queued\"} * 7 or intellagent_agent_status{job=\"$job\",status=\"retrying\"} * 8)",
-          "legendFormat": "{{agent}}",
-          "refId": "A"
-        }
-      ],
-      "timeFrom": "15m",
-      "hideTimeOverride": true
     },
     {
       "id": 8,
