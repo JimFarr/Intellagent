@@ -1632,6 +1632,11 @@ describe('per-agent git worktrees', () => {
       assert.equal(conflict.landed.length, 0, JSON.stringify(conflict));
       assert.equal(git(dir, 'rev-parse', 'main'), mainTip, 'main is where it was');
       git(dir, 'checkout', '-q', '--', 'f.txt');
+      // a board that stopped mid-landing left main open in _land: the next board start lets go of it
+      const landDir = path.join(dir, '.worktrees', '_land');
+      git(landDir, 'checkout', '-q', 'main');
+      assert.throws(() => git(dir, 'switch', '-q', 'main'), 'git refuses while _land holds main');
+      createWorktrees({ root: dir, dir: path.join(dir, '.worktrees') });
       git(dir, 'switch', '-q', 'main');
     } finally {
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
