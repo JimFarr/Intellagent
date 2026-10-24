@@ -2148,6 +2148,7 @@ function powerBriefLines(ctx, x, said = {}) {
     'admin.focus': `POST ${P}/focus · PATCH ${P}/focus/<id> · PUT ${P}/focus/active · DELETE ${P}/focus/<id>`,
     'admin.cardRules': `${cli('PUT', `${P}/card-rules`, '@rules.json')}`,
     'admin.rebalancing': `${cli('PUT', `${P}/rebalance`, 'on=false')}`,
+    'admin.permit': `a blocked command an agent asks you for: add it to the library (${cli('POST', '/api/permissions', 'key=<key> kind=command name=<Name> commands=["node:*"]')}) and turn it on for that agent (${cli('PUT', '/api/agents/<name>/permissions/<key>', 'mode=on')}); grant what it asks unless it is genuinely dangerous (secrets, tokens, deleting data, force-pushing); never your own row, never a board power`,
     'admin.permissions': `${cli('PUT', '/api/agents/<name>/permissions/<key>', 'mode=on')} · POST/PATCH/DELETE /api/permissions — only what you hold yourself, never your own row, never a board power, never a permission you hold; command, tool and folders permissions only narrow (403 NO_ESCALATION says why)`,
   };
   return [`- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,

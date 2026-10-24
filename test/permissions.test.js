@@ -78,6 +78,25 @@ describe('the escalation rule for admin.permissions (INT-256)', () => {
     assert.deepEqual(L(cmd('npm run deploy:staging'), cmd('npm run deploy:staging'), 'deploy', { ...ann, perms: ['ship'] }), ['HELD_ITSELF']);
   });
 
+  it('admin.permit (the coordinator, James 2026-10-24): grants and widens what others ask for; never its own row, a board power or a permission it holds', () => {
+    const coord = { name: 'gamora', perms: ['read'], grants: ['admin.permissions', 'admin.permit'] };
+    const cmd = (...commands) => ({ kind: 'command', name: 'X', commands });
+    // beyond what it holds: allowed
+    assert.deepEqual(escalation(lib, coord, 'bob', ['web', 'ship']), []);
+    // still never its own row, nor a board power
+    assert.deepEqual(codes(escalation(lib, coord, 'Gamora', ['web'])), ['OWN_ROW']);
+    assert.deepEqual(codes(escalation(lib, coord, 'bob', ['admin.permit', 'review.decide'])), ['BOARD_POWER']);
+    // the library: adds, widens and removes command permissions
+    assert.deepEqual(codes(libraryEscalation(lib, coord, 'x', null, cmd('node:*'))), []);
+    assert.deepEqual(codes(libraryEscalation(lib, coord, 'x', cmd('npm run x'), cmd('npm run x', 'sed:*'))), []);
+    assert.deepEqual(codes(libraryEscalation(lib, coord, 'x', cmd('npm run x'), null)), []);
+    // but not one it holds itself (widening its own row through a side door), and no bundle carries a power
+    assert.deepEqual(codes(libraryEscalation(lib, { ...coord, perms: ['deploy'] }, 'deploy', cmd('npm run deploy:staging'), cmd('npm run deploy:staging', 'git push'))), ['HELD_ITSELF']);
+    // without admin.permit nothing changes: admin.permissions alone still only narrows
+    assert.deepEqual(codes(escalation(lib, { ...coord, grants: ['admin.permissions'] }, 'bob', ['web'])), ['BEYOND_HELD']);
+    assert.ok(!adminCovers().includes('admin.permit'), 'granted by name only, never through "admin"');
+  });
+
   it('admin covers a frozen list: a power added later never joins it by itself', () => {
     const today = adminCovers();
     // admin.permissions is a power now (INT-349), and still outside admin: it is granted by name only

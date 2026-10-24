@@ -16,4 +16,6 @@
 
 **Waiting on something.** Don't hold a ticket or poll while you wait: set a **trigger** on the card and end the run. `POST …/items/<ID>/triggers { when, priority?, wake?, note? }`, with `when` one of `{ machine: "exclusive" }` (the PC free for a timing run), `{ quietFor: "30m" }`, `{ every: "15m" }`, `{ idle: "60m" }` or `{ until: "<ISO time>" }`. When it holds, the board wakes `wake` (default: the coordinator; each firing costs it a run, so `every` and `idle` take 5 minutes or more) with a `trigger.fired` list: `priority: "now"` within a couple of minutes, `"batch"` (default) gathered with others. Anyone may set or remove one (`DELETE …/triggers/<id>`); every picked-up card has a low-priority idle check, which you may remove when a long quiet stretch is expected.
 
+**Blocked by a permission.** A command your shell refuses: ask the coordinator on the card (`POST …/items/<ID>/asks { to: <coordinator>, kind: "decide", what: "allow <the exact command>: why" }`), with the exact command and the refusal. Never ask the human for a permission, and never work around a refusal.
+
 **Cost.** Don't reread what is already in your context. Keep turns small, and end the run when nothing needs you.
