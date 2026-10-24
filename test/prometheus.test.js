@@ -190,7 +190,9 @@ describe('the Grafana dashboard (docs/grafana)', () => {
       for (const p of panels) for (const t of p.targets) assert.ok(t.expr.includes('intellagent_'), `${p.title} queries the board`);
     } finally { await s.stop(); }
     const titles = panels.map((p) => p.title).join('|');
-    for (const want of ['Tickets per column', 'Done per day', 'Cycle time', 'Agent status', 'Runs by result', 'Queue per agent', 'Tokens per model', 'Estimated cost', 'Estimated cost per model', 'Usage-limit', 'Open questions', 'Oldest wait']) assert.ok(titles.includes(want), want);
+    // agent status is one small panel per agent (repeated by the agent variable), titled with the agent's name
+    assert.ok(panels.some((p) => p.repeat === 'agent' && p.targets.some((x) => x.expr.includes('intellagent_agent_status'))), 'agent status, one panel per agent');
+    for (const want of ['Tickets per column', 'Done per day', 'Cycle time', 'Runs by result', 'Queue per agent', 'Tokens per model', 'Estimated cost', 'Estimated cost per model', 'Usage-limit', 'Open questions', 'Oldest wait']) assert.ok(titles.includes(want), want);
   });
 });
 
