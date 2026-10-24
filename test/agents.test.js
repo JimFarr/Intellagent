@@ -606,7 +606,8 @@ describe('standing agents pick up work already on the board', () => {
 
   it('rebalancing (INT-234): a real imbalance moves work; undo puts it back and pins it; the switch, pins and undo are the human\'s', async () => {
     const s = await startServer({ agents: { defaults: fast, agents: {
-      rocket: { run: run('ok'), worktree: true }, drax: { run: run('ok'), worktree: true },
+      // drax is woken by the moves; a run that ended would free the lease taken below (runner onRunEnd), so its run outlasts the test
+      rocket: { run: run('ok'), worktree: true }, drax: { run: run('slow', 60000), worktree: true },
       spare: { run: run('ok'), enabled: false }, other: { run: run('ok'), enabled: false },
     } } });
     try {
