@@ -1608,6 +1608,31 @@ describe('per-agent git worktrees', () => {
       assert.equal(git(dir, 'show', 'main:cy.txt'), 'cy');
       assert.equal(git(dir, 'show', 'main:di.txt'), 'di');
       assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=no'), '');
+      // INT-440: with main open in the human's checkout it lands there, so their files are never behind main
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), git(dir, 'rev-parse', 'main'));
+      assert.equal(fs.readFileSync(path.join(dir, 'di.txt'), 'utf8'), 'di\n');
+      // with another branch open and uncommitted edits to the very file the ticket changes, it lands all the same
+      git(dir, 'switch', '-q', '-c', 'side');
+      write(dir, 'f.txt', 'the human, uncommitted\n');
+      const gus = (await wt.ensure('gus')).path;
+      write(gus, 'f.txt', 'gus\n');
+      git(gus, 'commit', '-q', '-am', 'gus edits f (T-8)');
+      assert.equal((await wt.land('gus', 'T-8')).via, 'cherry-pick');
+      assert.equal(git(dir, 'show', 'main:f.txt'), 'gus');
+      assert.equal(fs.readFileSync(path.join(dir, 'f.txt'), 'utf8'), 'the human, uncommitted\n', 'their edit is kept');
+      assert.equal(git(dir, 'rev-parse', 'side'), git(dir, 'rev-parse', 'main~1'), 'side is where it was');
+      assert.deepEqual(await wt.dirtyMain(), [], 'no checkout has main open, so nothing holds a landing up');
+      // a conflict there is undone too, and main is let go: the human can switch back to it
+      write(gus, 'f.txt', 'gus again\n');
+      git(gus, 'commit', '-q', '-am', 'gus edits f again (T-9)');
+      git(gus, 'reset', '-q', '--soft', 'HEAD~2');
+      git(gus, 'commit', '-q', '-m', 'gus squashed (T-9)');
+      const mainTip = git(dir, 'rev-parse', 'main');
+      const conflict = await wt.land('gus', 'T-9');
+      assert.equal(conflict.landed.length, 0, JSON.stringify(conflict));
+      assert.equal(git(dir, 'rev-parse', 'main'), mainTip, 'main is where it was');
+      git(dir, 'checkout', '-q', '--', 'f.txt');
+      git(dir, 'switch', '-q', 'main');
     } finally {
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
     }
@@ -1636,17 +1661,16 @@ describe('per-agent git worktrees', () => {
       assert.ok(!git('log', '--format=%s', 'agent/ann').includes('side work'), "ann's branch starts from main, not the open side branch");
       await until(async () => (await agentState(s, 'ann')).status === 'idle', 6000, 'ann idle');
       await s.ok('POST', `${B}/items/${a.id}/review`, { summary: 'done' }, { agent: 'ann' });
+      // INT-440: it lands anyway, in the board's own worktree, and the side branch and its files are untouched
+      const sideTip = git('rev-parse', 'side');
       await s.ok('POST', `${B}/items/${a.id}/review/decision`, { verdict: 'approve' }, USER);
-      assert.match((await comments(s, a.id)).at(-1), /Not landed: the main checkout has `side` open, not `main`.*git switch main.*intellagent merge/);
-      const failed = (await s.ok('GET', `/api/events?types=item.land_failed&itemId=${a.id}`)).events.at(-1);
-      assert.equal(failed.code, 'NOT_ON_MAIN');
-      assert.ok(!git('log', '--format=%s', 'side').includes(`(${a.id})`), 'nothing landed on side');
-      git('switch', '-q', 'main');
-      const land = await s.ok('POST', `${B}/items/${a.id}/land`, {}, USER);
-      assert.equal(land.landed.length, 1);
-      assert.equal(land.branch, 'main');
-      assert.ok(git('log', '-1', '--format=%s', 'main').includes(`(${a.id})`));
       assert.match((await comments(s, a.id)).at(-1), /Landed on main/);
+      assert.ok(git('log', '-1', '--format=%s', 'main').includes(`(${a.id})`));
+      assert.equal(git('rev-parse', 'side'), sideTip, 'nothing landed on side');
+      assert.equal(git('branch', '--show-current'), 'side');
+      assert.ok(!fs.existsSync(path.join(dir, `work-${a.id}.txt`)), "the human's open files are not touched");
+      git('switch', '-q', 'main'); // main was let go after the landing
+      assert.ok(fs.existsSync(path.join(dir, `work-${a.id}.txt`)));
     } finally {
       await s.stop();
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
