@@ -2575,3 +2575,21 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 .trg-row .dd.trg-wake { width: auto; flex: 0 1 auto; }
 .trg-lbl { color: var(--muted); font-size: 12px; }
 .trg-hint { flex: 1 1 200px; color: var(--muted); font-size: 12px; }
+
+/* An agent's run, as it happens (INT-457): what it says, each command and edit, each result folded, the end */
+.rl-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.rl-bar .dd { width: auto; }
+.rl-state { color: var(--ok); font-size: 12px; }
+.rl-list { display: flex; flex-direction: column; gap: 4px; }
+.rl { white-space: pre-wrap; word-break: break-word; }
+.rl-say { color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5; padding: 4px 0; }
+.rl-say > :first-child { margin-top: 0; } .rl-say > :last-child { margin-bottom: 0; }
+.rl-tool { color: var(--accent); }
+.rl-out > summary { color: var(--muted); cursor: pointer; list-style: none; padding-left: 14px; }
+.rl-out > summary::before { content: '▸'; margin-left: -14px; margin-right: 6px; }
+.rl-out[open] > summary::before { content: '▾'; }
+.rl-out > pre { margin: 4px 0 4px 14px; padding: 8px; border-left: 2px solid var(--border); color: var(--muted); white-space: pre-wrap; }
+.rl-meta, .rl-raw { color: var(--muted); font-size: 11px; }
+.rl-meta > summary { cursor: pointer; }
+.rl-end { color: var(--ok); font-weight: 600; padding-top: 6px; border-top: 1px solid var(--border); margin-top: 4px; }
+.rl-err, .rl-err > summary { color: var(--danger); }

@@ -4446,7 +4446,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       ${a.status === 'paused' || a.status === 'failed' ? btn('resume', 'play', 'Resume', 'Resume|Clear failures and run any waiting events') : btn('pause', 'pause', 'Pause', 'Pause|The current run finishes; new events wait')}
       ${btn('run', 'sparkle', 'Run now', 'Run now|Start a run with whatever is waiting, or just to check the board')}
       ${btn('edit', 'pencil', 'Edit', 'Edit|Change role, permissions, model, what wakes it and its throttle')}
-      ${btn('log', 'terminal', 'Log', 'Last run|Output of the most recent run')}
+      ${a.status === 'running' ? btn('log', 'terminal', 'Watch live', 'Watch live|What it is doing now, as it happens; its earlier runs are in the same view') : btn('log', 'terminal', 'Runs', 'Runs|What it did in its last runs, step by step')}
       ${btn('remove', 'x', 'Remove', 'Remove|Delete this standing agent from agents.json — its tickets and history stay')}</div>`;
   }
   async function standingAction(btn) {
@@ -4466,14 +4466,62 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     try { await api('POST', `/api/agents/${encodeURIComponent(name)}/${act}`, {}); await refreshPresence(); }
     catch (e) { toast(e.message, { kind: 'error' }); }
   }
-  async function showRunLog(name) {
-    const body = openDrawer('runLogDrawer', `${name} · last run`, 'terminal');
-    body.innerHTML = '<pre class="run-log">…</pre>';
-    try {
-      const r = await api('GET', `/api/agents/${encodeURIComponent(name)}/log`);
-      $('.run-log', body).textContent = r.log || 'No runs yet.';
-      $('.run-log', body).scrollTop = 1e9;
-    } catch (e) { $('.run-log', body).textContent = e.message; }
+  // A run as it happens (INT-457): the log is Claude's stream-json, one event a line; each becomes a terminal-like
+  // row. A live run is followed by asking for the lines written since, every second, while the drawer is open.
+  const runRows = (line) => {
+    if (!line.trim()) return '';
+    let ev;
+    try { ev = JSON.parse(line); } catch { return `<div class="rl rl-raw">${esc(line.length > 400 ? `${line.slice(0, 400)}…` : line)}</div>`; }
+    const fold = (text, err) => {
+      const t = String(text ?? '').trim();
+      const first = t.split('\n')[0].slice(0, 160) || '(no output)';
+      return `<details class="rl rl-out${err ? ' rl-err' : ''}"><summary>${esc(first)}${t.includes('\n') || t.length > 160 ? ' …' : ''}</summary><pre>${esc(t.slice(0, 6000))}${t.length > 6000 ? '\n…' : ''}</pre></details>`;
+    };
+    const tool = (u) => {
+      const i = u.input || {};
+      const what = u.name === 'Bash' ? `$ ${i.command}` : i.file_path ? `${u.name} ${i.file_path}` : i.pattern ? `${u.name} ${i.pattern}` : i.skill ? `Skill ${i.skill}` : `${u.name} ${JSON.stringify(i).slice(0, 140)}`;
+      return `<div class="rl rl-tool">${esc(what)}</div>`;
+    };
+    if (ev.type === 'system' && ev.subtype === 'init') return `<div class="rl rl-meta">session started${ev.model ? ` · ${esc(ev.model)}` : ''}</div>`;
+    if (ev.type === 'assistant') return (ev.message?.content || []).map((c) => (c.type === 'text' ? `<div class="rl-say md">${md(c.text)}</div>` : c.type === 'tool_use' ? tool(c) : '')).join('');
+    if (ev.type === 'user') return (ev.message?.content || []).filter((c) => c.type === 'tool_result')
+      .map((c) => fold(Array.isArray(c.content) ? c.content.map((x) => x.text || '').join('\n') : c.content, c.is_error)).join('');
+    if (ev.type === 'result') {
+      const secs = ev.duration_ms ? `${Math.round(ev.duration_ms / 1000)} s` : '';
+      const cost = ev.total_cost_usd != null ? `$${ev.total_cost_usd.toFixed(2)}` : '';
+      return `<div class="rl rl-end${ev.is_error ? ' rl-err' : ''}">${ev.is_error ? '✗ ended with an error' : '✓ done'}${[secs, cost].filter(Boolean).map((x) => ` · ${x}`).join('')}</div>`;
+    }
+    return '';
+  };
+  async function showRunLog(name, run = null) {
+    const body = openDrawer('runLogDrawer', `${name} · runs`, 'terminal');
+    body.innerHTML = '<div class="rl-bar"><button class="dd rl-pick">…</button><span class="rl-state"></span></div><div class="run-log rl-list"></div>';
+    const list = $('.rl-list', body);
+    const q = (extra) => `/api/agents/${encodeURIComponent(name)}/log?${new URLSearchParams({ ...(run ? { run } : {}), ...extra })}`;
+    let runs = [];
+    try { runs = (await api('GET', `/api/agents/${encodeURIComponent(name)}/runs`)).runs; } catch (e) { list.textContent = e.message; return; }
+    run ||= runs[0]?.run || null;
+    const label = (r) => `${r.live ? '● ' : ''}${new Date(r.startedAt).toLocaleString()}`;
+    const pick = $('.rl-pick', body);
+    pick.innerHTML = `${esc(run ? label(runs.find((r) => r.run === run) || { startedAt: run, live: false }) : 'No runs yet')}${icon('chev', 'sm')}`;
+    pick.onclick = () => menu(pick, runs.map((r) => ({ label: label(r), cls: r.run === run ? 'on' : '', run: () => showRunLog(name, r.run) })));
+    if (!run) { list.innerHTML = '<div class="empty-note">No runs yet.</div>'; return; }
+    // the whole log, then whatever is written after it while the run goes on
+    let next = 0;
+    const atEnd = () => list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    const pull = async () => {
+      if (!list.isConnected) return;
+      try {
+        const r = await api('GET', q({ from: next }));
+        const stick = atEnd();
+        if (r.log) list.insertAdjacentHTML('beforeend', r.log.split('\n').map((l) => (l.startsWith('$ ') ? `<details class="rl rl-meta"><summary>run command</summary><pre>${esc(l.slice(2))}</pre></details>` : runRows(l))).join(''));
+        next = r.next ?? next;
+        if (stick) list.scrollTop = list.scrollHeight;
+        $('.rl-state', body).textContent = r.running ? '● live' : '';
+        if (r.running) setTimeout(pull, 1000);
+      } catch (e) { $('.rl-state', body).textContent = e.message; }
+    };
+    pull();
   }
 
   // The board's coordinator receives requests (Ask an agent) unless another agent is picked.

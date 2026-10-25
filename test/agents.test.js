@@ -2418,6 +2418,34 @@ describe('personality and context items (INT-240)', () => {
   });
 });
 
+describe('watching a run (INT-457)', () => {
+  it('the human lists runs and follows one in whole lines from a position; agents may not read run logs', async () => {
+    const s = await startServer({ agents: { defaults: fast, agents: { dev: { run: run('ok'), role: 'builder' }, other: { run: run('ok'), enabled: false } } } });
+    try {
+      await s.ok('POST', '/api/agents/dev/run', {}, USER);
+      await until(async () => (await s.ok('GET', '/api/agents/dev/log', undefined, USER)).log.includes('--- output ---'), 8000, 'run logged');
+      const { runs } = await s.ok('GET', '/api/agents/dev/runs', undefined, USER);
+      assert.equal(runs.length, 1);
+      assert.match(runs[0].run, /^[\w-]+\.log$/);
+      assert.ok(Date.parse(runs[0].startedAt), 'a readable start time');
+      // from 0: the whole log in whole lines, and where to ask next; from there: nothing new
+      const a = await s.ok('GET', `/api/agents/dev/log?from=0&run=${runs[0].run}`, undefined, USER);
+      assert.ok(a.log.length > 0 && a.log.endsWith('\n'), 'whole lines only');
+      assert.equal(a.next, Buffer.byteLength(a.log));
+      const b = await s.ok('GET', `/api/agents/dev/log?from=${a.next}`, undefined, USER);
+      assert.equal(b.log, '');
+      assert.equal(b.running, false);
+      // a run name is a log file name, never a path
+      assert.equal((await s.api('GET', '/api/agents/dev/log?run=..%2Fx.log', undefined, USER)).status, 400);
+      // the human's only: a log holds file contents and command output
+      for (const p of ['/api/agents/dev/log', '/api/agents/dev/runs']) {
+        const r = await s.api('GET', p, undefined, { kind: 'agent', name: 'other' });
+        assert.deepEqual([r.status, r.body.code], [403, 'HUMAN_ONLY'], p);
+      }
+    } finally { await s.stop(); }
+  });
+});
+
 describe('a run gets its own token (INT-248)', () => {
   it('the preview is the first-turn prompt of a real run: same text around the events; human or agents.manage only', async () => {
     const s = await startServer({ agents: { defaults: fast, agents: { dev: { run: run('ok'), role: 'builder', personality: { speed: 4, text: 'Say little.' }, contextItems: [{ kind: 'note', title: 'House rules', body: 'Be kind.' }] }, other: { run: run('ok'), enabled: false } } } });

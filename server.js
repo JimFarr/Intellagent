@@ -4762,17 +4762,47 @@ route('POST', '/api/agents', 'Human: add or update a standing agent { name, role
 });
 route('DELETE', '/api/agents/:name', 'Human: remove a standing agent', ({ p }) => standing.remove(p.name));
 route('GET', '/api/agents/:name', 'One standing agent', ({ p }) => standing.get(p.name));
-route('GET', '/api/agents/:name/log', 'Output of the latest run (tail): ?bytes=20000', ({ p, q }) => {
+// An agent's run logs (INT-457): the human's only, since a log holds file contents and command output.
+// The runs of one agent are its folder of logs, newest first; a run is named by its log's file name.
+const RUN_LOG_RE = /^[\w-]+\.log$/;
+function runLogDir(name) {
+  const a = standing.get(name);
+  return a.lastRun?.log ? path.dirname(a.lastRun.log) : path.join(DATA, 'agent-runs', name.replace(/[^\w.-]+/g, '_'));
+}
+route('GET', '/api/agents/:name/runs', 'Human only: the agent\'s latest runs, newest first → { runs: [{ run, startedAt, size, live }] } (?limit=10)', ({ p, q, actor }) => {
+  humanConfig(actor, "read an agent's run logs");
   const a = standing.get(p.name);
-  const f = a.lastRun?.log;
-  if (!f || !fs.existsSync(f)) return { log: '' };
+  const dir = runLogDir(p.name);
+  const live = a.status === 'running' && a.lastRun?.log ? path.basename(a.lastRun.log) : null;
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => RUN_LOG_RE.test(f)).sort().reverse(); } catch { /* no runs yet */ }
+  return { runs: files.slice(0, clamp(Number(q.limit) || 10, 1, 50)).map((f) => ({ run: f, startedAt: f.replace(/\.log$/, '').replace(/T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/, 'T$1:$2:$3.$4Z'), size: fs.statSync(path.join(dir, f)).size, live: f === live })) };
+});
+route('GET', '/api/agents/:name/log', 'Human only: a run\'s log, the latest unless ?run=<a name from …/runs>. Without ?from, its tail (?bytes=20000); with ?from=<byte>, whole lines written since, to follow a live run → { log, from, next, size, running, run }', ({ p, q, actor }) => {
+  humanConfig(actor, "read an agent's run logs");
+  const a = standing.get(p.name);
+  let f = a.lastRun?.log;
+  if (q.run) {
+    if (!RUN_LOG_RE.test(String(q.run))) fail(400, 'run is a log name from GET /api/agents/<name>/runs');
+    f = path.join(runLogDir(p.name), String(q.run));
+  }
+  if (!f || !fs.existsSync(f)) return { log: '', running: false };
   const size = fs.statSync(f).size;
+  const running = a.status === 'running' && a.lastRun?.log === f;
+  const read = (start, length) => {
+    const fd = fs.openSync(f, 'r');
+    try { const buf = Buffer.alloc(length); fs.readSync(fd, buf, 0, length, start); return buf; } finally { fs.closeSync(fd); }
+  };
+  if (q.from != null) {
+    // whole lines only, so a reader following the run never gets half a JSON event or half a character
+    const from = clamp(Number(q.from) || 0, 0, size);
+    const buf = read(from, Math.min(size - from, 500_000));
+    const end = buf.lastIndexOf(0x0a) + 1;
+    return { run: path.basename(f), log: buf.subarray(0, end).toString('utf8'), from, next: from + end, size, running };
+  }
   const n = clamp(Number(q.bytes) || 20000, 1000, 500_000);
-  const fd = fs.openSync(f, 'r');
-  const buf = Buffer.alloc(Math.min(n, size));
-  fs.readSync(fd, buf, 0, buf.length, size - buf.length);
-  fs.closeSync(fd);
-  return { file: f, truncated: size > n, log: buf.toString('utf8') };
+  const len = Math.min(n, size);
+  return { run: path.basename(f), file: f, truncated: size > n, log: read(size - len, len).toString('utf8'), size, running };
 });
 /* Agent manager (INT-55): an agent with the agents.manage grant (or the human) edits another standing
    agent. What it may change is a fixed list; the run command, grants, enabled, env and cwd stay with the
