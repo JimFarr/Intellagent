@@ -32,6 +32,40 @@ test('grants what fits under the ceiling and tracks the floor', () => {
   assert.deepEqual(l.floor(), { cpu: 12, gpuMB: 2548 });
 });
 
+test('an exclusive lease runs 20 minutes at a time, asked or renewed; a shared one keeps the longer cap (INT-456)', () => {
+  const c = clock();
+  const l = machine(c);
+  const x = l.ask({ holder: 'cap', exclusive: true, minutes: 80, ticket: 'LNZ-86' });
+  assert.equal(x.lease.expiresAt, '2026-10-13T09:20:00.000Z', 'asked for 80, granted 20');
+  c.pass(15);
+  assert.equal(l.renew(x.lease.id, 60).expiresAt, '2026-10-13T09:35:00.000Z', 'renewed: 20 more from now, not 60');
+  l.done(x.lease.id);
+  assert.equal(l.ask({ holder: 'tony', cpu: 2, minutes: 80 }).lease.expiresAt, '2026-10-13T10:35:00.000Z', 'shared: 80 as asked');
+});
+
+test('an exclusive lease on a quiet machine ends after 10 quiet minutes; any busy reading resets the count (INT-456)', () => {
+  const c = clock();
+  const l = machine(c);
+  const x = l.ask({ holder: 'cap', exclusive: true, minutes: 20 }).lease;
+  const read = (cpu, gpu = 5) => l.quiet({ cpu, gpu });
+  assert.deepEqual(read(10), [], 'quiet, but just started');
+  c.pass(6); assert.deepEqual(read(80), [], 'a run is going: the count resets');
+  c.pass(1); read(12);
+  c.pass(9); assert.deepEqual(read(12), [], 'quiet for 9 minutes: kept');
+  c.pass(1);
+  const ended = read(12);
+  assert.deepEqual(ended.map((e) => [e.id, e.ended]), [[x.id, 'quiet']], 'quiet for 10 minutes: freed, and says why');
+  assert.equal(l.ask({ holder: 'natasha', cpu: 2 }).granted, true, 'the machine is free for the next one');
+  // a busy card alone keeps it: a timing run on the graphics card barely touches the processor
+  const y = l.ask({ holder: 'tony', exclusive: false, cpu: 0 });
+  assert.ok(y.granted);
+  const z = machine(c);
+  const zx = z.ask({ holder: 'cap', exclusive: true }).lease;
+  z.quiet({ cpu: 5, gpu: 90 }); c.pass(11);
+  assert.deepEqual(z.quiet({ cpu: 5, gpu: 90 }), [], 'card busy: not quiet');
+  assert.ok(z.status().leases.some((e) => e.id === zx.id));
+});
+
 test('says no when there is no room, and when room frees', () => {
   const c = clock();
   const l = machine(c);

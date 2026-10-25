@@ -19,7 +19,7 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { Ledger } = require('./lib/leases');
+const { Ledger, QUIET_MINUTES } = require('./lib/leases');
 const machine = require('./lib/machine');
 const { hostProblem, jsonProblem } = require('./lib/local-only');
 
@@ -102,6 +102,16 @@ async function main() {
   });
 
   setInterval(() => { if (ledger.sweep().length) save(ledger); }, SWEEP_MS).unref();
+  // An exclusive lease on a quiet machine is a run that stopped (INT-456): read the machine once a minute while one
+  // is live, and let the ledger free it after QUIET_MINUTES. Nothing is read while no exclusive lease is held.
+  setInterval(async () => {
+    if (!ledger.leases.some((l) => l.exclusive)) return;
+    try {
+      const [cpu, cards] = await Promise.all([machine.cpuBusy(), forced ? [] : machine.gpus()]);
+      const ended = ledger.quiet({ cpu: cpu.busyPercent, gpu: cards[0]?.busyPercent ?? null });
+      if (ended.length) { save(ledger); for (const l of ended) console.log(`${l.id} (${l.holder}) ended: the machine was quiet for ${QUIET_MINUTES} minutes`); }
+    } catch (e) { console.warn(`quiet check: ${e.message}`); }
+  }, 60_000).unref();
   server.listen(PORT, '127.0.0.1', () => console.log(`leases on http://127.0.0.1:${PORT} · ${capacity.cpu} threads${capacity.gpuMB ? `, ${capacity.gpuMB} MB of card` : ''} · ${FILE}`));
 }
 
