@@ -1,7 +1,7 @@
 /* Shared client state: the board, the settings and the token. Everything that reads or writes them imports from here. */
 
 // The default, and the fallback for a missing or unknown theme: Bauhaus Studio, or its dark twin.
-export const BASE_THEME = matchMedia('(prefers-color-scheme: light)').matches ? 'bauhaus-studio' : 'bauhaus-studio-dark';
+export const BASE_THEME = matchMedia('(prefers-color-scheme: light)').matches ? 'clear' : 'clear-dark';
 
 // The only place that touches localStorage: a missing or unreadable value gives the fallback, and a failed write is dropped.
 // `raw` keeps a plain string (the token) as it is instead of JSON.
