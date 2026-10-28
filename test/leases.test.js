@@ -308,12 +308,19 @@ test('names the processes an agent started, so a stray test run is easy to find'
   assert.equal(isAgentProcess(String.raw`node C:\Lenza\.intellagent\review\natasha\node_modules\vite\bin\vite.js build`), true);
   assert.equal(isAgentProcess(String.raw`node C:\Lenza\node_modules\vite\bin\vite.js preview --outDir C:\Lenza\.intellagent\builds\natasha`), false, 'an agent build\'s server is meant to stay up');
   assert.equal(isAgentProcess('C:\Program Files\Google\Chrome\chrome.exe'), false);
+  // the person's editor or notepad opened on a worktree mentions the path, and is never an agent's
+  assert.equal(isAgentProcess(String.raw`"C:\Users\me\AppData\Local\Programs\Microsoft VS Code\Code.exe" C:\Lenza\.worktrees\nebula`), false);
+  assert.equal(isAgentProcess(String.raw`notepad.exe C:\Lenza\.intellagent\worktrees\x\README.md`), false);
+  assert.equal(isAgentProcess(String.raw`"C:\Program Files\nodejs\node.exe" C:\Lenza\.worktrees\nebula\test.js`), true);
+  // the worktree path after the 300 characters the listing keeps still counts
+  const long = parseWindowsProcesses([{ IDProcess: 5, Name: 'node', PercentProcessorTime: 0 }], [{ ProcessId: 5, CommandLine: `node ${'--flag '.repeat(60)}C:\\Lenza\\.worktrees\\n\\t.js` }], 1);
+  assert.equal(long[0].agent, true);
   const list = parseWindowsProcesses(
     [{ IDProcess: 0, Name: 'Idle', PercentProcessorTime: 900 }, { IDProcess: 42, Name: 'node#2', PercentProcessorTime: 1200 }],
     [{ ProcessId: 42, CommandLine: 'node vitest.mjs run', CreationDate: '/Date(1760889060000)/' }],
     12,
   );
-  assert.deepEqual(list, [{ pid: 42, name: 'node', cpuPercent: 100, startedAt: '2025-10-19T15:51:00.000Z', command: 'node vitest.mjs run' }]);
+  assert.deepEqual(list, [{ pid: 42, name: 'node', cpuPercent: 100, startedAt: '2025-10-19T15:51:00.000Z', command: 'node vitest.mjs run', agent: false }]);
 });
 
 test('reap stops only a process marked agent, and every refusal has a code and a hint (INT-395)', () => {

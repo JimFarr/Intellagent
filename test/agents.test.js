@@ -973,7 +973,7 @@ describe('what a run inherits (INT-246)', () => {
     } finally { delete process.env.IA_T_SECRET; delete process.env.IA_T_KEEP; }
   });
 
-  it('a custom run inherits only what a shell needs unless inheritEnv adds names; a claude run still inherits everything (INT-260)', () => {
+  it('a custom run inherits only what a shell needs unless inheritEnv adds names; a claude run inherits everything but the board\'s INTELLAGENT_* (INT-260)', () => {
     const token = process.env.INTELLAGENT_TOKEN; // set when the suite itself runs inside an agent
     process.env.IA_T_API_KEY = 'secret';
     process.env.INTELLAGENT_TOKEN = 'the-boards-own';
@@ -994,7 +994,7 @@ describe('what a run inherits (INT-246)', () => {
       assert.equal(childEnv({ run: 'node adapter.js', env: { IA_T_API_KEY: 'given' } }, {}, {}).IA_T_API_KEY, 'given', 'env still gives a value outright');
       const claude = childEnv({ run: 'claude -p go' }, {}, {});
       assert.equal(claude.IA_T_API_KEY, 'secret', 'claude runs keep today\'s default');
-      assert.equal(claude.INTELLAGENT_TOKEN, 'the-boards-own');
+      assert.equal(claude.INTELLAGENT_TOKEN, undefined, 'never the board\'s own token: the run is given its own');
       assert.equal(childEnv({ run: 'claude -p go', inheritEnv: [] }, {}, {}).IA_T_API_KEY, undefined, 'inheritEnv still narrows a claude run');
     } finally {
       delete process.env.IA_T_API_KEY;
