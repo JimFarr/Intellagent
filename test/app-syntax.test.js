@@ -73,38 +73,7 @@ describe('no-reply pip', () => {
   });
 });
 
-// The rule builder (INT-306) lives in the page too: run its real ruleTree and treeText source against a stand-in field list,
-// and check that condition text -> rows -> text gives the same text, and that a text row cannot change how rows group.
-describe('rule builder: round trip', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
-  const a = src.indexOf('const RULE_TESTS ='), b = src.indexOf('const needsNoSpace');
-  assert.ok(a > 0 && b > a, 'rule builder source not found');
-  const fields = [
-    { path: 'type', kind: 'choice', options: [] }, { path: 'priority', kind: 'choice', options: [] },
-    { path: 'review.oks', kind: 'number' }, { path: 'review.allOk', kind: 'flag' }, { path: 'columnDays', kind: 'number' },
-    { path: 'fields.risk', kind: 'choice', options: [] }, { path: '', kind: 'raw' },
-  ];
-  const lib = vm.runInNewContext(
-    `${src.slice(a, b)}\n({ back: (t) => treeText(ruleTree(t, F)), tree: (t) => JSON.stringify(ruleTree(t, F)), text: (tr) => treeText(tr) })`,
-    { F: fields });
-  const same = ['review.allOk (@drax or @nebula) columnDays>=3', 'review.allOk or (@drax or @nebula) or columnDays>=3',
-    'fields.risk:high or priority:Critical or is:rule:"two words"', 'type:issue review.oks>=2'];
-  for (const t of same) it(`"${t}" comes back as written`, () => assert.equal(lib.back(t), t));
-  it('a condition with no switch (a b or c) stays one text row, saved as written', () => {
-    const t = 'type:issue priority:High or @drax';
-    assert.equal(lib.back(t), t);
-    assert.equal(JSON.parse(lib.tree(t)).items.length, 1);
-  });
-  it('beside other rows a text row must be one term', () => {
-    const rows = (v) => ({ mode: 'all', items: [{ path: 'type', test: 'is', value: 'issue' }, { path: '', test: 'raw', value: v }] });
-    assert.equal(lib.text(rows('a or b')), null);
-    assert.equal(lib.text(rows('a b')), null);
-    assert.equal(lib.text(rows('(a)')), null);
-    assert.equal(lib.text(rows('or')), null);
-    assert.equal(lib.text(rows('is:rule:"two words"')), 'type:issue is:rule:"two words"');
-    assert.equal(lib.text(rows('@drax')), 'type:issue @drax');
-  });
-});
+// the condition builder's round trip moved with it to the Rules page: test/rules-builder.test.js
 
 // Stop all agents (INT-340): run the real armStopAll() source against a stand-in document that records its listeners.
 // The second click is the page's own handler (it calls stop._disarm, then posts stop-all), so it is not run here.

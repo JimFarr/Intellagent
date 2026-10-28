@@ -27,8 +27,6 @@ const mix = (x, p, y) => fromOklab(oklab(x).map((c, i) => c * p + oklab(y)[i] * 
 // rule in public/app.css that sets that text and its ground]. If app.css changes one, change it here and in TAG_TEXT.
 const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8');
 const GROUP_TEXT = [
-  ['cover head', 'tag-cover', 0.09, 'surface', /\[data-groups="cover"\] \.group-head \{[^}]*background: color-mix\(in oklab, var\(--tagc\) 9%, var\(--surface\)\);[^}]*color: color-mix\(in oklab, var\(--tagc\) var\(--tag-cover, 42%\), var\(--text\)\)/],
-  ['tab head', 'tag-tab', 0.14, 'surface', /\[data-groups="tab"\] \.group-head \{[^}]*background: color-mix\(in oklab, var\(--tagc\) 14%, var\(--surface\)\); color: color-mix\(in oklab, var\(--tagc\) var\(--tag-tab, 40%\), var\(--text\)\)/],
   ['parent chip', 'tag-chip', 0.17, 'surface', /\.chip\.parent \{[^}]*17%, transparent\); color: color-mix\(in oklab, var\(--tagc\) var\(--tag-chip, 55%\), var\(--text\)\)/],
   ['group head', 'tag-head', 0, 'panel', /\n\.group-head \{[^}]*background: none; color: color-mix\(in oklab, var\(--tagc\) var\(--tag-head, 50%\), var\(--text\)\)/],
 ];
@@ -82,8 +80,7 @@ describe('theme palettes', () => {
   });
 
   // A met gate's pill (INT-104): --ok 20% into the text, on --ok 14% over the surface. If app.css changes the rule,
-  // change the shares here. (--ok is one bright green for every theme: 55%, the first design, is 2.8:1 on the light
-  // themes, and 35% still 3.8:1 on latte.)
+  // change the shares here. (--ok is one bright green for every theme: 55%, the first design, is 2.8:1 on a light theme.)
   const ok = /--ok: (#[0-9a-f]{6})/i.exec(css)?.[1];
   it('the met gate pill rule matches public/app.css', () => {
     assert.ok(ok, '--ok in :root');

@@ -226,6 +226,9 @@ Columns with `humanOnlyIn` / `humanOnlyOut` can only be entered / left by a huma
 
 A **sleeping** column (`flags.sleeping`, e.g. Backlog) holds work nobody should start yet. Assigning a ticket there wakes nobody; agents cannot start it there (`409 SLEEPING`) and it is not in their work. Moving it out — into Ready — wakes its assignee. On a board with a sleeping column, agents file new tickets into it (`403 SLEEPING` elsewhere); the **coordinator** decides where a ticket an agent filed goes (leave it asleep, or create or move it into any column it may use), and only the human wakes the human's own tickets.
 
+### Rules: the human's "when this happens, do that"
+The human keeps rules on the board (`GET /api/boards/main/rules`): a trigger (a ticket enters a column, idles for an hour, a review is approved…), an optional card-rules condition on the ticket, and actions (wake an agent, comment, move, assign, ask the human, set a field or property, extract from the ticket, style its card, land, merge into a branch…). Texts and values may say `{id}`, `{title}`, `{field.<key>}`, `{property.<name>}` and, from a comment that set it off, `{comment.text}`, `{comment.author}`, `{comment.url}`. A card's style (`style` on the ticket) is the human's or a rule's: an agent gets `403 HUMAN_ONLY`. A rule acts as the board, under its own name: its changes show as `actor.rule` on events. When one wakes you, the event is `rule.fired` with `rule`, the ticket and the human's `note`: do what the note says. Rules are the human's to change (`403 HUMAN_ONLY`); you may read them and their log (`GET …/rules/log`) and ask on a card for a new one. The details are in docs/operators.md, under Rules.
+
 ### Grants: powers the human delegates
 The human delegates a power (review.decide, column.gate, work.land, agents.control, agents.manage, the Board admin set) through agents.json or the Agents page, and every call is checked. The grant syntax, required reviewers, guidance and switches are in docs/operators.md, under Grants.
 
@@ -471,6 +474,7 @@ Approvals    GET/PUT …/approvals  …/admin (PUT human)
 Rebalancing  GET/PUT …/rebalance (PUT human or admin.rebalancing)  POST/DELETE …/items/:id/pin  POST …/items/:id/rebalance/undo (human)
 Rules        GET/PUT …/directives                PATCH /api/boards/:board          POST /api/boards      PATCH /api/app  POST /api/app/restart (human)
 Card rules   GET/PUT …/card-rules (PUT human or admin.cardRules)    GET …/card-rules/check  …/card-rules/matches
+Rules        GET/POST …/rules (POST human)  PUT/DELETE …/rules/:id (human)  POST …/rules/preview  GET …/rules/log
 Search       GET/POST /api/search
 Events       GET /api/events  /api/events/wait  /api/stream   POST /api/stream-ticket (the UI)
              GET/POST /api/subscriptions         DELETE /api/subscriptions/:id     GET …/:id/next   POST …/:id/ack

@@ -16,11 +16,11 @@ const fromOklab = ([L, a, b]) => {
 const mixOklab = (x, p, y) => fromOklab(oklab(x).map((c, i) => c * p + oklab(y)[i] * (1 - p)));
 const mixHex = (x, y, p) => `#${rgb(x).map((c, i) => Math.round(c + (rgb(y)[i] - c) * p).toString(16).padStart(2, '0')).join('')}`;
 const T = (label, mode, c, style = {}, css = '') => ({
-  label, mode, style, css, glow: !!style.glow,
+  label, mode, style, css,
   vars: {
     bg: c[0], panel: c[1], surface: c[2], text: c[3], muted: c[4], border: c[5], accent: c[6], 'accent-2': c[7],
     issue: c[8], task: c[9], spike: c[10], ok: c[11], warn: c[12], danger: c[13], blob1: c[14], blob2: c[15], blob3: c[16],
-    shadow: mode === 'dark' ? 'rgb(0 0 0 / .6)' : 'rgb(60 45 30 / .22)', 'fx-o': mode === 'dark' ? '.34' : '.5', grain: mode === 'dark' ? '.07' : '.09',
+    shadow: mode === 'dark' ? 'rgb(0 0 0 / .6)' : 'rgb(60 45 30 / .22)',
     // set on every theme, so switching away from one that changes them never leaves them behind
     'on-accent': '#fff', 'accent-fill': c[6],
   },
@@ -28,7 +28,7 @@ const T = (label, mode, c, style = {}, css = '') => ({
 // Clear: thin lines, no shadows or motion to speak of, sentence-case headings. The type shows as a line on top and
 // "needs you" as a bar on the left, so the two never compete for one place. Links are underlined at full strength,
 // every control shows a focus ring, and form fields get an edge of 3:1 so they can be found.
-const CLEAR_STYLE = { card: 6, col: 10, modal: 12, ctl: 6, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'normal', bg: 'none', texture: false, avatar: 'round', titleW: 500, font: "'Inter'", display: "'Inter'", colAlpha: 100 };
+const CLEAR_STYLE = { card: 6, col: 10, modal: 12, ctl: 6, bw: 1, shadow: 'flat', cards: 'clean', typeInd: 'dot', tape: 'none', attn: 'bar', enter: 'fade', lanes: 'solid', chips: 'tag', heads: 'normal', avatar: 'round', avStyle: 'tint', drop: 'tint', groups: 'rule', titleW: 500, font: "'Inter'", display: "'Inter'", colAlpha: 100 };
 const CLEAR_CSS = '.c-title { font-size: 14px; line-height: 1.45; } .col-name { font-weight: 600; } .app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 700; }'
   + ' .md a { border-bottom-color: currentColor; }'
   + ' :is(button, a, summary, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }'
@@ -39,7 +39,7 @@ export const THEMES = {
   // picked to stay apart under protan, deutan and tritan vision, and each also has its own shape or place.
   clear: T('Clear', 'light', ['#f6f7f9', '#eef0f3', '#ffffff', '#16191f', '#555c68', '#ccd1d8', '#3a64ae', '#674fa7', '#a54b6e', '#3a64ae', '#856635', '#397582', '#896535', '#9e3b4a', '#a5b8e0', '#c1b5dd', '#accdd3'],
     CLEAR_STYLE, CLEAR_CSS),
-  'clear-dark': T('Clear Dark', 'dark', ['#15171b', '#1b1e23', '#22262c', '#e7e9ed', '#a5abb6', '#3a404b', '#89a9e6', '#b2a3e8', '#de8aa6', '#89a9e6', '#d7b475', '#75becb', '#e3bd7d', '#e57682', '#475c87', '#5a4f7f', '#446c72'],
+  'clear-dark': T('Clear Dark', 'dark', ['#15171b', '#1b1e23', '#22262c', '#e7e9ed', '#a5abb6', '#464d59', '#89a9e6', '#b2a3e8', '#de8aa6', '#89a9e6', '#d7b475', '#75becb', '#e3bd7d', '#e57682', '#475c87', '#5a4f7f', '#446c72'],
     CLEAR_STYLE, CLEAR_CSS),
 };
 // Imported themes (INT-465): a theme is a .css file (lib/themes.js, themes/README.md). Its :root block is the palette,
@@ -74,7 +74,7 @@ export const removeTheme = (id) => { if (!BUILT_IN.includes(id)) delete THEMES[i
 const TAG_SRC = ['accent', 'accent-2', 'task', 'spike', 'ok', 'issue', 'warn', 'blob1', 'blob2', 'blob3', 'danger'];
 // Text tinted by a group colour (app.css): [variable, usual share of the tag in the text, share in its ground,
 // ground]. A theme whose colours can't carry the usual share at 4.5:1 gets a smaller one, never a duller colour.
-const TAG_TEXT = [['tag-cover', 42, 9, 'surface'], ['tag-tab', 40, 14, 'surface'], ['tag-chip', 55, 17, 'surface'], ['tag-head', 50, 0, 'panel']];
+const TAG_TEXT = [['tag-chip', 55, 17, 'surface'], ['tag-head', 50, 0, 'panel']];
 const shows = (c, v) => { for (let i = 1; i <= 100 && contrast(c, v.surface) < 3; i++) c = mixHex(c, v.text, 0.02); return c; };
 const apart = (x, y) => Math.hypot(...oklab(x).map((c, i) => c - oklab(y)[i]));
 // Worked out when a theme is first shown (about 1 ms), not for every theme at load: { tags, shares }.

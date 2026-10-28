@@ -2439,6 +2439,13 @@ describe('watching a run (INT-457)', () => {
       const b = await s.ok('GET', `/api/agents/dev/log?from=${a.next}`, undefined, USER);
       assert.equal(b.log, '');
       assert.equal(b.running, false);
+      // one line longer than the 500 KB window is skipped, not read for ever (INT-470); the next line still comes
+      const { file } = await s.ok('GET', '/api/agents/dev/log', undefined, USER);
+      fs.chmodSync(file, 0o644);
+      fs.appendFileSync(file, `${'x'.repeat(600_000)}\n{"type":"after"}\n`);
+      const c = await s.ok('GET', `/api/agents/dev/log?from=${a.next}&run=${runs[0].run}`, undefined, USER);
+      assert.deepEqual([c.log, c.skipped, c.next], ['', 600_001, a.next + 600_001]);
+      assert.equal((await s.ok('GET', `/api/agents/dev/log?from=${c.next}&run=${runs[0].run}`, undefined, USER)).log, '{"type":"after"}\n');
       // a run name is a log file name, never a path
       assert.equal((await s.api('GET', '/api/agents/dev/log?run=..%2Fx.log', undefined, USER)).status, 400);
       // the human's only: a log holds file contents and command output
