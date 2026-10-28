@@ -2423,7 +2423,8 @@ describe('watching a run (INT-457)', () => {
     const s = await startServer({ agents: { defaults: fast, agents: { dev: { run: run('ok'), role: 'builder' }, other: { run: run('ok'), enabled: false } } } });
     try {
       await s.ok('POST', '/api/agents/dev/run', {}, USER);
-      await until(async () => (await s.ok('GET', '/api/agents/dev/log', undefined, USER)).log.includes('--- output ---'), 8000, 'run logged');
+      // the output header is written before the run ends: wait for the end too, or `running` below races it
+      await until(async () => { const l = await s.ok('GET', '/api/agents/dev/log', undefined, USER); return l.log.includes('--- output ---') && !l.running; }, 8000, 'run logged and ended');
       const { runs } = await s.ok('GET', '/api/agents/dev/runs', undefined, USER);
       assert.equal(runs.length, 1);
       assert.match(runs[0].run, /^[\w-]+\.log$/);

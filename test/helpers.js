@@ -9,6 +9,10 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
+// A test that fails before its stop() leaves its server running, and the server's pipes keep the test file
+// from ever exiting (the whole suite hangs): kill whatever is left once the file's tests are done.
+const live = new Set();
+require('node:test').after(() => { for (const p of live) p.kill('SIGKILL'); });
 
 // opts: { manifest, agents (agents.json content), dir (reuse a stopped server's folder, e.g. to simulate a reboot),
 //         env (extra environment for the server, e.g. NODE_OPTIONS to preload a stub) }
@@ -53,21 +57,24 @@ async function startOnce({ manifest = {}, agents, dir, env = {} } = {}) {
     env: cleanEnv({ ...fakeClaudePath(), INTELLAGENT_RUN_GUARD_BIN: path.join(os.tmpdir(), 'ia-test-guard-bin'), ...env, INTELLAGENT_MANIFEST: mp, INTELLAGENT_PORT: String(port) }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  live.add(proc);
+  proc.on('exit', () => live.delete(proc));
   let log = '';
   proc.stdout.on('data', (d) => (log += d));
   proc.stderr.on('data', (d) => (log += d));
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; ; i++) {
     try { if ((await fetch(`${base}/api`)).ok) break; } catch { /* not up yet */ }
-    if (i > 100 || proc.exitCode != null) throw new Error(`server did not start:\n${log}`);
+    if (i > 100 || proc.exitCode != null) { proc.kill(); throw new Error(`server did not start:\n${log}`); }
     await new Promise((r) => setTimeout(r, 100));
   }
 
-  // as: { agent: 'name' } | { user: 'name' }
+  // as: { agent: 'name' } | { user: 'name' }, and token: the bearer to send
   async function api(method, p, body, as = { agent: 'tester' }) {
     const headers = { 'content-type': 'application/json' };
     if (as.agent) headers['x-agent'] = as.agent;
     if (as.user) { headers['x-user'] = as.user; headers.origin = base; }
+    if (as.token) headers.authorization = `Bearer ${as.token}`;
     const r = await fetch(base + p, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const text = await r.text();
     let json; try { json = JSON.parse(text); } catch { json = text; }
@@ -83,7 +90,8 @@ async function startOnce({ manifest = {}, agents, dir, env = {} } = {}) {
   // keep: leave the folder so a new server can start on it. hard: kill without a clean shutdown (power cut).
   async function stop({ keep = false, hard = false } = {}) {
     proc.kill(hard ? 'SIGKILL' : 'SIGTERM');
-    await new Promise((r) => (proc.exitCode != null ? r() : proc.on('exit', r)));
+    // a process killed by a signal has no exitCode, only a signalCode: either means a second stop() has nothing to wait for
+    await new Promise((r) => (proc.exitCode != null || proc.signalCode != null ? r() : proc.on('exit', r)));
     if (keep) return;
     // data files are read-only by design; make them writable so the temp folder can go
     const unlock = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, f.name); if (f.isDirectory()) unlock(p); else fs.chmodSync(p, 0o666); } };

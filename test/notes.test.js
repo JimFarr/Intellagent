@@ -47,6 +47,19 @@ describe('area note rules', () => {
 });
 
 describe('the store', () => {
+  it('a new note on a full area stays: the least confirmed older one is retired instead', () => {
+    const s = store();
+    const old = [];
+    for (let i = 0; i < NOTES.PER_AREA; i++) {
+      const n = s.add({ area: 'lib/x.js', text: `lesson ${i}` }, agent('groot')).note;
+      s.confirm(n.id, agent('rocket'));
+      old.push(n.id);
+    }
+    const fresh = s.add({ area: 'lib/x.js', text: 'a new lesson' }, agent('nebula')).note;
+    const kept = s.forPaths(['lib/x.js']).map((n) => n.id);
+    assert.ok(kept.includes(fresh.id), 'the note it said it added is there');
+    assert.equal(kept.length, NOTES.PER_AREA);
+  });
   it('keeps notes by area, most confirmed first; the same lesson again counts as a confirmation', () => {
     const s = store();
     const a = s.add({ area: 'lib/alerts/', text: 'work.js and stuck.js share NOT_OWNING', from: 'int-1' }, agent('groot')).note;

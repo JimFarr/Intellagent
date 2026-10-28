@@ -93,7 +93,7 @@ if (mode === 'stream') {
       for (const id of new Set(events.map((e) => e.itemId).filter(Boolean))) {
         await fetch(`${process.env.INTELLAGENT_URL}/api/boards/main/items/${id}/comments`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT, ...(ctx.run ? { 'x-intellagent-run': ctx.run } : {}) },
+          headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT, ...(ctx.run ? { 'x-intellagent-run': ctx.run } : {}), ...(process.env.INTELLAGENT_TOKEN ? { authorization: `Bearer ${process.env.INTELLAGENT_TOKEN}` } : {}) },
           body: JSON.stringify({ body: `turn ${turns} in pid ${process.pid} (${kind}${role})` }),
         });
       }
