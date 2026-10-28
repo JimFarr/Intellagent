@@ -1395,7 +1395,10 @@ describe('token usage', () => {
   });
 
   it('asks one-shot claude runs for JSON output and leaves everything else alone', () => {
-    assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --output-format json');
+    assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --output-format stream-json --verbose');
+    // the usage read takes the last result line of a stream (INT-458)
+    const stream = [{ type: 'system' }, { type: 'assistant', message: { content: [] } }, { type: 'result', usage: { input_tokens: 5, output_tokens: 2 } }].map((m) => JSON.stringify(m)).join('\n');
+    assert.deepEqual(parseUsage(`--- output ---\n${stream}\n`), { input: 5, output: 2, cacheRead: 0, cacheCreated: 0 });
     assert.equal(withJsonOutput('claude -p "x" --output-format stream-json'), 'claude -p "x" --output-format stream-json');
     assert.equal(withJsonOutput('node fake.js ok'), 'node fake.js ok');
   });
