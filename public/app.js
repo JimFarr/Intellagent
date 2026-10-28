@@ -6,6 +6,7 @@ import { md } from './js/markdown.js';
 import { tip, hideTip, focusTip, tipPausedWhen } from './js/tooltips.js';
 import { eventIcon, describe as describeEvent } from './js/events.js';
 import { createRules, RULE_VIEWS } from './js/rules.js';
+import { createPlugins, PLUGIN_VIEWS } from './js/plugins.js';
 import { state, settings, settingsStore, themeKey, onSystemTheme, DEFAULTS, stored, AUTH, tokenStore } from './js/state.js';
 import { THEMES, BUILT_IN, addTheme, removeTheme, themeGroups, contrast } from './js/themes.js';
 import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, rel, fmtLeft, TYPES, PRIORITIES, PRIO_VAR, TYPE_VAR, FIELD_ICON, LOGO, avatar, emojiGlyph, nameOf, nameHTML, dotsHTML, minsSince, standingOf, runAgo, thinkAge } from './js/core.js';
@@ -214,6 +215,8 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
   // the If's dropdowns offer the people on the board and the card looks' names
   const rules = createRules({ api, toast, openDrawer, rel, nameOf, isOpen: () => Object.values(RULE_VIEWS).some(([id]) => document.getElementById(id)), board: () => state.board,
     people: () => knownPeople() });
+  // Integrations (public/js/plugins.js)
+  const plugins = createPlugins({ api, toast, openDrawer, rel, nameOf, isOpen: () => Object.values(PLUGIN_VIEWS).some(([id]) => document.getElementById(id)), openPerms: () => openPermissions() });
   const B = (p = '') => `/api/boards/${encodeURIComponent(state.boardId)}${p}`;
   const I = (id, p = '') => B(`/items/${encodeURIComponent(id)}${p}`);
   const colById = (id) => state.board?.columns.find((c) => c.id === id);
@@ -3372,6 +3375,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
   function onEvent(ev) {
     if (ev.type === 'hello') return;
     rules.onEvent(ev);
+    plugins.onEvent(ev);
     if (ev.type === 'item.typing') { // live only: no seq, no hash, nothing to refresh
       if (ev.board === state.boardId && ev.actor?.name && ev.actor.name !== settings.userName) setTyping(ev.itemId, ev.actor.name, true);
       return;
@@ -3475,7 +3479,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
   const SECTIONS = [['board', 'Board', 'board'], ['agents', 'Agents', 'bot'], ['deployments', 'Integrations', 'link'], ['rules', 'Rules', 'zap']];
   const PAGES = {
     agents: [['agentsDrawer', 'Agents', 'bot', () => openAgents()], ['requestsDrawer', 'Ask an agent', 'send', () => openRequests()], ['inboxDrawer', 'Inbox', 'bell', () => openInbox()], ['catchDrawer', 'While you were away', 'sparkle', () => openCatchup()], ['digestDrawer', 'Digest', 'news', () => openDigest()], ['metricsDrawer', 'Flow', 'activity', () => openMetrics()], ['analyticsDrawer', 'Analytics', 'layers', () => openAnalytics()], ['contextDrawer', 'Context', 'text', () => openContext()], ['permsDrawer', 'Permissions', 'lock', () => openPermissions()], ['gridDrawer', 'Assignments', 'sliders', () => openPermGrid()]],
-    deployments: [['deployDrawer', 'Connectors', 'link', () => openDeployments('connectors')], ['actionsDrawer', 'Actions', 'play', () => openDeployments('actions')]],
+    deployments: Object.entries(PLUGIN_VIEWS).map(([k, v]) => [...v, () => plugins.open(k)]),
     rules: [[...RULE_VIEWS.mine, () => rules.open('mine')], [...RULE_VIEWS.log, () => rules.open('log')]],
   };
   const pageSection = (id) => Object.keys(PAGES).find((s) => PAGES[s].some(([pid]) => pid === (HUB_PARENT[id] || id))) || null;
@@ -3805,14 +3809,6 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     };
     draw();
   }
-
-  // Integrations come from plugins (INT-462/463): until one is installed each view says so
-  const openDeployments = (view = 'connectors') => {
-    const [id, title, ic, h, p] = view === 'actions'
-      ? ['actionsDrawer', 'Actions', 'play', 'No actions yet', 'Each plugin brings its actions. Agents and rules run the ones you grant them.']
-      : ['deployDrawer', 'Connectors', 'link', 'No connectors yet', 'A connector is a plugin: a folder you add here that connects the board to a service.'];
-    openDrawer(id, title, ic).innerHTML = `<div class="ent-empty">${icon(ic)}<h3>${h}</h3><p>${p}</p></div>`;
-  };
 
   // With a name (from the awake strip), scrolls to that agent's Now row (else its row below) and marks it for a moment.
   function openAgents(name) {
