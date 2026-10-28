@@ -1,0 +1,43 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Form controls (INT-471 mockup)</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--surface:#fff;--text:#1b1f27;--muted:#5d6676;--border:#d5d9e0;--accent:#2a7f6f;--on-accent:#fff;--danger:#c03545;--ok:#2c8a57;--warn:#a8680f;--field-bg:color-mix(in oklab,var(--bg) 35%,var(--surface));--hover:color-mix(in oklab,var(--text) 6%,transparent);--r-s:6px;--r-m:10px;--ease:cubic-bezier(.4,0,.2,1)}
+[data-t=dark]{--bg:#12151b;--panel:#171b22;--surface:#1c212a;--text:#e8ebf0;--muted:#9aa3b2;--border:#2e3541;--accent:#79d0b8;--on-accent:#0c1a16;--danger:#ff7a8a}
+[data-t=import]{--bg:#2b2233;--panel:#332a3d;--surface:#3a3046;--text:#f3e9ff;--muted:#b9a8cc;--border:#54455f;--accent:#ffb454;--on-accent:#2a1a00;--danger:#ff8fa3}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px/20px system-ui,sans-serif}
+.sheet{max-width:960px;margin:0 auto;padding:24px;display:grid;gap:24px}
+h1{font:600 18px/24px system-ui;margin:0}h2{font:500 12px/16px system-ui;color:var(--muted);margin:0 0 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.f{height:32px;width:100%;border:1px solid var(--border);border-radius:var(--r-s);background:var(--field-bg);color:var(--text);padding:0 12px;font:inherit;transition:border-color .12s var(--ease)}
+textarea.f{height:auto;padding:6px 12px;min-height:72px}
+.f::placeholder{color:var(--muted)}.f.h,.f:hover{border-color:color-mix(in oklab,var(--text) 30%,var(--border))}
+.f:focus-visible,.f.fx,.b:focus-visible,.b.fx{outline:2px solid var(--accent);outline-offset:2px;border-color:var(--accent)}
+.f.err{border-color:var(--danger)}.f:disabled{opacity:.5;cursor:not-allowed}
+.help{font:500 12px/16px system-ui;color:var(--muted);margin-top:4px}.help.err{color:var(--danger)}
+.cb{width:16px;height:16px;border:1px solid var(--border);border-radius:var(--r-s);background:var(--field-bg);display:inline-grid;place-items:center;color:var(--on-accent)}
+.cb.on{background:var(--accent);border-color:var(--accent)}.cb.rd{border-radius:50%}.cb.rd.on::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--on-accent)}
+.lab{display:flex;gap:8px;align-items:center;min-height:32px}
+.sw{width:32px;height:18px;border-radius:9px;background:var(--border);position:relative}.sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--surface);transition:transform .12s var(--ease)}.sw.on{background:var(--accent)}.sw.on::after{transform:translateX(14px)}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:var(--r-s);height:32px;overflow:hidden}.seg span{padding:0 12px;display:grid;place-items:center;border-left:1px solid var(--border)}.seg span:first-child{border:0}.seg .on{background:var(--surface);box-shadow:inset 0 -2px var(--accent);font-weight:600}
+.sl{flex:1;height:4px;background:var(--border);border-radius:2px;position:relative}.sl i{position:absolute;left:0;width:60%;height:100%;background:var(--accent);border-radius:2px}.sl b{position:absolute;left:60%;top:-6px;width:16px;height:16px;margin-left:-8px;border-radius:50%;background:var(--surface);border:1px solid var(--accent)}
+.sw1{width:20px;height:20px;border-radius:50%;background:var(--accent)}
+.b{height:32px;padding:0 12px;border-radius:var(--r-s);border:1px solid var(--border);background:var(--surface);color:var(--text);font:500 13px system-ui}
+.b.p{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}.b.q{border-color:transparent;background:none}.b.q:hover{background:var(--hover)}.b.d{color:var(--danger)}.b:disabled{opacity:.5}
+.menu{border:1px solid var(--border);border-radius:var(--r-m);background:var(--panel);padding:8px;box-shadow:0 8px 24px rgb(0 0 0/.18)}.menu div{height:32px;display:flex;align-items:center;padding:0 8px;border-radius:var(--r-s)}.menu .on{background:var(--hover)}
+.cells{display:grid;grid-template-columns:repeat(6,32px);gap:2px;margin-top:8px}.cells span{height:32px;display:grid;place-items:center;border-radius:var(--r-s)}
+</style>
+<body data-t="light"><div class="sheet">
+<div class="row"><h1>Form controls</h1><span class="row" style="margin-left:auto"><button class="b" onclick="document.body.dataset.t='light'">Clear</button><button class="b" onclick="document.body.dataset.t='dark'">Clear Dark</button><button class="b" onclick="document.body.dataset.t='import'">Imported</button></span></div>
+<div class="grid">
+<div><h2>Text: rest, hover, focus, filled</h2><div style="display:grid;gap:8px"><input class="f" placeholder="Title"><input class="f h" placeholder="Hover"><input class="f fx" value="Focus"><input class="f" value="Filled"></div></div>
+<div><h2>Disabled, error</h2><input class="f" disabled value="Disabled"><div style="height:8px"></div><input class="f err" value="abc" aria-invalid="true"><div class="help err">⚠ Must be a number</div></div>
+<div><h2>Text area</h2><textarea class="f" placeholder="Description"></textarea><div class="help">Markdown works</div></div>
+<div><h2>Select and menu</h2><div class="f" style="display:flex;align-items:center;justify-content:space-between">Ready <span>⌄</span></div><div class="menu" style="margin-top:4px"><div>Backlog</div><div class="on">✓ Ready</div><div>In Progress</div></div></div>
+<div><h2>Number, date</h2><div style="display:grid;gap:8px"><div class="f" style="display:flex;justify-content:space-between;align-items:center;font-variant-numeric:tabular-nums">30<span style="color:var(--muted)">− +</span></div><div class="f" style="display:flex;justify-content:space-between;align-items:center">2026-10-29<span style="color:var(--muted)">▦</span></div></div></div>
+<div><h2>Checkbox, radio, switch</h2><label class="lab"><span class="cb on">✓</span>Checked</label><label class="lab"><span class="cb"></span>Unchecked</label><label class="lab"><span class="cb rd on"></span>Radio on</label><label class="lab"><span class="cb rd"></span>Radio off</label><label class="lab"><span class="sw on"></span>Switch on</label><label class="lab"><span class="sw"></span>Switch off</label></div>
+<div><h2>Segmented, slider</h2><div class="seg"><span>Day</span><span class="on">Week</span><span>Month</span></div><div class="row" style="margin-top:16px"><div class="sl"><i></i><b></b></div><span style="font-variant-numeric:tabular-nums">60</span></div></div>
+<div><h2>Colour picker</h2><div class="f" style="display:flex;gap:8px;align-items:center"><span class="sw1"></span><code>#79d0b8</code><span style="margin-left:auto">⌄</span></div><div class="menu" style="margin-top:4px"><div style="height:48px;background:linear-gradient(90deg,#e55,#ee5,#5e5,#5ee,#55e,#e5e);border-radius:6px"></div><div class="row" style="margin-top:8px"><span class="sw1"></span><span class="sw1" style="background:var(--ok)"></span><span class="sw1" style="background:var(--warn)"></span><span class="sw1" style="background:var(--danger)"></span></div></div></div>
+<div><h2>Emoji / glyph</h2><div class="row"><button class="b" style="width:32px;padding:0">🦗</button><button class="b" style="width:32px;padding:0;border-style:dashed;color:var(--muted)">+</button></div><div class="menu" style="margin-top:4px"><input class="f" placeholder="Search"><div class="cells"><span>🦗</span><span>🛠</span><span>🚀</span><span>🔍</span><span>🧪</span><span>✨</span></div></div></div>
+<div><h2>Buttons</h2><div class="row"><button class="b p">Primary</button><button class="b">Default</button><button class="b q">Quiet</button><button class="b d">Delete</button><button class="b" disabled>Disabled</button><button class="b fx">Focus</button></div></div>
+</div></div>

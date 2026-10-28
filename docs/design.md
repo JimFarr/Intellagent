@@ -90,3 +90,27 @@ Each page gets its own commit with before/after at 1280, 375 and (section pages)
 1. **Five type sizes and 12 px minimum** removes the tiny 7.5–11 px text. Some dense rows (agent logs, badges) will lose a little density. OK?
 2. **Shadows only on floating things.** Cards lose their soft shadow in Clear and use a hairline. OK?
 3. **Side menu 240 px with an accent bar** instead of a filled current item. OK?
+
+## Form controls: one family
+
+Every control shares one skeleton, so a row of mixed controls lines up. Imported themes recolour them through `--bg`, `--surface`, `--text`, `--border`, `--accent`, `--danger` and change nothing else. The mockup sheet `docs/design/controls.html` shows each control at rest, hover, focus, filled, disabled and in error, in Clear, Clear Dark and one imported palette; it uses only these tokens.
+
+| Part | Rule |
+|---|---|
+| Height | 32 px (40 on touch, `pointer: coarse`); compact 24 px for table cells. Text areas start at 3 rows. |
+| Shape | `--r-s`, `--field-bg`, `1px solid var(--border)`, padding 0 12 (8 compact), Body type. |
+| Hover | Border to `color-mix(--text 30%, --border)`. Nothing moves, no shadow. 120 ms `--ease-io`. |
+| Focus | Border `--accent` plus the 2 px `--accent` ring with 2 px offset (`:focus-visible`); never removed. |
+| Disabled | 50 % opacity, `not-allowed`, no hover. The reason goes in the tooltip or help text. |
+| Error | Border `--danger`, a 16 px alert icon and the words under the field in `--danger`, `aria-invalid`. Never colour alone. |
+| Placeholder | `--muted`, at least 4.5:1 like any text. |
+
+- **Text, number, date.** One look. Number: no browser spinner; quiet − / + buttons (24 px) at the right edge, shown on hover and focus; tabular figures. Date: the same field with a 16 px calendar icon; the popup is a month grid in a menu.
+- **Select and menu.** The field with a 16 px chevron; opens a menu under it (see Menus), 32 px items, the chosen one with a check, keys: arrows, type-ahead, Esc. Never the native popup.
+- **Checkbox and radio.** 16 px, `--r-s` (radio round), `--field-bg`, hairline. Checked: `--accent` fill, mark in `--on-accent`; the mark draws in 120 ms. The label is the click target, 32 px tall.
+- **Switch.** 32 × 18 track, 14 px knob; off `--border`, on `--accent`; the knob slides 120 ms ease, no bounce. The label stays the same when it flips.
+- **Segmented choice.** For 2–4 short exclusive options: one 32 px bar, `--r-s`, hairline separators. Chosen: `--surface` with a 2 px `--accent` underline, bold. No pills.
+- **Slider.** 4 px `--border` track, `--accent` fill, 16 px `--surface` knob with a 1 px `--accent` ring, value in Caption at the right. Arrows step 1, PageUp/Down step 10.
+- **Colour picker.** A 32 px field: round 20 px swatch, the hex in mono, chevron. Opens a popover with a saturation square, a hue strip, a row of theme swatches (`--accent`, `--ok`, `--warn`, `--danger`, `--accent-2`) and the hex input. The native `<input type=color>` stays underneath as the fallback.
+- **Emoji / glyph.** A 32 px square button showing the glyph (empty: dashed outline and a plus). Opens a menu with search and a grid of 32 px cells, recent first, Clear at the bottom. One grapheme only.
+- **Buttons.** 32 px, `--r-s`, Body at weight 500, icon 16 px with an 8 px gap. Primary: `--accent` fill (once or twice per screen). Default: `--surface` and hairline. Quiet: no border or fill, `--hover` on hover. Danger: a default button with `--danger` text and ring, filled only on the confirm step. Icon-only: 32 px square with a tooltip. Busy: label stays, a 14 px spinner replaces the icon, clicks ignored. Press deepens `--hover`; nothing scales.
