@@ -90,7 +90,8 @@ async function startOnce({ manifest = {}, agents, dir, env = {} } = {}) {
   // keep: leave the folder so a new server can start on it. hard: kill without a clean shutdown (power cut).
   async function stop({ keep = false, hard = false } = {}) {
     proc.kill(hard ? 'SIGKILL' : 'SIGTERM');
-    await new Promise((r) => (proc.exitCode != null ? r() : proc.on('exit', r)));
+    // a process killed by a signal has no exitCode, only a signalCode: either means a second stop() has nothing to wait for
+    await new Promise((r) => (proc.exitCode != null || proc.signalCode != null ? r() : proc.on('exit', r)));
     if (keep) return;
     // data files are read-only by design; make them writable so the temp folder can go
     const unlock = (d) => { for (const f of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, f.name); if (f.isDirectory()) unlock(p); else fs.chmodSync(p, 0o666); } };

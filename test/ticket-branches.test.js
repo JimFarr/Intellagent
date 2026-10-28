@@ -208,3 +208,35 @@ describe('start gives the ticket its branch (INT-321)', () => {
     }
   });
 });
+
+describe('two boards on one repository (INT-453)', () => {
+  it('start refuses an agent name the other board already uses, and never the board\'s own', async () => {
+    const { startServer, USER } = require('./helpers');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-two-'));
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 'test@example.com');
+    git(dir, 'config', 'user.name', 'Test');
+    write(dir, '.gitignore', 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'init');
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-two-b-'));
+    const agents = { agents: { dev: { enabled: false, worktree: true } } };
+    const a = await startServer({ dir, agents });
+    // the same name in other capitals is the same branch on Windows, so it clashes too
+    const b = await startServer({ dir: other, manifest: { projectRoot: dir }, agents: { agents: { Dev: { enabled: false, worktree: true } } } });
+    const B = '/api/boards/main';
+    try {
+      const one = await a.ok('POST', `${B}/items`, { title: 'one', column: 'Ready' }, USER);
+      await a.ok('POST', `${B}/items/${one.id}/start`, {}, { agent: 'dev' });
+      const two = await b.ok('POST', `${B}/items`, { title: 'two', column: 'Ready' }, USER);
+      const r = await b.api('POST', `${B}/items/${two.id}/start`, {}, { agent: 'Dev' });
+      assert.deepEqual([r.status, r.body.code], [409, 'AGENT_NAME_TAKEN']);
+      assert.ok(r.body.hint);
+      const again = await a.api('POST', `${B}/items/${one.id}/start`, {}, { agent: 'dev' });
+      assert.equal(again.status, 200, 'the first board never refuses its own name');
+    } finally {
+      await b.stop(); await a.stop();
+      try { git(dir, 'worktree', 'prune'); fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(other, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+});

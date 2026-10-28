@@ -994,7 +994,7 @@ describe('what a run inherits (INT-246)', () => {
       assert.equal(childEnv({ run: 'node adapter.js', env: { IA_T_API_KEY: 'given' } }, {}, {}).IA_T_API_KEY, 'given', 'env still gives a value outright');
       const claude = childEnv({ run: 'claude -p go' }, {}, {});
       assert.equal(claude.IA_T_API_KEY, 'secret', 'claude runs keep today\'s default');
-      assert.equal(claude.INTELLAGENT_TOKEN, undefined, 'never the board\'s own token (nor its deploy PAT): the run is given its own');
+      assert.equal(claude.INTELLAGENT_TOKEN, undefined, 'never the board\'s own token: the run is given its own');
       assert.equal(childEnv({ run: 'claude -p go', inheritEnv: [] }, {}, {}).IA_T_API_KEY, undefined, 'inheritEnv still narrows a claude run');
     } finally {
       delete process.env.IA_T_API_KEY;
@@ -1395,7 +1395,10 @@ describe('token usage', () => {
   });
 
   it('asks one-shot claude runs for JSON output and leaves everything else alone', () => {
-    assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --output-format json');
+    assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --output-format stream-json --verbose');
+    // the usage read takes the last result line of a stream (INT-458)
+    const stream = [{ type: 'system' }, { type: 'assistant', message: { content: [] } }, { type: 'result', usage: { input_tokens: 5, output_tokens: 2 } }].map((m) => JSON.stringify(m)).join('\n');
+    assert.deepEqual(parseUsage(`--- output ---\n${stream}\n`), { input: 5, output: 2, cacheRead: 0, cacheCreated: 0 });
     assert.equal(withJsonOutput('claude -p "x" --output-format stream-json'), 'claude -p "x" --output-format stream-json');
     assert.equal(withJsonOutput('node fake.js ok'), 'node fake.js ok');
   });

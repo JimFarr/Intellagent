@@ -4,7 +4,8 @@ import { THEMES } from './themes.js';
 // With no theme picked, the board follows the system: Clear when it is light, else Clear Dark, live as it changes.
 const systemLight = matchMedia('(prefers-color-scheme: light)');
 export const onSystemTheme = (fn) => systemLight.addEventListener('change', fn);
-export const themeKey = () => settings.theme || (systemLight.matches ? 'clear' : 'clear-dark');
+// A picked theme that isn't loaded (an imported one before /api/themes answers, or one since removed) shows the system's.
+export const themeKey = () => (Object.hasOwn(THEMES, settings.theme || '') ? settings.theme : systemLight.matches ? 'clear' : 'clear-dark');
 
 // The only place that touches localStorage: a missing or unreadable value gives the fallback, and a failed write is dropped.
 // `raw` keeps a plain string (the token) as it is instead of JSON.
@@ -29,7 +30,6 @@ export const DEFAULTS = {
 function loadSettings() {
   try {
     const s = settingsStore.get();
-    if (!Object.hasOwn(THEMES, s.theme)) delete s.theme; // a removed theme follows the system; own keys only, so "toString" is no theme
     return { ...DEFAULTS, ...s, stub: { ...DEFAULTS.stub, ...(s.stub || {}) } };
   } catch { return JSON.parse(JSON.stringify(DEFAULTS)); }
 }

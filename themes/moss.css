@@ -1,0 +1,38 @@
+/* intellagent-theme
+name: Moss
+mode: dark
+style: {"card":18,"col":30,"modal":30,"ctl":14,"bw":1,"cards":"clean","typeInd":"dot","tape":"none","attn":"glow","enter":"rise","lanes":"solid","chips":"pill","bg":"blobs","texture":true,"grain":".11","avatar":"round","md":"paper","titleW":600,"display":"'Fraunces'","colAlpha":88,"avStyle":"pebble","drop":"spotlight"}
+*/
+:root {
+  --bg: #121812;
+  --panel: #182019;
+  --surface: #1e281f;
+  --text: #e6ecd9;
+  --muted: #8f9c84;
+  --border: #2b382c;
+  --accent: #a3d16c;
+  --accent-2: #e2c36b;
+  --issue: #e88a6a;
+  --task: #7fb6a4;
+  --spike: #e2c36b;
+  --ok: #8fcf6e;
+  --warn: #e0a35a;
+  --danger: #e86a5a;
+  --blob1: #2f4a26;
+  --blob2: #4a5a1f;
+  --blob3: #1f3a33;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .62;
+  --grain: .07;
+  --on-accent: #121812;
+  --accent-fill: #a3d16c;
+}
+.card { border-radius: 28px 14px 30px 12px / 16px 30px 14px 28px; border-color: rgb(163 209 108 / .14); background: radial-gradient(140% 120% at 0% 0%, rgb(163 209 108 / .10), transparent 55%), linear-gradient(165deg, #233024, #1a231b); box-shadow: 0 12px 26px -14px rgb(0 0 0 / .85), inset 0 1px 0 rgb(226 195 107 / .10); }
+.card:nth-child(3n+2) { border-radius: 14px 30px 16px 26px / 28px 14px 30px 16px; }
+.card:nth-child(3n) { border-radius: 30px 18px 24px 14px / 14px 26px 18px 30px; }
+.card:hover { box-shadow: 0 18px 36px -14px rgb(0 0 0 / .9), 0 0 0 1px rgb(163 209 108 / .35), 0 0 30px -10px rgb(163 209 108 / .35); }
+.column { border-radius: 46px 34px 52px 30px / 34px 52px 30px 46px; border-color: rgb(163 209 108 / .10); background: linear-gradient(180deg, rgb(32 44 30 / .88), rgb(22 30 22 / .82)); }
+.col-head { border-bottom: 1px dashed rgb(226 195 107 / .18); }
+.col-name { font-family: var(--display); font-weight: 600; letter-spacing: .01em; color: #e9e2c4; }
+.app-name { color: #e2c36b; }
+.btn.primary { background: linear-gradient(140deg, #b5dc7c, #6fae58); color: #10160f; border-radius: 22px 12px 22px 12px; }

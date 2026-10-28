@@ -7,7 +7,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // The theme table is an ES module of the browser app (public/js/themes.js), loaded here the way the page loads it.
-const { THEMES, themeGroups, contrast, oklab } = require('../public/js/themes.js');
+const { THEMES, addTheme, themeGroups, contrast, oklab } = require('../public/js/themes.js');
+const { parse } = require('../lib/themes.js');
+
+// Every theme file in themes/ is imported the way the page imports it, so the exported themes are held to the same bars as the built-in two.
+const DIR = path.join(__dirname, '..', 'themes');
+const FILES = fs.readdirSync(DIR).filter((f) => f.endsWith('.css'));
+for (const f of FILES) addTheme(parse(fs.readFileSync(path.join(DIR, f), 'utf8')));
 
 // color-mix(in oklab, x p, y): back from oklab to #rrggbb.
 const fromOklab = ([L, a, b]) => {
@@ -26,9 +32,9 @@ const GROUP_TEXT = [
 ];
 
 describe('theme palettes', () => {
-  it('has Clear and Clear Dark, one light and one dark', () => {
-    assert.deepEqual(Object.keys(THEMES), ['clear', 'clear-dark']);
-    assert.deepEqual(Object.values(THEMES).map((t) => t.mode), ['light', 'dark']);
+  it('evaluates the theme table', () => {
+    assert.equal(Object.keys(THEMES).length, FILES.length + 2, 'Clear, Clear Dark and every file in themes/');
+    assert.ok(FILES.length > 30);
   });
 
   for (const [k, t] of Object.entries(THEMES)) {

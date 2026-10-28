@@ -1,0 +1,30 @@
+/* intellagent-theme
+name: Nord
+mode: dark
+style: {"card":10,"col":16,"modal":18,"ctl":8,"cards":"clean","tape":"none","typeInd":"tint","attn":"outline","enter":"fade","lanes":"solid","bg":"none","avStyle":"tint","groups":"rule"}
+*/
+:root {
+  --bg: #2a303c;
+  --panel: #2e3440;
+  --surface: #3b4252;
+  --text: #eceff4;
+  --muted: #a3adc2;
+  --border: #434c5e;
+  --accent: #88c0d0;
+  --accent-2: #b48ead;
+  --issue: #bf616a;
+  --task: #81a1c1;
+  --spike: #ebcb8b;
+  --ok: #a3be8c;
+  --warn: #d08770;
+  --danger: #bf616a;
+  --blob1: #5e81ac;
+  --blob2: #88c0d0;
+  --blob3: #b48ead;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #2a303c;
+  --accent-fill: #88c0d0;
+}
+.col-head { border-bottom: 1px solid var(--border); margin: 0 4px 10px; }

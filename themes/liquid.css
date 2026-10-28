@@ -1,0 +1,34 @@
+/* intellagent-theme
+name: Liquid
+mode: light
+style: {"card":18,"col":28,"modal":30,"ctl":14,"bw":1,"cards":"glass","typeInd":"dot","tape":"none","attn":"glow","enter":"zoom","lanes":"glass","chips":"pill","bg":"mesh","texture":false,"md":"clean","avStyle":"gem","titleW":600,"display":"'Outfit'","colAlpha":40,"drop":"tint"}
+*/
+:root {
+  --bg: #dfe6f6;
+  --panel: #ffffff;
+  --surface: #ffffff;
+  --text: #111733;
+  --muted: #5a6482;
+  --border: #cdd6ec;
+  --accent: #3d6bff;
+  --accent-2: #ff5aa6;
+  --issue: #ff5d73;
+  --task: #3d6bff;
+  --spike: #ffb020;
+  --ok: #22c08a;
+  --warn: #ff8a3d;
+  --danger: #ef4058;
+  --blob1: #7aa0ff;
+  --blob2: #ff9bd2;
+  --blob3: #7cf0d6;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .95;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #3c69fb;
+}
+.column, .card, .modal, .drawer, .pill-btn, .search input { box-shadow: inset 0 1px 0 rgb(255 255 255 / .9), inset 0 0 0 1px rgb(255 255 255 / .35), 0 18px 40px -26px rgb(30 50 140 / .45); }
+.modal, .drawer { background: rgb(255 255 255 / .72); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
+.pill-btn { background: rgb(255 255 255 / .55); }
+.btn.primary { background: linear-gradient(180deg, #5a83ff, #2f5cf5); border-radius: 999px; box-shadow: inset 0 1px 0 rgb(255 255 255 / .45), 0 8px 18px -8px rgb(47 92 245 / .6); }
+.app-name { background: linear-gradient(90deg, #3d6bff, #ff5aa6); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }

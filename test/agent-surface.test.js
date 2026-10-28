@@ -288,6 +288,22 @@ describe('agent tokens on new boards', () => {
       assert.equal(yes.json.agent, 'pat');
     } finally { await s.stop(); }
   });
+  it('--manifest with --as another agent keeps the run\'s own token, so it can\'t borrow that agent\'s from local.json', async () => {
+    const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    try {
+      for (const a of ['ada', 'bob']) assert.equal(cli(['token', '--agent', a], { cwd: s.dir }).code, 0);
+      const tokens = JSON.parse(fs.readFileSync(path.join(s.dir, 'local.json'), 'utf8')).agentTokens;
+      const manifest = path.join(s.dir, 'intellagent.manifest.json');
+      const run = { INTELLAGENT_AGENT: 'ada', INTELLAGENT_TOKEN: tokens.ada };
+      const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-nowhere-'));
+      const me = cli(['api', 'GET', '/api/profiles/me', '--manifest', manifest], { cwd: elsewhere, env: run });
+      assert.equal(me.code, 0, me.err);
+      assert.equal(me.json.name, 'ada');
+      const borrowed = cli(['api', 'GET', '/api/profiles/me', '--manifest', manifest, '--as', 'bob'], { cwd: elsewhere, env: run });
+      assert.equal(borrowed.code, 1, 'ada may not speak as bob with bob\'s token');
+      assert.match(borrowed.err, /error 40[13]/);
+    } finally { await s.stop(); }
+  });
   it('intellagent status lists the boards of a board that requires tokens', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     try {

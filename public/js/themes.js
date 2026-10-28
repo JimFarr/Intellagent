@@ -42,15 +42,32 @@ export const THEMES = {
   'clear-dark': T('Clear Dark', 'dark', ['#15171b', '#1b1e23', '#22262c', '#e7e9ed', '#a5abb6', '#464d59', '#89a9e6', '#b2a3e8', '#de8aa6', '#89a9e6', '#d7b475', '#75becb', '#e3bd7d', '#e57682', '#475c87', '#5a4f7f', '#446c72'],
     CLEAR_STYLE, CLEAR_CSS),
 };
+// Imported themes (INT-465): a theme is a .css file (lib/themes.js, themes/README.md). Its :root block is the palette,
+// the header's style: line the look options, and every other rule is scoped to the theme when it is applied.
 // Text on accent fills reaches 4.5:1. White where it does; in a dark theme, else its background ink (a pale accent
 // reads far better with ink); else the fill (--accent-fill) is deepened toward the theme's ink until white reads.
 // --accent itself is untouched, so links, rings and tints keep the theme's colour.
-for (const t of Object.values(THEMES)) {
+const finish = (t) => {
   const v = t.vars, ink = luminance(v.bg) < luminance(v.text) ? v.bg : v.text;
-  if (contrast('#fff', v.accent) >= 4.5) continue;
-  else if (t.mode === 'dark' && contrast(ink, v.accent) >= 4.5) v['on-accent'] = ink;
+  v['on-accent'] ??= '#fff'; v['accent-fill'] ??= v.accent;
+  if (contrast('#fff', v.accent) >= 4.5) return t;
+  if (t.mode === 'dark' && contrast(ink, v.accent) >= 4.5) v['on-accent'] = ink;
   else for (let i = 1; i <= 50 && contrast('#fff', v['accent-fill']) < 4.5; i++) v['accent-fill'] = mixHex(v.accent, ink, i / 50);
-}
+  return t;
+};
+for (const t of Object.values(THEMES)) finish(t);
+// An imported theme from the server's { id, name, mode, css }; it replaces one of the same id.
+export const addTheme = ({ id, name, mode, css }) => {
+  const head = /^\s*\/\*([\s\S]*?)\*\//.exec(css)?.[1] || '';
+  const vars = {};
+  for (const m of (/:root\s*\{([^{}]*)\}/.exec(css)?.[1] || '').matchAll(/--([\w-]+)\s*:\s*([^;]+?)\s*(?:;|$)/g)) vars[m[1]] = m[2];
+  let style = {};
+  try { style = JSON.parse(/^\s*style\s*:\s*(.+?)\s*$/m.exec(head)?.[1] || '{}'); } catch { /* the server checked it */ }
+  const rules = css.replace(/^\s*\/\*[\s\S]*?\*\//, '').replace(/:root\s*\{[^{}]*\}/, '').trim();
+  return (THEMES[id] = finish({ label: name, mode, style, css: rules, glow: !!style.glow, vars }));
+};
+export const BUILT_IN = ['clear', 'clear-dark'];
+export const removeTheme = (id) => { if (!BUILT_IN.includes(id)) delete THEMES[id]; };
 // Group (parent) colours, --tag-0…7, come from the theme's own palette: in this order, each that shows on the
 // card surface (moved toward the text until it reaches 3:1, as any non-text mark must) and differs clearly from
 // those already taken. A narrow palette adds deeper shades of what it has while they still differ; then repeats.

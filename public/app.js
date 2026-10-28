@@ -7,83 +7,12 @@ import { tip, hideTip, focusTip, tipPausedWhen } from './js/tooltips.js';
 import { eventIcon, describe as describeEvent } from './js/events.js';
 import { createRules, RULE_VIEWS } from './js/rules.js';
 import { state, settings, settingsStore, themeKey, onSystemTheme, DEFAULTS, stored, AUTH, tokenStore } from './js/state.js';
-import { THEMES, themeGroups, contrast } from './js/themes.js';
+import { THEMES, BUILT_IN, addTheme, removeTheme, themeGroups, contrast } from './js/themes.js';
+import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, rel, fmtLeft, TYPES, PRIORITIES, PRIO_VAR, TYPE_VAR, FIELD_ICON, LOGO, avatar, emojiGlyph, nameOf, nameHTML, dotsHTML, minsSince, standingOf, runAgo, thinkAge } from './js/core.js';
 
 (() => {
   /* ═════════════════════════ helpers ═════════════════════════ */
 
-  // Parent tags take a slot, and each theme paints its slots from its own palette (--tag-0…7, themeGroups): as
-  // many slots as the theme has distinct group colours, up to eight. Slots are dealt out board-wide: each name
-  // starts at its hashed slot and moves along only when an earlier name took it, so as many parents as there are
-  // colours never share one, and a name keeps its colour on chips, groups and menus alike.
-  let tagSlots = new Map(), tagSlotsFor, tagSlotsOf;
-  const tagCount = () => themeGroups(THEMES[themeKey()]).count;
-  const tagHome = (p) => hashStr(String(p)) % tagCount();
-  function tagSlot(p) {
-    const board = state.board, slots = tagCount();
-    // Rebuild when the board is replaced, the theme has a different number of colours, or an in-place edit
-    // brought in a name we haven't dealt yet.
-    if (tagSlotsFor !== board || tagSlotsOf !== slots || (!tagSlots.has(p) && Object.values(board?.items || {}).some((it) => it.parent === p))) {
-      tagSlotsFor = board;
-      tagSlotsOf = slots;
-      tagSlots = new Map();
-      const names = [...new Set(Object.values(board?.items || {}).map((it) => it.parent).filter(Boolean))];
-      names.sort((a, b) => tagHome(a) - tagHome(b) || (a < b ? -1 : 1));
-      let used = new Set();
-      for (const n of names) {
-        if (used.size === slots) used = new Set();
-        let s = tagHome(n);
-        while (used.has(s)) s = (s + 1) % slots;
-        used.add(s);
-        tagSlots.set(n, s);
-      }
-    }
-    return tagSlots.get(p) ?? tagHome(p);
-  }
-  const tagColor = (p) => `var(--tag-${tagSlot(p)}, var(--accent))`;
-  const tilt = (id) => (((hashStr(id) % 1000) / 1000) - 0.5) * 2.6;
-  const nowMs = () => Date.now() + state.offset;
-  const reduced = () => settings.motion === 'reduced';
-  const autosize = (ta) => { if (!ta) return; ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; };
-  const isImage = (a) => a?.kind !== 'link' && /^image\//.test(a?.mime || '');
-
-  function rel(ts) {
-    if (!ts) return '';
-    const s = (nowMs() - Date.parse(ts)) / 1000;
-    if (s < 45) return 'now';
-    if (s < 3600) return `${Math.round(s / 60)}m`;
-    if (s < 86400) return `${Math.round(s / 3600)}h`;
-    if (s < 604800) return `${Math.round(s / 86400)}d`;
-    return new Date(ts).toLocaleDateString();
-  }
-  const fmtLeft = (ms) => (ms <= 0 ? '0:00' : ms >= 3600000 ? `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m` : `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`);
-
-  const TYPES = ['issue', 'task', 'spike'];
-  const PRIORITIES = ['Low', 'Medium', 'High', 'Critical'];
-  const PRIO_VAR = { Low: 'var(--muted)', Medium: 'var(--task)', High: 'var(--warn)', Critical: 'var(--danger)' };
-  const TYPE_VAR = { issue: 'var(--issue)', task: 'var(--task)', spike: 'var(--spike)' };
-  const FIELD_ICON = { text: 'text', markdown: 'text', number: 'num', boolean: 'toggle', enum: 'list', tags: 'tag', date: 'cal', url: 'link', user: 'user' };
-
-  // Agents (and you) can set colour / glyph / image via PATCH /api/profiles/me; otherwise colour comes from the name.
-  function avatar(actor, cls = '') {
-    const name = actor?.name || '?';
-    const p = state.profiles[name];
-    const kind = (p?.kind || actor?.kind) === 'user' ? 'user' : 'agent';
-    const color = p?.color || `hsl(${hue(name)} 62% 56%)`;
-    const style = `--av:${esc(color)}${p?.image ? `;background-image:url(&quot;${esc(p.image)}&quot;)` : ''}`;
-    const run = state.standing[name]?.status;
-    return `<span class="avatar ${kind} ${p?.image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}"${run && run !== 'idle' ? ` data-run="${run}"` : ''} style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${p?.image ? '' : p?.glyph ? `<i class="gl">${esc(emojiGlyph(p.glyph))}</i>` : esc(initials(name))}</span>`;
-  }
-  // A glyph like 🗡 or ⚔ draws as a flat text symbol unless U+FE0F follows it; add it so it shows as the emoji.
-  const emojiGlyph = (g) => (/^\p{Extended_Pictographic}$/u.test(g) && !/\p{Emoji_Presentation}/u.test(g) ? `${g}️` : g);
-
-  // How an agent or person is called on screen: the profile's label when it has one ("Receptionist"),
-  // else the id. The id is what routes (@mentions, assignee), so it stays in tooltips and muted suffixes.
-  const nameOf = (n) => state.profiles[n]?.label || n || '';
-  const nameHTML = (n) => {
-    const l = state.profiles[n]?.label;
-    return l && l !== n ? `<span class="dn" title="@${esc(n)}">${esc(l)}</span>` : esc(n || '');
-  };
 
   // Standing agents whose active run was woken for this request (kind 'requests') or by a comment on this
   // ticket (kind 'comments') get a "thinking" bubble. It stays for the whole run, replies included: a reply
@@ -96,7 +25,6 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
   // The bubble's words (INT-185): "is writing a reply" until <name> has posted in this run, then "is still working".
   // `posts` is [{ who, at }] for the thread
   const replyWords = (n, posts) => (posts.some((p) => p.who === n && p.at > standingOf(n).lastRun?.startedAt) ? 'is still working' : 'is writing a reply');
-  const dotsHTML = '<i class="ai-dots"><b></b><b></b><b></b></i>';
   // Who is writing a comment on a ticket (INT-286): agents on a run woken by a comment there (as the reply bubble),
   // and people typing in its box (item.typing, lapsing TYPING_MS after the last one). Never yourself.
   const TYPING_MS = 6000;
@@ -133,17 +61,6 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
     }
     updateCard(cardEls.get(id), state.board?.items[id]);
   }
-  // The bubble's age (INT-191): how long the run has gone, or that it has gone quiet (stalled: no board call and no output)
-  const minsSince = (iso) => Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
-  const standingOf = (n) => Object.values(state.standing || {}).find((a) => a.name === n) || {};
-  const runAgo = (n) => {
-    const a = standingOf(n);
-    return a.stalled ? `hasn't touched the board for ${minsSince(a.lastActivityAt)} min` : `${minsSince(a.runningSince)} min`;
-  };
-  const thinkAge = (n) => {
-    const stalled = standingOf(n).stalled;
-    return `${stalled ? '' : dotsHTML}<span class="think-age${stalled ? ' stalled' : ''}" data-run="${esc(n)}">${runAgo(n)}</span>`;
-  };
   // A run that ended without a reply here (INT-191): a quiet line. It goes once the agent replied during the run, or anyone posts after it ended
   const endedHere = (kind, id, posts) => Object.values(state.standing || {})
     .filter((a) => a.status !== 'running' && a.lastRun?.endedAt && a.lastRun?.about?.[kind]?.includes(id)
@@ -6044,7 +5961,11 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
           <i style="background:${v.panel}"><b style="background:${v.task};opacity:.85"></b><b style="background:${v.accent}"></b></i>
           <i style="background:${v.panel}"><b style="background:${v.spike};opacity:.85"></b></i></span><span class="nm">${th.label}</span></button>`;
       }).join('');
+      const imported = !BUILT_IN.includes(settings.theme) && THEMES[settings.theme];
       return `<div class="look-sticky">${previewStage('style')}</div>
+        <div class="theme-pick"><div class="tiles theme-tiles">${tiles}</div>
+        <div class="theme-actions"><button class="btn" data-pick-file>${icon('plus', 'sm')}Import a theme</button><input type="file" accept=".css,text/css" hidden data-import-theme>${imported ? `<button class="btn" data-remove-theme="${esc(settings.theme)}">${icon('trash', 'sm')}Remove ${esc(imported.label)}</button>` : ''}</div></div>
+        <p class="set-note">Clear and Clear Dark are built in; any other theme is a .css file (see themes/ in the repo), kept with the board. Your pick is kept in this browser; a removed theme falls back to Clear.</p>
         <h3>Layout</h3>
         <div class="choices">
         ${choiceRow('motion', 'Motion', [['full', 'Full', 'All animations'], ['reduced', 'Reduced', 'Only the essentials']], settings.motion)}
@@ -6345,6 +6266,12 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
     pane.onclick = async (e) => {
       const uc = e.target.closest('[data-ucolor]');
       if (uc) { try { await api('PATCH', '/api/profiles/me', { color: uc.dataset.ucolor || null }); pulseSaved(); } catch (err) { toast(err.message, { kind: 'error' }); } return; }
+      if (e.target.closest('[data-pick-file]')) { $('[data-import-theme]', pane).click(); return; }
+      const rm = e.target.closest('[data-remove-theme]');
+      if (rm) {
+        try { await api('DELETE', `/api/themes/${rm.dataset.removeTheme}`); removeTheme(rm.dataset.removeTheme); saveSettings(); show('look', true); } catch (err) { toast(err.message, { kind: 'error' }); }
+        return;
+      }
       const th = e.target.closest("[data-pick-theme]");
       if (th) { switchTheme(th.dataset.pickTheme, e.clientX, e.clientY, () => show('look', true)); return; }
       const sb = e.target.closest('.seg[data-set] button, .opt-grid[data-set] button');
@@ -6374,7 +6301,18 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
       const r = e.target.dataset.range;
       if (r) { paintRange(e.target); settings[r] = Number(e.target.value); applySettings(); updateOverflow(); }
     };
-    pane.onchange = (e) => {
+    pane.onchange = async (e) => {
+      if (e.target.matches('[data-import-theme]')) {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const added = await api('POST', '/api/themes', { css: await file.text() });
+          addTheme(added);
+          toast(`Imported ${added.name}`, { kind: 'ok', timeout: 2000 });
+          switchTheme(added.id, innerWidth / 2, 0, () => show('look', true));
+        } catch (err) { toast(err.message, { kind: 'error', timeout: 8000 }); }
+        return;
+      }
       if (e.target.dataset.range) { saveSettings(); pulseSaved(); }
       const k = e.target.dataset.text;
       if (k) { settings[k] = e.target.value.trim() || DEFAULTS[k]; saveSettings(); pulseSaved(); show(t, true); if (k === 'userName') refreshInbox(); }
@@ -6444,6 +6382,8 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
       if (n && free >= 0 && innerWidth >= 640) { root.classList.add('frame-now'); root.style.setProperty('--frame-l', `${side}px`); root.style.setProperty('--frame-r', `${side}px`); getComputedStyle($('#topbar')).paddingLeft; root.classList.remove('frame-now'); } }
     // light the section's tab at once: the page itself waits for the board to load
     { const s = parseSection(); document.body.dataset.section = s; for (const b of $$('#sections [data-section]')) b.classList.toggle('on', b.dataset.section === s); }
+    // imported themes (INT-465); a saved pick of one shows once they are here
+    try { (await api('GET', '/api/themes')).themes.forEach(addTheme); applySettings(); } catch { /* Clear stays */ }
     try {
       Object.assign(state.app, await api('GET', '/api/app'));
       try { state.profiles = await api('GET', '/api/profiles'); } catch { /* none yet */ }

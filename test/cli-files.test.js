@@ -62,6 +62,17 @@ describe('key=@file reads one value from a file', () => {
       const outside = post(`@${path.join(ROOT, 'package.json').replace(/\\/g, '/')}`);
       assert.equal(outside.code, 2);
       assert.match(outside.err, /error 403 FORBIDDEN: .*outside the folders an agent may read from/);
+      // a whole body from a file (@file alone) keeps the same rules
+      const whole = cli(['api', 'POST', `/api/boards/main/items/${it1.id}/comments`, `@${path.join(s.dir, 'local.json').replace(/\\/g, '/')}`], { cwd: s.dir, env: as });
+      assert.equal(whole.code, 2);
+      assert.match(whole.err, /error 403 FORBIDDEN: .*tokens or data/);
+      // a board the agent made itself, whose project is the whole disk, named by INTELLAGENT_MANIFEST, widens nothing
+      const wide = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-wide-'));
+      fs.writeFileSync(path.join(wide, 'intellagent.manifest.json'), JSON.stringify({ projectRoot: path.parse(ROOT).root }));
+      const widened = cli(['api', 'POST', `/api/boards/main/items/${it1.id}/comments`, `body=@${path.join(ROOT, 'package.json').replace(/\\/g, '/')}`],
+        { cwd: s.dir, env: { ...as, INTELLAGENT_MANIFEST: path.join(wide, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base } });
+      assert.equal(widened.code, 2);
+      assert.match(widened.err, /error 403 FORBIDDEN: .*outside the folders an agent may read from/);
       const got = await s.ok('GET', `/api/boards/main/items/${it1.id}`, undefined, USER);
       assert.equal(got.comments.length, 0, 'none of them posted anything');
     } finally { await s.stop(); }

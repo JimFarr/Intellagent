@@ -1,0 +1,31 @@
+/* intellagent-theme
+name: Dracula
+mode: dark
+style: {"cards":"clean","typeInd":"top","tape":"none","attn":"glow","enter":"zoom","bg":"stars","avStyle":"flat","drop":"pulse","groups":"rail"}
+*/
+:root {
+  --bg: #21222c;
+  --panel: #282a36;
+  --surface: #343746;
+  --text: #f8f8f2;
+  --muted: #8b93c4;
+  --border: #44475a;
+  --accent: #bd93f9;
+  --accent-2: #ff79c6;
+  --issue: #ff5555;
+  --task: #8be9fd;
+  --spike: #f1fa8c;
+  --ok: #50fa7b;
+  --warn: #ffb86c;
+  --danger: #ff5555;
+  --blob1: #bd93f9;
+  --blob2: #ff79c6;
+  --blob3: #8be9fd;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #21222c;
+  --accent-fill: #bd93f9;
+}
+.c-id { color: var(--accent-2); }
+.col-name { color: var(--accent); }

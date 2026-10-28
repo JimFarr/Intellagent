@@ -1,0 +1,31 @@
+/* intellagent-theme
+name: Slate
+mode: light
+style: {"card":6,"col":10,"modal":12,"ctl":6,"shadow":"flat","tape":"none","cards":"clean","attn":"bar","enter":"sheet","lanes":"lane","chips":"tag","heads":"caps","bg":"none","texture":false,"avatar":"round","titleW":500,"font":"'IBM Plex Sans'","display":"'IBM Plex Sans'","colAlpha":92,"avStyle":"tint","drop":"spotlight","groups":"rule"}
+*/
+:root {
+  --bg: #f5f7fa;
+  --panel: #eef1f5;
+  --surface: #ffffff;
+  --text: #1b2430;
+  --muted: #64748b;
+  --border: #dbe2ea;
+  --accent: #2563eb;
+  --accent-2: #0ea5e9;
+  --issue: #dc2626;
+  --task: #2563eb;
+  --spike: #d97706;
+  --ok: #16a34a;
+  --warn: #ea580c;
+  --danger: #dc2626;
+  --blob1: #93c5fd;
+  --blob2: #a5f3fc;
+  --blob3: #e2e8f0;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #2563eb;
+}
+.topbar { background: var(--surface); border-bottom: 1px solid var(--border); margin-bottom: 10px; padding-bottom: 12px; }
+.app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; }

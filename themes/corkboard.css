@@ -1,0 +1,30 @@
+/* intellagent-theme
+name: Corkboard
+mode: light
+style: {"md":"paper","card":2,"col":16,"modal":18,"ctl":10,"tape":"pin","cards":"sticky","attn":"ribbon","bg":"none","avatar":"round","colAlpha":55,"grain":".22","avStyle":"flat","drop":"pulse","groups":"cover"}
+*/
+:root {
+  --bg: #c9a77c;
+  --panel: #b8946a;
+  --surface: #fff8d2;
+  --text: #2b2014;
+  --muted: #6b5537;
+  --border: #9c7a52;
+  --accent: #c0392b;
+  --accent-2: #2e86ab;
+  --issue: #ff9aa2;
+  --task: #7fb7e6;
+  --spike: #f4d35e;
+  --ok: #4c9a2a;
+  --warn: #d9822b;
+  --danger: #c0392b;
+  --blob1: #e0c39a;
+  --blob2: #b88e5f;
+  --blob3: #d8b38a;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #c0392b;
+}
+.c-title { font-family: 'Caveat', cursive; font-size: 20px; line-height: 1.1; font-weight: 600; }

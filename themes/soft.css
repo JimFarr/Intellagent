@@ -1,0 +1,38 @@
+/* intellagent-theme
+name: Soft
+mode: light
+style: {"card":16,"col":26,"modal":28,"ctl":14,"bw":0,"cards":"clean","typeInd":"dot","tape":"none","attn":"glow","enter":"rise","lanes":"solid","bg":"none","texture":false,"avatar":"round","colAlpha":100,"avStyle":"pebble","drop":"lift"}
+*/
+:root {
+  --bg: #e6e9ef;
+  --panel: #e6e9ef;
+  --surface: #e6e9ef;
+  --text: #2d3346;
+  --muted: #7b8196;
+  --border: #d5d9e2;
+  --accent: #6c63ff;
+  --accent-2: #00b8a9;
+  --issue: #ef5d7a;
+  --task: #5b8def;
+  --spike: #f0a93b;
+  --ok: #2bb673;
+  --warn: #f08c3b;
+  --danger: #e5484d;
+  --blob1: #e6e9ef;
+  --blob2: #e6e9ef;
+  --blob3: #e6e9ef;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #6961f8;
+}
+.column { box-shadow: 10px 10px 24px #c5c9d3, -10px -10px 24px #ffffff; }
+.card { box-shadow: 6px 6px 14px #c8ccd6, -6px -6px 14px #ffffff; }
+.card:hover { box-shadow: 2px 2px 6px #c8ccd6, -2px -2px 6px #ffffff; }
+.card::before { display: none; }
+.search input, .inp, .dd, .tbox, .seg { background: var(--bg); box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; border-color: transparent; }
+.pill-btn, .btn:not(.primary) { background: var(--bg); border-color: transparent; box-shadow: 4px 4px 10px #c8ccd6, -4px -4px 10px #ffffff; }
+.pill-btn:active, .btn:active { box-shadow: inset 3px 3px 7px #c8ccd6, inset -3px -3px 7px #ffffff; }
+.modal, .drawer { box-shadow: 20px 20px 50px #c5c9d3, -20px -20px 50px #ffffff; }
+.seg button.on { box-shadow: 3px 3px 6px #c8ccd6, -3px -3px 6px #ffffff; }

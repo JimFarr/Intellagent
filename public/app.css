@@ -995,6 +995,7 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
 
 /* themes at the top of Appearance (INT-222): pick a kind, then one of its themes, all in view */
 .theme-pick { display: grid; gap: 10px; padding-top: 4px; margin-bottom: 4px; }
+.theme-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .theme-tiles .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .theme-tiles { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
 .theme-tiles .tile .pv { height: 52px; }

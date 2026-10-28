@@ -1,0 +1,31 @@
+/* intellagent-theme
+name: GitHub Light
+mode: light
+style: {"card":8,"col":12,"modal":14,"ctl":7,"cards":"clean","tape":"none","shadow":"flat","attn":"outline","enter":"sheet","lanes":"solid","chips":"tag","bg":"none","texture":false,"avatar":"round","titleW":600,"avStyle":"flat","groups":"rule"}
+*/
+:root {
+  --bg: #f6f8fa;
+  --panel: #eef1f4;
+  --surface: #ffffff;
+  --text: #1f2328;
+  --muted: #656d76;
+  --border: #d0d7de;
+  --accent: #0969da;
+  --accent-2: #8250df;
+  --issue: #cf222e;
+  --task: #0969da;
+  --spike: #9a6700;
+  --ok: #1a7f37;
+  --warn: #bc4c00;
+  --danger: #cf222e;
+  --blob1: #54aeff;
+  --blob2: #c297ff;
+  --blob3: #ffd8b5;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #0969da;
+}
+.c-title { font-size: 13.5px; }
+.c-id { color: var(--muted); }

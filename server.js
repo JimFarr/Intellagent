@@ -24,6 +24,7 @@ const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join
 const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
 const { readLocal, updateLocal, foreignCode } = require('./lib/locate');
 const cardrules = require('./lib/cardrules');
+const { createThemes, ThemeError } = require('./lib/themes');
 const jsonfile = require('./lib/jsonfile');
 const MANIFEST_DEFAULTS = {
   appName: 'Intellagent',
@@ -1660,11 +1661,14 @@ function addComment(ctx, id, d, actor) {
     // Without an @mention it goes to whoever worked the ticket last.
     const intent = d.intent === 'explain' ? 'explain' : null;
     const c = { id: rid('c'), author: actor, body: str(d.body, 20_000), createdAt: now(), ...(atts.length ? { attachments: atts } : {}), ...(intent ? { intent } : {}), ...(d.replyTo ? { replyTo: str(d.replyTo, 40) } : {}) };
+    // an agent on probation mentions nobody: its introduction reaches the human, not other agents (INT-233).
+    // Kept on the comment, so the work lists skip it too, also once the agent is accepted (INT-409).
+    const quiet = actor.kind === 'agent' && !!standing?.probationOf(actor.name);
+    if (quiet) c.mentionsNobody = true;
     item.comments.push(c);
     item.version++;
     item.updatedAt = c.createdAt;
-    // an agent on probation mentions nobody: its introduction reaches the human, not other agents (INT-233)
-    const mentions = actor.kind === 'agent' && standing?.probationOf(actor.name) ? [] : intent ? explainTargets(item, c) : mentionsIn(c.body);
+    const mentions = quiet ? [] : intent ? explainTargets(item, c) : mentionsIn(c.body);
     events.push(itemEvent(ctx, 'comment.added', item, actor, { comment: { id: c.id, body: trimChange(c.body), attachments: atts.length, ...(intent ? { intent } : {}) }, mentions, ...(intent ? { intent } : {}) }));
     // An agent that names another agent without @ has alerted nobody: say so in the reply (not stored), so it
     // can comment again with the @mention if it meant to.
@@ -2105,6 +2109,9 @@ async function startTicketBranch(ctx, id, d, actor) {
   if (actor.kind !== 'agent' || !worktrees || !agentBranch(actor.name)) return null;
   const item = getItem(ctx, id);
   const { target } = startChecks(ctx, item, d, actor);
+  let known = []; try { known = standing.list().agents.map((a) => a.name); } catch { /* no standing agents */ }
+  const other = require('./lib/boards').claim(PROJECT_ROOT, MANIFEST_PATH, [...known, actor.name], actor.name);
+  if (other) fail(409, `${item.id} was not started: another board on this repository (${other}) already has an agent named ${actor.name}, and they would share its branches`, { code: 'AGENT_NAME_TAKEN', hint: `Give one of the agents another name (agents.json), so each board's branches stay its own` });
   // the move's own refusals, before git: a full or locked working column must not leave the worktree switched.
   // (The gates, which grants can open, stay with moveInto in startWork.)
   const blocked = target ? moveBlocker(ctx, item, target, actor) : null;
@@ -3236,6 +3243,8 @@ const POLICY = {
   'POST /api/agents/:name/resume': { who: 'agents.control' },
   'POST /api/agents/:name/run': { who: 'agents.control' },
   'DELETE /api/presence/:name': { who: 'human', why: 'Only the human can forget agents' },
+  'POST /api/themes': { who: 'human', why: 'Only the human imports a theme: it restyles the page', hint: 'Ask on a card' },
+  'DELETE /api/themes/:id': { who: 'human', why: 'Only the human removes a theme', hint: 'Ask on a card' },
   'PUT /api/profiles/me/status': { who: 'self', readOnly: true },
   'PATCH /api/profiles/me': { who: 'self', readOnly: true },
   'POST /api/profiles/:name/memory': { who: 'self', readOnly: true },
@@ -5636,6 +5645,20 @@ route('PUT', '/api/profiles/:name/memory', 'Human only: switch an agent\'s memor
   const r = memory.setOn(name, body.on, actor);
   memoryChanged(name, 'switched', actor, null, { on: r.on });
   return r;
+});
+
+/* ───────────────────────── themes (INT-465) ───────────────────────── */
+
+const themes = createThemes({ dir: path.join(DATA, 'themes'), writeFile: writeFileAtomic });
+const themeErrors = (fn) => { try { return fn(); } catch (e) { if (e instanceof ThemeError) fail(e.status, e.message, { code: e.status === 404 ? 'NOT_FOUND' : 'BAD_REQUEST', hint: e.hint }); throw e; } };
+route('GET', '/api/themes', 'The imported themes (Clear and Clear Dark are built into the page): { themes: [{ id, name, mode, css }] }', () => ({ themes: themes.list() }));
+route('POST', '/api/themes', 'Human only: import a theme { css } — a header comment (name:, mode: light|dark, optional style:), the palette in :root { --bg … }, then any rules. @import and remote url() are stripped. Importing the same name again replaces it', ({ body, actor }) => {
+  humanOnly(actor);
+  return themeErrors(() => themes.add(body.css));
+});
+route('DELETE', '/api/themes/:id', 'Human only: remove an imported theme; a browser that had picked it falls back to Clear', ({ p, actor }) => {
+  humanOnly(actor);
+  return themeErrors(() => themes.remove(p.id));
 });
 
 route('GET', '/avatars/:file', null, ({ res, p }) => {

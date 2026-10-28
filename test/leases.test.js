@@ -64,6 +64,15 @@ test('an exclusive lease on a quiet machine ends after 10 quiet minutes; any bus
   z.quiet({ cpu: 5, gpu: 90 }); c.pass(11);
   assert.deepEqual(z.quiet({ cpu: 5, gpu: 90 }), [], 'card busy: not quiet');
   assert.ok(z.status().leases.some((e) => e.id === zx.id));
+  // a restart forgets when the quiet began: nothing was measured while the program was down
+  const r = machine(c);
+  const rx = r.ask({ holder: 'cap', exclusive: true }).lease;
+  r.quiet({ cpu: 5, gpu: 5 });
+  assert.match(r.status().leases[0].quietSince, /^\d{4}-\d\d-\d\dT/, 'shown as a date like the others');
+  c.pass(11);
+  const back = machine(c, { state: JSON.parse(JSON.stringify(r)) });
+  assert.deepEqual(back.quiet({ cpu: 5, gpu: 5 }), [], 'restored after a quiet stretch: the count starts again');
+  assert.ok(back.status().leases.some((e) => e.id === rx.id));
 });
 
 test('says no when there is no room, and when room frees', () => {

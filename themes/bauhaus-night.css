@@ -1,0 +1,33 @@
+/* intellagent-theme
+name: Bauhaus Night
+mode: dark
+style: {"md":"grid","card":0,"col":0,"modal":0,"ctl":20,"bw":2,"shadow":"hard","cards":"clean","typeInd":"top","tape":"none","attn":"ribbon","enter":"pop","lanes":"solid","chips":"pill","heads":"caps","bg":"none","texture":false,"avatar":"round","titleW":700,"font":"'Archivo'","display":"'Archivo'","avStyle":"flat","drop":"lift","groups":"spine"}
+*/
+:root {
+  --bg: #14130f;
+  --panel: #1c1b16;
+  --surface: #23211b;
+  --text: #f1ebdd;
+  --muted: #9a9384;
+  --border: #d9d1bf;
+  --accent: #e8443a;
+  --accent-2: #3d6fd6;
+  --issue: #e8443a;
+  --task: #3d6fd6;
+  --spike: #f5c518;
+  --ok: #43a047;
+  --warn: #ef8a2a;
+  --danger: #e8443a;
+  --blob1: #e8443a;
+  --blob2: #3d6fd6;
+  --blob3: #f5c518;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #14130f;
+  --accent-fill: #e8443a;
+}
+.card::before { display: none; }
+.column { border-top: 10px solid var(--col); }
+.col-name { font-weight: 900; letter-spacing: .06em; }
+.app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 900; }

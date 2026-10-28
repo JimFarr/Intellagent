@@ -1,0 +1,31 @@
+/* intellagent-theme
+name: Graphite
+mode: dark
+style: {"card":5,"col":8,"modal":10,"ctl":6,"tape":"none","cards":"clean","typeInd":"dot","attn":"outline","enter":"sheet","lanes":"solid","chips":"outline","bg":"none","texture":false,"display":"'Inter'","colAlpha":92,"avStyle":"ring","drop":"dashed","groups":"rule"}
+*/
+:root {
+  --bg: #0f1012;
+  --panel: #16171a;
+  --surface: #1c1d21;
+  --text: #e6e7ea;
+  --muted: #8b8f98;
+  --border: #2a2c31;
+  --accent: #6e9fff;
+  --accent-2: #58d0b4;
+  --issue: #f87171;
+  --task: #6e9fff;
+  --spike: #fbbf24;
+  --ok: #4ade80;
+  --warn: #fb923c;
+  --danger: #f87171;
+  --blob1: #3b4252;
+  --blob2: #2a3a4a;
+  --blob3: #3a2e3e;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #0f1012;
+  --accent-fill: #6e9fff;
+}
+.column { border-color: transparent; }
+.card:hover { translate: 0 -1px; }

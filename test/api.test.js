@@ -291,10 +291,19 @@ describe('board API', () => {
       assert.equal((await t.ok('GET', `/api/events?since=${seq - 3}`)).events.length, 3, 'recent events are still served');
       await t.stop({ keep: true });
       const t2 = await startServer({ dir: t.dir, manifest: { eventsMaxMB: 0.004, eventsKeep: 2 } });
+      let last;
       try {
         await t2.ok('POST', `${B}/items`, { title: 'after restart', column: 'Backlog' });
-        assert.ok((await t2.ok('GET', '/api/app')).seq > seq, 'numbering goes on after a restart');
-      } finally { await t2.stop(); }
+        last = (await t2.ok('GET', '/api/app')).seq;
+        assert.ok(last > seq, 'numbering goes on after a restart');
+      } finally { await t2.stop({ keep: true }); }
+      // rotated and stopped before the next event: no live log at all, and numbering still goes on
+      fs.renameSync(path.join(data, 'events.jsonl'), path.join(data, `events-${Date.now()}.jsonl`));
+      const t3 = await startServer({ dir: t.dir, manifest: { eventsMaxMB: 0.004, eventsKeep: 2 } });
+      try {
+        await t3.ok('POST', `${B}/items`, { title: 'after a rotated restart', column: 'Backlog' });
+        assert.ok((await t3.ok('GET', '/api/app')).seq > last, 'numbering goes on from the set-aside log');
+      } finally { await t3.stop(); }
     } catch (e) { await t.stop().catch(() => {}); throw e; }
   });
 
