@@ -1,6 +1,6 @@
 /* Shared by every area of the client: ids, colours, time, avatars and names. Pure over state, settings and util: nothing here draws a card or opens a window. */
 import { esc, hashStr, hue, initials } from './util.js';
-import { state, settings, BASE_THEME } from './state.js';
+import { state, settings, themeKey } from './state.js';
 import { THEMES, themeGroups } from './themes.js';
 
 // Parent tags take a slot, and each theme paints its slots from its own palette (--tag-0…7, themeGroups): as
@@ -8,7 +8,7 @@ import { THEMES, themeGroups } from './themes.js';
 // starts at its hashed slot and moves along only when an earlier name took it, so as many parents as there are
 // colours never share one, and a name keeps its colour on chips, groups and menus alike.
 let tagSlots = new Map(), tagSlotsFor, tagSlotsOf;
-const tagCount = () => themeGroups(THEMES[settings.theme] || THEMES[BASE_THEME]).count;
+const tagCount = () => themeGroups(THEMES[themeKey()]).count;
 const tagHome = (p) => hashStr(String(p)) % tagCount();
 function tagSlot(p) {
   const board = state.board, slots = tagCount();
