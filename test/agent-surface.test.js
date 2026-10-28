@@ -45,6 +45,8 @@ function cli(args, { cwd, env = {} } = {}) {
   const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'intellagent.js'), ...args], { cwd, env: cleanEnv({ INTELLAGENT_SANDBOX_FIRST_PORT: String(SANDBOX_FIRST_PORT), ...env }), encoding: 'utf8', input: '', timeout: 60000 });
   return { code: r.status, out: r.stdout, err: r.stderr, json: (() => { try { return JSON.parse(r.stdout); } catch { return null; } })() };
 }
+// intellagent token --agent <name> prints the token once (INT-467): local.json keeps only its hash
+const issueToken = (dir, name) => { const r = cli(['token', '--agent', name], { cwd: dir }); assert.equal(r.code, 0, r.err); return r.out.match(/^ {2}(\S+)$/m)[1]; };
 
 describe('MCP tool profiles', () => {
   it('core is the default, lists exactly the core tools, and stays under its budget', async () => {
@@ -265,7 +267,9 @@ describe('agent tokens on new boards', () => {
     assert.equal(m.auth.requireAgentTokens, true);
     assert.equal(m.host, '127.0.0.1');
     const local = JSON.parse(fs.readFileSync(path.join(dir, '.intellagent', 'local.json'), 'utf8'));
-    assert.ok(local.agentTokens[m.defaultAgent], 'the default agent has a token');
+    const shown = r.out.match(/INTELLAGENT_TOKEN=(\S+)/)?.[1];
+    assert.ok(shown, 'init prints the default agent\'s token once');
+    assert.equal(local.agentTokens[m.defaultAgent], require('../lib/locate').hashToken(shown), 'local.json keeps only its hash');
     assert.ok(fs.readFileSync(path.join(dir, '.intellagent', '.gitignore'), 'utf8').includes('local.json'));
   });
   it('init --no-start names the port in its Next line, and says when it is the default', () => {
@@ -282,19 +286,39 @@ describe('agent tokens on new boards', () => {
       const no = cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'pat' } });
       assert.equal(no.code, 1);
       assert.match(no.err, /error 401.*hint: The human issues one: intellagent token --agent pat/);
-      assert.equal(cli(['token', '--agent', 'pat'], { cwd: s.dir }).code, 0);
-      const yes = cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'pat' } });
+      const token = issueToken(s.dir, 'pat');
+      const yes = cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'pat', INTELLAGENT_TOKEN: token } });
       assert.equal(yes.code, 0, yes.err);
       assert.equal(yes.json.agent, 'pat');
+      // the hole INT-467 closes: naming pat without its token gets nobody's token from local.json
+      const named = cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'pat' } });
+      assert.equal(named.code, 1);
+      assert.match(named.err, /error 401 UNAUTHORIZED: Agent "pat" must send its token/);
+      assert.ok(!fs.readFileSync(path.join(s.dir, 'local.json'), 'utf8').includes(token), 'no file holds the token');
+      // rotating replaces it at once, and the old one stops
+      const next = cli(['token', '--agent', 'pat', '--rotate'], { cwd: s.dir }).out.match(/^ {2}(\S+)$/m)[1];
+      assert.equal(cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'pat', INTELLAGENT_TOKEN: next } }).code, 0);
+      assert.equal(cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'pat', INTELLAGENT_TOKEN: token } }).code, 1);
     } finally { await s.stop(); }
   });
-  it('--manifest with --as another agent keeps the run\'s own token, so it can\'t borrow that agent\'s from local.json', async () => {
+  it('a board started on a local.json with tokens in the clear hashes them, and the tokens still work (INT-467)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-test-'));
+    fs.writeFileSync(path.join(dir, 'local.json'), JSON.stringify({ userToken: 'u-keep', agentTokens: { old: 'old-clear-token' } }));
+    const s = await startServer({ dir, manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    try {
+      const local = JSON.parse(fs.readFileSync(path.join(s.dir, 'local.json'), 'utf8'));
+      assert.equal(local.agentTokens.old, require('../lib/locate').hashToken('old-clear-token'));
+      assert.equal(local.userToken, 'u-keep', 'the human\'s token is left as it was');
+      assert.equal(cli(['api', 'GET', '/api/profiles/me'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'old', INTELLAGENT_TOKEN: 'old-clear-token' } }).code, 0);
+    } finally { await s.stop(); }
+  });
+  it('--manifest with --as another agent keeps the run\'s own token, so the board refuses it as that agent', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     try {
-      for (const a of ['ada', 'bob']) assert.equal(cli(['token', '--agent', a], { cwd: s.dir }).code, 0);
-      const tokens = JSON.parse(fs.readFileSync(path.join(s.dir, 'local.json'), 'utf8')).agentTokens;
+      const ada = issueToken(s.dir, 'ada');
+      issueToken(s.dir, 'bob');
       const manifest = path.join(s.dir, 'intellagent.manifest.json');
-      const run = { INTELLAGENT_AGENT: 'ada', INTELLAGENT_TOKEN: tokens.ada };
+      const run = { INTELLAGENT_AGENT: 'ada', INTELLAGENT_TOKEN: ada };
       const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-nowhere-'));
       const me = cli(['api', 'GET', '/api/profiles/me', '--manifest', manifest], { cwd: elsewhere, env: run });
       assert.equal(me.code, 0, me.err);
@@ -339,10 +363,10 @@ describe('agent tokens on new boards', () => {
   });
   it('an agent with a role and a token is not asked to introduce itself over MCP; a wrong token gets a code and a hint', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
-    const env = { INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'vera' };
     try {
-      assert.equal(cli(['token', '--agent', 'vera'], { cwd: s.dir }).code, 0);
-      const set = cli(['api', 'PATCH', '/api/profiles/me', 'role=builder'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'vera' } });
+      const token = issueToken(s.dir, 'vera');
+      const env = { INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'vera', INTELLAGENT_TOKEN: token };
+      const set = cli(['api', 'PATCH', '/api/profiles/me', 'role=builder'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'vera', INTELLAGENT_TOKEN: token } });
       assert.equal(set.code, 0, set.err);
       const c = mcp(env);
       try {
@@ -358,17 +382,18 @@ describe('agent tokens on new boards', () => {
       assert.ok(body.hint, 'a wrong token comes with a hint');
     } finally { await s.stop(); }
   });
-  it('an empty INTELLAGENT_TOKEN (a standing run with no token) is no token: the CLI and MCP fall back to local.json', async () => {
+  it('an empty INTELLAGENT_TOKEN is no token: the CLI and MCP never take one from local.json (INT-467)', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     const empty = { INTELLAGENT_TOKEN: '' };
     try {
-      assert.equal(cli(['token', '--agent', 'vera'], { cwd: s.dir }).code, 0);
-      const ok = cli(['api', 'GET', '/api/profiles/me'], { cwd: s.dir, env: { ...empty, INTELLAGENT_AGENT: 'vera' } });
-      assert.equal(ok.code, 0, `CLI: ${ok.err}`);
+      issueToken(s.dir, 'vera');
+      const cliAs = cli(['api', 'GET', '/api/profiles/me'], { cwd: s.dir, env: { ...empty, INTELLAGENT_AGENT: 'vera' } });
+      assert.equal(cliAs.code, 1);
+      assert.match(cliAs.err, /error 401 UNAUTHORIZED: Agent "vera" must send its token/);
       const c = mcp({ ...empty, INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base, INTELLAGENT_AGENT: 'vera' });
       try {
         const r = await c.call('tools/call', { name: 'get_my_work', arguments: {} });
-        assert.ok(!r.result?.isError, `MCP: ${r.result?.content?.[0]?.text || r.error?.message}`);
+        assert.match(r.result?.content?.[0]?.text || r.error?.message || '', /must send its token/, 'MCP is refused too');
       } finally { c.close(); }
       // with nothing to fall back to, nothing is sent: "has no token", not a wrong (empty) one
       const none = cli(['api', 'GET', '/api/profiles/me'], { cwd: s.dir, env: { ...empty, INTELLAGENT_AGENT: 'nobody' } });
@@ -429,7 +454,11 @@ describe('agent tokens on new boards', () => {
     try {
       // as `intellagent agents add late` does: the file is edited, and the running board notices
       fs.writeFileSync(path.join(s.dir, 'agents.json'), JSON.stringify({ agents: { late: { enabled: false, perms: ['read'] } } }));
-      await until(async () => cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'late' } }).code === 0, 10000, 'late can call the board');
+      // only its hash is kept (INT-467): its runs call the board with the run token the board hands them
+      const late = () => { try { return JSON.parse(fs.readFileSync(path.join(s.dir, 'local.json'), 'utf8')).agentTokens?.late || ''; } catch { return ''; } };
+      await until(() => /^sha256:/.test(late()), 10000, 'late gets a token');
+      const named = cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'late' } });
+      assert.equal(named.code, 1, 'naming late is not enough');
     } finally { await s.stop(); }
   });
   it('a local.json saved with a BOM still guards the human, and issuing agent tokens keeps the user token', async () => {
@@ -485,14 +514,14 @@ describe('the git hook', () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-hook-'));
     const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' });
     try {
-      assert.equal(cli(['token', '--agent', 'vera'], { cwd: s.dir }).code, 0);
+      const token = issueToken(s.dir, 'vera');
       const it = await s.ok('POST', '/api/boards/main/items', { title: 'linked', column: 'Ready' }, USER);
       git('init', '-q', '-b', 'main'); git('config', 'user.email', 't@e.com'); git('config', 'user.name', 'T');
       fs.writeFileSync(path.join(repo, 'a.txt'), 'a');
       git('add', '.'); git('commit', '-q', '-m', `Fix the thing (${it.id})`);
       const r = spawnSync(process.execPath, [path.join(ROOT, 'git-hook.js'), 'post-commit'], {
         cwd: repo, encoding: 'utf8', timeout: 20000,
-        env: cleanEnv({ INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base }),
+        env: cleanEnv({ INTELLAGENT_MANIFEST: path.join(s.dir, 'intellagent.manifest.json'), INTELLAGENT_URL: s.base, INTELLAGENT_TOKEN: token }),
       });
       assert.match(r.stdout, new RegExp(`linked [0-9a-f]{7} → ${it.id}`), r.stdout + r.stderr);
       const item = await s.ok('GET', `/api/boards/main/items/${it.id}`, undefined, USER);
@@ -505,8 +534,7 @@ describe('waiting from the CLI', () => {
   it('wait marks a comment seen (👀) on a board that requires agent tokens', async () => {
     const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
     try {
-      assert.equal(cli(['token', '--agent', 'pat'], { cwd: s.dir }).code, 0);
-      const env = { INTELLAGENT_AGENT: 'pat' };
+      const env = { INTELLAGENT_AGENT: 'pat', INTELLAGENT_TOKEN: issueToken(s.dir, 'pat') };
       const it = await s.ok('POST', '/api/boards/main/items', { title: 'look', column: 'Ready' }, USER);
       // pat acts first, so wait starts from there; then the human @mentions pat
       assert.equal(cli(['do', 'add_comment', `id=${it.id}`, 'body=on it'], { cwd: s.dir, env }).code, 0);

@@ -22,7 +22,7 @@ const PUBLIC = path.join(ROOT, 'public');
 
 const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join(ROOT, 'intellagent.manifest.json'));
 const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
-const { readLocal, updateLocal, foreignCode } = require('./lib/locate');
+const { readLocal, updateLocal, foreignCode, hashToken, isHashed } = require('./lib/locate');
 const cardrules = require('./lib/cardrules');
 const { createThemes, ThemeError } = require('./lib/themes');
 const jsonfile = require('./lib/jsonfile');
@@ -62,6 +62,12 @@ function loadManifest() {
   // exists but can't be read stops the board: starting without the user token would let anyone act as the human.
   let local;
   try { local = readLocal(LOCAL_PATH); } catch (e) { console.error(`Intellagent will not start: ${e.message}`); process.exit(1); }
+  // agent tokens are kept only as hashes (INT-467): one written in the clear by an older board is hashed now
+  if (Object.values(local.agentTokens || {}).some((v) => !isHashed(v))) {
+    try {
+      local = updateLocal(LOCAL_PATH, (l) => { for (const [k, v] of Object.entries(l.agentTokens || {})) if (!isHashed(v)) l.agentTokens[k] = hashToken(v); });
+    } catch (e) { console.error(`Intellagent will not start: agent tokens in ${LOCAL_PATH} could not be hashed (${e.message})`); process.exit(1); }
+  }
   if (local.userToken) merged.auth.userToken = local.userToken;
   if (local.agentTokens) merged.auth.agentTokens = { ...(merged.auth.agentTokens || {}), ...local.agentTokens };
   merged.dataDir = path.resolve(path.dirname(MANIFEST_PATH), merged.dataDir);
@@ -3011,10 +3017,13 @@ function useStreamTicket(ticket) {
   streamTickets.delete(ticket);
   return exp > Date.now();
 }
-const tokenEq = (a, b) => typeof a === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const tokenEq = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+// a stored agent token is a hash (local.json); a manifest may still hold one in the clear
+const tokenMatches = (tok, stored) => typeof tok === 'string' && tokenEq(isHashed(stored) ? hashToken(tok) : tok, stored);
 
-// Agent tokens in local.json (git-ignored), read fresh; and issue one for a standing agent on a board that
-// requires them, so agents the human adds keep working.
+// Agent tokens in local.json (git-ignored, hashes only), read fresh; and issue one for a standing agent on a
+// board that requires them, so agents the human adds keep working. Nobody sees that token: the agent's runs
+// call the board with a run token (runTokenOf), and the human issues a usable one with intellagent token --agent.
 function readLocalAgentTokens() {
   try { return readLocal(LOCAL_PATH).agentTokens || {}; } catch { return {}; }
 }
@@ -3022,8 +3031,17 @@ function issueAgentToken(name) {
   if (!M.auth.requireAgentTokens || !name || M.auth.agentTokens?.[name] || readLocalAgentTokens()[name]) return;
   // never write over a local.json that can't be read: it may hold the user token
   let local;
-  try { local = updateLocal(LOCAL_PATH, (l) => { l.agentTokens = { ...(l.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') }; }); } catch (e) { console.error(`No token issued for ${name}: ${e.message}`); return; }
+  try { local = updateLocal(LOCAL_PATH, (l) => { l.agentTokens = { ...(l.agentTokens || {}), [name]: hashToken(crypto.randomBytes(18).toString('base64url')) }; }); } catch (e) { console.error(`No token issued for ${name}: ${e.message}`); return; }
   M.auth.agentTokens = { ...(M.auth.agentTokens || {}), [name]: local.agentTokens[name] };
+}
+// A standing agent's runs carry a token the board mints for it, kept in memory and in the run's environment
+// only (INT-467). One per agent for the life of the board, so a keep-alive session stays warm; stopping the
+// board stops every run, so none outlives it. Handed out only to an agent that has a token on the board.
+const runTokens = new Map();
+function runTokenOf(name) {
+  const key = name.toLowerCase();
+  if (!runTokens.has(key)) runTokens.set(key, crypto.randomBytes(24).toString('base64url'));
+  return runTokens.get(key);
 }
 
 // Optional auth from the manifest. Off by default; docs and app name stay public so agents can discover it.
@@ -3044,14 +3062,17 @@ function checkAuth(req, q, actor, pathname, policy) {
   }
   // names match without regard to case, as grants and probation do: "Gatekeeper" must send gatekeeper's token (INT-418)
   const tokenFor = (tokens) => Object.entries(tokens || {}).find(([k]) => k.toLowerCase() === actor.name.toLowerCase())?.[1];
-  const need = tokenFor(A.agentTokens);
-  const tokenHint = `Send the token the human issued with: intellagent token --agent ${actor.name} (the CLI and MCP tools send it by themselves; elsewhere set INTELLAGENT_TOKEN)`;
-  if (need) { if (!tokenEq(tok, need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); return; }
+  // local.json first, read fresh: a token issued or rotated since the board started (intellagent token --agent)
+  // counts at once, and the one it replaced stops (INT-467: a lost token can't be read back, only rotated)
+  const fresh = tokenFor(readLocalAgentTokens());
+  if (fresh && tokenFor(A.agentTokens) !== fresh) A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh };
+  const need = fresh || tokenFor(A.agentTokens);
+  const tokenHint = `Send the token the human issued with: intellagent token --agent ${actor.name}, in INTELLAGENT_TOKEN (the CLI and MCP tools send it from there; a standing run has its own)`;
+  // its standing runs' token, or the one the human issued (kept as a hash)
+  const ok = (stored) => tokenEq(tok, runTokens.get(actor.name.toLowerCase())) || tokenMatches(tok, stored);
+  if (need) { if (!ok(need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); return; }
   if (A.requireAgentTokens) {
-    // a token issued since the board started (intellagent token --agent) counts without a restart
-    const fresh = tokenFor(readLocalAgentTokens());
-    if (fresh) { A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh }; if (tokenEq(tok, fresh)) return; fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); }
-    fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name} (the CLI and MCP tools then send it by themselves)` });
+    fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name}, then gives it to the agent in INTELLAGENT_TOKEN` });
   }
   const p = permsFor(actor.name);
   // the route policy says what a read-only agent may still do (INT-144): talk, never change
@@ -5513,8 +5534,8 @@ standing = require('./lib/agents').createAgents({
       try { if (standing.probationOf(n) && !standing.probationOf(n).returned) askForIntroduction(n, { kind: 'system', name: 'intellagent' }); } catch (e) { console.error(`introduction request for ${n}: ${e.message}`); }
     }
   },
-  // the run's own token (INTELLAGENT_TOKEN), read fresh so a rotated one reaches the next run; never the user token
-  tokenOf: (name) => readLocalAgentTokens()[name] || M.auth.agentTokens?.[name] || null,
+  // the run's own token (INTELLAGENT_TOKEN): a run token while the agent has a token here; never the user token
+  tokenOf: (name) => (readLocalAgentTokens()[name] || M.auth.agentTokens?.[name] ? runTokenOf(name) : null),
   onRunEnd: (name) => {
     for (const ctx of boards.values()) {
       if (Object.values(ctx.board.items).some((it) => activeLease(it)?.claimant === name)) finishSession(ctx, {}, { kind: 'agent', name });
