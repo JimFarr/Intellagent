@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // The theme table is an ES module of the browser app (public/js/themes.js), loaded here the way the page loads it.
-const { THEMES, THEME_KINDS, themeGroups, contrast, oklab } = require('../public/js/themes.js');
+const { THEMES, themeGroups, contrast, oklab } = require('../public/js/themes.js');
 
 // color-mix(in oklab, x p, y): back from oklab to #rrggbb.
 const fromOklab = ([L, a, b]) => {
@@ -21,15 +21,14 @@ const mix = (x, p, y) => fromOklab(oklab(x).map((c, i) => c * p + oklab(y)[i] * 
 // rule in public/app.css that sets that text and its ground]. If app.css changes one, change it here and in TAG_TEXT.
 const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8');
 const GROUP_TEXT = [
-  ['cover head', 'tag-cover', 0.09, 'surface', /\[data-groups="cover"\] \.group-head \{[^}]*background: color-mix\(in oklab, var\(--tagc\) 9%, var\(--surface\)\);[^}]*color: color-mix\(in oklab, var\(--tagc\) var\(--tag-cover, 42%\), var\(--text\)\)/],
-  ['tab head', 'tag-tab', 0.14, 'surface', /\[data-groups="tab"\] \.group-head \{[^}]*background: color-mix\(in oklab, var\(--tagc\) 14%, var\(--surface\)\); color: color-mix\(in oklab, var\(--tagc\) var\(--tag-tab, 40%\), var\(--text\)\)/],
   ['parent chip', 'tag-chip', 0.17, 'surface', /\.chip\.parent \{[^}]*17%, transparent\); color: color-mix\(in oklab, var\(--tagc\) var\(--tag-chip, 55%\), var\(--text\)\)/],
   ['group head', 'tag-head', 0, 'panel', /\n\.group-head \{[^}]*background: none; color: color-mix\(in oklab, var\(--tagc\) var\(--tag-head, 50%\), var\(--text\)\)/],
 ];
 
 describe('theme palettes', () => {
-  it('evaluates the theme table', () => {
-    assert.ok(Object.keys(THEMES).length > 30);
+  it('has Clear and Clear Dark, one light and one dark', () => {
+    assert.deepEqual(Object.keys(THEMES), ['clear', 'clear-dark']);
+    assert.deepEqual(Object.values(THEMES).map((t) => t.mode), ['light', 'dark']);
   });
 
   for (const [k, t] of Object.entries(THEMES)) {
@@ -38,12 +37,6 @@ describe('theme palettes', () => {
       assert.ok(c >= 4.5, `${v['on-accent']} on ${v['accent-fill']} is ${c.toFixed(2)}:1`);
     });
   }
-
-  it('every theme is listed under exactly one kind in Appearance (INT-222)', () => {
-    const listed = THEME_KINDS.flatMap(([, , keys]) => keys);
-    assert.deepEqual([...listed].sort(), Object.keys(THEMES).sort());
-    assert.equal(new Set(listed).size, listed.length, 'no theme in two kinds');
-  });
 
   it('the group text rules match public/app.css', () => {
     for (const [where, , , , rule] of GROUP_TEXT) assert.match(css, rule, where);
@@ -81,8 +74,7 @@ describe('theme palettes', () => {
   });
 
   // A met gate's pill (INT-104): --ok 20% into the text, on --ok 14% over the surface. If app.css changes the rule,
-  // change the shares here. (--ok is one bright green for every theme: 55%, the first design, is 2.8:1 on the light
-  // themes, and 35% still 3.8:1 on latte.)
+  // change the shares here. (--ok is one bright green for every theme: 55%, the first design, is 2.8:1 on a light theme.)
   const ok = /--ok: (#[0-9a-f]{6})/i.exec(css)?.[1];
   it('the met gate pill rule matches public/app.css', () => {
     assert.ok(ok, '--ok in :root');

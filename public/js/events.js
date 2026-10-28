@@ -17,18 +17,23 @@ export function eventIcon(t) {
   if (t === 'item.restored') return 'restore';
   if (t === 'item.created') return 'plus';
   if (t === 'schema.updated') return 'layers';
+  if (t.startsWith('deploy.')) return 'play';
+  if (t === 'pr.opened') return 'send';
+  if (t === 'pr.commented') return 'msg';
+  if (t.startsWith('rule.')) return 'zap';
   return 'pencil';
 }
 
 export function describe(ev, html, nameOf, RUN_LABEL) {
   const b = (s) => (html ? `<b>${esc(s)}</b>` : s);
-  const who = b(ev.actor?.name ? nameOf(ev.actor.name) : 'someone');
+  // a rule acts as the board, under its own name
+  const who = b(ev.actor?.rule ? `rule “${ev.actor.rule.name}”` : ev.actor?.name ? nameOf(ev.actor.name) : 'someone');
   const nb = (n) => b(nameOf(n));
   const id = ev.item?.id || ev.itemId || '';
   const fields = Object.keys(ev.changes || {}).map((k) => k.replace(/^(properties|fields)\./, '')).join(', ');
   switch (ev.type) {
     case 'item.created': return `${who} created ${b(id)}${html ? '' : ` · ${ev.item?.title}`}`;
-    case 'item.updated': return `${who} changed ${b(id)} ${fields}`;
+    case 'item.updated': return `${who} changed ${b(id)} ${html ? esc(fields) : fields}`;
     case 'item.moved': return `${who} moved ${b(id)} → ${b(ev.item?.column || '')}${ev.delegated ? ' for you' : ''}`;
     case 'item.reordered': return `${who} reordered ${b(id)}`;
     case 'item.archived': return `${who} archived ${b(id)}`;
@@ -36,7 +41,7 @@ export function describe(ev, html, nameOf, RUN_LABEL) {
     case 'review.reviewer_assigned': return `${who} asked ${b(nameOf(ev.reviewer))} to review ${b(id)}${ev.again ? ' again' : ''}`;
     case 'review.reviewer_removed': return `${who} removed ${b(nameOf(ev.reviewer))} as reviewer of ${b(id)}`;
     case 'review.reviewed': return `${who} reviewed ${b(id)}: ${ev.verdict === 'ok' ? 'looks good ✓' : 'concerns ⚠'}`;
-    case 'agent.managed': return `${who} changed ${b(nameOf(ev.agent))}: ${Object.keys(ev.changes || {}).map((k) => k.replace(/^profile\./, '')).join(', ')}${ev.delegated ? ' for you' : ''}`;
+    case 'agent.managed': { const keys = Object.keys(ev.changes || {}).map((k) => k.replace(/^profile\./, '')).join(', '); return `${who} changed ${b(nameOf(ev.agent))}: ${html ? esc(keys) : keys}${ev.delegated ? ' for you' : ''}`; }
     case 'item.restored': return `${who} restored ${b(id)}`;
     case 'comment.added': return `${who} on ${b(id)}: ${html ? esc(ev.comment?.body?.slice(0, 120)) : ev.comment?.body?.slice(0, 80)}${ev.comment?.attachments ? ` ${html ? icon('clip', 'sm') : '📎'}` : ''}`;
     case 'lease.claimed': return `${nb(ev.claimant)} claimed ${b(id)}`;
@@ -70,8 +75,8 @@ export function describe(ev, html, nameOf, RUN_LABEL) {
     case 'master.expired': return `${b(ev.holder)}'s board hold expired`;
     case 'master.status': return `${b(ev.holder)}: ${html ? esc(ev.status || '—') : ev.status || '—'}`;
     case 'review.requested': return `${who} asked you to review ${b(id)}`;
-    case 'reaction.added': return `${who} reacted ${ev.emoji} on ${b(id)}`;
-    case 'reaction.removed': return `${who} removed ${ev.emoji} on ${b(id)}`;
+    case 'reaction.added': return `${who} reacted ${html ? esc(ev.emoji) : ev.emoji} on ${b(id)}`;
+    case 'reaction.removed': return `${who} removed ${html ? esc(ev.emoji) : ev.emoji} on ${b(id)}`;
     case 'request.created': return `${who} asked ${b(ev.request?.to)}: ${html ? esc(String(ev.request?.body || '').slice(0, 80)) : String(ev.request?.body || '').slice(0, 80)}`;
     case 'request.replied': return `${who} replied to a request${ev.reply ? `: ${html ? esc(ev.reply.slice(0, 80)) : ev.reply.slice(0, 80)}` : ''}`;
     case 'request.done': return `${who} finished a request${ev.reply ? `: ${html ? esc(ev.reply.slice(0, 80)) : ev.reply.slice(0, 80)}` : ''}`;
@@ -80,6 +85,25 @@ export function describe(ev, html, nameOf, RUN_LABEL) {
     case 'digest.added': return `${who} posted to the digest`;
     case 'item.unblocked': return `${b(id)} is unblocked (${b(ev.resolvedBy)} done)`;
     case 'app.renamed': return `${who} renamed the app to ${b(ev.to)}`;
+    case 'rule.fired': return `${who} woke ${nb((ev.addressed || [])[0] || '')}${id ? ` about ${b(id)}` : ''}${ev.note ? `: ${html ? esc(ev.note) : ev.note}` : ''}`;
+    case 'rule.ran': {
+      const t = (s) => (html ? esc(s) : s);
+      // what it did, action by action, when the event says (older ones only count the failures)
+      if (ev.did?.length) return `${who} fired${id ? ` on ${b(id)}` : ''}: ${ev.did.map((d) => d.ok ? t(d.text) : `${t(d.text)} (failed${d.error ? `: ${t(d.error)}` : ''})`).join(', ')}`;
+      const bad = (ev.results || []).filter((x) => !x.ok).length;
+      return `${who} fired${id ? ` on ${b(id)}` : ''}${bad ? ` (${bad} action${bad > 1 ? 's' : ''} failed)` : ''}`;
+    }
+    case 'deploy.run.requested': return `${who} asks to run ${b(ev.run?.name || '')}: it waits for your OK on the Integrations page`;
+    case 'deploy.run.approved': return `${who} let ${nb(ev.run?.by?.name || '')} run ${b(ev.run?.name || '')}`;
+    case 'deploy.run.rejected': return `${who} turned down ${nb(ev.run?.by?.name || '')}'s run of ${b(ev.run?.name || '')}`;
+    case 'deploy.run.started': return `${b(ev.run?.name || '')} started (${nameOf(ev.run?.by?.name || '')})`;
+    case 'deploy.run.updated': return `${b(ev.run?.name || '')} is running`;
+    case 'pr.commented': { const t = String(ev.comment?.text || '').slice(0, 140); return `${b(ev.comment?.author || 'someone')} commented on PR ${b(`#${ev.pr?.id ?? ''}`)}: ${html ? esc(t) : t}`; }
+    case 'pr.opened': return `${b(ev.pr?.by || 'someone')} raised a PR for ${b(id)}: ${html ? esc(ev.pr?.title || '') : ev.pr?.title || ''}${ev.pr?.target ? ` → ${b(ev.pr.target)}` : ''}`;
+    case 'deploy.run.finished': {
+      const branch = ev.run?.steps?.find((s) => s.branch)?.branch;
+      return `${b(ev.run?.name || '')} ${ev.run?.status || 'ended'}${branch ? ` on ${b(branch)}` : ''}${ev.run?.message ? `: ${html ? esc(ev.run.message) : ev.run.message}` : ''}`;
+    }
     default: return `${who} · ${ev.type}`;
   }
 }

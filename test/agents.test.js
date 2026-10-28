@@ -973,7 +973,7 @@ describe('what a run inherits (INT-246)', () => {
     } finally { delete process.env.IA_T_SECRET; delete process.env.IA_T_KEEP; }
   });
 
-  it('a custom run inherits only what a shell needs unless inheritEnv adds names; a claude run still inherits everything (INT-260)', () => {
+  it('a custom run inherits only what a shell needs unless inheritEnv adds names; a claude run inherits everything but the board\'s INTELLAGENT_* (INT-260)', () => {
     const token = process.env.INTELLAGENT_TOKEN; // set when the suite itself runs inside an agent
     process.env.IA_T_API_KEY = 'secret';
     process.env.INTELLAGENT_TOKEN = 'the-boards-own';
@@ -994,7 +994,7 @@ describe('what a run inherits (INT-246)', () => {
       assert.equal(childEnv({ run: 'node adapter.js', env: { IA_T_API_KEY: 'given' } }, {}, {}).IA_T_API_KEY, 'given', 'env still gives a value outright');
       const claude = childEnv({ run: 'claude -p go' }, {}, {});
       assert.equal(claude.IA_T_API_KEY, 'secret', 'claude runs keep today\'s default');
-      assert.equal(claude.INTELLAGENT_TOKEN, 'the-boards-own');
+      assert.equal(claude.INTELLAGENT_TOKEN, undefined, 'never the board\'s own token (nor its deploy PAT): the run is given its own');
       assert.equal(childEnv({ run: 'claude -p go', inheritEnv: [] }, {}, {}).IA_T_API_KEY, undefined, 'inheritEnv still narrows a claude run');
     } finally {
       delete process.env.IA_T_API_KEY;
@@ -2423,7 +2423,8 @@ describe('watching a run (INT-457)', () => {
     const s = await startServer({ agents: { defaults: fast, agents: { dev: { run: run('ok'), role: 'builder' }, other: { run: run('ok'), enabled: false } } } });
     try {
       await s.ok('POST', '/api/agents/dev/run', {}, USER);
-      await until(async () => (await s.ok('GET', '/api/agents/dev/log', undefined, USER)).log.includes('--- output ---'), 8000, 'run logged');
+      // the output header is written before the run ends: wait for the end too, or `running` below races it
+      await until(async () => { const l = await s.ok('GET', '/api/agents/dev/log', undefined, USER); return l.log.includes('--- output ---') && !l.running; }, 8000, 'run logged and ended');
       const { runs } = await s.ok('GET', '/api/agents/dev/runs', undefined, USER);
       assert.equal(runs.length, 1);
       assert.match(runs[0].run, /^[\w-]+\.log$/);

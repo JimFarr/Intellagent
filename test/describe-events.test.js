@@ -11,6 +11,13 @@ const words = (ev, html = false) => describeEvent(ev, html, (n) => n, {});
 const delegated = { power: 'admin.rules', onBehalfOf: 'human' };
 
 describe('activity words', () => {
+  it('in HTML, names an agent chose (property keys, emoji) are text, never markup', () => {
+    const changed = words({ type: 'item.updated', item: { id: 'INT-1' }, changes: { 'properties.<img src=x onerror=alert(1)>': {} } }, true);
+    assert.ok(!changed.includes('<img'), changed);
+    assert.match(changed, /&lt;img/);
+    assert.ok(!words({ type: 'reaction.added', item: { id: 'INT-1' }, emoji: '<b>x</b>' }, true).includes('<b>x'));
+    assert.ok(!words({ type: 'agent.managed', agent: 'a', changes: { '<i>': {} } }, true).includes('<i>'));
+  });
   it('evaluates describe()', () => {
     assert.equal(words({ type: 'board.updated', actor: { name: 'gamora' } }), 'gamora updated the board');
   });

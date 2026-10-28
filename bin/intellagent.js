@@ -33,6 +33,7 @@ const ROOT = path.join(__dirname, '..');
 // and which board folder's manifest and tokens to use, like INTELLAGENT_URL, INTELLAGENT_AGENT and INTELLAGENT_MANIFEST, for a shell that may only run commands starting with "intellagent"
 // (a standing agent reaching its sandbox).
 const given = new Set();
+const runAgent = process.env.INTELLAGENT_AGENT; // who this process runs as, before --as renames it
 for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_AGENT'], ['--manifest', 'INTELLAGENT_MANIFEST']]) {
   const a = process.argv;
   const stop = a.indexOf('--'); // after -- (sandbox exec) the words belong to the command it runs
@@ -54,7 +55,10 @@ if (given.has('--manifest')) {
   }
   if (!given.has('--url')) delete process.env.INTELLAGENT_URL;
   const own = require('../lib/locate').localSecrets(path.resolve(process.env.INTELLAGENT_MANIFEST)).agentTokens?.[process.env.INTELLAGENT_AGENT];
-  if (own) delete process.env.INTELLAGENT_TOKEN;
+  // only this agent's own token there: --as another name keeps the run's token, so the board refuses it,
+  // instead of borrowing that agent's token from the shared local.json
+  const asOther = given.has('--as') && runAgent && runAgent.toLowerCase() !== process.env.INTELLAGENT_AGENT.toLowerCase();
+  if (own && !asOther) delete process.env.INTELLAGENT_TOKEN;
 }
 const [cmd = 'help', ...rest] = process.argv.slice(2);
 
@@ -695,7 +699,12 @@ async function nextEvents({ agent, types, timeoutSec, quiet, listen = { scope: '
     const q = new URLSearchParams({ ...(listen.query || { for: agent }), excludeActor: agent, since: String(since), timeout: String(left), ...(types ? { types } : {}) });
     let r;
     try { r = await get(`/api/events/wait?${q}`); }
-    catch (e) { if (!quiet) console.error(`board unreachable (${e.message}); retrying…`); await new Promise((res) => setTimeout(res, 5000)); continue; }
+    catch (e) {
+      if (Date.now() >= deadline) return [];
+      if (!quiet) console.error(`board unreachable (${e.message}); retrying…`);
+      await new Promise((res) => setTimeout(res, Math.min(5000, Math.max(0, deadline - Date.now()))));
+      continue;
+    }
     since = r.cursor;
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ cursor: since, at: new Date().toISOString() }));

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
  * Intellagent — a portable kanban for humans and agents.
- * Zero dependencies. Node >= 18.   Start:  node server.js
+ * Zero dependencies. Node >= 22.18 (it runs lib/deploy/*.ts as they are).   Start:  node server.js
  * Agents: GET /api/docs
  */
 'use strict';
@@ -23,6 +23,7 @@ const PUBLIC = path.join(ROOT, 'public');
 const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join(ROOT, 'intellagent.manifest.json'));
 const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
 const { readLocal, updateLocal, foreignCode } = require('./lib/locate');
+const deployGrants = require('./lib/deploy/grants.ts');
 const cardrules = require('./lib/cardrules');
 const jsonfile = require('./lib/jsonfile');
 const MANIFEST_DEFAULTS = {
@@ -84,6 +85,10 @@ const slug = (s) => String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').r
 // agents may rename columns (INT-418).
 const namesColumn = (refs, colId) => arr(refs).some((r) => slug(r) === colId);
 const str = (v, max) => String(v ?? '').slice(0, max);
+// colours go into style="…" in the page: a colour and nothing else (no ";background:url(…)")
+const COLOR_RE = /^(#[0-9a-f]{3,8}|(rgb|hsl|oklch|oklab)a?\([\d\s.,%/+-]+\))$/i;
+const cssColor = (v) => (COLOR_RE.test(String(v ?? '').trim()) ? String(v).trim() : null);
+const colorOf = (v) => cssColor(v) ?? fail(400, '"color" must be a CSS colour like #8b7bff, rgb(…), hsl(…) or oklch(…)', { code: 'BAD_REQUEST' });
 const { isObj } = jsonfile;
 const arr = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : String(v).split(',').map((s) => s.trim()).filter(Boolean));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
@@ -102,6 +107,34 @@ class HttpError extends Error {
   }
 }
 const fail = (status, message, extra) => { throw new HttpError(status, message, extra); };
+
+// The deployment library (lib/deploy). Made this early because every step and sequence is a power of its own,
+// deploy.step.<id> and deploy.sequence.<id>, held through grants like review.decide, and grants are read from the start.
+const deployStore = require('./lib/deploy/store.ts').createDeployStore({ file: path.join(DATA, 'deploy.json'), runsFile: path.join(DATA, 'deploy-runs.json'), fail, now });
+// The Jira actions (lib/jira): each is a power too, jira.action.<id>, and its runs share the deployments' history.
+const JIRA = require('./lib/jira/jira.ts');
+const jiraStore = JIRA.createJiraStore({ file: path.join(DATA, 'jira.json'), fail });
+// The DevStack actions (lib/devstack): devstack.action.<id>, the same way
+const DEVSTACK = require('./lib/devstack/devstack.ts');
+const devstackStore = DEVSTACK.createDevstackStore({ file: path.join(DATA, 'devstack.json'), fail });
+// The Confluence actions (lib/confluence): confluence.action.<id>, the same way
+const CONFLUENCE = require('./lib/confluence/confluence.ts');
+const confluenceStore = CONFLUENCE.createConfluenceStore({ file: path.join(DATA, 'confluence.json'), fail });
+// The Azure DevOps pull request actions (lib/deploy/pr-actions.ts): ado.action.<id>, the same way
+const PRACT = require('./lib/deploy/pr-actions.ts');
+const prActionStore = PRACT.createPrActionStore({ file: path.join(DATA, 'ado-actions.json'), fail });
+// The step, sequence, Jira, DevStack, Confluence or pull request action a power names, while it exists: a deleted one's grants name nothing and are dropped.
+function deployTargetOf(key) {
+  const p = deployGrants.parsePower(key);
+  const t = p && (p.kind === 'step' ? deployStore.step(p.id) : p.kind === 'jira' ? jiraStore.action(p.id) : p.kind === 'devstack' ? devstackStore.action(p.id) : p.kind === 'confluence' ? confluenceStore.action(p.id) : p.kind === 'ado' ? prActionStore.action(p.id) : deployStore.sequence(p.id));
+  return t ? { ...p, target: t } : null;
+}
+const isPower = (k) => !!POWERS[k] || !!deployTargetOf(k);
+const powerMeans = (k) => {
+  const d = deployTargetOf(k);
+  const named = { jira: 'Jira', devstack: 'DevStack', confluence: 'Confluence', ado: 'Azure DevOps pull request' }[d?.kind];
+  return POWERS[k] || (d ? (named ? `Run the ${named} action "${d.target.name}"` : `Run the deployment ${d.kind} "${d.target.name}" in Azure DevOps`) : k);
+};
 
 class Reply { constructor(status, body) { this.status = status; this.body = body; } }
 const created = (body) => new Reply(201, body);
@@ -285,7 +318,7 @@ function normField(f, base = null) {
   if ('required' in f) d.required = f.required === true;
   if (d.type === 'enum' || d.type === 'tags') {
     if ('options' in f || !d.options) {
-      d.options = arr(f.options).map((o) => (isObj(o) ? { value: str(o.value, 60).trim(), ...(o.color ? { color: str(o.color, 32) } : {}) } : { value: str(o, 60).trim() })).filter((o) => o.value);
+      d.options = arr(f.options).map((o) => (isObj(o) ? { value: str(o.value, 60).trim(), ...(cssColor(o.color) ? { color: cssColor(o.color) } : {}) } : { value: str(o, 60).trim() })).filter((o) => o.value);
     }
     if (d.type === 'enum' && !d.options.length) fail(400, `Enum field "${key}" needs "options"`);
   } else delete d.options;
@@ -363,6 +396,30 @@ function getCtx(id) {
   return ctx;
 }
 
+// The board's own behaviours, as the Rules page sets them (each is a rule there): on/off and their numbers, with the
+// manifest's values as the defaults.
+function behavioursOf(ctx) {
+  const b = ctx.board.behaviours || {};
+  const idleDefault = Number(M.triggers?.idleMinutes) > 0 ? Math.max(5, Number(M.triggers.idleMinutes)) : 60;
+  return {
+    landOnApprove: b.landOnApprove !== false,
+    askEscalation: b.askEscalation !== false,
+    stuckWatch: b.stuckWatch !== false,
+    idleCheck: { on: b.idleCheck?.on !== false, minutes: Math.max(5, Number(b.idleCheck?.minutes) || idleDefault) },
+    staleWork: { on: b.staleWork ? b.staleWork.on !== false : (Number(M.staleWorkMinutes) || 0) > 0, minutes: Number(b.staleWork?.minutes) > 0 ? Math.max(5, Number(b.staleWork.minutes)) : Number(M.staleWorkMinutes) || 120 }, // the floor is the Rules page's; the manifest's own value stands as set
+  };
+}
+// the card looks among the rules, as card rules ({ name, condition, look, enabled }), in the rules' order
+const looksOf = (b) => (b.automations?.rules || []).filter((r) => r.when?.on === 'fits' && r.then?.[0]?.do === 'look').map((r) => ({ name: r.name, condition: r.if, look: r.then[0].look, enabled: r.enabled !== false }));
+// Replace the card looks among the rules with these card rules, in this order; the other rules stay (PUT …/card-rules,
+// and an admin change put back)
+function setLooks(b, rules) {
+  const at = new Date().toISOString();
+  const all = b.automations?.rules || [];
+  const old = new Map(all.filter((r) => r.when?.on === 'fits').map((r) => [r.name.toLowerCase(), r]));
+  b.automations = { ...(b.automations || { log: [] }), rules: [...all.filter((r) => r.when?.on !== 'fits'), ...(rules || []).map((r) => { const o = old.get(r.name.toLowerCase()); return { id: o?.id || rid('rule'), name: r.name, enabled: r.enabled !== false, when: { on: 'fits' }, if: r.condition, then: [{ do: 'look', look: r.look }], createdAt: o?.createdAt || at, updatedAt: at }; })] };
+  b.cardRules = looksOf(b);
+}
 function normalizeBoard(b) {
   b.columns = Array.isArray(b.columns) ? b.columns : [];
   b.items = isObj(b.items) ? b.items : {};
@@ -373,9 +430,19 @@ function normalizeBoard(b) {
   if (b.cardRulesSeeded) {
     const seeded = cardrules.TYPE_RULES.map((r) => JSON.stringify(r));
     b.cardRules = b.cardRules.filter((r) => !seeded.includes(JSON.stringify(r)));
+    // and from the rules, where card looks live now (unchanged ones only, as above)
+    if (isObj(b.automations) && Array.isArray(b.automations.rules)) b.automations.rules = b.automations.rules.filter((r) => !(r.when?.on === 'fits' && seeded.includes(JSON.stringify({ name: r.name, condition: r.if, look: r.then?.[0]?.look, enabled: r.enabled !== false }))));
     delete b.cardRulesSeeded;
   }
   b.digest = Array.isArray(b.digest) ? b.digest : [];
+  b.automations = isObj(b.automations) ? { rules: Array.isArray(b.automations.rules) ? b.automations.rules : [], log: Array.isArray(b.automations.log) ? b.automations.log : [] } : { rules: [], log: [] };
+  // Card looks are rules (when a ticket fits, then its card looks so): a board's card rules move in once. cardRules
+  // stays as their copy for what draws and matches looks (lookFor, is:rule:, the page), rebuilt from the rules.
+  if (b.cardRules.length && !b.automations.rules.some((r) => r.when?.on === 'fits')) {
+    const at = new Date().toISOString();
+    b.automations.rules.push(...b.cardRules.map((r, i) => ({ id: `look-${i}-${Date.now().toString(36)}`, name: r.name, enabled: r.enabled !== false, when: { on: 'fits' }, if: r.condition, then: [{ do: 'look', look: r.look }], createdAt: at, updatedAt: at })));
+  }
+  b.cardRules = looksOf(b);
   b.master = isObj(b.master) ? b.master : null;
   b.ticketTemplates = Array.isArray(b.ticketTemplates) ? b.ticketTemplates : [];
   b.requests = Array.isArray(b.requests) ? b.requests : [];
@@ -507,7 +574,9 @@ function boardParts(board) {
 // Anything else (a column's name or flags, the schema, templates, directives, focus, master, requests, digest)
 // or a write touching more than SYNC_MAX tickets gives { from, full: true }: the page fetches the whole board.
 const SYNC_MAX = 50;
-const SYNC_KEYS = new Set(['items', 'columns', 'nextNumber']);
+// automations: the rules and their log, which the board page doesn't show (the Rules page reads them itself), so a
+// rule firing never makes every open page reload the board
+const SYNC_KEYS = new Set(['items', 'columns', 'nextNumber', 'automations']);
 function syncOf(from, b, a, board) {
   const full = { from, full: true };
   for (const [k, s] of a.keys) if (b.keys.get(k) !== s && !SYNC_KEYS.has(k)) return full;
@@ -578,7 +647,7 @@ function addColumn(board, c) {
   const col = {
     id,
     name: str(c.name, 60).trim(),
-    color: str(c.color || '#8b8fa3', 32),
+    color: cssColor(c.color) || '#8b8fa3',
     icon: str(c.icon || '', 32),
     flags: pickFlags(c.flags),
     itemIds: [],
@@ -707,7 +776,7 @@ const STUCK_TIMINGS = STUCK.timingsOf(M.stuck);
 // gauge reuses it while the board is unchanged instead of working out every agent's work again on each scrape.
 const lastOwners = new Map();
 function sweepStuck(ctx) {
-  if (M.sandbox) return; // a sandbox runs no agents: nothing to wake, and its human is not to be asked
+  if (M.sandbox || !behavioursOf(ctx).stuckWatch) return; // switched off on the Rules page // a sandbox runs no agents: nothing to wake, and its human is not to be asked
   // every standing agent, paused or switched off included: an owner that can't run is down, not absent
   const all = standingAgents();
   const byName = new Map(all.map((a) => [a.name, a]));
@@ -716,7 +785,7 @@ function sweepStuck(ctx) {
     works: Object.fromEntries(all.map((a) => [a.name, workFor(ctx, a.name)])),
     running: (n) => !!standing?.isRunning?.(n),
     status: (n) => { const a = byName.get(n); return !a ? undefined : a.paused ? 'paused' : !a.enabled ? 'disabled' : a.status; },
-  }, STUCK_TIMINGS);
+  }, stuckTimings(ctx));
   if (JSON.stringify(next) !== JSON.stringify(ctx.board.stuck || {}) || due.length) {
     tx(ctx, (events) => {
       askAboutStuck(ctx, events, due, next, nowMs, STUCK_TIMINGS);
@@ -879,9 +948,18 @@ function grantsOf(name) {
       if (!APPROVAL_POWERS.has(power)) return ignore(power, { minOks: g.minOks, from: g.from }, '"minOks" and "from" only apply to review.decide and column.gate, the powers that act on a reviewed ticket');
       Object.assign(out, rule);
     }
+    // a deployment's power: { approve: "human" } makes the run wait for the human's OK; its scope names what reaches Azure DevOps
+    const dep = deployGrants.parsePower(power);
+    if (g.approve != null) {
+      if (!dep || g.approve !== 'human') return ignore(power, { approve: g.approve }, '"approve" is only "human", on a deployment');
+      out.approve = 'human';
+    }
+    if (dep && isObj(g.where) && Object.keys(g.where).some((k) => !deployGrants.validKey(k, dep.kind))) {
+      return ignore(power, g.where, `a deployment's rules name only ${deployGrants.KEYS_HINT(dep.kind)}`);
+    }
     return out;
   }).flatMap((g) => (g?.power === ADMIN_BUNDLE ? adminCovers().map((power) => ({ ...g, power })) : [g]))
-    .filter((g) => g && POWERS[g.power]);
+    .filter((g) => g && isPower(g.power));
 }
 // { minOks, from } read from a grant, or a string saying why it can't be. minOks is a whole number ≥ 1 or "all";
 // from is a list of reviewer names (left out: every reviewer assigned to the ticket). from alone means "all".
@@ -1060,6 +1138,7 @@ const settingAt = (board, path) => {
 };
 const clone = (v) => (v == null ? null : JSON.parse(JSON.stringify(v)));
 function setSetting(board, path, value) {
+  if (path[0] === 'cardRules') { setLooks(board, clone(value) || []); return; } // card looks are rules: put the rules back
   if (path[0] === 'columns') {
     const have = new Map(board.columns.map((c) => [c.id, c.itemIds]));
     board.columns = clone(value).map((c) => ({ ...c, itemIds: have.get(c.id) || [] }));
@@ -1220,6 +1299,8 @@ function readablePath(actor, raw) {
 function saveAttachment(ctx, item, a, actor) {
   if (!isObj(a)) fail(400, 'Attachment must be an object');
   if (a.url && !a.dataBase64 && !a.data && !a.path) {
+    // a link the human clicks: http(s) only, never javascript: or data: in the board's own page
+    if (!/^https?:\/\//i.test(String(a.url))) fail(400, 'A link attachment needs an http(s) address', { code: 'BAD_REQUEST', hint: '{ "url": "https://…" }' });
     return { id: rid('a'), kind: 'link', name: str(a.name || a.url, 120), url: str(a.url, 2000), addedAt: now(), author: actor };
   }
   let buf;
@@ -1484,7 +1565,7 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null, c
 // Set by the board only; assignedBy, pinned and rebalanced are not PATCHABLE.
 const assignedByOf = (actor) => ({ kind: actor.kind, name: actor.name, at: now() });
 
-const PATCHABLE = ['title', 'description', 'type', 'priority', 'parent', 'blockedBy', 'needsHuman', 'properties', 'replaceProperties', 'fields', 'cover', 'assignee', 'agentDraft',
+const PATCHABLE = ['title', 'description', 'type', 'priority', 'parent', 'blockedBy', 'needsHuman', 'properties', 'replaceProperties', 'fields', 'cover', 'assignee', 'agentDraft', 'style',
   'columnId', 'column', 'position', 'beforeId', 'afterId', 'version', 'confirm'];
 
 function trimChange(v) { return typeof v === 'string' && v.length > 400 ? `${v.slice(0, 400)}…` : v; }
@@ -1550,6 +1631,13 @@ function applyPatch(ctx, item, p, actor, events) {
     item.properties = next;
   }
   if ('fields' in p) applyFields(ctx, item, p.fields, actor, changes);
+  // the card's own style (a rule's "style its card", or the human): how the board looks is the human's, as card rules are
+  if ('style' in p) {
+    if (actor.kind === 'agent') fail(403, 'A card\'s style is set by the human or a rule', { code: 'HUMAN_ONLY', hint: 'Ask on the card for a rule that styles it' });
+    let next = null;
+    if (p.style != null) { try { next = cardrules.cleanLook(p.style, 'The style'); } catch (e) { fail(400, e.message, { code: 'BAD_REQUEST', hint: e.hint }); } }
+    set('style', next && Object.keys(next).length ? next : null);
+  }
   if ('assignee' in p) {
     const prev = item.assignee || null;
     const next = p.assignee ? str(p.assignee, 64).trim() : null;
@@ -1950,7 +2038,8 @@ function sweepAsks(ctx) {
     for (const it of Object.values(ctx.board.items)) for (const a of ASKS.overdueAsks(it, Date.now())) {
       a.escalated = now();
       events.push(itemEvent(ctx, 'ask.overdue', it, SYSTEM, { ask: { ...a }, mentions: [a.by] }));
-      const up = ASKS.escalationOf(a, coordinatorOf(ctx), { id: rid('ask'), now: Date.now() }, ASK_RULES);
+      // the coordinator takes it, unless the escalation is switched off on the Rules page
+      const up = behavioursOf(ctx).askEscalation ? ASKS.escalationOf(a, coordinatorOf(ctx), { id: rid('ask'), now: Date.now() }, ASK_RULES) : {};
       if (up.ask) {
         ASKS.addAsk(it, up.ask, ASK_RULES);
         events.push(itemEvent(ctx, 'ask.created', it, SYSTEM, { ask: { ...up.ask }, escalates: a.id, mentions: [up.ask.to] }));
@@ -2151,7 +2240,27 @@ function powerBriefLines(ctx, x, said = {}) {
     'admin.permit': `a blocked command an agent asks you for: add it to the library (${cli('POST', '/api/permissions', 'key=<key> kind=command name=<Name> commands=["node:*"]')}) and turn it on for that agent (${cli('PUT', '/api/agents/<name>/permissions/<key>', 'mode=on')}); grant what it asks unless it is genuinely dangerous (secrets, tokens, deleting data, force-pushing); never your own row, never a board power`,
     'admin.permissions': `${cli('PUT', '/api/agents/<name>/permissions/<key>', 'mode=on')} · POST/PATCH/DELETE /api/permissions — only what you hold yourself, never your own row, never a board power, never a permission you hold; command, tool and folders permissions only narrow (403 NO_ESCALATION says why)`,
   };
-  return [`- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
+  const dep = deployTargetOf(x.power);
+  if (dep?.kind === 'jira') {
+    const t = dep.target;
+    how[x.power] = `${cli('POST', `/api/jira/actions/${dep.id}/run`, `item=<ticket>${t.issue === 'ask' ? ' issue=<KEY-123>' : ''}${t.does === 'comment' && !t.text ? ' text="…"' : ''}`)}. Your grant is checked before it runs; deploy.run.finished says how it went`;
+  } else if (dep?.kind === 'confluence') {
+    const t = dep.target;
+    const needs = [t.does !== 'create' && t.page === 'ask' ? 'page=<page id or link>' : '', t.text ? '' : 'text=@<file.md>'].filter(Boolean).join(' ');
+    how[x.power] = `${cli('POST', `/api/confluence/actions/${dep.id}/run`, `item=<ticket> ${needs}`.trim())} (markdown; ${t.does === 'section' ? `replaces the section "${t.heading}"` : t.does === 'append' ? 'appended at the end' : `a new page in ${t.space}`}). Read a page first: GET /api/confluence/pages/<id>/markdown. It ends at once: succeeded or failed, with the page's link`;
+  } else if (dep?.kind === 'ado') {
+    const t = dep.target;
+    const needs = [t.does === 'reply' || t.does === 'resolve' ? 'thread=<thread id>' : '', (t.does === 'reply' || t.does === 'comment') && !t.text ? 'text="…"' : ''].filter(Boolean).join(' ');
+    how[x.power] = `${cli('POST', `/api/ado/actions/${dep.id}/run`, `item=<ticket> pr=<id or link> ${needs}`.trim())} (${PRACT.doesWords(t)}; pr defaults to the ticket's pr field, and a "PR is commented on" rule passes the PR and thread on). It ends at once: succeeded or failed`;
+  } else if (dep?.kind === 'devstack') {
+    how[x.power] = `${cli('POST', `/api/devstack/actions/${dep.id}/run`, 'item=<ticket>')} (tests ${dep.target.source} on ${dep.target.service}; source=<branch:…|path:…> to test another build). It queues for the stack and can take an hour: never poll, end your run; deploy.run.finished brings the verdict`;
+  } else if (dep) {
+    how[x.power] = dep.kind === 'step'
+      ? `${cli('POST', `/api/deploy/steps/${dep.id}/run`, 'parameters.<name>=<value> item=<ticket>')} (GET /api/deploy/steps/${dep.id} says what it sends)`
+      : `${cli('POST', `/api/deploy/sequences/${dep.id}/run`, `${(dep.target.inputs || []).map((i) => `inputs.${i.id}=<${i.name}>`).join(' ') || ''} item=<ticket>`.trim())}`;
+    how[x.power] += '. Your grant is checked before the run starts and again before each step; you are woken by deploy.run.finished. Never poll: end your run and wait';
+  }
+  return [`- **${x.power}** — ${powerMeans(x.power)}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}${x.approve ? ' (each run waits for the human\'s OK)' : ''}: ${how[x.power]}`,
     ...(Object.hasOwn(said, x.power) ? [`  ${guidanceLine(said[x.power])}`] : [])];
 }
 
@@ -2410,7 +2519,7 @@ function boardView(ctx) {
     hash: ctx.hash, seq: currentSeq(), serverTime: now(),
     app: { name: app.name, version: VERSION, build: BUILD, ...grafanaLink() },
     archivedCount: Object.keys(ctx.archive.items).length,
-    board: ctx.board,
+    board: { ...ctx.board, automations: undefined }, // the Rules page reads them: GET …/rules
   };
 }
 
@@ -2456,7 +2565,7 @@ const agentBranch = (name) => { try { return (name && standing?.get(name).worktr
 // seq is read with currentSeq().
 const { recent, currentSeq, parseFilter, matchesFilter, sseClients, waiters, emit, sseSend, longPoll, openStream, subs, saveSubs } = createEvents({
   fs, path, DATA, M, now, arr, boards, reply, HANDLED, presenceDelta, app, VERSION, BUILD, readJson, writeFileAtomic,
-  onEvent: (e) => standing?.onEvent(e) });
+  onEvent: (e) => { standing?.onEvent(e); onRuleEvent(e); } });
 
 /* ───────────────────────── profiles (agent/user colour, glyph, image) ───────────────────────── */
 
@@ -2464,7 +2573,6 @@ const PROFILES_FILE = path.join(DATA, 'profiles.json');
 const AVATAR_DIR = path.join(DATA, 'avatars');
 const profiles = readJson(PROFILES_FILE, {});
 const saveProfiles = () => writeFileAtomic(PROFILES_FILE, JSON.stringify(profiles, null, 2));
-const COLOR_RE = /^(#[0-9a-f]{3,8}|(rgb|hsl|oklch|oklab)a?\([\d\s.,%/+-]+\))$/i;
 
 function updateProfile(name, d, actor) {
   if (!name || name === 'anonymous') fail(400, 'Identify yourself with X-Agent (or X-User) first');
@@ -2759,7 +2867,7 @@ async function sweepTriggers(ctx) {
   const sleeping = new Set(ctx.board.columns.filter((c) => c.flags?.sleeping).map((c) => c.id));
   // every picked-up card gets the idle check unless someone removed it there (idleCheck: false)
   const wantIdle = Object.values(ctx.board.items).filter((it) => live(it) && it.journey?.pickedUpAt && !sleeping.has(it.columnId)
-    && it.idleCheck !== false && !TRIGGERS.activeOn(it).some((t) => t.when.kind === 'idle'));
+    && it.idleCheck !== false && behavioursOf(ctx).idleCheck.on && !TRIGGERS.activeOn(it).some((t) => t.when.kind === 'idle'));
   const items = Object.values(ctx.board.items).filter((it) => live(it) && TRIGGERS.activeOn(it).length);
   if (!items.length && !wantIdle.length && !(ctx.board.triggerQueue || []).length) return;
   const needsMachine = items.some((it) => TRIGGERS.activeOn(it).some((t) => t.when.kind === 'machine'));
@@ -2768,12 +2876,13 @@ async function sweepTriggers(ctx) {
   tx(ctx, (events) => {
     let queue = ctx.board.triggerQueue || [];
     // the same floor as a repeating trigger set through the API: each firing costs the coordinator a run
-    const idleMinutes = Number(M.triggers?.idleMinutes) > 0 ? Math.max(5, Number(M.triggers.idleMinutes)) : 60;
+    const idleMinutes = behavioursOf(ctx).idleCheck.minutes;
     // version bumped so an open board redraws the card with its bell
     for (const it of wantIdle) { it.triggers = [...(it.triggers || []).filter((x) => x.active), TRIGGERS.idleDefault({ id: rid('tr'), minutes: idleMinutes, nowIso: now() })]; it.version++; }
     for (const it of Object.values(ctx.board.items)) {
       if (!live(it)) continue;
       for (const t of TRIGGERS.activeOn(it)) {
+        if (t.default && !behavioursOf(ctx).idleCheck.on) continue; // the idle check is switched off on the Rules page
         if (TRIGGERS.holds(t, it)) continue;
         const machineFree = machine && Number.isFinite(machine.busyPercent) ? machine.leases === 0 && machine.busyPercent < t.when.busyBelow : null;
         const r = TRIGGERS.evaluate(t, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt), machineFree });
@@ -2891,7 +3000,7 @@ const SCHEMA = {
     seq: 'integer cursor', ts: 'ISO', board: 'string', hash: 'board hash after the change',
     type: ['item.created', 'item.updated', 'item.moved', 'item.reordered', 'item.archived', 'item.restored', 'comment.added',
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
-      'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'trigger.fired', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
+      'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'trigger.fired', 'rule.fired', 'rule.ran', 'deploy.run.requested', 'deploy.run.approved', 'deploy.run.rejected', 'deploy.run.started', 'deploy.run.updated', 'deploy.run.finished', 'pr.opened', 'pr.commented', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.managed', 'agent.role_changed', 'admin.reverted', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
@@ -3037,17 +3146,18 @@ function checkAuth(req, q, actor, pathname, policy) {
   }
   // names match without regard to case, as grants and probation do: "Gatekeeper" must send gatekeeper's token (INT-418)
   const tokenFor = (tokens) => Object.entries(tokens || {}).find(([k]) => k.toLowerCase() === actor.name.toLowerCase())?.[1];
-  const need = tokenFor(A.agentTokens);
+  // local.json is read on every call: a token issued or rotated since the board started (intellagent token
+  // --agent [--rotate]) counts at once, and the old one stops working
+  const fresh = tokenFor(readLocalAgentTokens());
+  if (fresh && fresh !== tokenFor(A.agentTokens)) A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh };
+  const need = fresh || tokenFor(A.agentTokens);
   const tokenHint = `Send the token the human issued with: intellagent token --agent ${actor.name} (the CLI and MCP tools send it by themselves; elsewhere set INTELLAGENT_TOKEN)`;
-  if (need) { if (!tokenEq(tok, need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); return; }
-  if (A.requireAgentTokens) {
-    // a token issued since the board started (intellagent token --agent) counts without a restart
-    const fresh = tokenFor(readLocalAgentTokens());
-    if (fresh) { A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh }; if (tokenEq(tok, fresh)) return; fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); }
+  if (need) { if (!tokenEq(tok, need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); }
+  else if (A.requireAgentTokens) {
     fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name} (the CLI and MCP tools then send it by themselves)` });
   }
   const p = permsFor(actor.name);
-  // the route policy says what a read-only agent may still do (INT-144): talk, never change
+  // the route policy says what a read-only agent may still do (INT-144): talk, never change; with a token or without
   if (p?.readOnly && policy && !policy.readOnly) {
     fail(403, `${actor.name} is read-only (it may still comment and ask for help)`);
   }
@@ -3161,6 +3271,55 @@ const POLICY = {
   'PATCH /api/permissions/:key': { who: 'admin.permissions' },
   'DELETE /api/permissions/:key': { who: 'admin.permissions' },
   'PUT /api/agents/:name/permissions/:key': { who: 'admin.permissions' },
+  // Deployments: the token, the library and approvals are the human's; running takes that deployment's own power
+  // (deploy.step.<id> / deploy.sequence.<id>), checked in the handler since the powers come and go with the library
+  'PUT /api/deploy/connection': { who: 'human', ...humanAsk('connect Azure DevOps') },
+  'DELETE /api/deploy/connection': { who: 'human', ...humanAsk('disconnect Azure DevOps') },
+  'PUT /api/deploy/pr-watch': { who: 'human', ...humanAsk('choose which projects are watched for pull requests') },
+  'PUT /api/deploy/webhook': { who: 'human', ...humanAsk('turn on the Azure DevOps webhook') },
+  'DELETE /api/deploy/webhook': { who: 'human', ...humanAsk('turn off the Azure DevOps webhook') },
+  // Azure DevOps itself: the hook's own username and password are checked in the route
+  'POST /hooks/ado': { who: 'any' },
+  'POST /api/ado/actions': { who: 'human', ...humanAsk('add a pull request action') },
+  'PUT /api/ado/actions/:id': { who: 'human', ...humanAsk('change a pull request action') },
+  'DELETE /api/ado/actions/:id': { who: 'human', ...humanAsk('delete a pull request action') },
+  'POST /api/ado/actions/:id/run': { who: 'any' },
+  'POST /api/deploy/steps': { who: 'human', ...humanAsk('add a deployment step') },
+  [`POST ${B_}/rules`]: { who: 'human', ...humanAsk('add a rule') },
+  [`PUT ${B_}/rules/:id`]: { who: 'human', ...humanAsk('change a rule') },
+  [`DELETE ${B_}/rules/:id`]: { who: 'human', ...humanAsk('delete a rule') },
+  [`POST ${B_}/rules/preview`]: { who: 'any', readOnly: true, held: true },
+  'PUT /api/deploy/steps/:id': { who: 'human', ...humanAsk('change a deployment step') },
+  'DELETE /api/deploy/steps/:id': { who: 'human', ...humanAsk('delete a deployment step') },
+  'POST /api/deploy/sequences': { who: 'human', ...humanAsk('add a deployment sequence') },
+  'PUT /api/deploy/sequences/:id': { who: 'human', ...humanAsk('change a deployment sequence') },
+  'DELETE /api/deploy/sequences/:id': { who: 'human', ...humanAsk('delete a deployment sequence') },
+  'POST /api/deploy/steps/:id/run': { who: 'any' },
+  'POST /api/deploy/sequences/:id/run': { who: 'any' },
+  'POST /api/deploy/runs/:id/cancel': { who: 'any' },
+  'POST /api/deploy/runs/:id/approve': { who: 'human', ...humanAsk('approve a deployment') },
+  'POST /api/deploy/runs/:id/reject': { who: 'human', ...humanAsk('turn down a deployment') },
+  'PUT /api/jira/connection': { who: 'human', ...humanAsk('connect Jira') },
+  'DELETE /api/jira/connection': { who: 'human', ...humanAsk('disconnect Jira') },
+  'POST /api/jira/connection/test': { who: 'human', ...humanAsk('test the Jira connection') },
+  'POST /api/jira/actions': { who: 'human', ...humanAsk('add a Jira action') },
+  'PUT /api/jira/actions/:id': { who: 'human', ...humanAsk('change a Jira action') },
+  'DELETE /api/jira/actions/:id': { who: 'human', ...humanAsk('delete a Jira action') },
+  'POST /api/jira/actions/:id/run': { who: 'any' },
+  'PUT /api/devstack/connection': { who: 'human', ...humanAsk('connect the DevStack') },
+  'DELETE /api/devstack/connection': { who: 'human', ...humanAsk('disconnect the DevStack') },
+  'POST /api/devstack/connection/test': { who: 'human', ...humanAsk('test the DevStack connection') },
+  'POST /api/devstack/actions': { who: 'human', ...humanAsk('add a DevStack action') },
+  'PUT /api/devstack/actions/:id': { who: 'human', ...humanAsk('change a DevStack action') },
+  'DELETE /api/devstack/actions/:id': { who: 'human', ...humanAsk('delete a DevStack action') },
+  'POST /api/devstack/actions/:id/run': { who: 'any' },
+  'PUT /api/confluence/connection': { who: 'human', ...humanAsk('connect Confluence') },
+  'DELETE /api/confluence/connection': { who: 'human', ...humanAsk('disconnect Confluence') },
+  'POST /api/confluence/connection/test': { who: 'human', ...humanAsk('test the Confluence connection') },
+  'POST /api/confluence/actions': { who: 'human', ...humanAsk('add a Confluence action') },
+  'PUT /api/confluence/actions/:id': { who: 'human', ...humanAsk('change a Confluence action') },
+  'DELETE /api/confluence/actions/:id': { who: 'human', ...humanAsk('delete a Confluence action') },
+  'POST /api/confluence/actions/:id/run': { who: 'any' },
   'PUT /api/roles/:key': { who: 'human', why: 'Only the human defines roles: a role sets the tools and wake-ups of every agent that takes it', hint: 'Suggest the role on a card instead' },
   'POST /api/agents': { who: 'human', why: 'Only the human can control standing agents' },
   'POST /api/agents/:name/changes/:id/revert': { who: 'human', why: 'Only the human puts back a board setting an agent changed on their behalf', hint: 'Ask on a card, and say which change' },
@@ -3678,7 +3837,7 @@ route('PUT', '/api/boards/:board/card-rules', 'Replace the card rules (human or 
     if (JSON.stringify(rules) === JSON.stringify(cardRulesOf(ctx))) return;
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { cardRules: { from: cardRulesOf(ctx).map((r) => r.name), to: rules.map((r) => r.name) } }, ...delegatedTag(del) });
     adminTrail(ctx, events, actor, del, `Changed the card rules: ${rules.map((r) => r.name).join(', ') || 'none'}`);
-    ctx.board.cardRules = rules;
+    setLooks(ctx.board, rules);
   });
   return { rules: cardRulesOf(ctx) };
 });
@@ -3690,7 +3849,8 @@ route('GET', '/api/boards/:board/card-rules/matches', 'The look each ticket earn
   const ctx = getCtx(p.board);
   const blocksOf = blocksIndex(ctx);
   const out = {};
-  if (!cardRulesOf(ctx).some((r) => r.enabled !== false)) return out;
+  // a style a rule set (item.style) shows without any card rule
+  if (!cardRulesOf(ctx).some((r) => r.enabled !== false) && !Object.values(ctx.board.items).some((it) => it.style)) return out;
   for (const c of ctx.board.columns) for (const id of c.itemIds) {
     const look = searchView(ctx, ctx.board.items[id], false, blocksOf).look;
     if (look) out[id] = look;
@@ -3832,7 +3992,7 @@ route('PATCH', '/api/boards/:board/columns/:column', 'Update column: { name?, co
     }
     if ('position' in body) used.push([adminGate(ctx, actor, 'admin.columns', 'reorder columns (the order decides where the gates sit)', { column: col }), `Moved the column "${col.name}"`]);
     if ('name' in body) { if (!String(body.name).trim()) fail(400, 'name cannot be empty'); col.name = str(body.name, 60).trim(); }
-    if ('color' in body) col.color = str(body.color, 32);
+    if ('color' in body) col.color = colorOf(body.color);
     if ('icon' in body) col.icon = str(body.icon, 32);
     if ('flags' in body) col.flags = pickFlags(body.flags, col.flags);
     if ('position' in body) {
@@ -3927,6 +4087,7 @@ route('POST', '/api/boards/:board/items/:id/attachments', 'Attach: { name?, mime
   if (actor.kind === 'user' && ctx.board.schema.builtins.attachments.ui !== 'edit') fail(403, 'Files are read-only in the UI');
   return created(tx(ctx, (events) => {
     const item = getItem(ctx, p.id);
+    guardWrite(ctx, item, actor);
     const att = saveAttachment(ctx, item, body, actor);
     item.attachments.push(att);
     item.version++;
@@ -3940,6 +4101,7 @@ route('DELETE', '/api/boards/:board/items/:id/attachments/:att', 'Detach (file i
   const ctx = getCtx(p.board);
   return tx(ctx, (events) => {
     const item = getItem(ctx, p.id);
+    guardWrite(ctx, item, actor);
     const att = item.attachments.find((a) => a.id === p.att);
     if (!att) fail(404, 'Attachment not found');
     if (actor.kind === 'user' && ctx.board.schema.builtins.attachments.ui !== 'edit') fail(403, 'Files are read-only in the UI');
@@ -4380,9 +4542,10 @@ function stopAllAgents(actor) {
 
 // Tickets an agent left in the working column with no sign of life go back to Ready.
 function sweepStale() {
-  const mins = Number(M.staleWorkMinutes) || 0;
-  if (!mins) return;
   for (const ctx of boards.values()) {
+    const sw = behavioursOf(ctx).staleWork;
+    const mins = sw.on ? sw.minutes : 0;
+    if (!mins) continue;
     const work = workingColumn(ctx);
     if (!work) continue;
     const m = activeMaster(ctx);
@@ -4417,6 +4580,1189 @@ route('GET', '/api/analytics', 'Agent analytics over ?days=7|30 (1-90), ?agent=<
   if (q.agent != null && !/^[\w.-]{1,64}$/.test(String(q.agent))) fail(400, `"${String(q.agent).slice(0, 64)}" is not an agent name`, { code: 'BAD_REQUEST', hint: 'Pass ?agent=<name> as in GET /api/agents, or leave it out for every agent' });
   // tickets waiting on the human, for the suggestions (the analytics file reads logs only)
   return analytics({ days: clamp(Number(q.days) || 7, 1, 90), agent: q.agent || null, waiting: waitingOnHuman(boards.values()) });
+});
+/* ───────────────────────── deployments (Azure DevOps) ───────────────────────── */
+// Steps and sequences of pipeline runs, ported from KM.Launchpad (lib/deploy). The board holds one Azure DevOps
+// token, in local.json: write-only, never in a reply, never handed to an agent. An agent runs a deployment only
+// when it holds that deployment's power (deploy.step.<id> / deploy.sequence.<id>, granted in Assignments), within
+// the grant's rules (lib/deploy/grants.ts): checked before the run starts and before each step.
+const { createAdo, AdoError } = require('./lib/deploy/ado.ts');
+let adoConn = null; // { org, user, source: 'local' | 'env', patHint, ado }
+function connectAdo() {
+  let c = null;
+  try { c = readLocal(LOCAL_PATH).deploy || null; } catch { c = null; }
+  const org = c?.org || process.env.INTELLAGENT_ADO_ORG;
+  const pat = c?.pat || process.env.INTELLAGENT_ADO_PAT;
+  // INTELLAGENT_ADO_URL: Azure DevOps Server, or a stand-in for tests; dev.azure.com otherwise
+  adoConn = org && pat ? { org, user: c?.user || null, source: c?.pat ? 'local' : 'env', patHint: String(pat).slice(-4), ado: createAdo({ org, pat, baseUrl: process.env.INTELLAGENT_ADO_URL }) } : null;
+}
+connectAdo();
+const requireAdo = () => adoConn?.ado || fail(503, 'Azure DevOps is not connected', { code: 'NOT_CONNECTED', hint: 'The human connects it on the Deployments page (Settings), or PUT /api/deploy/connection { org, pat }' });
+// Azure DevOps errors keep their message (it never holds the token). A refused token is 502, not 401: a 401 here
+// would read as "this board wants you to sign in".
+async function viaAdo(f) {
+  try { return await f(requireAdo()); } catch (e) {
+    if (!(e instanceof AdoError)) throw e;
+    if (e.status === 401 || e.status === 403) fail(502, e.message, { code: 'ADO_REFUSED', hint: 'Check the token on the Deployments page (Settings): it may have expired, or lack Build (read & execute), Code (read) and Project (read)' });
+    if (e.status === 404) fail(404, e.message, { code: 'NOT_FOUND' });
+    fail(e.status === 400 ? 400 : 502, e.message, { code: e.status === 400 ? 'BAD_REQUEST' : 'UPSTREAM' });
+  }
+}
+const runSummary = (r) => ({ id: r.id, kind: r.kind, target: r.target, name: r.name, status: r.status, by: r.by, item: r.item || null, ...(r.message ? { message: r.message } : {}),
+  steps: r.steps.map((s) => ({ name: s.name, state: s.state, result: s.result, buildNumber: s.buildNumber, webUrl: s.webUrl, ...(s.branch ? { branch: s.branch } : {}) })) });
+// The agent that asked for a run hears how it ended (and whether the human let it run): those events wake it.
+const deployEvent = (type, run, actor = SYSTEM) => emit({
+  type, board: M.defaultBoard, actor, run: runSummary(run),
+  // on its ticket's Activity: asked, approved, started, finished; not each poll's update
+  ...(run.item && type !== 'deploy.run.updated' ? { itemId: run.item } : {}),
+  recipients: run.by?.kind === 'agent' && ['deploy.run.finished', 'deploy.run.approved', 'deploy.run.rejected'].includes(type) ? [run.by.name] : [],
+});
+// An agent's grants of one deployment's power, and the check of one planned step against them
+const deployGrantsOf = (name, power) => grantsOf(name).filter((g) => g.power === power);
+const judgeRun = (run, r, grants, inputs) => deployGrants.judge(grants, run.kind, { branch: r.branch, parameters: r.templateParameters, variables: r.variables, inputs }, r.unknown);
+// The check the runner makes before each step, with what that step will really send. A grant taken away while the
+// run waits or goes stops it here.
+function authorizeDeploy(run, index, values) {
+  if (run.by?.kind !== 'agent') return null;
+  const v = deployGrants.judge(deployGrantsOf(run.by.name, deployGrants.powerOf(run.kind, run.target)), run.kind, values);
+  if (!v.ok) return `outside ${run.by.name}'s grant of ${run.name}: ${v.why}`;
+  if (v.approve && run.approval?.verdict !== 'approved') return 'this needs the human\'s OK';
+  return null;
+}
+// Who may run a deployment: each agent the board knows that holds its power, with its rules
+function deployHolders(power) {
+  const names = new Set([...(standing ? standing.list().agents.map((a) => a.name) : []), ...Object.keys(M.permissions || {}).filter((n) => n !== '*')]);
+  return [...names].flatMap((name) => deployGrantsOf(name, power).map((g) => ({ name, ...(g.where ? { where: g.where } : {}), ...(g.approve ? { approve: g.approve } : {}) })));
+}
+// A deleted deployment's power names nothing: its grants leave agents.json too, so a later deployment that gets
+// the same id starts with nobody holding it. (The manifest's own grants are the human's file to edit.)
+function dropDeployGrants(power, actor) {
+  if (!standing) return [];
+  const dropped = [];
+  for (const a of standing.list().agents) {
+    const keep = (a.grants || []).filter((g) => (typeof g === 'string' ? g : g?.power) !== power);
+    if (keep.length === (a.grants || []).length) continue;
+    const { changes } = standing.manage(a.name, { grants: keep.length ? keep : null }, { kind: actor.kind, name: actor.name });
+    emit({ type: 'agent.managed', actor, agent: a.name, changes, recipients: [a.name] });
+    dropped.push(a.name);
+  }
+  return dropped;
+}
+const withHolders = (kind, d) => { const power = deployGrants.powerOf(kind, d.id); return { ...d, power, holders: deployHolders(power) }; };
+const deployRunner = require('./lib/deploy/runner.ts').createRunner({
+  store: deployStore, ado: () => adoConn?.ado || null, uniqueName: () => adoConn?.user?.uniqueName || '', now, emit: deployEvent, authorize: authorizeDeploy,
+  // a ticket's branch: its "branch" field or property, else a branch that names its id or Jira key
+  ticket: (id) => {
+    const it = ticketOf(id);
+    if (!it) return null;
+    const branch = String(it.fields?.branch || it.properties?.branch || '').trim() || null;
+    return { branch, keys: [it.id, JIRA.issueOfTicket(it, { find: 'title', boardPrefix: getCtx(M.defaultBoard).board.idPrefix })].filter(Boolean) };
+  },
+  pollMs: Number(process.env.INTELLAGENT_DEPLOY_POLL_MS) || 5000,
+});
+deployRunner.recover();
+const runSkeleton = (kind, target) => (kind === 'jira' || kind === 'devstack' || kind === 'confluence' || kind === 'ado' ? [] : kind === 'step' ? [{ stepId: target }] : deployStore.sequence(target).items).map((x, i) => {
+  const s = deployStore.step(x.stepId);
+  return { index: i, stepId: s.id, name: s.alias || s.name, project: s.project, pipelineId: s.pipelineId, buildId: null, buildNumber: null, state: 'pending', result: null, webUrl: null, startedAt: null, finishedAt: null, message: null };
+});
+function runValues(v, what) {
+  if (v == null) return {};
+  if (!isObj(v)) fail(400, `${what} must be an object of name: value`, { code: 'BAD_REQUEST' });
+  if (Object.keys(v).length > 100) fail(400, `${what}: at most 100`, { code: 'BAD_REQUEST' });
+  return Object.fromEntries(Object.entries(v).filter(([, x]) => x != null).map(([k, x]) => {
+    if (typeof x === 'object') fail(400, `${what}.${k} must be text`, { code: 'BAD_REQUEST' });
+    return [str(k, 200), str(x, 2000)];
+  }));
+}
+// Start a run, or, for an agent whose grant wants the human's OK, file it waiting. The agent's grants are checked
+// against every step with all that can be known now; what an earlier step hands on is checked before its step.
+async function requestRun(kind, target, body, actor) {
+  const def = kind === 'step' ? deployStore.step(target) : deployStore.sequence(target);
+  if (!def) fail(404, `No ${kind} "${target}"`, { code: 'NOT_FOUND', hint: `GET /api/deploy/${kind}s lists them` });
+  requireAdo();
+  let inputs = {};
+  let overrides = {};
+  if (kind === 'sequence') {
+    inputs = runValues(body.inputs, 'inputs');
+    const unknownIds = Object.keys(inputs).filter((k) => !def.inputs.some((x) => x.id === k));
+    if (unknownIds.length) fail(400, `${def.name} has no input ${unknownIds.join(', ')}`, { code: 'BAD_REQUEST', hint: `Its inputs: ${def.inputs.map((x) => x.id).join(', ') || 'none'}` });
+  } else {
+    overrides = { ...(body.branch ? { branch: str(body.branch, 250).trim() } : {}), parameters: runValues(body.parameters, 'parameters'), variables: runValues(body.variables, 'variables') };
+  }
+  const item = body.item == null || body.item === '' ? null : str(body.item, 40).trim().toUpperCase();
+  if (item && !/^[A-Z][A-Z0-9]*-\d+$/.test(item)) fail(400, '"item" is a ticket id such as INT-12', { code: 'BAD_REQUEST' });
+  const run = { id: rid('dr'), kind, target, name: def.name, status: 'waiting', inputs, overrides, by: { kind: actor.kind, name: actor.name }, item, createdAt: now(), steps: runSkeleton(kind, target) };
+  let needsOk = false;
+  if (actor.kind === 'agent') {
+    const power = deployGrants.powerOf(kind, target);
+    const grants = deployGrantsOf(actor.name, power);
+    if (!grants.length) fail(403, `You may not run ${def.name}`, { code: 'HUMAN_ONLY', hint: `The human can let you: Agents › Assignments › ${power} (or "grants" in agents.json)` });
+    const planned = await viaAdo(() => deployRunner.plan(run));
+    planned.items.forEach((r, i) => {
+      const v = judgeRun(run, r, grants, planned.inputs);
+      if (!v.ok) fail(403, `${run.steps[i].name} is outside your grant of ${def.name}: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human, or ask them on the card', step: r.step.id });
+      if (v.approve) needsOk = true;
+    });
+  }
+  deployStore.addRun(run);
+  if (needsOk) {
+    run.approval = { needed: true, requestedAt: now() };
+    deployStore.saveRuns();
+    deployEvent('deploy.run.requested', run, actor);
+  } else deployRunner.start(run);
+  return created(run);
+}
+const getDeployRun = (id) => deployStore.run(id) || fail(404, `No run "${id}"`, { code: 'NOT_FOUND' });
+const endWaiting = (run, status, actor, type) => {
+  Object.assign(run, { status, finishedAt: now() });
+  run.steps.forEach((s) => { s.state = 'skipped'; });
+  deployStore.saveRuns();
+  deployEvent(type, run, actor);
+};
+
+route('GET', '/api/deploy', 'Deployments at a glance: { connected, org, user: { displayName, uniqueName }, patHint (last 4), source: local|env, counts: { steps, sequences, waiting, running }, you?: { grants } (an agent\'s grants of deployments) }', ({ actor }) => ({
+  connected: !!adoConn, org: adoConn?.org || null, user: adoConn?.user || null, patHint: adoConn?.patHint || null, source: adoConn?.source || null,
+  counts: { steps: deployStore.steps().length, sequences: deployStore.sequences().length, waiting: deployStore.allRuns().filter((r) => r.status === 'waiting').length, running: deployStore.allRuns().filter((r) => r.status === 'running').length },
+  ...(actor.kind === 'agent' ? { you: { grants: grantsOf(actor.name).filter((g) => deployGrants.parsePower(g.power)) } } : {}),
+}));
+route('PUT', '/api/deploy/connection', 'Human: connect Azure DevOps { org, pat }. The token is tried first (who it belongs to), then kept in local.json; it is never returned', async ({ body }) => {
+  const org = str(body.org, 100).trim();
+  const pat = str(body.pat, 500).trim();
+  if (!org || !pat) fail(400, 'Send the organization and a personal access token', { code: 'BAD_REQUEST', hint: '{ "org": "MyOrg", "pat": "…" }: the token needs Build (read & execute), Code (read) and Project (read)' });
+  let user;
+  try { user = await createAdo({ org, pat, baseUrl: process.env.INTELLAGENT_ADO_URL }).whoami(); } catch (e) {
+    if (!(e instanceof AdoError)) throw e;
+    fail(400, `Azure DevOps did not accept it: ${e.message}`, { code: 'ADO_REFUSED', hint: 'Check the organization name and that the token is current' });
+  }
+  updateLocal(LOCAL_PATH, (l) => { l.deploy = { org, pat, user, connectedAt: now() }; });
+  connectAdo();
+  return { connected: true, org, user, patHint: adoConn.patHint, source: adoConn.source };
+});
+route('DELETE', '/api/deploy/connection', 'Human: forget the Azure DevOps token (a run in flight fails at its next call)', () => {
+  updateLocal(LOCAL_PATH, (l) => { delete l.deploy; });
+  connectAdo();
+  return { connected: !!adoConn, source: adoConn?.source || null };
+});
+/* Pull requests: the board looks at the newest PRs of the projects the human picks, once a minute, with the token it
+   already holds. A PR that names a ticket (its id, or its Jira key, in the source branch or the title) is a
+   pr.opened event on that ticket, once: the "a PR is raised" trigger, with {pr.url}, {pr.title}… for its actions.
+   A project's first look only notes what is there, so turning the watch on doesn't fire for every old PR. */
+const PR_FILE = path.join(DATA, 'pr-watch.json');
+const prWatch = { projects: [], seen: {}, ...readJson(PR_FILE, {}) };
+const savePrWatch = () => writeFileAtomic(PR_FILE, JSON.stringify(prWatch, null, 2));
+const PR_POLL_MS = Number(process.env.INTELLAGENT_PR_POLL_MS) || 60_000;
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// INT-3 must not match INT-31, nor XINT-3
+const namesKey = (text, key) => new RegExp(`(^|[^A-Za-z0-9])${escRe(key)}(?![0-9])`, 'i').test(String(text || ''));
+function prTickets(ctx, pr) {
+  return liveItems(ctx).filter((it) => {
+    const keys = [it.id, JIRA.issueOfTicket(it, { find: 'title', boardPrefix: ctx.board.idPrefix })].filter(Boolean);
+    return keys.some((k) => namesKey(pr.source, k) || namesKey(pr.title, k));
+  });
+}
+let prPolling = false;
+async function pollPRs() {
+  if (prPolling || !adoConn || !prWatch.projects.length) return;
+  prPolling = true;
+  try {
+    for (const project of prWatch.projects) {
+      let prs;
+      try { prs = await adoConn.ado.pullRequests(project); } catch (e) { prWatch.error = { project, message: e.message, at: now() }; continue; }
+      const first = !Array.isArray(prWatch.seen[project]);
+      const seen = new Set(prWatch.seen[project] || []);
+      const fresh = prs.filter((pr) => !seen.has(pr.id));
+      prWatch.seen[project] = [...new Set([...prs.map((pr) => pr.id), ...seen])].slice(0, 1000);
+      if (first) continue;
+      for (const pr of fresh) {
+        for (const ctx of boards.values()) {
+          for (const it of prTickets(ctx, pr)) {
+            tx(ctx, (events) => events.push({ board: ctx.id, type: 'pr.opened', actor: SYSTEM, itemId: it.id, title: it.title, pr, recipients: [] }));
+          }
+        }
+      }
+      if (prWatch.error?.project === project) delete prWatch.error;
+    }
+    prWatch.checkedAt = now();
+    savePrWatch();
+  } finally { prPolling = false; }
+}
+setInterval(() => pollPRs().catch((e) => console.warn(`pull requests: ${e.message}`)), PR_POLL_MS).unref();
+route('GET', '/api/deploy/pr-watch', 'Which Azure DevOps projects the board watches for pull requests that name a ticket: { projects, checkedAt, error? }', () => ({ projects: prWatch.projects, checkedAt: prWatch.checkedAt || null, ...(prWatch.error ? { error: prWatch.error } : {}) }));
+route('PUT', '/api/deploy/pr-watch', 'Human: watch these projects for pull requests { projects: [names] } (a PR naming a ticket fires "a PR is raised"; a project\'s first look fires nothing)', ({ body }) => {
+  const projects = [...new Set(arr(body.projects).map((x) => str(x, 100).trim()).filter(Boolean))].slice(0, 20);
+  prWatch.projects = projects;
+  for (const k of Object.keys(prWatch.seen)) if (!projects.includes(k)) delete prWatch.seen[k];
+  savePrWatch();
+  setImmediate(() => pollPRs().catch(() => {}));
+  return { projects };
+});
+/* Azure DevOps service hooks (lib/deploy/webhooks.ts): POST /hooks/ado, outside /api so the board's sign-in doesn't
+   apply; the hook's own username and password do. Every 10 s the buffered comments become pr.commented events on the
+   tickets their PR names (as the PR watch matches them), which is what sets off "a PR is commented on" rules. */
+const adoHookCreds = () => { try { return readLocal(LOCAL_PATH).adoWebhook || null; } catch { return null; } };
+// The comments the board posted (pull request actions, below), by the webhook's key: they come back through the hook
+const adoPosted = new Set();
+const notePosted = (prId, r) => { adoPosted.add(`comment:${prId}:${r.threadId}:${r.commentId}`); if (adoPosted.size > 2000) adoPosted.delete(adoPosted.values().next().value); };
+const adoHooks = require('./lib/deploy/webhooks.ts').createAdoWebhooks({
+  creds: adoHookCreds,
+  flushMs: Number(process.env.INTELLAGENT_WEBHOOK_FLUSH_MS) || 10_000,
+  onFlush: (events) => {
+    for (const ev of events) {
+      if (adoPosted.has(ev.key)) continue; // the board's own reply: never a reason to fire again
+      for (const ctx of boards.values()) {
+        for (const it of prTickets(ctx, ev.pr)) {
+          tx(ctx, (out) => out.push({ board: ctx.id, type: 'pr.commented', actor: SYSTEM, itemId: it.id, title: it.title, pr: ev.pr, comment: ev.comment, recipients: [] }));
+        }
+      }
+    }
+  },
+});
+route('POST', '/hooks/ado', 'Azure DevOps service hooks (basic auth: the username and password on Integrations › Connections › Azure DevOps › Webhook). Takes "Pull request commented on"; answers at once, acts within 10 s', ({ req, body }) => {
+  if (!adoHooks.allowed(req.headers.authorization)) fail(401, 'This hook needs the username and password the board gave it', { code: 'UNAUTHORIZED' });
+  return { received: adoHooks.receive(body) };
+});
+route('GET', '/api/deploy/webhook', 'Human: the Azure DevOps webhook\'s username and password (to paste into the service hook), and when it last heard from Azure', ({ actor }) => {
+  if (actor.kind !== 'user') fail(403, 'The webhook\'s password is the human\'s to see', { code: 'HUMAN_ONLY' });
+  const c = adoHookCreds();
+  return { on: !!c, path: '/hooks/ado', ...(c ? { username: c.username, password: c.password } : {}), ...adoHooks.view() };
+});
+route('PUT', '/api/deploy/webhook', 'Human: turn the Azure DevOps webhook on with a new password (an old one stops working at once)', () => {
+  const c = require('./lib/deploy/webhooks.ts').newCreds();
+  updateLocal(LOCAL_PATH, (l) => { l.adoWebhook = c; });
+  return { on: true, path: '/hooks/ado', ...c, ...adoHooks.view() };
+});
+route('DELETE', '/api/deploy/webhook', 'Human: turn the Azure DevOps webhook off (its calls are refused)', () => {
+  updateLocal(LOCAL_PATH, (l) => { delete l.adoWebhook; });
+  return { on: false, path: '/hooks/ado', ...adoHooks.view() };
+});
+
+/* Pull request actions (lib/deploy/pr-actions.ts): reply on a comment's thread, resolve it, comment on the PR or
+   approve it, with the board's Azure DevOps token. Each is ado.action.<id>, judged on the PR's repo; a run is a call
+   or two, so it ends at once like a Jira run, and shares the deployments' history. */
+const judgeAdo = (agent, a, repo) => deployGrants.judge(deployGrantsOf(agent, deployGrants.powerOf('ado', a.id)), 'ado', { branch: null, parameters: {}, variables: {}, repo });
+const needsThread = (a) => a.does === 'reply' || a.does === 'resolve';
+// Which PR and thread, and the text: what the run is given, else what set the rule off, else the ticket's pr
+async function adoPlan(a, body, item, ev) {
+  const prId = PRACT.prIdOf(body.pr) || ev?.pr?.id || PRACT.prIdOf(item?.fields?.pr || item?.properties?.pr);
+  if (!prId) fail(400, `${a.name} needs the pull request`, { code: 'BAD_REQUEST', hint: 'Send pr: its id or link; or give the ticket a pr field or property' });
+  const pr = await viaAdo((x) => x.pullRequest(prId));
+  const threadId = Number(body.thread) || (ev?.pr?.id === prId && ev?.comment?.threadId) || null;
+  if (needsThread(a) && !threadId) fail(400, `${a.name} needs the thread`, { code: 'BAD_REQUEST', hint: 'Send thread: its id (a "PR is commented on" rule passes it on)' });
+  const text = a.does === 'approve' ? '' : RULES.fill(a.text || str(body.text || '', 4000), item, ev).trim();
+  if ((a.does === 'reply' || a.does === 'comment') && !text) fail(400, `${a.name} needs the text`, { code: 'BAD_REQUEST', hint: 'Send text: "…" (markdown)' });
+  return { pr: { id: pr.id, title: pr.title, project: pr.project, repo: pr.repo, repoId: pr.repoId, url: pr.url }, threadId, text };
+}
+async function execAdo(run, a) {
+  Object.assign(run, { status: 'running', startedAt: now() });
+  try {
+    const x = requireAdo();
+    const { pr, threadId } = run;
+    if (run.text && needsThread(a)) notePosted(pr.id, await x.prReply(pr, threadId, run.text));
+    if (a.does === 'comment') { const r = await x.prComment(pr, run.text); notePosted(pr.id, r); run.threadId = r.threadId; }
+    if (a.does === 'resolve') await x.prThreadStatus(pr, threadId, a.status);
+    if (a.does === 'approve') await x.prVote(pr, adoConn.user?.id || (await x.whoami()).id, 10);
+    const on = `PR ${pr.id} (${pr.repo})`;
+    run.message = { reply: `Replied on a thread of ${on}`, resolve: `Resolved a thread of ${on} as ${a.status}`, comment: `Commented on ${on}`, approve: `Approved ${on}` }[a.does];
+    run.url = run.threadId ? `${pr.url}?discussionId=${run.threadId}` : pr.url;
+    run.status = 'succeeded';
+  } catch (e) {
+    Object.assign(run, { status: 'failed', message: e?.message || String(e) });
+  }
+  run.finishedAt = now();
+  deployStore.saveRuns();
+  deployEvent('deploy.run.finished', run);
+  return run;
+}
+async function requestAdoRun(id, body, actor, ev = null) {
+  const a = prActionStore.action(id) || fail(404, `No pull request action "${id}"`, { code: 'NOT_FOUND', hint: 'GET /api/ado/actions lists them' });
+  requireAdo();
+  const itemId = body.item == null || body.item === '' ? null : str(body.item, 40).trim().toUpperCase();
+  const item = ticketOf(itemId);
+  if (itemId && !item) fail(404, `No ticket ${itemId}`, { code: 'NOT_FOUND' });
+  const plan = await adoPlan(a, body, item, ev);
+  const run = { id: rid('dr'), kind: 'ado', target: a.id, name: a.name, status: 'waiting', inputs: {}, overrides: {}, by: { kind: actor.kind, name: actor.name }, item: itemId, pr: plan.pr, threadId: plan.threadId, ...(plan.text ? { text: plan.text } : {}), createdAt: now(), steps: [] };
+  let needsOk = false;
+  if (actor.kind === 'agent') {
+    const v = judgeAdo(actor.name, a, plan.pr.repo);
+    if (!v.ok && v.why === 'no grant') fail(403, `You may not run ${a.name}`, { code: 'HUMAN_ONLY', hint: `The human can let you: Agents › Assignments › ${deployGrants.powerOf('ado', a.id)}` });
+    if (!v.ok) fail(403, `${a.name} is outside your grant: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human, or ask them on the card' });
+    needsOk = v.approve;
+  }
+  deployStore.addRun(run);
+  if (!needsOk) return created(await execAdo(run, a));
+  run.approval = { needed: true, requestedAt: now() };
+  run.message = `${PRACT.doesWords(a)} on PR ${plan.pr.id} (${plan.pr.repo})${plan.text ? `: "${plan.text.slice(0, 120)}"` : ''}`;
+  deployStore.saveRuns();
+  deployEvent('deploy.run.requested', run, actor);
+  return created(run);
+}
+async function approveAdoRun(run, actor) {
+  const a = prActionStore.action(run.target) || fail(409, 'That pull request action was deleted while the run waited', { code: 'CONFLICT', hint: 'Turn it down' });
+  requireAdo();
+  if (run.by?.kind === 'agent') {
+    const v = judgeAdo(run.by.name, a, run.pr?.repo);
+    if (!v.ok) fail(409, `${a.name} is no longer within ${run.by.name}'s grant: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Turn it down, or widen the grant first' });
+  }
+  run.approval = { ...(run.approval || {}), verdict: 'approved', by: actor.name, at: now() };
+  run.status = 'running'; // before the call: a second Approve finds it no longer waiting
+  deployEvent('deploy.run.approved', run, actor);
+  return execAdo(run, a);
+}
+route('GET', '/api/ado/actions', 'Azure DevOps pull request actions: [{ id, name, does: reply|resolve|comment|approve, status?, text?, power: "ado.action.<id>", holders }]', () => prActionStore.actions().map((a) => withHolders('ado', a)));
+route('POST', '/api/ado/actions', 'Human: add a pull request action { name, does: reply (on the comment\'s thread) | resolve (status: fixed|wontFix|closed; text? replied first) | comment (a new thread) | approve, text? (markdown; {id} {title} {comment.author}…; left out, given when it runs) }. Its id comes from the name and never changes: grants name it', ({ body, actor }) => created(prActionStore.saveAction(body, actor.name)));
+route('PUT', '/api/ado/actions/:id', 'Human: replace a pull request action (the fields of POST; its id stays)', ({ p, body, actor }) => prActionStore.saveAction(body, actor.name, p.id));
+route('DELETE', '/api/ado/actions/:id', 'Human: delete a pull request action (its runs stay). Its power goes, and so do agents\' grants of it', ({ p, actor }) => {
+  prActionStore.deleteAction(p.id);
+  return { deleted: p.id, grantsDropped: dropDeployGrants(deployGrants.powerOf('ado', p.id), actor) };
+});
+route('POST', '/api/ado/actions/:id/run', 'Run a pull request action { item?: ticket id, pr? (its id or link; else the ticket\'s pr field or property), thread? (reply and resolve), text? (an action with no text of its own) } → 201 the run: succeeded or failed, or waiting for the human\'s OK. Agents: within their grant of ado.action.<id> (rules: repo)', ({ p, body, actor }) => requestAdoRun(p.id, body, actor));
+route('GET', '/api/deploy/projects', 'Azure DevOps projects of the connected organization: [{ id, name }]', () => viaAdo((a) => a.projects()));
+route('GET', '/api/deploy/projects/:project/pipelines', 'Pipelines of a project: [{ id, name, project, folder, enabled }]', ({ p }) => viaAdo((a) => a.pipelines(p.project)));
+route('GET', '/api/deploy/projects/:project/pipelines/:id', 'What a pipeline takes: { pipeline, branches: [{ name, isDefault, mine, lastCommit }], parameters: [{ name, kind: parameter|variable, type, defaultValue, allowOverride, allowedValues }], resources: [{ alias, source, project }] }. Parameters are read from its YAML, best-effort', ({ p }) => viaAdo((a) => a.pipeline(p.project, Number(p.id), adoConn?.user?.uniqueName)));
+route('GET', '/api/deploy/steps', 'Deployment steps: [{ id, name, alias?, project, pipelineId, pipelineName?, branch?, templateParameters?, variables?, usedBy: [sequence ids], power: "deploy.step.<id>", holders: [{ name, where?, approve? }] }]', () => deployStore.steps().map((s) => ({ ...withHolders('step', s), usedBy: deployStore.usedBy(s.id) })));
+route('GET', '/api/deploy/steps/:id', 'One step', ({ p }) => ({ ...withHolders('step', deployStore.step(p.id) || fail(404, `No step "${p.id}"`, { code: 'NOT_FOUND' })), usedBy: deployStore.usedBy(p.id) }));
+route('POST', '/api/deploy/steps', 'Human: add a step { name, alias?, project, pipelineId, pipelineName?, branch? ("" the pipeline\'s default, "__smart__" the token owner\'s latest), templateParameters?, variables? }. Its id comes from the name and never changes: grants name it', ({ body, actor }) => created(deployStore.saveStep(body, actor.name)));
+route('PUT', '/api/deploy/steps/:id', 'Human: replace a step (the fields of POST; its id stays)', ({ p, body, actor }) => deployStore.saveStep(body, actor.name, p.id));
+route('DELETE', '/api/deploy/steps/:id', 'Human: delete a step (409 while a sequence uses it). Its power goes, and so do agents\' grants of it → { deleted, grantsDropped: [agents] }', ({ p, actor }) => {
+  deployStore.deleteStep(p.id);
+  return { deleted: p.id, grantsDropped: dropDeployGrants(deployGrants.powerOf('step', p.id), actor) };
+});
+route('GET', '/api/deploy/sequences', 'Deployment sequences: [{ id, name, inputs, items, power: "deploy.sequence.<id>", holders: [{ name, where?, approve? }] }]', () => deployStore.sequences().map((q) => withHolders('sequence', q)));
+route('GET', '/api/deploy/sequences/:id', 'One sequence', ({ p }) => withHolders('sequence', deployStore.sequence(p.id) || fail(404, `No sequence "${p.id}"`, { code: 'NOT_FOUND' })));
+route('POST', '/api/deploy/sequences', 'Human: add a sequence { name, inputs: [{ id?, name, kind: value|branch|environment, default?, sourceProject?, sourcePipelineId?, sourceParameter? }], items: [{ stepId, branch?, branchInputId?, bindings?: [{ target: parameter|variable, name, kind: input|step|literal, ref }], link?: { mode: resource|container|parameter|variable, key, source: runId|buildNumber|tag|branch } }] }. A step binding\'s ref is "<earlier item index>.<output>"', ({ body, actor }) => created(deployStore.saveSequence(body, actor.name)));
+route('PUT', '/api/deploy/sequences/:id', 'Human: replace a sequence (the fields of POST; its id stays)', ({ p, body, actor }) => deployStore.saveSequence(body, actor.name, p.id));
+route('DELETE', '/api/deploy/sequences/:id', 'Human: delete a sequence (its runs stay). Its power goes, and so do agents\' grants of it → { deleted, grantsDropped: [agents] }', ({ p, actor }) => {
+  deployStore.deleteSequence(p.id);
+  return { deleted: p.id, grantsDropped: dropDeployGrants(deployGrants.powerOf('sequence', p.id), actor) };
+});
+route('POST', '/api/deploy/steps/:id/run', 'Run one step { branch?, parameters?: { name: value }, variables?, item?: ticket id } → 201 the run (running, or waiting for the human\'s OK). Agents: within their deploy.run grant (403 OUT_OF_SCOPE says which value is outside it)', ({ p, body, actor }) => requestRun('step', p.id, body, actor));
+route('POST', '/api/deploy/sequences/:id/run', 'Run a sequence { inputs?: { inputId: value }, item?: ticket id } → 201 the run. Agents: every step must be within their deploy.run grant', ({ p, body, actor }) => requestRun('sequence', p.id, body, actor));
+route('GET', '/api/deploy/runs', 'Recent runs, newest first (?kind=step|sequence, ?target=<id>, ?status=waiting|running|…, ?top=20, up to 100)', ({ q }) => deployStore.listRuns({ kind: q.kind, target: q.target, top: Number(q.top) || 20 }).filter((r) => !q.status || r.status === q.status));
+route('GET', '/api/deploy/runs/:id', 'One run: { id, kind, target, name, status: waiting|running|succeeded|failed|canceled|rejected, inputs, overrides, by, item, approval?, steps: [{ name, state: pending|running|completed|skipped, result, branch, parameters, variables, buildNumber, webUrl, startedAt, finishedAt, message }], createdAt, startedAt, finishedAt, message }', ({ p }) => getDeployRun(p.id));
+route('POST', '/api/deploy/runs/:id/cancel', 'Stop a run: no further step starts (a pipeline run already going carries on in Azure DevOps). Agents: only their own runs', ({ p, actor }) => {
+  const run = getDeployRun(p.id);
+  if (actor.kind === 'agent' && run.by?.name?.toLowerCase() !== actor.name.toLowerCase()) fail(403, 'You can stop only the runs you asked for', { code: 'FORBIDDEN', hint: 'Ask the human' });
+  if (deployRunner.TERMINAL.has(run.status)) fail(409, `This run already ended (${run.status})`, { code: 'CONFLICT' });
+  if (run.status === 'waiting') endWaiting(run, 'canceled', actor, 'deploy.run.finished');
+  else if (run.kind === 'devstack') cancelDevstack(run);
+  else deployRunner.cancel(run);
+  return run;
+});
+route('POST', '/api/deploy/runs/:id/approve', 'Human: let a waiting run start. An agent\'s run is checked against its grants again (409 OUT_OF_SCOPE when they no longer cover it)', async ({ p, actor }) => {
+  const run = getDeployRun(p.id);
+  if (run.status !== 'waiting') fail(409, `This run is not waiting (${run.status})`, { code: 'CONFLICT' });
+  if (run.kind === 'jira') return approveJiraRun(run, actor);
+  if (run.kind === 'devstack') return approveDevstackRun(run, actor);
+  if (run.kind === 'confluence') return approveConfluenceRun(run, actor);
+  if (run.kind === 'ado') return approveAdoRun(run, actor);
+  requireAdo();
+  // the step or sequence may have changed while it waited: run what it is now, and check that again
+  run.steps = runSkeleton(run.kind, run.target);
+  if (run.by?.kind === 'agent') {
+    const planned = await viaAdo(() => deployRunner.plan(run));
+    for (const r of planned.items) {
+      const v = judgeRun(run, r, deployGrantsOf(run.by.name, deployGrants.powerOf(run.kind, run.target)), planned.inputs);
+      if (!v.ok) fail(409, `${r.step.name} is no longer within ${run.by.name}'s grant of ${run.name}: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Turn it down, or widen the grant first' });
+    }
+    // while the plan was fetched, a second Approve, a Reject or a Cancel may have settled it
+    if (run.status !== 'waiting') fail(409, `This run is not waiting (${run.status})`, { code: 'CONFLICT' });
+  }
+  run.approval = { ...(run.approval || {}), verdict: 'approved', by: actor.name, at: now() };
+  deployStore.saveRuns();
+  deployEvent('deploy.run.approved', run, actor);
+  deployRunner.start(run);
+  return run;
+});
+route('POST', '/api/deploy/runs/:id/reject', 'Human: turn down a waiting run { note? }', ({ p, body, actor }) => {
+  const run = getDeployRun(p.id);
+  if (run.status !== 'waiting') fail(409, `This run is not waiting (${run.status})`, { code: 'CONFLICT' });
+  run.approval = { ...(run.approval || {}), verdict: 'rejected', by: actor.name, at: now(), ...(body.note ? { note: str(body.note, 500) } : {}) };
+  endWaiting(run, 'rejected', actor, 'deploy.run.rejected');
+  return run;
+});
+
+/* ───────────────────────── Jira (the Integrations section) ─────────────────────────
+   One service account (Jira Data Center or Server), kept in local.json like the Azure DevOps token: write-only, never
+   in a reply, never handed to an agent. Its actions (lib/jira) are powers like deployments, and their runs share the
+   deployments' history and events (deploy.run.*), so approvals, the Runs page and the agents' wake-ups work alike. */
+let jiraConn = null; // { url, username, user, find, jira }
+function connectJira() {
+  let c = null;
+  try { c = readLocal(LOCAL_PATH).jira || null; } catch { c = null; }
+  jiraConn = c?.url && c?.username && c?.password ? { url: c.url, username: c.username, user: c.user || null, find: c.find || 'title', jira: JIRA.createJira(c) } : null;
+}
+connectJira();
+const requireJira = () => jiraConn?.jira || fail(503, 'Jira is not connected', { code: 'NOT_CONNECTED', hint: 'The human connects it on the Integrations page (Connections)' });
+async function viaJira(f) {
+  try { return await f(requireJira()); } catch (e) {
+    if (!(e instanceof JIRA.JiraError)) throw e;
+    if (e.status === 401 || e.status === 403) fail(502, e.message, { code: 'JIRA_REFUSED', hint: 'Check the service account on the Integrations page (Connections)' });
+    if (e.status === 404) fail(404, e.message, { code: 'NOT_FOUND' });
+    fail(e.status === 400 ? 400 : 502, e.message, { code: e.status === 400 ? 'BAD_REQUEST' : 'UPSTREAM' });
+  }
+}
+const jiraView = () => ({ connected: !!jiraConn, url: jiraConn?.url || null, username: jiraConn?.username || null, user: jiraConn?.user || null, find: jiraConn?.find || 'title' });
+const ticketOf = (id) => (id ? getCtx(M.defaultBoard).board.items[id] || null : null);
+// What a Jira action will touch: the issue, its project and, for a move, the status (what an agent's grant judges)
+function jiraPlan(a, body, item) {
+  if (a.does === 'create') return { issue: null, project: a.project, status: null };
+  const issue = a.issue === 'fixed' ? a.key
+    : a.issue === 'ask' ? str(body.issue || '', 40).trim().toUpperCase()
+    : JIRA.issueOfTicket(item, { find: jiraConn?.find, boardPrefix: getCtx(M.defaultBoard).board.idPrefix });
+  if (!issue) {
+    fail(400, a.issue === 'ask' ? `${a.name} needs the issue key` : `${item ? item.id : 'This run'} has no Jira issue`, {
+      code: 'BAD_REQUEST', hint: a.issue === 'ask' ? 'Send issue: "BET-1234"' : item ? 'Set the ticket\'s jira field, or put the key (BET-1234) in its title' : 'Send item: the ticket it is for',
+    });
+  }
+  if (!JIRA.KEY_RE.test(issue)) fail(400, `"${issue}" is not a Jira issue key such as BET-1234`, { code: 'BAD_REQUEST' });
+  return { issue, project: issue.split('-')[0], status: a.does === 'transition' ? a.status : null };
+}
+// The grant check for an agent's Jira run → the verdict (lib/deploy/grants.ts)
+const judgeJira = (agent, a, plan) => deployGrants.judge(deployGrantsOf(agent, deployGrants.powerOf('jira', a.id)), 'jira', { branch: null, parameters: {}, variables: {}, project: plan.project, status: plan.status });
+// Carry one run out: one or two calls, so it ends here, succeeded or failed, with what happened in its message.
+// A move finds the transition that reaches the status from where the issue is now.
+async function execJira(run, a, item) {
+  Object.assign(run, { status: 'running', startedAt: now() });
+  try {
+    const j = requireJira();
+    if (a.does === 'transition') {
+      const cur = await j.issue(run.issue);
+      if (cur.status && cur.status.toLowerCase() === a.status.toLowerCase()) run.message = `${run.issue} is already in ${cur.status}`;
+      else {
+        const ts = await j.transitions(run.issue);
+        const t = ts.find((x) => x.to.toLowerCase() === a.status.toLowerCase());
+        if (!t) throw new Error(`${run.issue} can't move from ${cur.status} to ${a.status}: from there it can go to ${[...new Set(ts.map((x) => x.to))].join(', ') || 'nowhere'}`);
+        await j.transition(run.issue, t.id);
+        run.message = `Moved ${run.issue} from ${cur.status} to ${t.to}`;
+      }
+    } else if (a.does === 'comment') {
+      await j.comment(run.issue, run.text);
+      run.message = `Commented on ${run.issue}`;
+    } else if (a.does === 'assign') {
+      await j.assign(run.issue, a.assignee);
+      run.message = a.assignee ? `Assigned ${run.issue} to ${a.assignee}` : `Unassigned ${run.issue}`;
+    } else {
+      const r = await j.create({ project: a.project, issueType: a.issueType, summary: JIRA.fill(a.summary, item), description: a.text ? JIRA.fill(a.text, item) : undefined });
+      run.issue = r.key;
+      run.message = `Created ${r.key}`;
+    }
+    run.status = 'succeeded';
+  } catch (e) {
+    Object.assign(run, { status: 'failed', message: e?.message || String(e) });
+  }
+  run.finishedAt = now();
+  deployStore.saveRuns();
+  deployEvent('deploy.run.finished', run);
+  return run;
+}
+// Run a Jira action, or, for an agent whose grant wants the human's OK, file it waiting
+async function requestJiraRun(id, body, actor) {
+  const a = jiraStore.action(id) || fail(404, `No Jira action "${id}"`, { code: 'NOT_FOUND', hint: 'GET /api/jira/actions lists them' });
+  requireJira();
+  const itemId = body.item == null || body.item === '' ? null : str(body.item, 40).trim().toUpperCase();
+  const item = ticketOf(itemId);
+  if (itemId && !item) fail(404, `No ticket ${itemId}`, { code: 'NOT_FOUND' });
+  const plan = jiraPlan(a, body, item);
+  const text = a.does === 'comment' ? JIRA.fill(a.text || str(body.text || '', 4000), item).trim() : '';
+  if (a.does === 'comment' && !text) fail(400, `${a.name} needs the comment's text`, { code: 'BAD_REQUEST', hint: 'Send text: "…"' });
+  const run = { id: rid('dr'), kind: 'jira', target: a.id, name: a.name, status: 'waiting', inputs: {}, overrides: {}, by: { kind: actor.kind, name: actor.name }, item: itemId, issue: plan.issue, ...(text ? { text } : {}), createdAt: now(), steps: [] };
+  let needsOk = false;
+  if (actor.kind === 'agent') {
+    const v = judgeJira(actor.name, a, plan);
+    if (!v.ok && v.why === 'no grant') fail(403, `You may not run ${a.name}`, { code: 'HUMAN_ONLY', hint: `The human can let you: Agents › Assignments › ${deployGrants.powerOf('jira', a.id)}` });
+    if (!v.ok) fail(403, `${a.name} is outside your grant: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human, or ask them on the card' });
+    needsOk = v.approve;
+  }
+  deployStore.addRun(run);
+  if (!needsOk) return created(await execJira(run, a, item));
+  run.approval = { needed: true, requestedAt: now() };
+  deployStore.saveRuns();
+  deployEvent('deploy.run.requested', run, actor);
+  return created(run);
+}
+// The human's OK on a waiting Jira run: the action as it is now, checked against the agent's grant again
+async function approveJiraRun(run, actor) {
+  const a = jiraStore.action(run.target) || fail(409, 'That Jira action was deleted while the run waited', { code: 'CONFLICT', hint: 'Turn it down' });
+  requireJira();
+  if (run.by?.kind === 'agent') {
+    const v = judgeJira(run.by.name, a, { project: run.issue ? run.issue.split('-')[0] : a.project, status: a.does === 'transition' ? a.status : null });
+    if (!v.ok) fail(409, `${a.name} is no longer within ${run.by.name}'s grant: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Turn it down, or widen the grant first' });
+  }
+  run.approval = { ...(run.approval || {}), verdict: 'approved', by: actor.name, at: now() };
+  deployEvent('deploy.run.approved', run, actor);
+  return execJira(run, a, ticketOf(run.item));
+}
+
+route('GET', '/api/jira', 'Jira at a glance: { connected, url, username, user: { name, displayName }, find: title|field, actions }', () => ({ ...jiraView(), actions: jiraStore.actions().length }));
+route('PUT', '/api/jira/connection', 'Human: connect Jira (Data Center or Server) { url, username, password?, find?: "title" (the ticket\'s jira field, else a key in its title) | "field" }. The account is tried first; the password is kept in local.json and never returned. Left out, the saved one stays', async ({ body }) => {
+  let url = str(body.url, 300).trim().replace(/\/+$/, '');
+  if (JIRA.isCloud(url)) url = new URL(url).origin; // a pasted issue or board link: the site
+  const username = str(body.username, 200).trim();
+  if (!/^https?:\/\/\S+$/i.test(url) || !username) fail(400, 'Send the address and the username', { code: 'BAD_REQUEST', hint: '{ "url": "https://jira.example.com", "username": "svc-account", "password": "…" }' });
+  let saved = null;
+  try { saved = readLocal(LOCAL_PATH).jira || null; } catch { saved = null; }
+  const password = body.password ? str(body.password, 500) : saved?.username === username && saved?.url === url ? saved.password : '';
+  if (!password) fail(400, 'Send the password', { code: 'BAD_REQUEST' });
+  const find = body.find === 'field' ? 'field' : 'title';
+  let user;
+  try { user = await JIRA.createJira({ url, username, password }).whoami(); } catch (e) {
+    if (!(e instanceof JIRA.JiraError)) throw e;
+    const cloudLogin = JIRA.isCloud(url) && (e.status === 401 || e.status === 403);
+    fail(400, cloudLogin ? 'Atlassian Cloud refused it: its API never takes your account password, only your email and an API token' : `Jira did not accept it: ${e.message}`, {
+      code: 'JIRA_REFUSED',
+      hint: cloudLogin ? 'Create a token at https://id.atlassian.com/manage-profile/security/api-tokens ("Create API token", without scopes) and paste it as the password; the username is your Atlassian email. The Confluence token works too'
+        : 'Check the address, username and password',
+    });
+  }
+  updateLocal(LOCAL_PATH, (l) => { l.jira = { url, username, password, find, user, connectedAt: now() }; });
+  connectJira();
+  return jiraView();
+});
+route('DELETE', '/api/jira/connection', 'Human: forget the Jira account', () => { updateLocal(LOCAL_PATH, (l) => { delete l.jira; }); connectJira(); return jiraView(); });
+route('POST', '/api/jira/connection/test', 'Human: check the saved account still works → { ok, user } or { ok: false, error }', async () => {
+  try { return { ok: true, user: await requireJira().whoami() }; } catch (e) { if (!(e instanceof JIRA.JiraError)) throw e; return { ok: false, error: e.message }; }
+});
+route('GET', '/api/jira/projects', 'Jira projects the account sees: [{ key, name }]', () => viaJira((j) => j.projects()));
+route('GET', '/api/jira/projects/:key/statuses', 'The statuses a project\'s workflows use: [name]', ({ p }) => viaJira((j) => j.statuses(p.key)));
+route('GET', '/api/jira/actions', 'Jira actions: [{ id, name, does, issue, key?, status?, text?, assignee?, project?, issueType?, summary?, power: "jira.action.<id>", holders }]', () => jiraStore.actions().map((a) => withHolders('jira', a)));
+route('POST', '/api/jira/actions', 'Human: add a Jira action { name, does: transition|comment|assign|create, issue: ticket|fixed|ask, key?, status?, text?, assignee?, project?, issueType?, summary? }. Its id comes from the name and never changes: grants name it', ({ body, actor }) => created(jiraStore.saveAction(body, actor.name)));
+route('PUT', '/api/jira/actions/:id', 'Human: replace a Jira action (the fields of POST; its id stays)', ({ p, body, actor }) => jiraStore.saveAction(body, actor.name, p.id));
+route('DELETE', '/api/jira/actions/:id', 'Human: delete a Jira action (its runs stay). Its power goes, and so do agents\' grants of it → { deleted, grantsDropped: [agents] }', ({ p, actor }) => {
+  jiraStore.deleteAction(p.id);
+  return { deleted: p.id, grantsDropped: dropDeployGrants(deployGrants.powerOf('jira', p.id), actor) };
+});
+route('POST', '/api/jira/actions/:id/run', 'Run a Jira action { item?: ticket id, issue? (an action that asks for it), text? (a comment action with no text of its own) } → 201 the run: succeeded or failed with what happened in "message", or waiting for the human\'s OK. Agents: within their grant of jira.action.<id>', ({ p, body, actor }) => requestJiraRun(p.id, body, actor));
+
+/* ───────────────────────── DevStack ───────────────────────── */
+// The local DevStack (lib/devstack): the board starts the devstack MCP server and drives it as an agent would. A run
+// starts with devstack_gate or devstack_test, then devstack_run_result is asked until it has a verdict: queued for
+// the stack's lease, the build swapped in, the suite run, the stack put back. One run at a time (the stack is one).
+// The connection is in local.json: { url (127.0.0.1 only), mcp (the server's index.js) }.
+let devstackConn = null; // { url, mcp, client }
+function connectDevstack() {
+  devstackConn?.client.stop();
+  let c = null;
+  try { c = readLocal(LOCAL_PATH).devstack || null; } catch { c = null; }
+  devstackConn = c?.mcp ? { url: c.url, mcp: c.mcp, client: DEVSTACK.createMcp({ command: [process.execPath, c.mcp], env: { DEVSTACK_URL: c.url, DEVSTACK_AGENT: 'intellagent' }, cwd: path.dirname(c.mcp) }) } : null;
+}
+connectDevstack();
+process.on('exit', () => devstackConn?.client.stop());
+const requireDevstack = () => devstackConn?.client || fail(503, 'The DevStack is not connected', { code: 'NOT_CONNECTED', hint: 'The human connects it on the Integrations page (Connections), or PUT /api/devstack/connection { url, mcp }' });
+const devstackView = () => ({ connected: !!devstackConn, url: devstackConn?.url || null, mcp: devstackConn?.mcp || null, actions: devstackStore.actions().length });
+// The build a run tests: the action's source with {worktree} and {branch} of the agent that worked the ticket, then
+// the rule placeholders ({id}, {field.<key>}, {pr.source}…)
+function devstackSource(a, item, given, ev = null) {
+  if (given) return given;
+  const agent = item?.review?.requestedBy || item?.workedBy?.at(-1);
+  const wt = worktrees && agent && agentBranch(agent) ? worktrees.where(agent) : null;
+  const branch = wt && item ? worktrees.ticketBranch(agent, item.id) : null;
+  if (/\{worktree\}/.test(a.source) && !wt) fail(409, `${a.name} tests the agent's folder, and ${item ? `no agent worktree worked ${item.id}` : 'no ticket was given'}`, { code: 'CONFLICT', hint: 'Pass source: "branch:<name>" or "path:<folder>", or run it for a ticket an agent worked' });
+  const s = a.source.replace(/\{worktree\}/g, () => wt?.path || '').replace(/\{branch\}/g, () => branch || '');
+  return RULES.fill(s, item, ev).trim();
+}
+const judgeDevstack = (agent, a, source) => deployGrants.judge(deployGrantsOf(agent, deployGrants.powerOf('devstack', a.id)), 'devstack', { branch: null, parameters: {}, variables: {}, service: a.service, source });
+let devstackQueue = Promise.resolve();
+// Carry one run out (after any run before it): start it, then follow it to a verdict. Its message says where it is
+// while it runs; at the end the verdict, and the gate's "DevStack" section goes on the ticket.
+function execDevstack(run, a) {
+  const go = async () => {
+    if (run.status !== 'running' && run.status !== 'waiting') return run; // canceled while queued
+    const progress = (msg) => { run.message = msg; deployStore.saveRuns(); deployEvent('deploy.run.updated', run); };
+    Object.assign(run, { status: 'running', startedAt: now() });
+    try {
+      const client = requireDevstack();
+      const { tool, args } = DEVSTACK.startCall(a, run.source, run.issue || run.item, `${run.by?.name || 'the board'} for ${run.item || 'no ticket'} (Intellagent)`);
+      const started = await client.call(tool, args);
+      if (!started.ok || !started.runId) throw new Error(started.message || started.code || `${tool} did not start`);
+      run.devstackRunId = started.runId;
+      progress('started: waiting for the stack');
+      let r;
+      for (;;) {
+        r = await client.call('devstack_run_result', { runId: run.devstackRunId, waitSeconds: 60 });
+        if (r.state === 'finished') break;
+        if (r.ok === false && r.code) throw new Error(r.message || r.code);
+        progress([r.state, r.step || r.currentStep, r.queuePosition != null ? `queue position ${r.queuePosition}` : null].filter(Boolean).join(' · ') || 'running');
+      }
+      const verdict = String(r.verdict || (r.ok ? 'PASS' : 'FAIL'));
+      Object.assign(run, { status: r.ok ? 'succeeded' : 'failed', verdict, message: `${verdict}${r.reasons?.length ? `: ${r.reasons.join('; ')}` : r.meaning ? `: ${r.meaning}` : ''}`.slice(0, 1000) });
+      const item = ticketOf(run.item);
+      if (item) addComment(getCtx(M.defaultBoard), item.id, { body: r.section || `**DevStack: ${a.name}** ${verdict}${r.counts ? ` (${Object.entries(r.counts).map(([k, v]) => `${v} ${k}`).join(', ')})` : ''}${r.reasons?.length ? `\n\n${r.reasons.map((x) => `- ${x}`).join('\n')}` : ''}` }, SYSTEM);
+    } catch (e) {
+      if (run.status !== 'canceled') Object.assign(run, { status: 'failed', message: e?.message || String(e) });
+    }
+    run.finishedAt = now();
+    deployStore.saveRuns();
+    deployEvent('deploy.run.finished', run);
+    return run;
+  };
+  const p = devstackQueue.then(go, go);
+  devstackQueue = p.catch(() => {});
+  return p;
+}
+async function cancelDevstack(run) {
+  if (run.devstackRunId && devstackConn) { try { await devstackConn.client.call('devstack_run_result', { runId: run.devstackRunId, cancel: true, waitSeconds: 0 }); } catch { /* it ends anyway */ } }
+  Object.assign(run, { status: 'canceled', message: 'canceled: the stack is put back' });
+  deployStore.saveRuns();
+}
+// Run a DevStack action, or, for an agent whose grant wants the human's OK, file it waiting. It answers at once
+// (running): the verdict comes as deploy.run.finished.
+function requestDevstackRun(id, body, actor, ev = null) {
+  const a = devstackStore.action(id) || fail(404, `No DevStack action "${id}"`, { code: 'NOT_FOUND', hint: 'GET /api/devstack/actions lists them' });
+  requireDevstack();
+  const itemId = body.item == null || body.item === '' ? null : str(body.item, 40).trim().toUpperCase();
+  const item = ticketOf(itemId);
+  if (itemId && !item) fail(404, `No ticket ${itemId}`, { code: 'NOT_FOUND' });
+  const given = body.source == null || body.source === '' ? null : str(body.source, 400).trim();
+  if (given && !/^(branch|path|commit|image):\S/.test(given)) fail(400, 'source is branch:<name>, path:<folder>, commit:<sha> or image:<tag>', { code: 'BAD_REQUEST' });
+  const source = devstackSource(a, item, given, ev);
+  const issue = item ? JIRA.issueOfTicket(item, { find: 'title', boardPrefix: getCtx(M.defaultBoard).board.idPrefix }) : null;
+  const run = { id: rid('dr'), kind: 'devstack', target: a.id, name: a.name, status: 'waiting', inputs: {}, overrides: {}, by: { kind: actor.kind, name: actor.name }, item: itemId, source, ...(issue ? { issue } : {}), createdAt: now(), steps: [] };
+  let needsOk = false;
+  if (actor.kind === 'agent') {
+    const v = judgeDevstack(actor.name, a, source);
+    if (!v.ok && v.why === 'no grant') fail(403, `You may not run ${a.name}`, { code: 'HUMAN_ONLY', hint: `The human can let you: Agents › Assignments › ${deployGrants.powerOf('devstack', a.id)}` });
+    if (!v.ok) fail(403, `${a.name} is outside your grant: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human, or ask them on the card' });
+    needsOk = v.approve;
+  }
+  deployStore.addRun(run);
+  if (needsOk) {
+    run.approval = { needed: true, requestedAt: now() };
+    deployStore.saveRuns();
+    deployEvent('deploy.run.requested', run, actor);
+    return created(run);
+  }
+  run.status = 'running';
+  deployStore.saveRuns();
+  deployEvent('deploy.run.started', run, actor);
+  execDevstack(run, a);
+  return created(run);
+}
+function approveDevstackRun(run, actor) {
+  const a = devstackStore.action(run.target) || fail(409, 'That DevStack action was deleted while the run waited', { code: 'CONFLICT', hint: 'Turn it down' });
+  requireDevstack();
+  if (run.by?.kind === 'agent') {
+    const v = judgeDevstack(run.by.name, a, run.source);
+    if (!v.ok) fail(409, `${a.name} is no longer within ${run.by.name}'s grant: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Turn it down, or widen the grant first' });
+  }
+  run.approval = { ...(run.approval || {}), verdict: 'approved', by: actor.name, at: now() };
+  run.status = 'running';
+  deployStore.saveRuns();
+  deployEvent('deploy.run.approved', run, actor);
+  execDevstack(run, a);
+  return run;
+}
+
+route('GET', '/api/devstack', 'DevStack at a glance: { connected, url, mcp, actions, services }', () => ({ ...devstackView(), services: DEVSTACK.SERVICES }));
+route('PUT', '/api/devstack/connection', 'Human: connect the local DevStack { url (default http://127.0.0.1:5050, this machine only), mcp: the devstack MCP server\'s dist/index.js }. Tried first (devstack_status)', async ({ body }) => {
+  const url = str(body.url || 'http://127.0.0.1:5050', 200).trim().replace(/\/+$/, '');
+  if (!/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(url)) fail(400, 'The DevStack is local: its address is http://127.0.0.1:<port>', { code: 'BAD_REQUEST', hint: 'http://127.0.0.1:5050, or 5050 + your port offset' });
+  const mcp = path.resolve(str(body.mcp, 500).trim());
+  if (!body.mcp || !fs.existsSync(mcp) || !fs.statSync(mcp).isFile()) fail(400, `No devstack MCP server at ${mcp}`, { code: 'BAD_REQUEST', hint: 'The built server: <DevStack checkout>\\tools\\devstack-mcp\\dist\\index.js (npm run build there first)' });
+  const probe = DEVSTACK.createMcp({ command: [process.execPath, mcp], env: { DEVSTACK_URL: url, DEVSTACK_AGENT: 'intellagent' }, cwd: path.dirname(mcp), callTimeoutMs: 60_000 });
+  let status;
+  try { status = await probe.call('devstack_status', {}); } catch (e) { fail(400, `The DevStack did not answer: ${e.message}`, { code: 'DEVSTACK_REFUSED', hint: 'Is the stack up, and the MCP server built?' }); } finally { probe.stop(); }
+  updateLocal(LOCAL_PATH, (l) => { l.devstack = { url, mcp, connectedAt: now() }; });
+  connectDevstack();
+  return { ...devstackView(), ready: status?.ready ?? status?.ok ?? null };
+});
+route('DELETE', '/api/devstack/connection', 'Human: forget the DevStack connection (a run in flight fails)', () => { updateLocal(LOCAL_PATH, (l) => { delete l.devstack; }); connectDevstack(); return devstackView(); });
+route('POST', '/api/devstack/connection/test', 'Human: ask the DevStack how it is (devstack_status) → { ok, status } or { ok: false, error }', async () => {
+  try { return { ok: true, status: await requireDevstack().call('devstack_status', {}) }; } catch (e) { if (e instanceof HttpError) throw e; return { ok: false, error: e.message }; }
+});
+route('GET', '/api/devstack/actions', 'DevStack actions: [{ id, name, tool: gate|test, service, kind?, tags?, source, power: "devstack.action.<id>", holders }]', () => devstackStore.actions().map((a) => withHolders('devstack', a)));
+route('POST', '/api/devstack/actions', 'Human: add a DevStack action { name, tool: gate|test, service, kind?: upgrade|behaviour (gate), tags? (test), source? (default path:{worktree}: the folder of the agent that worked the ticket; branch:{branch} its ticket branch, pushed) }', ({ body, actor }) => created(devstackStore.saveAction(body, actor.name)));
+route('PUT', '/api/devstack/actions/:id', 'Human: replace a DevStack action (the fields of POST; its id stays)', ({ p, body, actor }) => devstackStore.saveAction(body, actor.name, p.id));
+route('DELETE', '/api/devstack/actions/:id', 'Human: delete a DevStack action (its runs stay). Its power goes, and so do agents\' grants of it', ({ p, actor }) => {
+  devstackStore.deleteAction(p.id);
+  return { deleted: p.id, grantsDropped: dropDeployGrants(deployGrants.powerOf('devstack', p.id), actor) };
+});
+route('POST', '/api/devstack/actions/:id/run', 'Run a DevStack action { item?: ticket id, source?: branch:<name>|path:<folder>|commit:<sha> (else the action\'s) } → 201 the run, running or waiting for the human\'s OK; the verdict comes as deploy.run.finished (and on the ticket). Agents: within their grant of devstack.action.<id>', ({ p, body, actor }) => requestDevstackRun(p.id, body, actor));
+
+/* ───────────────────────── Confluence ───────────────────────── */
+// One account (lib/confluence), in local.json: write-only, never in a reply. Its actions create a page, append to
+// one, or replace the section under a heading, from markdown (the rest of the page, macros and all, stays as it is).
+// A run is one or two calls, so it ends at once like a Jira run, with the page's link.
+let confluenceConn = null; // { url, username, client }
+function connectConfluence() {
+  let c = null;
+  try { c = readLocal(LOCAL_PATH).confluence || null; } catch { c = null; }
+  confluenceConn = c?.url && c?.username && c?.password ? { url: c.url, username: c.username, user: c.user || null, client: CONFLUENCE.createConfluence({ url: c.url, username: c.username, password: c.password }) } : null;
+}
+connectConfluence();
+const requireConfluence = () => confluenceConn?.client || fail(503, 'Confluence is not connected', { code: 'NOT_CONNECTED', hint: 'The human connects it on the Integrations page (Connections), or PUT /api/confluence/connection { url, username, password }' });
+const confluenceView = () => ({ connected: !!confluenceConn, url: confluenceConn?.url || null, username: confluenceConn?.username || null, user: confluenceConn?.user || null });
+async function viaConfluence(f) {
+  try { return await f(requireConfluence()); } catch (e) {
+    if (!(e instanceof CONFLUENCE.ConfluenceError)) throw e;
+    if (e.status === 401 || e.status === 403) fail(502, e.message, { code: 'CONFLUENCE_REFUSED', hint: 'Check the account on the Integrations page: it may have changed, or lack access to that space' });
+    fail(e.status === 404 ? 404 : e.status === 400 ? 400 : 502, e.message, { code: e.status === 404 ? 'NOT_FOUND' : e.status === 400 ? 'BAD_REQUEST' : 'UPSTREAM' });
+  }
+}
+// Reading a page through the board's account is an agent's only while it holds a Confluence grant (of any action)
+const holdsConfluence = (actor) => actor.kind === 'user' || grantsOf(actor.name).some((g) => deployGrants.parsePower(g.power)?.kind === 'confluence');
+const judgeConfluence = (agent, a, space) => deployGrants.judge(deployGrantsOf(agent, deployGrants.powerOf('confluence', a.id)), 'confluence', { branch: null, parameters: {}, variables: {}, space });
+// What a run does: the page (fixed, or given), and the markdown (the action's, else given), filled for the ticket
+async function confluencePlan(a, body, item, ev) {
+  const fill = (s) => RULES.fill(s, item, ev);
+  const md = fill(a.text || str(body.text || '', 20000)).trim();
+  if (!md) fail(400, `${a.name} needs the text: markdown`, { code: 'BAD_REQUEST', hint: 'Send text: "…" (intellagent api … text=@notes.md)' });
+  if (a.does === 'create') return { md, space: a.space, title: fill(a.title).trim().slice(0, 250) || item?.title || a.name };
+  const pageId = a.page === 'fixed' ? a.pageId : CONFLUENCE.pageIdOf(body.page);
+  if (!pageId) fail(400, `${a.name} needs the page: its id or link`, { code: 'BAD_REQUEST', hint: 'Send page: "https://…/pages/123456/…" or "123456"' });
+  const meta = await viaConfluence((c) => c.page(pageId));
+  return { md, pageId, space: meta.space, title: meta.title };
+}
+async function execConfluence(run, a) {
+  Object.assign(run, { status: 'running', startedAt: now() });
+  try {
+    const c = requireConfluence();
+    const msg = `Intellagent: ${a.name}${run.item ? ` for ${run.item}` : ''}`;
+    if (a.does === 'create') {
+      const p = await c.create({ space: run.space, parent: a.parent, title: run.title, markdown: run.md });
+      Object.assign(run, { pageId: p.id, url: p.url, message: `Created "${p.title}" in ${run.space}` });
+    } else if (a.does === 'append') {
+      const p = await c.append(run.pageId, run.md, msg);
+      Object.assign(run, { url: p.url, message: `Appended to "${p.title}" (version ${p.version})` });
+    } else {
+      const p = await c.section(run.pageId, a.heading, run.md, msg);
+      Object.assign(run, { url: p.url, message: `${p.found ? 'Replaced' : 'Added'} the section "${a.heading}" on "${p.title}" (version ${p.version})` });
+    }
+    run.status = 'succeeded';
+  } catch (e) {
+    Object.assign(run, { status: 'failed', message: e?.message || String(e) });
+  }
+  delete run.md; // the run keeps what happened, not the page's text
+  run.finishedAt = now();
+  deployStore.saveRuns();
+  deployEvent('deploy.run.finished', run);
+  return run;
+}
+async function requestConfluenceRun(id, body, actor, ev = null) {
+  const a = confluenceStore.action(id) || fail(404, `No Confluence action "${id}"`, { code: 'NOT_FOUND', hint: 'GET /api/confluence/actions lists them' });
+  requireConfluence();
+  const itemId = body.item == null || body.item === '' ? null : str(body.item, 40).trim().toUpperCase();
+  const item = ticketOf(itemId);
+  if (itemId && !item) fail(404, `No ticket ${itemId}`, { code: 'NOT_FOUND' });
+  const plan = await confluencePlan(a, body, item, ev);
+  const run = { id: rid('dr'), kind: 'confluence', target: a.id, name: a.name, status: 'waiting', inputs: {}, overrides: {}, by: { kind: actor.kind, name: actor.name }, item: itemId, space: plan.space, title: plan.title, ...(plan.pageId ? { pageId: plan.pageId } : {}), md: plan.md, createdAt: now(), steps: [] };
+  let needsOk = false;
+  if (actor.kind === 'agent') {
+    const v = judgeConfluence(actor.name, a, plan.space);
+    if (!v.ok && v.why === 'no grant') fail(403, `You may not run ${a.name}`, { code: 'HUMAN_ONLY', hint: `The human can let you: Agents › Assignments › ${deployGrants.powerOf('confluence', a.id)}` });
+    if (!v.ok) fail(403, `${a.name} is outside your grant: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Leave it for the human, or ask them on the card' });
+    needsOk = v.approve;
+  }
+  deployStore.addRun(run);
+  if (!needsOk) return created(await execConfluence(run, a));
+  // waiting: the text is kept with the run until the human says yes, so they see what would be written
+  run.approval = { needed: true, requestedAt: now() };
+  run.message = `${run.md.length} characters for ${a.does === 'create' ? `a new page "${run.title}"` : `"${run.title}"`}`;
+  deployStore.saveRuns();
+  deployEvent('deploy.run.requested', run, actor);
+  return created(run);
+}
+async function approveConfluenceRun(run, actor) {
+  const a = confluenceStore.action(run.target) || fail(409, 'That Confluence action was deleted while the run waited', { code: 'CONFLICT', hint: 'Turn it down' });
+  requireConfluence();
+  if (run.by?.kind === 'agent') {
+    const v = judgeConfluence(run.by.name, a, run.space);
+    if (!v.ok) fail(409, `${a.name} is no longer within ${run.by.name}'s grant: ${v.why}`, { code: 'OUT_OF_SCOPE', hint: 'Turn it down, or widen the grant first' });
+  }
+  run.approval = { ...(run.approval || {}), verdict: 'approved', by: actor.name, at: now() };
+  run.status = 'running'; // before the call: a second Approve finds it no longer waiting
+  deployEvent('deploy.run.approved', run, actor);
+  return execConfluence(run, a);
+}
+
+route('GET', '/api/confluence', 'Confluence at a glance: { connected, url, username, user: { name, displayName }, actions }', () => ({ ...confluenceView(), actions: confluenceStore.actions().length }));
+route('PUT', '/api/confluence/connection', 'Human: connect Confluence { url (Cloud: https://<site>.atlassian.net/wiki), username (Cloud: the email), password? (Cloud: an API token) }. The account is tried first; the password is kept in local.json and never returned. Left out, the saved one stays', async ({ body }) => {
+  const url = CONFLUENCE.siteOf(str(body.url, 300));
+  const username = str(body.username, 200).trim();
+  if (!/^https?:\/\/\S+$/i.test(url) || !username) fail(400, 'Send the address and the username', { code: 'BAD_REQUEST', hint: '{ "url": "https://confluence.example.com", "username": "svc-account", "password": "…" }' });
+  let saved = null;
+  try { saved = readLocal(LOCAL_PATH).confluence || null; } catch { saved = null; }
+  const password = body.password ? str(body.password, 500) : saved?.username === username && saved?.url === url ? saved.password : '';
+  if (!password) fail(400, 'Send the password (or, on Cloud, an API token)', { code: 'BAD_REQUEST' });
+  let user;
+  try { user = await CONFLUENCE.createConfluence({ url, username, password }).whoami(); } catch (e) {
+    if (!(e instanceof CONFLUENCE.ConfluenceError)) throw e;
+    const cloudLogin = CONFLUENCE.isCloud(url) && (e.status === 401 || e.status === 403);
+    fail(400, cloudLogin ? 'Atlassian Cloud refused it: its API never takes your account password, only your email and an API token' : `Confluence did not accept it: ${e.message}`, {
+      code: 'CONFLUENCE_REFUSED',
+      hint: cloudLogin ? 'Create a token at https://id.atlassian.com/manage-profile/security/api-tokens ("Create API token", without scopes) and paste it as the password; the username is your Atlassian email'
+        : 'Check the address, username and password',
+    });
+  }
+  updateLocal(LOCAL_PATH, (l) => { l.confluence = { url, username, password, user, connectedAt: now() }; });
+  connectConfluence();
+  return confluenceView();
+});
+route('DELETE', '/api/confluence/connection', 'Human: forget the Confluence account', () => { updateLocal(LOCAL_PATH, (l) => { delete l.confluence; }); connectConfluence(); return confluenceView(); });
+route('POST', '/api/confluence/connection/test', 'Human: check the saved account still works → { ok, user } or { ok: false, error }', async () => {
+  try { return { ok: true, user: await requireConfluence().whoami() }; } catch (e) { if (!(e instanceof CONFLUENCE.ConfluenceError)) throw e; return { ok: false, error: e.message }; }
+});
+route('GET', '/api/confluence/spaces', 'Confluence spaces the account sees: [{ key, name }]', () => viaConfluence((c) => c.spaces()));
+route('GET', '/api/confluence/pages/:id/markdown', 'A page as markdown, to read before changing it: { id, title, space, version, url, markdown }. A macro other than code reads as [macro: name]. The human, or an agent holding a grant of a Confluence action', ({ p, actor }) => {
+  if (!holdsConfluence(actor)) fail(403, 'Reading Confluence through the board is for agents that hold a Confluence action', { code: 'HUMAN_ONLY', hint: 'The human grants one in Agents › Assignments' });
+  const id = CONFLUENCE.pageIdOf(p.id) || fail(400, `"${p.id}" is not a page id`, { code: 'BAD_REQUEST' });
+  return viaConfluence((c) => c.markdown(id));
+});
+route('GET', '/api/confluence/actions', 'Confluence actions: [{ id, name, does: create|append|section, page?: fixed|ask, pageId?, space?, parent?, title?, heading?, text?, power: "confluence.action.<id>", holders }]', () => confluenceStore.actions().map((a) => withHolders('confluence', a)));
+route('POST', '/api/confluence/actions', 'Human: add a Confluence action { name, does: create (space, parent?, title) | append | section (heading), page?: fixed (pageId: an id or link) | ask, text? (markdown; {id} {title} {field.x}…; left out, given when it runs) }. Its id comes from the name and never changes: grants name it', ({ body, actor }) => created(confluenceStore.saveAction(body, actor.name)));
+route('PUT', '/api/confluence/actions/:id', 'Human: replace a Confluence action (the fields of POST; its id stays)', ({ p, body, actor }) => confluenceStore.saveAction(body, actor.name, p.id));
+route('DELETE', '/api/confluence/actions/:id', 'Human: delete a Confluence action (its runs stay). Its power goes, and so do agents\' grants of it', ({ p, actor }) => {
+  confluenceStore.deleteAction(p.id);
+  return { deleted: p.id, grantsDropped: dropDeployGrants(deployGrants.powerOf('confluence', p.id), actor) };
+});
+route('POST', '/api/confluence/actions/:id/run', 'Run a Confluence action { item?: ticket id, page? (an action that asks for it: an id or link), text? (markdown, when the action has none) } → 201 the run: succeeded with the page\'s link, failed with why, or waiting for the human\'s OK. Agents: within their grant of confluence.action.<id>', ({ p, body, actor }) => requestConfluenceRun(p.id, body, actor));
+
+/* ───────────────────────── rules (the Rules section) ─────────────────────────
+   The human's "when <something happens>, if <the ticket holds>, then <do this>" (lib/rules.js has the vocabulary).
+   A rule acts as the board, marked with the rule, so its own changes never set rules off: no chains, no loops.
+   It goes through the same checks as anyone (a human-only gate refuses it), and the log says what each action did. */
+const RULES = require('./lib/rules');
+const rulesOf = (ctx) => (ctx.board.automations ||= { rules: [], log: [] });
+const ruleActor = (rule) => ({ ...SYSTEM, rule: { id: rule.id, name: rule.name } });
+const liveItems = (ctx) => ctx.board.columns.flatMap((c) => c.itemIds.map((id) => ctx.board.items[id])).filter((it) => it && !it.test);
+function ruleHolds(ctx, rule, item, blocksOf = blocksIndex(ctx)) {
+  if (!rule.if) return true;
+  if (!item) return false;
+  return cardrules.holds(cardrules.parseCondition(rule.if), searchView(ctx, item, false, blocksOf), cardRulesOf(ctx).filter((r) => r.enabled !== false));
+}
+// coordinator / assignee / last_worker, or a name as it is
+function ruleWho(ctx, who, item) {
+  if (who === 'coordinator') return coordinatorOf(ctx);
+  if (who === 'assignee') return item?.assignee || null;
+  if (who === 'last_worker') return item?.workedBy?.at(-1) || null;
+  return who;
+}
+// An extract action: the text it reads from the ticket, then a pattern's first group (or whole match), or the
+// answer of a cheap model run with no tools. null when there is nothing to put anywhere.
+const EXTRACT_MAX = 2000;
+const { spawn } = require('child_process');
+const { killTree } = require('./lib/agents/proc');
+const AI_RUN = typeof M.extract?.run === 'string' && M.extract.run.trim() ? M.extract.run : 'claude -p --model haiku --tools ""';
+function ticketText(item, from) {
+  const parts = {
+    title: item.title,
+    description: item.description || '',
+    comments: (item.comments || []).map((c) => `${c.author?.name || 'someone'}: ${c.body}`).join('\n\n'),
+  };
+  return (from === 'all' ? `${parts.title}\n\n${parts.description}\n\n${parts.comments}` : parts[from] || '').slice(0, 30_000);
+}
+function askAI(prompt) {
+  return new Promise((resolve, reject) => {
+    // the board's own INTELLAGENT_* (tokens, the deploy PAT) never reach it; it runs in the temp folder with no tools
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^INTELLAGENT_/i.test(k)));
+    const child = spawn(AI_RUN, [], { shell: true, windowsHide: true, cwd: os.tmpdir(), env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = ''; let err = '';
+    const timer = setTimeout(() => { killTree(child); reject(new Error('the AI took over 90 s to answer')); }, 90_000);
+    child.stdout.on('data', (d) => { if (out.length < 64_000) out += d; });
+    child.stderr.on('data', (d) => { if (err.length < 2000) err += d; });
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error(`the AI could not start: ${e.message}`)); });
+    child.on('close', (code) => { clearTimeout(timer); code === 0 ? resolve(out.trim()) : reject(new Error(`the AI run ended with ${code}${err ? `: ${err.trim().slice(0, 200)}` : ''}`)); });
+    child.stdin.on('error', () => {});
+    child.stdin.end(prompt);
+  });
+}
+async function extractFrom(item, a) {
+  const text = ticketText(item, a.from);
+  let found;
+  if (a.how === 'pattern') {
+    const m = new RegExp(a.pattern, 'i').exec(text);
+    found = m ? (m[1] ?? m[0]) : null;
+  } else {
+    const answer = await askAI(`Read this ticket and answer the question. Reply with the answer only: no preamble, no quotes, no markdown fences. If the ticket does not say, reply with exactly NONE.\n\nQuestion: ${a.ask}\n\n--- Ticket ${item.id} ---\n${text}\n`);
+    found = !answer || /^none\.?$/i.test(answer) ? null : answer;
+  }
+  found = found == null ? null : String(found).trim().slice(0, EXTRACT_MAX);
+  return found || null;
+}
+
+// ev: the event that set the rule off (null for time rules), for {pr.*} and {run.*} in texts and values
+async function ruleAction(ctx, rule, a, item, why, ev = null) {
+  const actor = ruleActor(rule);
+  const id = item?.id;
+  const fill = (t) => RULES.fill(t, item, ev);
+  switch (a.do) {
+    case 'wake': {
+      const name = ruleWho(ctx, a.agent, item);
+      if (!name) fail(409, `there is no ${a.agent.replace('_', ' ')}${item ? ` for ${item.id}` : ''}`);
+      tx(ctx, (events) => events.push({ board: ctx.id, type: 'rule.fired', actor, rule: actor.rule, why, ...(item ? { itemId: id, columnId: item.columnId, title: item.title } : {}), ...(a.note ? { note: fill(a.note) } : {}), recipients: [name], addressed: [name] }));
+      return { woke: name };
+    }
+    case 'ask_human': return { question: askHuman(ctx, id, fill(a.text), actor).questionId };
+    case 'move': updateItem(ctx, id, { column: a.column }, actor); return { column: a.column };
+    case 'assign': {
+      const to = a.to ? ruleWho(ctx, a.to, item) : null;
+      if (a.to && !to) fail(409, `there is no ${a.to.replace('_', ' ')} for ${id}`);
+      updateItem(ctx, id, { assignee: to }, actor);
+      return { assignee: to };
+    }
+    case 'release_lease': releaseLease(ctx, id, actor); return {};
+    case 'archive': archiveItems(ctx, [id], actor, `rule: ${rule.name}`); return {};
+    case 'comment': addComment(ctx, id, { body: fill(a.text) }, actor); return {};
+    case 'set_field': updateItem(ctx, id, { fields: { [a.key]: RULES.fillValue(a.value, item, ev) } }, actor); return {};
+    case 'set_property': updateItem(ctx, id, { properties: { [a.key]: RULES.fillValue(a.value, item, ev) } }, actor); return {};
+    case 'style': updateItem(ctx, id, { style: a.look }, actor); return {};
+    case 'unstyle': updateItem(ctx, id, { style: null }, actor); return {};
+    case 'extract': {
+      const found = await extractFrom(item, a);
+      if (found == null) return { found: false };
+      if (a.into === 'comment') addComment(ctx, id, { body: found }, actor);
+      else updateItem(ctx, id, { [a.into === 'field' ? 'fields' : 'properties']: { [a.key]: found } }, actor);
+      return { found: found.length > 80 ? `${found.slice(0, 80)}…` : found };
+    }
+    case 'merge': {
+      if (!worktrees) fail(409, 'this board has no worktrees, so nothing merges');
+      if (item.review?.verdict !== 'approve') fail(409, `${id} isn't approved: only approved work merges`);
+      const agent = item.review?.requestedBy || item.workedBy?.at(-1);
+      if (!agent || !agentBranch(agent)) fail(409, `no agent worktree for ${id}`);
+      const r = await worktrees.mergeInto(agent, id, a.branch, { push: a.push });
+      if (!r.landed?.length) fail(409, `${id} didn't merge into ${a.branch}: ${r.reason || 'no commits'}${r.hint ? ` (${r.hint})` : ''}`);
+      return { branch: a.branch, merged: r.landed, ...(r.created ? { created: true } : {}), ...(r.pushed ? { pushed: true } : {}), ...(r.pushError ? { pushError: r.pushError } : {}) };
+    }
+    case 'land': {
+      if (!worktrees) fail(409, 'this board has no worktrees, so nothing lands');
+      if (item.review?.verdict !== 'approve') fail(409, `${id} isn't approved: only approved work lands`);
+      const agent = item.review?.requestedBy || item.workedBy?.at(-1);
+      if (!agent || !agentBranch(agent)) fail(409, `no agent worktree for ${id}`);
+      await landingOf(ctx, id);
+      const r = await startLanding(ctx, id, agent, actor);
+      return { landing: r?.state || r?.landing?.state || 'started' };
+    }
+    case 'deploy': {
+      const r = a.kind === 'jira' ? await requestJiraRun(a.id, { item: id || null }, actor)
+        : a.kind === 'devstack' ? requestDevstackRun(a.id, { item: id || null }, actor, ev)
+        : a.kind === 'confluence' ? await requestConfluenceRun(a.id, { item: id || null }, actor, ev)
+        : a.kind === 'ado' ? await requestAdoRun(a.id, { item: id || null }, actor, ev)
+        : await requestRun(a.kind, a.id, { item: id || null }, actor);
+      return { run: (r.body || r).id };
+    }
+  }
+  return {};
+}
+// Carry a rule out on one ticket (or none), then keep what happened in the log and on the ticket's history.
+// mark(rule) updates the stored rule's state (what it fired for) in the same save as the log.
+async function fireRule(ctx, rule, itemId, why, mark = () => {}, ev = null) {
+  const nowMs = Date.now();
+  const stored = () => rulesOf(ctx).rules.find((r) => r.id === rule.id);
+  if (RULES.throttled(rule, nowMs)) {
+    // said once an hour, so a runaway rule doesn't fill the log either
+    if (nowMs - Date.parse(rule.state?.heldAt || 0) < 3_600_000) return;
+    tx(ctx, () => {
+      const r = stored(); if (!r) return;
+      r.state = { ...(r.state || {}), heldAt: new Date(nowMs).toISOString() };
+      rulesOf(ctx).log = [...rulesOf(ctx).log, { at: now(), rule: r.id, name: r.name, item: itemId, why, held: `fired ${RULES.MAX_PER_HOUR} times in the last hour: held back until it calms down` }].slice(-RULES.LOG_KEEP);
+    });
+    return;
+  }
+  const results = [];
+  for (const a of rule.then) {
+    const item = itemId ? ctx.board.items[itemId] : null; // read again: an earlier action may have moved or archived it
+    try {
+      if (RULES.ACTIONS[a.do].ticket && !item) fail(409, itemId ? `${itemId} is no longer on the board` : 'this rule fired for no ticket');
+      results.push({ do: a.do, ok: true, ...(await ruleAction(ctx, rule, a, item, why, ev)) });
+    } catch (e) { results.push({ do: a.do, ok: false, error: e.message }); }
+  }
+  const actor = ruleActor(rule);
+  tx(ctx, (events) => {
+    const r = stored();
+    if (r) { RULES.noteFired(r, nowMs); mark(r); }
+    rulesOf(ctx).log = [...rulesOf(ctx).log, { at: now(), rule: rule.id, name: rule.name, item: itemId, why, results }].slice(-RULES.LOG_KEEP);
+    // on the ticket's history (wakes nobody)
+    const item = itemId && (ctx.board.items[itemId] || ctx.archive.items[itemId]);
+    // what each action did, in words, for the ticket's Activity: "move it to Done", "run the Jira action x (failed: …)"
+    const did = rule.then.map((a, i) => ({ text: RULES.describeAction(a, ctx.board.columns), ok: !!results[i]?.ok, ...(results[i]?.error ? { error: results[i].error } : {}) }));
+    events.push({ board: ctx.id, type: 'rule.ran', actor, rule: actor.rule, why, results, did, ...(item ? { itemId, title: item.title } : {}), recipients: [] });
+  });
+}
+// what set a rule off, in words: "a ticket enters In Progress"
+const whyOf = (ctx, rule) => RULES.describe({ ...rule, if: null, then: [] }, ctx.board.columns).replace(/^If /, '').replace(/ → $/, '');
+const ruleFails = (fn) => fn().catch((e) => console.warn(`rule: ${e.message}`));
+// Every event, after it is saved: the event rules it sets off. Not the rules' own (actor.rule): no chains.
+function onRuleEvent(e) {
+  if (e.actor?.rule || !e.board) return;
+  const ctx = boards.get(e.board);
+  const rules = (ctx?.board.automations?.rules || []).filter((r) => r.enabled && RULES.EVENTS[r.when.on] && RULES.eventMatches(r, e));
+  if (!rules.length) return;
+  const itemId = e.itemId || e.run?.item || null;
+  setImmediate(() => {
+    for (const rule of rules) ruleFails(async () => {
+      const item = itemId ? ctx.board.items[itemId] : null;
+      if (rule.if && !ruleHolds(ctx, rule, item)) return;
+      await fireRule(ctx, rule, itemId, whyOf(ctx, rule), undefined, e);
+    });
+  });
+}
+// Time rules, once a minute: each ticket fires once per idle stretch or stay in the column; an "every" rule once a
+// period, for each ticket its "if" picks (or once, for no ticket)
+async function sweepRules(ctx) {
+  const rules = (ctx.board.automations?.rules || []).filter((r) => r.enabled && RULES.TIMES[r.when.on]);
+  if (!rules.length) return;
+  const nowMs = Date.now();
+  const done = doneColumnId(ctx);
+  const blocksOf = blocksIndex(ctx);
+  for (const rule of rules) {
+    if (rule.when.on === 'every') {
+      if (!RULES.everyDue(rule, nowMs)) continue;
+      const stamp = (r) => { r.state = { ...(r.state || {}), lastEvery: new Date(nowMs).toISOString() }; };
+      const targets = rule.if ? liveItems(ctx).filter((it) => ruleHolds(ctx, rule, it, blocksOf)).slice(0, 50).map((it) => it.id) : [null];
+      if (!targets.length) { tx(ctx, () => { const r = rulesOf(ctx).rules.find((x) => x.id === rule.id); if (r) stamp(r); }); continue; }
+      for (const id of targets) await fireRule(ctx, rule, id, `every ${rule.when.minutes} min`, stamp);
+      continue;
+    }
+    for (const it of liveItems(ctx)) {
+      if (rule.when.on === 'idle' && it.columnId === done) continue;
+      const key = RULES.timeDue(rule, it, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt) });
+      if (!key || rule.state?.seen?.[it.id] === key || !ruleHolds(ctx, rule, it, blocksOf)) continue;
+      await fireRule(ctx, rule, it.id, whyOf(ctx, rule), (r) => {
+        const live = new Set(Object.keys(ctx.board.items));
+        r.state = { ...(r.state || {}), seen: { ...Object.fromEntries(Object.entries(r.state?.seen || {}).filter(([k]) => live.has(k))), [it.id]: key } };
+      });
+    }
+  }
+}
+setInterval(() => { for (const ctx of boards.values()) ruleFails(() => sweepRules(ctx)); }, 60_000).unref();
+
+/* The board's own behaviours, as rules on the Rules page, beside the human's and edited the same way. Each reads its
+   rule from where the behaviour is set (behaviours, the idle alarm, rebalancing, a column's flags) and writes an edit
+   back there while it still fits; an edit that makes it something else switches the behaviour off and saves the
+   rule as an ordinary one. Their engines stay theirs: batching, rounds and the rest are unchanged. */
+function nativeRules(ctx) {
+  const b = behavioursOf(ctx);
+  const ia = idleAlarmOf(ctx);
+  const work = workingColumn(ctx);
+  const pick = pickupColumns(ctx)[0];
+  const set = (patch) => { ctx.board.behaviours = { ...(ctx.board.behaviours || {}), ...patch }; };
+  const shape = (r, on, dos) => r.when.on === on && r.then.length === dos.length && r.then.every((x, i) => x.do === dos[i]);
+  const flag = (c, k, v) => { c.flags = { ...c.flags, [k]: v }; };
+  const list = [
+    { id: 'board-land', name: 'Merge approved work into main', enabled: b.landOnApprove, when: { on: 'approved' }, then: [{ do: 'land' }],
+      write: (r) => shape(r, 'approved', ['land']) && !r.if && (set({ landOnApprove: r.enabled }), true), off: () => set({ landOnApprove: false }) },
+    { id: 'board-idle-check', name: 'Idle check', enabled: b.idleCheck.on, when: { on: 'idle', minutes: b.idleCheck.minutes }, then: [{ do: 'wake', agent: 'coordinator' }],
+      write: (r) => shape(r, 'idle', ['wake']) && !r.if && r.then[0].agent === 'coordinator' && !r.then[0].note && (set({ idleCheck: { on: r.enabled, minutes: r.when.minutes } }), true),
+      off: () => set({ idleCheck: { on: false, minutes: b.idleCheck.minutes } }) },
+    { id: 'board-ask-escalation', name: 'Escalate overdue asks', enabled: b.askEscalation, when: { on: 'ask_overdue' }, then: [{ do: 'escalate' }],
+      write: (r) => shape(r, 'ask_overdue', ['escalate']) && !r.if && (set({ askEscalation: r.enabled }), true), off: () => set({ askEscalation: false }) },
+    { id: 'board-stuck-watch', name: 'Stuck watch', enabled: b.stuckWatch, when: { on: 'stuck', minutes: stuckTimings(ctx).quietMs / 60_000 }, then: [{ do: 'unstick' }],
+      write: (r) => shape(r, 'stuck', ['unstick']) && !r.if && (set({ stuckWatch: r.enabled, stuckMinutes: r.when.minutes }), true), off: () => set({ stuckWatch: false }) },
+    ...(work && pick ? [{
+      id: 'board-stale-work', name: `Stale work back to ${pick.name}`, enabled: b.staleWork.on, when: { on: 'in_column', column: work.id, minutes: b.staleWork.minutes }, if: '!claimant', then: [{ do: 'move', column: pick.id }],
+      write: (r) => shape(r, 'in_column', ['move']) && r.when.column === work.id && r.then[0].column === pick.id && (!r.if || r.if === '!claimant') && (set({ staleWork: { on: r.enabled, minutes: r.when.minutes } }), true),
+      off: () => set({ staleWork: { on: false, minutes: b.staleWork.minutes } }),
+    }] : []),
+    {
+      id: 'board-idle-alarm', name: 'Idle-board alarm', enabled: ia.on, when: { on: 'board_idle', minutes: ia.minutes },
+      then: ia.wake.length ? ia.wake.map((n) => ({ do: 'wake', agent: n, ...(ia.note ? { note: ia.note } : {}) })) : [{ do: 'ask_human', text: 'The board is idle: tickets wait and no builder is running' }],
+      write: (r) => {
+        const wakes = r.then.every((x) => x.do === 'wake');
+        if (r.when.on !== 'board_idle' || r.if || !(wakes || shape(r, 'board_idle', ['ask_human']))) return false;
+        const names = wakes ? r.then.map((x) => x.agent) : [];
+        const known = new Set(standingAgents().map((x) => x.name));
+        const unknown = names.filter((n) => !known.has(n));
+        if (unknown.length) fail(400, `The idle alarm wakes standing agents: ${unknown.join(', ')} ${unknown.length > 1 ? "aren't" : "isn't"} one`, { code: 'BAD_REQUEST', hint: `Pick from: ${[...known].join(', ') || 'none defined'}` });
+        ctx.board.idleAlarm = { ...(ctx.board.idleAlarm || {}), on: r.enabled, minutes: Math.min(1440, r.when.minutes), wake: names, note: (r.then.find((x) => x.note)?.note || '').slice(0, 1000), ...(wakes ? {} : { human: true }) };
+        return true;
+      },
+      off: () => { const { from, ...cur } = ia; ctx.board.idleAlarm = { ...cur, on: false }; },
+    },
+    { id: 'board-rebalance', name: 'Rebalancing', enabled: rebalanceOf(ctx).on, when: { on: 'assignee_away' }, then: [{ do: 'reassign' }],
+      write: (r) => shape(r, 'assignee_away', ['reassign']) && !r.if && ((ctx.board.rebalance = { ...(ctx.board.rebalance || {}), on: r.enabled }), true),
+      off: () => { ctx.board.rebalance = { ...(ctx.board.rebalance || {}), on: false }; } },
+    // a column's flags: one rule each while the flag is set; switched off, it becomes an ordinary rule (and stays listed)
+    ...ctx.board.columns.filter((c) => c.flags.releaseLeaseOnEnter).map((c) => ({
+      id: `board-release-${c.id}`, name: `Release the lease in ${c.name}`, enabled: true, when: { on: 'entered', column: c.id }, then: [{ do: 'release_lease' }],
+      write: (r) => r.enabled && shape(r, 'entered', ['release_lease']) && r.when.column === c.id && !r.if, off: () => flag(c, 'releaseLeaseOnEnter', false),
+    })),
+    ...ctx.board.columns.filter((c) => c.flags.autoArchiveAfterDays).map((c) => ({
+      id: `board-archive-${c.id}`, name: `Archive what stays in ${c.name}`, enabled: true, when: { on: 'in_column', column: c.id, minutes: c.flags.autoArchiveAfterDays * 1440 }, if: '!claimant', then: [{ do: 'archive' }],
+      write: (r) => r.enabled && shape(r, 'in_column', ['archive']) && r.when.column === c.id && r.when.minutes % 1440 === 0 && (!r.if || r.if === '!claimant') && (flag(c, 'autoArchiveAfterDays', r.when.minutes / 1440), true),
+      off: () => flag(c, 'autoArchiveAfterDays', 0),
+    })),
+  ];
+  return list.map((n) => ({ ...n, native: true }));
+}
+// The stuck watch's timings, with the board's own quiet time when the Rules page set one
+const stuckTimings = (ctx) => (ctx.board.behaviours?.stuckMinutes ? STUCK.timingsOf({ ...(M.stuck || {}), quietMinutes: ctx.board.behaviours.stuckMinutes }) : STUCK_TIMINGS);
+const nativeView = (ctx, n) => ({ id: n.id, name: n.name, enabled: n.enabled, when: n.when, ...(n.if ? { if: n.if } : {}), then: n.then, native: true, text: RULES.describe(n, ctx.board.columns) });
+// An edit to one of the board's own rules: back to its setting while it fits, else an ordinary rule in its place
+function saveNative(ctx, n, body, actor) {
+  const rule = ruleErr(() => RULES.cleanRule(body, ctx.board.columns, { id: rid('rule'), nowIso: now(), native: true }));
+  let fits = false;
+  tx(ctx, (events) => {
+    fits = !!n.write(rule);
+    if (!fits) {
+      const own = [rule.when.on, ...rule.then.map((x) => x.do)].find((k) => (RULES.EVENTS[k] || RULES.TIMES[k] || RULES.ACTIONS[k])?.nativeOnly);
+      if (own && rule.enabled) fail(400, `"${(RULES.EVENTS[own] || RULES.TIMES[own] || RULES.ACTIONS[own]).label}" is the board's own: it only works as this rule has it`, { code: 'BAD_REQUEST', hint: 'Keep that part and change the rest, or switch this rule off and build a new one' });
+      n.off();
+    }
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rules: { changed: n.name } } });
+  });
+  if (fits) return nativeView(ctx, nativeRules(ctx).find((x) => x.id === n.id) || n);
+  // switched off, or reshaped into something its engine doesn't do: from now on it is an ordinary rule
+  const own = [rule.when.on, ...rule.then.map((x) => x.do)].some((k) => (RULES.EVENTS[k] || RULES.TIMES[k] || RULES.ACTIONS[k])?.nativeOnly);
+  return own ? nativeView(ctx, nativeRules(ctx).find((x) => x.id === n.id) || { ...n, enabled: false }) : saveRule(ctx, { ...body, name: body.name || n.name }, actor);
+}
+const ruleView = (ctx, r) => ({ ...r, text: RULES.describe(r, ctx.board.columns), state: undefined, fired: (r.state?.recent || []).length ? new Date(Math.max(...r.state.recent)).toISOString() : null });
+const ruleErr = (fn) => { try { return fn(); } catch (e) { if (e instanceof RULES.RuleError) fail(400, e.message, { code: 'BAD_REQUEST', hint: e.hint }); throw e; } };
+function saveRule(ctx, body, actor, prev = null) {
+  const rule = ruleErr(() => RULES.cleanRule(body, ctx.board.columns, { id: rid('rule'), prev, nowIso: now() }));
+  tx(ctx, (events) => {
+    const all = rulesOf(ctx).rules;
+    if (!prev && all.length >= RULES.MAX_RULES) fail(409, `A board keeps at most ${RULES.MAX_RULES} rules`, { code: 'CONFLICT', hint: 'Delete one you no longer use' });
+    if (rule.when.on === 'fits' && all.some((r) => r.id !== prev?.id && r.when?.on === 'fits' && r.name.toLowerCase() === rule.name.toLowerCase())) fail(409, `There is already a card look called "${rule.name}"`, { code: 'CONFLICT', hint: 'Card looks have their own names: is:rule:<name> finds them' });
+    rulesOf(ctx).rules = prev ? all.map((r) => (r.id === prev.id ? rule : r)) : [...all, rule];
+    ctx.board.cardRules = looksOf(ctx.board);
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rules: { [prev ? 'changed' : 'added']: rule.name } } });
+  });
+  return ruleView(ctx, rule);
+}
+const getRule = (ctx, id) => rulesOf(ctx).rules.find((r) => r.id === id) || fail(404, `No rule "${id}"`, { code: 'NOT_FOUND', hint: `GET /api/boards/${ctx.id}/rules lists them` });
+
+route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, when, if?, then, text (in words), fired, native? }], vocabulary: { events, times, actions, roles } }. native: one of the board\'s own behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing, a column\'s release-lease and auto-archive), listed and edited as a rule; words marked nativeOnly belong to those alone', ({ p }) => {
+  const ctx = getCtx(p.board);
+  const labels = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { label: v.label, ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}), ...(v.nativeOnly ? { nativeOnly: true } : {}) }]));
+  return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...rulesOf(ctx).rules.map((r) => ruleView(ctx, r))], vocabulary: { events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
+});
+route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, when: { on, column?, minutes?, to?, result? }, if?: card-rules condition, then: [{ do, … }], enabled? }. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented, mentioned (to?), unblocked, lease_expired, ask_overdue, deploy_finished (result?: succeeded|failed); or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land, deploy { kind: step|sequence, id }. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
+route('PUT', '/api/boards/:board/rules/:id', 'Human: replace a rule (as POST); { enabled: false } with the rest switches it off', ({ p, body, actor }) => {
+  const ctx = getCtx(p.board);
+  const n = nativeRules(ctx).find((x) => x.id === p.id);
+  return n ? saveNative(ctx, n, body, actor) : saveRule(ctx, body, actor, getRule(ctx, p.id));
+});
+route('DELETE', '/api/boards/:board/rules/:id', 'Human: delete a rule (its log stays). One of the board\'s own is switched off', ({ p, actor }) => {
+  const ctx = getCtx(p.board);
+  const n = nativeRules(ctx).find((x) => x.id === p.id);
+  if (n) { tx(ctx, (events) => { n.off(); events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rules: { off: n.name } } }); }); return { off: n.id }; }
+  const rule = getRule(ctx, p.id);
+  tx(ctx, (events) => {
+    rulesOf(ctx).rules = rulesOf(ctx).rules.filter((r) => r.id !== rule.id);
+    ctx.board.cardRules = looksOf(ctx.board);
+    events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rules: { deleted: rule.name } } });
+  });
+  return { deleted: rule.id };
+});
+route('POST', '/api/boards/:board/rules/preview', 'Before saving: which tickets a rule would act on now { rule } → { mode: "due" (a time rule: these would fire now) | "match" (an event rule: these match its "if", so would be acted on when the event happens to them) | "board" (no ticket), count, items: [{ id, title }] (first 20), text }', ({ p, body }) => {
+  const ctx = getCtx(p.board);
+  const rule = ruleErr(() => RULES.cleanRule(body.rule ?? body, ctx.board.columns, { id: 'preview', nowIso: now() }));
+  const text = RULES.describe(rule, ctx.board.columns);
+  if (rule.when.on === 'every' && !rule.if) return { mode: 'board', count: 0, items: [], text };
+  const nowMs = Date.now();
+  const blocksOf = blocksIndex(ctx);
+  const timed = rule.when.on === 'idle' || rule.when.on === 'in_column';
+  const hits = liveItems(ctx).filter((it) => {
+    if (rule.when.on === 'idle' && it.columnId === doneColumnId(ctx)) return false;
+    if (timed && !RULES.timeDue(rule, it, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt) })) return false;
+    if ((rule.when.on === 'left') && it.columnId !== rule.when.column) return false;
+    return ruleHolds(ctx, rule, it, blocksOf);
+  });
+  return { mode: timed ? 'due' : 'match', count: hits.length, items: hits.slice(0, 20).map((it) => ({ id: it.id, title: it.title })), text };
+});
+route('GET', '/api/boards/:board/rules/log', 'What the rules did, newest first: ?rule=<id>&item=<id>&limit (default 50) → [{ at, rule, name, item, why, results: [{ do, ok, error?, … }] | held }]', ({ p, q }) => {
+  const ctx = getCtx(p.board);
+  const limit = clamp(Number(q.limit) || 50, 1, RULES.LOG_KEEP);
+  return rulesOf(ctx).log.filter((l) => (!q.rule || l.rule === q.rule) && (!q.item || l.item === String(q.item).toUpperCase())).slice(-limit).reverse();
 });
 // Prometheus scrape (INT-309). Off until the manifest says metrics: { prometheus: true }; then it answers only to the
 // metrics token in local.json (intellagent token --metrics). That token opens this route and nothing else: checkAuth
@@ -4510,7 +5856,50 @@ route('PUT', '/api/roles/:key', 'Human: add or replace one of your own roles { l
 /* The permission library (INT-228): every permission an agent can hold — built-in tools, board powers and
    the human's own (command, tool, folders, bundle, verbal), stored in agents.json under "perms". Everyone
    reads it; only the human changes it, and only its custom entries. */
-const permLibrary = () => standing?.permissionLibrary?.() || createPermLibrary();
+// Every step and sequence is a permission too: listed with the library, read-only there (the Deployments page
+// makes, renames and deletes them), and granted like any board power in Assignments.
+const deployPermEntries = () => [...deployStore.steps().map((s) => ['step', s]), ...deployStore.sequences().map((q) => ['sequence', q])].map(([kind, d]) => {
+  const key = deployGrants.powerOf(kind, d.id);
+  const what = kind === 'step' ? `${d.pipelineName || `pipeline ${d.pipelineId}`} · ${d.project}` : `${d.items.length} step${d.items.length === 1 ? '' : 's'}`;
+  return {
+    key, kind: 'deployment', name: `Run ${d.name}`, description: `Run the deployment ${kind} "${d.name}" (${what}) in Azure DevOps. Human-only unless the human grants it; its rules name ${deployGrants.KEYS_HINT(kind)}.`,
+    allows: { powers: [key] }, needs: [], brief: '', builtin: true, enforced: true, heldBy: 'grants', group: 'Deployments', deployment: { kind, id: d.id },
+  };
+}).concat(jiraStore.actions().map((a) => {
+  const key = deployGrants.powerOf('jira', a.id);
+  return {
+    key, kind: 'deployment', name: `Run ${a.name}`, description: `Run the Jira action "${a.name}" (${jiraDoes(a)}). Human-only unless the human grants it; its rules name ${deployGrants.KEYS_HINT('jira')}.`,
+    allows: { powers: [key] }, needs: [], brief: '', builtin: true, enforced: true, heldBy: 'grants', group: 'Jira', deployment: { kind: 'jira', id: a.id },
+  };
+})).concat(devstackStore.actions().map((a) => {
+  const key = deployGrants.powerOf('devstack', a.id);
+  return {
+    key, kind: 'deployment', name: `Run ${a.name}`, description: `Run the DevStack action "${a.name}" (${devstackDoes(a)}). Human-only unless the human grants it; its rules name ${deployGrants.KEYS_HINT('devstack')}.`,
+    allows: { powers: [key] }, needs: [], brief: '', builtin: true, enforced: true, heldBy: 'grants', group: 'DevStack', deployment: { kind: 'devstack', id: a.id },
+  };
+})).concat(deployPermEntriesConfluence(), deployPermEntriesAdo());
+const deployPermEntriesAdo = () => prActionStore.actions().map((a) => {
+  const key = deployGrants.powerOf('ado', a.id);
+  return {
+    key, kind: 'deployment', name: `Run ${a.name}`, description: `Run the pull request action "${a.name}" (${PRACT.doesWords(a)}) in Azure DevOps. Human-only unless the human grants it; its rules name ${deployGrants.KEYS_HINT('ado')}.`,
+    allows: { powers: [key] }, needs: [], brief: '', builtin: true, enforced: true, heldBy: 'grants', group: 'Azure DevOps', deployment: { kind: 'ado', id: a.id },
+  };
+});
+const deployPermEntriesConfluence = () => confluenceStore.actions().map((a) => {
+  const key = deployGrants.powerOf('confluence', a.id);
+  return {
+    key, kind: 'deployment', name: `Run ${a.name}`, description: `Run the Confluence action "${a.name}" (${confluenceDoes(a)}). Human-only unless the human grants it; its rules name ${deployGrants.KEYS_HINT('confluence')}.`,
+    allows: { powers: [key] }, needs: [], brief: '', builtin: true, enforced: true, heldBy: 'grants', group: 'Confluence', deployment: { kind: 'confluence', id: a.id },
+  };
+});
+// What a Confluence action does, in a few words
+const confluenceDoes = (a) => (a.does === 'create' ? `create a page in ${a.space}` : `${a.does === 'append' ? 'append to' : `replace the section "${a.heading}" of`} ${a.page === 'ask' ? 'a page given when it runs' : `page ${a.pageId}`}`);
+// What a DevStack action does, in a few words
+const devstackDoes = (a) => (a.tool === 'gate' ? `the ${a.kind === 'behaviour' ? 'affected tests' : 'PR gate: A/B, then the full regression'} on ${a.service}` : `tests tagged ${a.tags.join(', ')} with ${a.service} swapped in`);
+// What a Jira action does, in a few words
+const jiraDoes = (a) => ({ transition: `move ${a.issue === 'fixed' ? a.key : 'the issue'} to ${a.status}`, comment: `comment on ${a.issue === 'fixed' ? a.key : 'the issue'}`, assign: `assign ${a.issue === 'fixed' ? a.key : 'the issue'} to ${a.assignee || 'nobody'}`, create: `create a ${a.issueType} in ${a.project}` }[a.does] || a.does);
+const withDeployments = (lib) => ({ ...lib, list: () => [...lib.list(), ...deployPermEntries()], get: (k) => lib.get(k) || deployPermEntries().find((e) => e.key === k) || null });
+const permLibrary = () => withDeployments(standing?.permissionLibrary?.() || createPermLibrary());
 const permBody = (body) => Object.fromEntries(['kind', 'name', 'description', 'brief', 'commands', 'command', 'tools', 'tool', 'folders', 'includes', 'needs'].filter((k) => k in (body || {})).map((k) => [k, body[k]]));
 function permChanged(actor, key, before, after, d = null) {
   emit({ type: 'permissions.changed', actor, key, before: before ?? null, after: after ?? null, ...delegatedTag(d) });
@@ -4576,7 +5965,7 @@ route('DELETE', '/api/permissions/:key', 'Human, or admin.permissions (bundles a
    off, on, or on with rules (a board power with a required-reviewers rule and/or a scope). Tools and custom
    permissions live in the agent's "perms", powers in its "grants", the human's words in its "guidance": all in
    agents.json, which only the human writes. */
-const ruleOf = (g) => (isObj(g) ? Object.fromEntries(['minOks', 'from', 'where'].filter((k) => g[k] != null).map((k) => [k, g[k]])) : {});
+const ruleOf = (g) => (isObj(g) ? Object.fromEntries(['minOks', 'from', 'where', 'approve'].filter((k) => g[k] != null).map((k) => [k, g[k]])) : {});
 const grantsFor = (a, key) => (a.grants || []).filter((g) => (typeof g === 'string' ? g : g?.power) === key);
 function gridCell(ctx, a, entry) {
   const lib = permLibrary();
@@ -4646,8 +6035,8 @@ route('PUT', '/api/agents/:name/permissions/:key', 'Human, signed in, or admin.p
     if (mode === 'on') next = [...others, p.key];
     if (mode === 'rules') {
       if (!isObj(rules) || !Object.keys(rules).length) fail(400, 'Mode "rules" needs rules', { code: 'BAD_REQUEST', hint: '{ "minOks": 2, "from": ["nebula", "kraglin"] } and/or { "where": { "fields.risk": "low" } }; for no rules at all use mode "on"' });
-      const bad = Object.keys(rules).filter((k) => !['minOks', 'from', 'where'].includes(k));
-      if (bad.length) fail(400, `Unknown rule key(s): ${bad.join(', ')}`, { code: 'BAD_REQUEST', hint: 'Rules: minOks, from, where' });
+      const bad = Object.keys(rules).filter((k) => !['minOks', 'from', 'where', 'approve'].includes(k));
+      if (bad.length) fail(400, `Unknown rule key(s): ${bad.join(', ')}`, { code: 'BAD_REQUEST', hint: 'Rules: minOks, from, where; approve ("human", deployments only)' });
       next = [...others, ...cleanGrants([{ power: p.key, ...rules }])];
     }
     patch.grants = next.length ? next : null;
@@ -4710,7 +6099,7 @@ function cleanGrants(list) {
   if (!Array.isArray(list)) fail(400, '"grants" must be a list');
   return list.map((g) => {
     const power = typeof g === 'string' ? g : g?.power;
-    if (!POWERS[power] && power !== ADMIN_BUNDLE) fail(400, `Unknown power "${power}". Powers: ${[...Object.keys(POWERS), ADMIN_BUNDLE].join(', ')}`);
+    if (!isPower(power) && power !== ADMIN_BUNDLE) fail(400, `Unknown power "${power}". Powers: ${[...Object.keys(POWERS), ADMIN_BUNDLE].join(', ')}, and deploy.step.<id> / deploy.sequence.<id> for each deployment`);
     // A scope narrows a power, so a malformed one is refused, never dropped: dropping it would turn "only
     // where risk is low" into "everywhere".
     if (typeof g === 'string') return power;
@@ -4720,6 +6109,15 @@ function cleanGrants(list) {
       rule = okRule(g);
       if (typeof rule === 'string') fail(400, `The rule of ${power}: ${rule}`, { code: 'BAD_REQUEST', hint: 'minOks is a whole number from 1 up to the number of names in "from"; "from" lists reviewer names' });
       if (!APPROVAL_POWERS.has(power)) fail(400, `"minOks" and "from" only apply to review.decide and column.gate, not ${power}`, { code: 'BAD_REQUEST' });
+    }
+    const dep = deployGrants.parsePower(power);
+    if (g?.approve != null) {
+      if (!dep || g.approve !== 'human') fail(400, '"approve" is only "human", on a deployment: its runs wait for the human\'s OK', { code: 'BAD_REQUEST' });
+      rule = { ...rule, approve: 'human' };
+    }
+    if (dep && isObj(g?.where)) {
+      const bad = Object.keys(g.where).filter((k) => !deployGrants.validKey(k, dep.kind));
+      if (bad.length) fail(400, `A ${dep.kind}'s rules can't name ${bad.join(', ')}`, { code: 'BAD_REQUEST', hint: `Keys: ${deployGrants.KEYS_HINT(dep.kind)}` });
     }
     if (g?.where == null) return Object.keys(rule).length ? { power, ...rule } : power;
     if (!isObj(g.where)) fail(400, `The scope ("where") of ${power} must be an object like { "fields.risk": "low" }`, { code: 'BAD_REQUEST' });
@@ -5143,7 +6541,7 @@ route('GET', '/api/permissions/me', 'What you are allowed to do (from the manife
   return {
   name: actor.name, kind: actor.kind, permissions: actor.kind === 'agent' ? permsFor(actor.name) : null,
   perms, runAuthorsCode: run.ok, ...(run.ok ? {} : { runAuthorsCodeWhy: run.why, runAuthorsCodeHint: run.hint }),
-  grants: actor.kind === 'agent' ? grantsOf(actor.name).map((g) => ({ ...g, means: POWERS[g.power] })) : null,
+  grants: actor.kind === 'agent' ? grantsOf(actor.name).map((g) => ({ ...g, means: powerMeans(g.power) })) : null,
   // the human's words beside each permission (never enforced); kept apart from the rules above
   guidance: actor.kind === 'agent' ? (() => { try { return { ...(standing?.guidanceOf?.(actor.name) || {}) }; } catch { return {}; } })() : null,
   tokenRequired: actor.kind === 'user' ? !!M.auth.userToken : !!M.auth.agentTokens?.[actor.name] || !!M.auth.requireAgentTokens,
@@ -5355,6 +6753,11 @@ const server = http.createServer(async (req, res) => {
     const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {};
     const actor = actorOf(req, q);
     checkAuth(req, q, actor, u.pathname, m.r.policy);
+    // with no user token anyone can send X-User: deployments and Jira act outside the board, so, like permissions,
+    // they change only on a board that can tell the human apart
+    if (actor.kind === 'user' && !M.auth.userToken && req.method !== 'GET' && /^\/api\/(deploy|jira|devstack|confluence|ado)(\/|$)/.test(u.pathname)) {
+      fail(403, 'Deployments, Jira, DevStack and Confluence can be changed or run only on a board with a sign-in token', { code: 'NO_TOKEN', hint: 'Run "intellagent token", restart the board and sign in with "intellagent open"' });
+    }
     if (actor.kind === 'agent' && req.method !== 'GET') probationGate(req.method, u.pathname, body, actor);
     const bm = /^\/api\/boards\/([^/]+)(?:\/(.*))?$/.exec(u.pathname);
     const gctx = bm && (boards.get(bm[1]) || boards.get(slug(decodeURIComponent(bm[1]))));

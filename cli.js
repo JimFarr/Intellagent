@@ -18,7 +18,7 @@
  */
 'use strict';
 const fs = require('fs');
-const { fromPairs, send, report } = require('./lib/request');
+const { fromPairs, fileValue, send, report } = require('./lib/request');
 
 const argv = process.argv.slice(2);
 const compact = argv.includes('--compact');
@@ -30,7 +30,7 @@ function readBody() {
   if (!args.length) return undefined;
   const [first] = args;
   if (args.length === 1 && first === '-') return fs.readFileSync(0, 'utf8');
-  if (args.length === 1 && first.startsWith('@')) return fs.readFileSync(first.slice(1), 'utf8');
+  if (args.length === 1 && first.startsWith('@')) return fileValue(first.slice(1)); // the key=@path rules: never local.json
   if (args.length === 1 && /^\s*[[{]/.test(first)) return first;
   return fromPairs(args);
 }

@@ -5,8 +5,10 @@ import { $, $$, esc, el, clamp, hashStr, hue, initials, ICONS, icon } from './js
 import { md } from './js/markdown.js';
 import { tip, hideTip, focusTip, tipPausedWhen } from './js/tooltips.js';
 import { eventIcon, describe as describeEvent } from './js/events.js';
-import { state, settings, settingsStore, BASE_THEME, DEFAULTS, stored, AUTH, tokenStore } from './js/state.js';
-import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/themes.js';
+import { createDeployments } from './js/deploy.js';
+import { createRules, RULE_VIEWS } from './js/rules.js';
+import { state, settings, settingsStore, themeKey, onSystemTheme, DEFAULTS, stored, AUTH, tokenStore } from './js/state.js';
+import { THEMES, themeGroups, contrast } from './js/themes.js';
 
 (() => {
   /* ═════════════════════════ helpers ═════════════════════════ */
@@ -16,7 +18,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   // starts at its hashed slot and moves along only when an earlier name took it, so as many parents as there are
   // colours never share one, and a name keeps its colour on chips, groups and menus alike.
   let tagSlots = new Map(), tagSlotsFor, tagSlotsOf;
-  const tagCount = () => themeGroups(THEMES[settings.theme] || THEMES[BASE_THEME]).count;
+  const tagCount = () => themeGroups(THEMES[themeKey()]).count;
   const tagHome = (p) => hashStr(String(p)) % tagCount();
   function tagSlot(p) {
     const board = state.board, slots = tagCount();
@@ -41,13 +43,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   }
   const tagColor = (p) => `var(--tag-${tagSlot(p)}, var(--accent))`;
   const tilt = (id) => (((hashStr(id) % 1000) / 1000) - 0.5) * 2.6;
-  // Each card gets its own decoration placement, stable per ticket: a slot (0–3), a spot along the top
-  // edge (18–82%) and a small extra angle, so tape, pins and clips don't line up like stamps.
-  const decoVars = (id) => {
-    const h = hashStr(`${id}~deco`);
-    return `--deco-slot:${h % 4};--deco-x:${18 + ((h >>> 3) % 65)}%;--deco-r:${((h >>> 9) % 15) - 7}deg`;
-  };
-  const decoSlot = (id) => hashStr(`${id}~deco`) % 4;
   const nowMs = () => Date.now() + state.offset;
   const reduced = () => settings.motion === 'reduced';
   const autosize = (ta) => { if (!ta) return; ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; };
@@ -69,7 +64,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   const PRIO_VAR = { Low: 'var(--muted)', Medium: 'var(--task)', High: 'var(--warn)', Critical: 'var(--danger)' };
   const TYPE_VAR = { issue: 'var(--issue)', task: 'var(--task)', spike: 'var(--spike)' };
   const FIELD_ICON = { text: 'text', markdown: 'text', number: 'num', boolean: 'toggle', enum: 'list', tags: 'tag', date: 'cal', url: 'link', user: 'user' };
-  const LOGO = '<svg viewBox="0 0 32 32"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent-2)"/></linearGradient></defs><rect x="2" y="2" width="28" height="28" rx="9" fill="url(#lg)"/><path d="M9.5 11h11M9.5 16h7M9.5 21h4" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><path d="M23 17.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1z" fill="#fff"/></svg>';
 
   // Agents (and you) can set colour / glyph / image via PATCH /api/profiles/me; otherwise colour comes from the name.
   function avatar(actor, cls = '') {
@@ -174,37 +168,10 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   /* ═════════════════════════ themes + settings ═════════════════════════ */
 
   // A theme = palette + style spec + optional CSS. The style spec drives data-attributes on <html>
-  // (CSS branches on them); `css` is injected for one-off touches that make each theme its own.
-  const STYLE = {
-    card: 12, col: 20, modal: 22, ctl: 10, bw: 1, colAlpha: 84, titleW: 600,
-    shadow: 'soft', // soft | flat | hard | glow
-    cards: 'sticky', // sticky | clean | elevated | outline | glass | index
-    tape: 'tape', // tape | pin | clip | none
-    md: 'clean', // markdown look: clean | grid | paper | terminal
-    attn: 'orbit', // needs-you styling: orbit | glow | bar | outline | ribbon
-    enter: 'rise', // modal opening: rise | sheet | fade | pop | zoom
-    lanes: 'glass', // columns: glass | solid | outline | lane
-    typeInd: 'bar', // clean cards show type as: bar | top | tint | dot
-    chips: 'pill', // pill | tag | outline
-    heads: 'normal', // column titles: normal | caps
-    avatar: 'mixed', // mixed (agents square, people round) | round | square
-    bg: 'blobs', texture: true,
-    corner: null, // px kept clear in each card's top-right (0 unless the theme sets it)
-    avatars: 'color', // color | accent | ink
-    groups: 'tray', // tickets sharing a parent: tray (tinted panel) | rail (coloured rail) | rule (header + hairline) | tab (folder tab) | spine (vertical label) | foot (caption below) | cover (a summary card on top of the pile)
-    avStyle: 'gem', // avatar look: gem | flat | tint | ring | pebble | stamp
-    drop: 'ring', // a column a ticket is dragged over: ring | tint | lift | spotlight | dashed | pulse
-    colColor: 'own', // own | accent | ink — column dots and rules
-    toast: 'pill', // pop-up notices: pill (tinted capsule) | card (the theme's card) | note (quiet line) | ink (inverted strip)
-  };
-  // Strength of each generated pattern, multiplying --fx-o. The one source: the board gets it as --fx-k (applySettings),
-  // the Background tiles use it directly. `<kind>-<mode>` overrides a kind in light or dark themes.
-  const FXK = { topo: 1.05, squiggles: 0.62, doodles: 0.7, confetti: 1.3, halftone: 0.7, 'halftone-light': 0.55 };
-  const fxk = (kind, mode) => FXK[`${kind}-${mode}`] ?? FXK[kind] ?? 1;
-  const BACKGROUNDS = [['blobs', 'Blobs'], ['aurora', 'Aurora'], ['mesh', 'Mesh'], ['stars', 'Stars'], ['topo', 'Topo'], ['halftone', 'Halftone'], ['squiggles', 'Squiggles'], ['doodles', 'Doodles'], ['confetti', 'Confetti'], ['none', 'None']];
-  const themeStyle = () => ({ ...STYLE, ...(THEMES[settings.theme] || THEMES[BASE_THEME]).style });
-  // A user setting of "theme" (or unset) defers to the theme's own choice.
-  const pick = (k) => (settings[k] != null && settings[k] !== 'theme' ? settings[k] : themeStyle()[k]);
+  // (CSS branches on them); `css` is injected for touches of its own. Clear sets every key but these two.
+  const STYLE = { md: 'clean', toast: 'pill' };
+  const themeStyle = () => ({ ...STYLE, ...THEMES[themeKey()].style });
+  onSystemTheme(() => { if (!settings.theme) { applySettings(); render(); } });
 
   function saveSettings() {
     settingsStore.save(settings);
@@ -213,7 +180,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     render();
   }
   function applySettings() {
-    const t = THEMES[settings.theme] || THEMES[BASE_THEME];
+    const t = THEMES[themeKey()];
     const st = themeStyle();
     const r = document.documentElement;
     for (const [k, v] of Object.entries(t.vars)) r.style.setProperty(`--${k}`, v);
@@ -223,31 +190,23 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     for (const [k, v] of [['--r-card', st.card], ['--r-col', st.col], ['--r-modal', st.modal], ['--r-ctl', st.ctl], ['--bw', st.bw]]) r.style.setProperty(k, `${v}px`);
     r.style.setProperty('--col-alpha', `${st.colAlpha}%`);
     r.style.setProperty('--title-w', st.titleW);
-    if (st.grain) r.style.setProperty('--grain', st.grain);
     if (st.font) r.style.setProperty('--font', `${st.font}, system-ui, -apple-system, 'Segoe UI', sans-serif`); else r.style.removeProperty('--font');
     if (st.display) r.style.setProperty('--display', `${st.display}, var(--font)`); else r.style.removeProperty('--display');
     Object.assign(r.dataset, {
-      theme: settings.theme in THEMES ? settings.theme : BASE_THEME, mode: t.mode, glow: t.glow ? '1' : '',
+      theme: themeKey(), mode: t.mode,
       shadow: st.shadow, typeind: st.typeInd, chips: st.chips, heads: st.heads, avatar: st.avatar,
-      tape: pick('tape'), cards: pick('cards'), attn: pick('attn'), enter: pick('enter'), lanes: pick('lanes'), bg: pick('bg'), md: pick('md'), avstyle: pick('avStyle'), drop: pick('drop'), groups: pick('groups'), toast: pick('toast'),
-      density: settings.density,
+      tape: st.tape, cards: st.cards, attn: st.attn, enter: st.enter, lanes: st.lanes, md: st.md, avstyle: st.avStyle, drop: st.drop, groups: st.groups, toast: st.toast,
     });
-    r.style.setProperty('--fx-k', fxk(r.dataset.bg, t.mode));
-    const texture = settings.texture === 'theme' || settings.texture == null ? st.texture : settings.texture === 'on' || settings.texture === true;
-    r.classList.toggle('no-texture', !texture);
     r.classList.toggle('reduced', reduced());
     r.style.setProperty('--colw', `${settings.colw}px`);
-    const corner = st.corner ?? 0;
-    r.style.setProperty('--corner', `${corner}px`);
-    r.dataset.avatars = st.avatars;
-    r.dataset.colcolor = st.colColor;
     let css = $('#theme-css');
     if (!css) { css = document.createElement('style'); css.id = 'theme-css'; document.head.append(css); }
     css.textContent = t.css ? `:root[data-theme="${r.dataset.theme}"] { } ${t.css.replace(/(^|\})\s*([^{}]+)\{/g, (m, b, sel) => `${b} ${sel.split(',').map((x) => `:root[data-theme="${r.dataset.theme}"] ${x.trim()}`).join(', ')} {`)}` : '';
     let meta = $('meta[name="theme-color"]');
     if (!meta) { meta = document.createElement('meta'); meta.name = 'theme-color'; document.head.append(meta); }
     meta.content = t.vars.bg;
-    stars.sync(); art.sync();
+    const tb = $('#themeBtn');
+    if (tb) tb.innerHTML = icon(t.mode === 'dark' ? 'sun' : 'moon');
   }
   function switchTheme(name, x = innerWidth / 2, y = 0, after = null) {
     const apply = () => { settings.theme = name; saveSettings(); after?.(); };
@@ -267,8 +226,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   }
 
   /* ─── at rest: the board is in the background (another window has focus, or the tab is hidden) or nobody has
-     touched it for a minute. Every animation that loops forever (the drifting backgrounds, pulsing dots, spinning
-     rings, the starfield) stands still, so the graphics card has nothing to redraw; one-off animations (a toast, a
+     touched it for a minute. Every animation that loops forever (pulsing dots, spinning rings) stands still, so the graphics card has nothing to redraw; one-off animations (a toast, a
      card arriving) still play. The next touch, key or focus brings the movement back. ─── */
   const rest = (() => {
     const AFTER_MS = 60_000;
@@ -306,255 +264,21 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     };
   })();
 
-  /* ─── starfield (canvas) ─── */
-  const stars = (() => {
-    let cv = null;
-    let ctx = null;
-    let pts = [];
-    let raf = 0;
-    let cols = ['#fff', '#fff', '#fff'];
-    let mx = 0;
-    let my = 0;
-    let last = 0;
-    const seed = () => {
-      const n = Math.min(280, Math.round((innerWidth * innerHeight) / 6500));
-      pts = Array.from({ length: n }, () => ({ x: Math.random() * innerWidth, y: Math.random() * innerHeight, z: Math.random() ** 1.7 * 0.9 + 0.1, t: Math.random() * 6.28, c: Math.random() < 0.2 }));
-    };
-    const resize = () => {
-      if (!cv) return;
-      const d = devicePixelRatio || 1;
-      cv.width = innerWidth * d; cv.height = innerHeight * d;
-      ctx.setTransform(d, 0, 0, d, 0, 0);
-      seed();
-      if (!raf) frame();
-    };
-    // Capped at 30 fps (a slow drift loses nothing, and it halves the cost; a quarter on 120 Hz screens).
-    // Steps are scaled by the time elapsed, in 60 fps units, so the speed is the same at any refresh rate.
-    const frame = (now = performance.now()) => {
-      raf = 0;
-      if (!cv) return;
-      const move = !reduced() && !document.hidden && !document.documentElement.hasAttribute('data-rest');
-      if (move && last && now - last < 1000 / 30 - 2) { raf = requestAnimationFrame(frame); return; }
-      const k = move && last ? Math.min(4, (now - last) / (1000 / 60)) : 0;
-      last = move ? now : 0;
-      ctx.clearRect(0, 0, innerWidth, innerHeight);
-      const light = document.documentElement.dataset.mode === 'light';
-      for (const p of pts) {
-        if (move) {
-          p.y -= p.z * 0.14 * k; p.x += p.z * 0.05 * k; p.t += 0.025 * p.z * k;
-          if (p.y < -4) { p.y = innerHeight + 4; p.x = Math.random() * innerWidth; }
-          if (p.x > innerWidth + 4) p.x = -4;
-        }
-        ctx.globalAlpha = (0.3 + 0.7 * (0.5 + 0.5 * Math.sin(p.t))) * p.z * (light ? 0.55 : 0.95);
-        ctx.fillStyle = p.c ? (p.z > 0.55 ? cols[1] : cols[2]) : cols[0];
-        ctx.beginPath();
-        ctx.arc(p.x + mx * p.z * 16, p.y + my * p.z * 16, p.z * 1.7, 0, 6.283);
-        ctx.fill();
-      }
-      if (move && document.documentElement.dataset.bg === 'stars') raf = requestAnimationFrame(frame); else last = 0;
-    };
-    addEventListener('resize', resize);
-    addEventListener('pointermove', (e) => { mx = e.clientX / innerWidth - 0.5; my = e.clientY / innerHeight - 0.5; });
-    const wake = () => { if (!document.hidden && document.documentElement.dataset.bg === 'stars' && !raf) frame(); };
-    document.addEventListener('visibilitychange', wake);
-    document.addEventListener('intellagent:wake', wake);
-    return {
-      sync() {
-        const on = document.documentElement.dataset.bg === 'stars';
-        if (!cv) { cv = document.getElementById('stars'); if (!cv) return; ctx = cv.getContext('2d'); }
-        if (!on) { cancelAnimationFrame(raf); raf = 0; last = 0; ctx.clearRect(0, 0, cv.width, cv.height); return; }
-        const cs = getComputedStyle(document.documentElement);
-        cols = [cs.getPropertyValue('--text').trim(), cs.getPropertyValue('--accent').trim(), cs.getPropertyValue('--accent-2').trim()];
-        if (!pts.length) resize();
-        cancelAnimationFrame(raf); raf = 0; frame();
-      },
-    };
-  })();
-
-  /* ─── generated art: topo · squiggles · doodles · confetti · halftone ───
-     Drawn once per theme/size onto one canvas, never tiled: a seeded noise field decides where marks
-     cluster and where the board gets quiet, so nothing reads as wallpaper. Motion is a slow compositor drift (CSS). */
-  const art = (() => {
-    const KINDS = ['topo', 'squiggles', 'doodles', 'confetti', 'halftone'];
-    const M = 60; // canvas overhang each side, room for the drift
-    const hash = (x, y, s) => { let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(s, 1274126177)) | 0; h = Math.imul(h ^ (h >>> 13), 1103515245); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
-    const vn = (x, y, s) => {
-      const xi = Math.floor(x), yi = Math.floor(y), u0 = x - xi, v0 = y - yi;
-      const u = u0 * u0 * u0 * (u0 * (u0 * 6 - 15) + 10), v = v0 * v0 * v0 * (v0 * (v0 * 6 - 15) + 10);
-      const a = hash(xi, yi, s), b = hash(xi + 1, yi, s), c = hash(xi, yi + 1, s), d = hash(xi + 1, yi + 1, s);
-      return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
-    };
-    const fbm = (x, y, s, o = 3) => { // octaves rotated ~37° so the lattice never shows
-      let t = 0, a = 0.5, n = 0;
-      for (let i = 0; i < o; i++) { t += a * vn(x, y, s + i * 31); n += a; [x, y] = [(x * 0.8 - y * 0.6) * 2.02, (x * 0.6 + y * 0.8) * 2.02]; a *= 0.5; }
-      return t / n;
-    };
-    const rng = (s) => () => { s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-    const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-    const pickW = (r, list) => { let x = r() * list.reduce((n, [, w]) => n + w, 0); for (const [v, w] of list) if ((x -= w) <= 0) return v; return list[0][0]; };
-
-    // contour lines of a domain-warped noise field; every fifth line is an index contour
-    function topo(ctx, W, H, k, c) {
-      const cell = 6 * Math.max(0.6, k), nx = Math.ceil(W / cell) + 1, ny = Math.ceil(H / cell) + 1, f = new Float32Array(nx * ny), sc = 1 / (500 * k);
-      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-        const x = i * cell * sc, y = j * cell * sc;
-        f[j * nx + i] = fbm(x + 0.9 * fbm(x + 3.1, y + 7.7, 5, 2), y + 0.9 * fbm(x + 8.3, y + 1.9, 9, 2), 2, 4);
-      }
-      const step = 0.028, paths = [new Path2D(), new Path2D()];
-      const E = (e, x, y, a, b, cc, d, L) => { // edge crossing point: 0 top, 1 right, 2 bottom, 3 left
-        const t = (p, q) => (L - p) / (q - p);
-        return e === 0 ? [x + t(a, b) * cell, y] : e === 1 ? [x + cell, y + t(b, cc) * cell] : e === 2 ? [x + t(d, cc) * cell, y + cell] : [x, y + t(a, d) * cell];
-      };
-      const SEG = [[], [[3, 2]], [[2, 1]], [[3, 1]], [[0, 1]], [[3, 0], [2, 1]], [[0, 2]], [[3, 0]], [[3, 0]], [[0, 2]], [[0, 1], [3, 2]], [[0, 1]], [[3, 1]], [[2, 1]], [[3, 2]], []];
-      for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
-        const a = f[j * nx + i], b = f[j * nx + i + 1], cc = f[(j + 1) * nx + i + 1], d = f[(j + 1) * nx + i];
-        const lo = Math.ceil(Math.min(a, b, cc, d) / step), hi = Math.floor(Math.max(a, b, cc, d) / step);
-        for (let l = lo; l <= hi; l++) {
-          const L = l * step, idx = (a > L) << 3 | (b > L) << 2 | (cc > L) << 1 | (d > L);
-          for (const [e1, e2] of SEG[idx]) {
-            const p = E(e1, i * cell, j * cell, a, b, cc, d, L), q = E(e2, i * cell, j * cell, a, b, cc, d, L), P = paths[l % 5 === 0 ? 1 : 0];
-            P.moveTo(p[0], p[1]); P.lineTo(q[0], q[1]);
-          }
-        }
-      }
-      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      ctx.strokeStyle = c.accent; ctx.lineWidth = Math.max(0.7, 1 * k); ctx.stroke(paths[0]);
-      ctx.strokeStyle = c['topo-index'] || c['accent-2']; ctx.lineWidth = Math.max(1, 1.9 * k); ctx.stroke(paths[1]);
-    }
-
-    // two offset halftone screens (15° and 75°) whose dots swell where each colour pools
-    function halftone(ctx, W, H, k, c) {
-      const screen = (ang, col, cx, cy, seed) => {
-        const p = 13 * Math.max(0.55, k), ca = Math.cos(ang), sa = Math.sin(ang), R = Math.hypot(W, H);
-        ctx.fillStyle = col; ctx.beginPath();
-        for (let v = -R; v < R; v += p) for (let u = -R; u < R; u += p) {
-          const x = W / 2 + u * ca - v * sa, y = H / 2 + u * sa + v * ca;
-          if (x < -p || y < -p || x > W + p || y > H + p) continue;
-          const d = Math.hypot((x / W - cx) * 1.15, (y / H - cy) * 1.5);
-          const t = (1 - sstep(0, 0.8, d)) * (0.5 + 0.9 * fbm(x / (260 * k), y / (260 * k), seed, 2)) - 0.06;
-          const r = p * 0.5 * Math.sqrt(Math.max(0, Math.min(0.8, t)));
-          if (r > 0.45) { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 6.2832); }
-        }
-        ctx.fill();
-      };
-      screen(0.26, c.accent, 0.92, 0.02, 3);
-      screen(1.31, c['accent-2'], 0.06, 1.02, 8);
-    }
-
-    // marks for the scattered kinds, drawn in a unit box around the origin
-    const wave = (n, amp) => { const p = []; for (let i = 0; i <= 48; i++) { const t = i / 48; p.push([-1 + 2 * t, amp * Math.sin(t * Math.PI * 2 * n)]); } return p; };
-    const coil = () => { const p = []; for (let i = 0; i <= 90; i++) { const t = i / 90; p.push([-0.95 + 1.9 * t - 0.2 * Math.sin(t * Math.PI * 9), 0.2 * Math.cos(t * Math.PI * 9)]); } return p; };
-    const ring = (r, n = 40, a0 = 0, a1 = 6.2832) => Array.from({ length: n + 1 }, (_, i) => { const a = a0 + (a1 - a0) * i / n; return [r * Math.cos(a), r * Math.sin(a)]; });
-    const line = (ctx, pts) => { ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke(); };
-    // hand-drawn: jitter the points, then run a smooth curve through their midpoints
-    const sketch = (ctx, pts, r, closed = false, j = 0.035) => {
-      const q = pts.map(([x, y]) => [x + (r() - 0.5) * 2 * j, y + (r() - 0.5) * 2 * j]);
-      if (closed) q.push(q[0], q[1]);
-      ctx.beginPath(); ctx.moveTo(q[0][0], q[0][1]);
-      for (let i = 1; i < q.length - 1; i++) ctx.quadraticCurveTo(q[i][0], q[i][1], (q[i][0] + q[i + 1][0]) / 2, (q[i][1] + q[i + 1][1]) / 2);
-      if (!closed) ctx.lineTo(q[q.length - 1][0], q[q.length - 1][1]);
-      ctx.stroke();
-    };
-    const dense = (pts, closed) => pts.flatMap((p, i) => { const q = pts[(i + 1) % pts.length]; return !closed && i === pts.length - 1 ? [p] : [p, [p[0] + (q[0] - p[0]) * 0.15, p[1] + (q[1] - p[1]) * 0.15], [p[0] + (q[0] - p[0]) * 0.85, p[1] + (q[1] - p[1]) * 0.85]]; }); // keeps corners from melting
-    const dot = (ctx, x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill(); };
-    const MEMPHIS = [
-      [(x) => line(x, wave(2.5, 0.22)), 4], [(x) => line(x, coil()), 2.5], [(x) => line(x, wave(3, 0.16).map(([a, b], i) => [a, i % 8 < 4 ? b : -b]).filter((_, i) => i % 4 === 0)), 2],
-      [(x) => line(x, ring(0.55, 30, Math.PI, 6.2832)), 1.4], [(x) => line(x, ring(0.32)), 1], [(x) => { dot(x, -0.42, 0.1, 0.1); dot(x, 0, -0.12, 0.1); dot(x, 0.42, 0.1, 0.1); }, 1],
-      [(x) => { line(x, [[-0.3, 0], [0.3, 0]]); line(x, [[0, -0.3], [0, 0.3]]); }, 1], [(x) => { for (const o of [-0.26, 0, 0.26]) line(x, [[-0.5, o - 0.15], [0.5, o + 0.15]]); }, 1],
-    ];
-    const star = (n, R, r0) => Array.from({ length: n * 2 }, (_, i) => { const a = -Math.PI / 2 + i * Math.PI / n, q = i % 2 ? r0 : R; return [q * Math.cos(a), q * Math.sin(a)]; });
-    const DOODLES = [
-      [(x, r) => sketch(x, [[-0.5, 0.02], [-0.32, 0.2], [-0.14, 0.38], [0.2, -0.05], [0.55, -0.45]], r), 2], // check
-      [(x, r) => sketch(x, dense(star(5, 0.6, 0.26), true), r, true, 0.025), 1.6],
-      [(x, r) => { x.beginPath(); x.moveTo(0, -0.62); for (const [a, b, cx, cy] of [[0.55, 0, 0.08, -0.08], [0, 0.62, 0.08, 0.08], [-0.55, 0, -0.08, 0.08], [0, -0.62, -0.08, -0.08]]) x.quadraticCurveTo(cx, cy, a, b); x.stroke(); }, 2], // sparkle
-      [(x, r) => sketch(x, Array.from({ length: 34 }, (_, i) => { const a = i * 0.42, q = 0.04 + i * 0.016; return [q * Math.cos(a), q * Math.sin(a)]; }), r, false, 0.015), 1.3], // spiral
-      [(x, r) => { sketch(x, [[-0.6, 0.35], [-0.2, 0.42], [0.15, 0.1], [0.5, -0.3]], r); sketch(x, [[0.18, -0.32], [0.5, -0.3], [0.46, 0.02]], r, false, 0.02); }, 1.6], // arrow
-      [(x, r) => sketch(x, Array.from({ length: 24 }, (_, i) => { const t = i / 24 * 6.2832; return [0.036 * 16 * Math.sin(t) ** 3, -0.036 * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) - 0.05]; }), r, true, 0.02), 1.2], // heart
-      [(x, r) => { sketch(x, dense([[-0.5, -0.38], [0.5, -0.38], [0.52, 0.38], [-0.5, 0.38]], true), r, true, 0.025); sketch(x, [[-0.3, -0.12], [0.28, -0.12]], r, false, 0.02); sketch(x, [[-0.3, 0.1], [0.08, 0.1]], r, false, 0.02); }, 1.4], // card
-      [(x, r) => sketch(x, dense([[0.12, -0.62], [-0.3, 0.06], [0.04, 0.04], [-0.12, 0.62], [0.36, -0.12], [0.02, -0.1], [0.12, -0.62]]), r, false, 0.015), 1.2], // bolt
-      [(x, r) => { sketch(x, dense([[-0.55, -0.4], [0.55, -0.42], [0.55, 0.22], [-0.05, 0.22], [-0.3, 0.48], [-0.28, 0.22], [-0.55, 0.22], [-0.55, -0.4]]), r, false, 0.02); }, 1.4], // speech bubble
-      [(x, r) => { sketch(x, ring(0.5, 14), r, true, 0.03); dot(x, -0.17, -0.1, 0.06); dot(x, 0.17, -0.1, 0.06); sketch(x, ring(0.27, 8, 0.5, 2.64).map(([a, b]) => [a, b + 0.02]), r, false, 0.015); }, 1], // smile
-      [(x, r) => { for (let i = 0; i < 4; i++) { const a = i * Math.PI / 4; sketch(x, [[-0.45 * Math.cos(a), -0.45 * Math.sin(a)], [0.45 * Math.cos(a), 0.45 * Math.sin(a)]], r, false, 0.02); } }, 1], // asterisk
-    ];
-    const CONFETTI = [
-      [(x) => { x.beginPath(); x.roundRect(-0.55, -0.2, 1.1, 0.4, 0.08); x.fill(); }, 4], [(x) => dot(x, 0, 0, 0.32), 2.2],
-      [(x) => { x.beginPath(); x.moveTo(0, -0.42); x.lineTo(0.4, 0.3); x.lineTo(-0.4, 0.3); x.closePath(); x.fill(); }, 1.6],
-      [(x) => { x.lineWidth = 0.2; line(x, wave(1.5, 0.18).map(([a, b]) => [a * 0.6, b])); }, 1.8], [(x) => { x.fillRect(-0.28, -0.28, 0.56, 0.56); }, 1],
-    ];
-    const KIND = { // marks, size px, spacing ×size, stroke px, colour weights, foreshorten
-      squiggles: { marks: MEMPHIS, size: [30, 50], gap: 2.6, lw: 2.2, cols: [['accent', 5], ['accent-2', 4], ['spike', 1.4]] },
-      doodles: { marks: DOODLES, size: [28, 42], gap: 2.35, lw: 1.9, cols: [['accent', 5], ['accent-2', 4]] },
-      confetti: { marks: CONFETTI, size: [12, 21], gap: 3, lw: 0, cols: [['accent', 4], ['accent-2', 3.6], ['spike', 2.6], ['issue', 1.6]], fore: true },
-    };
-    function scatter(ctx, W, H, k, c, kind) {
-      const K = KIND[kind], r = rng(kind.length * 977 + 13), placed = [], cellSz = 70 * k, grid = new Map();
-      const near = (x, y, rad) => {
-        const gx = Math.floor(x / cellSz), gy = Math.floor(y / cellSz);
-        for (let a = gx - 1; a <= gx + 1; a++) for (let b = gy - 1; b <= gy + 1; b++) for (const p of grid.get(a + ',' + b) || []) if (Math.hypot(p[0] - x, p[1] - y) < (p[2] + rad)) return true;
-        return false;
-      };
-      const tries = Math.round((W * H) / ((k < 1 ? 120 : 900) * k * k));
-      for (let n = 0; n < tries; n++) {
-        const x = r() * W, y = r() * H, s = (K.size[0] + r() * (K.size[1] - K.size[0])) * k;
-        // clusters and calm patches: low-frequency noise gates the density
-        if (k >= 1 && r() > 0.04 + 0.96 * sstep(0.47, 0.62, fbm(x / (460 * k), y / (460 * k), kind.length, 2))) continue;
-        const rad = s * K.gap * (k < 1 ? 0.36 : 0.5);
-        if (near(x, y, rad)) continue;
-        const key = Math.floor(x / cellSz) + ',' + Math.floor(y / cellSz);
-        (grid.get(key) || grid.set(key, []).get(key)).push([x, y, rad]);
-        placed.push([x, y, s]);
-      }
-      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      for (const [x, y, s] of placed) {
-        const mark = pickW(r, K.marks), col = c[pickW(r, K.cols)];
-        ctx.save(); ctx.translate(x, y); ctx.rotate((r() - 0.5) * (kind === 'doodles' ? 0.9 : 6.2832));
-        if (K.fore) ctx.scale(0.35 + 0.65 * r(), 1);
-        ctx.scale(s, s);
-        ctx.strokeStyle = ctx.fillStyle = col; ctx.lineWidth = (K.lw * Math.max(0.75, k)) / s;
-        ctx.globalAlpha = K.fore ? 0.6 + 0.4 * r() : 1;
-        mark(ctx, r);
-        ctx.restore();
-      }
-    }
-    const paint = (ctx, W, H, kind, c, k) => (kind === 'topo' ? topo : kind === 'halftone' ? halftone : scatter)(ctx, W, H, k, c, kind);
-
-    let cv = null, key = '', timer = 0;
-    const tiles = new Map();
-    const vars = () => (THEMES[settings.theme] || THEMES[BASE_THEME]).vars;
-    function sync() {
-      const kind = document.documentElement.dataset.bg;
-      cv ||= document.getElementById('art');
-      if (!cv) return;
-      if (!KINDS.includes(kind)) { if (key) { cv.width = cv.height = 0; key = ''; } return; }
-      const d = Math.min(2, devicePixelRatio || 1), W = innerWidth + 2 * M, H = innerHeight + 2 * M, k2 = [kind, settings.theme, W, H, d].join();
-      if (k2 === key) return;
-      key = k2;
-      cv.width = Math.round(W * d); cv.height = Math.round(H * d);
-      const ctx = cv.getContext('2d');
-      ctx.setTransform(d, 0, 0, d, 0, 0);
-      paint(ctx, W, H, kind, vars(), 1);
-    }
-    addEventListener('resize', () => { clearTimeout(timer); timer = setTimeout(sync, 250); });
-    return {
-      sync,
-      // Settings tile: the same generator at a smaller scale (no calm patches), a little stronger than on the board
-      tile(kind) {
-        if (!KINDS.includes(kind)) return '';
-        const v = vars(), id = kind + settings.theme;
-        if (!tiles.has(id)) {
-          const W = 200, H = 80, c = document.createElement('canvas'), o = document.createElement('canvas');
-          c.width = o.width = W * 2; c.height = o.height = H * 2;
-          const g = o.getContext('2d'); g.scale(2, 2); paint(g, W, H, kind, v, kind === 'topo' || kind === 'halftone' ? 0.5 : 0.6);
-          const x = c.getContext('2d'); x.globalAlpha = Math.min(1, parseFloat(v['fx-o']) * fxk(kind, (THEMES[settings.theme] || THEMES[BASE_THEME]).mode) * 1.8); x.drawImage(o, 0, 0);
-          tiles.set(id, c.toDataURL());
-        }
-        return `background: url(${tiles.get(id)}) center / cover, var(--bg)`;
-      },
-    };
-  })();
   /* ═════════════════════════ state + api ═════════════════════════ */
 
+  // a thin bar along the top while any request takes longer than a moment (a slow load, a save)
+  let busyN = 0, busyT = null;
+  const busy = (d) => {
+    busyN += d;
+    clearTimeout(busyT);
+    if (busyN > 0) busyT = setTimeout(() => document.documentElement.classList.add('busy'), 300);
+    else document.documentElement.classList.remove('busy');
+  };
   async function api(method, url, body) {
+    busy(1);
+    try { return await call(method, url, body); } finally { busy(-1); }
+  }
+  async function call(method, url, body) {
     const res = await fetch(url, {
       method,
       headers: {
@@ -570,6 +294,12 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     if (!res.ok) { const e = new Error(data?.error || res.statusText); e.status = res.status; e.data = data; throw e; }
     return data;
   }
+  // Deployments (public/js/deploy.js): made here, before any event can arrive for it
+  const deployments = createDeployments({ api, toast, openDrawer, rel, nameOf, menu, isOpen: () => !!$('#deployDrawer'), openGrant: (key) => openPermGrid(null, key) });
+  // Rules (public/js/rules.js)
+  // the If's dropdowns offer the people on the board and the card looks' names
+  const rules = createRules({ api, toast, openDrawer, rel, nameOf, isOpen: () => Object.values(RULE_VIEWS).some(([id]) => document.getElementById(id)), board: () => state.board,
+    people: () => knownPeople() });
   const B = (p = '') => `/api/boards/${encodeURIComponent(state.boardId)}${p}`;
   const I = (id, p = '') => B(`/items/${encodeURIComponent(id)}${p}`);
   const colById = (id) => state.board?.columns.find((c) => c.id === id);
@@ -595,6 +325,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const boardChanged = state.boardId !== data.board.id;
     state.boardId = data.board.id;
     state.board = data.board;
+    $('#board .boot-sk')?.remove(); // the first load's skeleton (index.html)
     state.hash = data.hash;
     state.seq = data.seq;
     loadMetrics(boardChanged);
@@ -602,7 +333,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     state.archivedCount = data.archivedCount;
     Object.assign(state.app, data.app);
     if (state.focusId && !viewFocus()) { state.focusId = null; toast('That focus board was retired — showing the full board', { icon: 'target' }); }
-    if (location.hash !== boardHash()) history.replaceState(null, '', boardHash());
+    if (state.section === 'board' && location.hash !== boardHash()) history.replaceState(null, '', boardHash());
     renderHeader();
     render();
     state.modal?.refresh();
@@ -660,7 +391,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   function closeMenus() { $$('.menu').forEach((m) => { m._onClose?.(); m.remove(); }); }
 
   // A positioned popover list. Items: { label, value?, icon?, color?, avatar?, hint?, cls?, disabled?, run? } or '-'.
-  function menu(anchor, items, { up = false, search = false, creatable = null, placeholder = 'Search…', onClose = null, keepOpen = false, width = null } = {}) {
+  function menu(anchor, items, { up = false, search = false, creatable = null, placeholder = 'Search…', onClose = null, keepOpen = false, width = null, wide = false } = {}) {
     const open = $('.menu');
     if (open && open._anchor === anchor) { closeMenus(); return null; }
     closeMenus();
@@ -673,7 +404,9 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const draw = () => {
       const q = (input?.value || '').trim().toLowerCase();
       list.innerHTML = '';
-      const vis = items.filter((it) => it === '-' ? !q : !q || String(it.label).toLowerCase().includes(q));
+      // every word of the search, in any order, in the label (or the item's own find text: a folder, say)
+      const words = q.split(/\s+/).filter(Boolean);
+      const vis = items.filter((it) => it === '-' ? !q : words.every((w) => String(it.find || it.label).toLowerCase().includes(w)));
       for (const it of vis) {
         if (it === '-') { list.append(el('<hr>')); continue; }
         const lead = it.avatar ? avatar(it.avatar) : it.color ? `<span class="sw" style="--c:${esc(it.color)}"></span>` : it.icon ? icon(it.icon) : '';
@@ -699,6 +432,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     draw();
     document.body.append(m);
     if (width) m.style.width = `${width}px`;
+    if (wide) m.classList.add('wide'); // long items, two lines each: past the usual 320px
     const place = () => {
       const r = anchor.getBoundingClientRect();
       const mr = m.getBoundingClientRect();
@@ -776,19 +510,26 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
 
   function buildChrome() {
     $('#topbar').innerHTML = `
-      <div class="brand"><span class="logo" title="Next theme|Click to cycle through themes">${LOGO}</span><span class="app-name" id="appName"></span></div>
-      <button class="pill-btn board-btn" id="boardBtn"><span id="boardName"></span>${icon('chev', 'sm')}</button>
-      <label class="search">${icon('search')}<input id="search" placeholder="Filter" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
+      <nav class="sections" id="sections" aria-label="Sections">${SECTIONS.map(([k, label, ic]) => `<a class="sec-btn" href="${k === 'board' ? '#/' : `#/@${k}`}" data-section="${k}" title="${esc(label)}">${icon(ic, 'sm')}<span>${esc(label)}</span></a>`).join('')}</nav>
+      <button class="pill-btn board-btn board-only" id="boardBtn"><span id="boardName"></span>${icon('chev', 'sm')}</button>
+      <button class="pill-btn icon-btn board-only" id="boardSettingsBtn" title="Board settings|How this board looks and works: cards, columns, fields and templates">${icon('sliders')}</button>
+      <label class="search board-only">${icon('search')}<input id="search" placeholder="Filter" autocomplete="off" spellcheck="false"><kbd>/</kbd></label>
       <span class="grow"></span>
-      <button class="pill-btn master-btn" id="masterBtn" hidden></button>
-      <button class="pill-btn needs-btn" id="needsBtn" title="Needs you|Tickets where an agent is waiting for your answer" hidden>${icon('ask')}<span id="needsCount"></span></button>
-      <button class="pill-btn idle-btn" id="idleBtn" aria-haspopup="menu" hidden></button>
-      <button class="pill-btn catch-btn" id="catchBtn" title="While you were away|Tickets agents changed since you last looked" hidden>${icon('sparkle')}<span id="catchCount"></span></button>
+      <button class="pill-btn master-btn board-only" id="masterBtn" hidden></button>
+      <button class="pill-btn needs-btn board-only" id="needsBtn" title="Needs you|Tickets where an agent is waiting for your answer" hidden>${icon('ask')}<span id="needsCount"></span></button>
+      <button class="pill-btn idle-btn board-only" id="idleBtn" aria-haspopup="menu" hidden></button>
+      <button class="pill-btn catch-btn board-only" id="catchBtn" title="While you were away|Tickets agents changed since you last looked" hidden>${icon('sparkle')}<span id="catchCount"></span></button>
       <div class="awake" id="awake" role="group" aria-label="Awake agents"></div>
-      <label class="search ask-field" id="askField" title="Ask an agent|Plan work, create tickets, explain a blocker — anything not tied to one ticket · A"><span class="ask-av" id="askAv"></span><input id="askIn" readonly autocomplete="off" aria-haspopup="dialog" aria-label="Ask an agent"><kbd>A</kbd><i class="ask-dot" hidden></i></label>
-      <button class="pill-btn hub-btn agents-btn" id="hubBtn" data-tip="Agents & inbox|Your inbox, the digest, agents, context and board rules, flow and the archive"><span class="stack-av" id="agentAvs"></span><span id="agentCount"></span><span class="awake-n" id="awakeN" hidden></span><span class="badge" hidden></span><span class="dot" hidden></span></button>
-      <button class="pill-btn icon-btn" id="bulkBtn" title="Select|Pick several tickets to move, re-prioritise or archive">${icon('checks')}</button>
-      <button class="pill-btn icon-btn" id="settingsBtn" title="Settings|Themes, card contents, ticket fields and alerts">${icon('sliders')}</button>`;
+      <button class="pill-btn icon-btn board-only" id="archiveBtn" title="Archive|Archived tickets: search them and bring one back">${icon('archive')}</button>
+      <button class="pill-btn icon-btn board-only" id="bulkBtn" title="Select|Pick several tickets to move, re-prioritise or archive">${icon('checks')}</button>
+      <button class="pill-btn icon-btn" id="themeBtn" title="Light or dark|Switch between Clear and Clear Dark"></button>`;
+    // sections are links (open in a new tab works); a plain click switches here without reloading
+    $('#sections').onclick = (e) => {
+      const a = e.target.closest('[data-section]');
+      if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
+      e.preventDefault();
+      if (a.dataset.section !== state.section) goSection(a.dataset.section); // the section already open stays as it is
+    };
     $('#boardBtn').onclick = (e) => boardMenu(e.currentTarget);
     $('#search').oninput = (e) => { state.query = e.target.value; applyFilter(); };
     $('#masterBtn').onclick = (e) => masterMenu(e.currentTarget);
@@ -796,20 +537,17 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
 
     $('#idleBtn').onclick = (e) => idleMenu(e.currentTarget);
     $('#catchBtn').onclick = openCatchup;
+    $('#archiveBtn').onclick = () => openArchive();
     $('#awake').onclick = (e) => { const b = e.target.closest('[data-wake]'); if (b) openAgents(b.dataset.wake); };
     // keyboard focus shows the same tooltip as hover
     $('#awake').addEventListener('focusin', (e) => { const b = e.target.closest('[data-wake]'); if (b?.matches(':focus-visible')) focusTip(b); });
     $('#awake').addEventListener('focusout', hideTip);
-    wireAskField();
     // Opens on whatever it is signalling: unread inbox, then a new digest entry, else the agents list
     // (asking an agent has its own field right beside it).
-    $('#hubBtn').onclick = () => (state.inbox.some(isUnread) ? openInbox() : !$('#hubBtn .dot').hidden ? openDigest() : openAgents());
     $('#bulkBtn').onclick = () => setBulk(!state.bulk);
-    $('#settingsBtn').onclick = () => openSettings();
-    $('.logo').onclick = (e) => {
-      const keys = Object.keys(THEMES);
-      switchTheme(keys[(keys.indexOf(settings.theme) + 1) % keys.length], e.clientX, e.clientY);
-    };
+    $('#boardSettingsBtn').onclick = () => openSettings();
+    $('#themeBtn').innerHTML = icon(THEMES[themeKey()].mode === 'dark' ? 'sun' : 'moon');
+    $('#themeBtn').onclick = (e) => switchTheme(themeKey() === 'clear' ? 'clear-dark' : 'clear', e.clientX, e.clientY);
     $('#board').addEventListener('scroll', updateOverflow, { passive: true });
     addEventListener('resize', updateOverflow);
   }
@@ -1026,12 +764,16 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     // Align the header with the column group, so the logo and the last button line up with the outer columns.
     const cols = $$('.column', b);
     const r = document.documentElement.style;
-    if (!cols.length || ov.length || innerWidth < 640) { r.removeProperty('--frame-l'); r.removeProperty('--frame-r'); return; }
+    if (!cols.length) return; // not loaded yet: keep the frame we started with
+    if (ov.length || innerWidth < 640) { r.removeProperty('--frame-l'); r.removeProperty('--frame-r'); return; }
     const first = cols[0].getBoundingClientRect();
     const last = cols[cols.length - 1].getBoundingClientRect();
     r.setProperty('--frame-l', `${Math.max(12, Math.round(first.left))}px`);
     r.setProperty('--frame-r', `${Math.max(12, Math.round(innerWidth - last.right))}px`);
+    frameStore.save({ cols: cols.length });
   }
+  // how many columns the board had last time: on the next load the header starts where they will be, not at the edge
+  const frameStore = stored('intellagent.frame', null);
 
   // The idle-board alarm's human notice (INT-294/316): a header badge while it stands, with Resume for each agent
   // it found down. The server decides when it stands; this only reads it, so nothing polls.
@@ -1116,7 +858,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
 
   function renderHeader() {
     if (!state.board) return;
-    $('#appName').textContent = state.app.name;
     document.title = `${state.board.name} · ${state.app.name}`;
     $('#boardName').textContent = state.board.name;
     const needs = needsIds().length;
@@ -1129,8 +870,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       mb.innerHTML = `${icon('lock', 'sm')}${avatar({ kind: ms.kind === 'user' ? 'user' : 'agent', name: ms.holder })}<span class="ms">${esc(ms.status || 'holds the board')}</span>`;
       mb.dataset.tip = `Board held by ${ms.holder}|Working alone — other agents can only comment or ask${ms.expiresAt ? ` · until ${new Date(ms.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}. Click to release.`;
     }
-    const lastDigest = state.board.digest?.[state.board.digest.length - 1]?.ts || '';
-    $('#hubBtn .dot').hidden = !lastDigest || lastDigest <= (digestSeen[state.boardId] || '');
     $('#bulkBtn').classList.toggle('on', state.bulk);
     $('#boardName').textContent = viewFocus() ? `${state.board.name} › ${viewFocus().name}` : state.board.name;
     document.title = `${viewFocus() ? `${viewFocus().name} · ` : ''}${state.board.name} · ${state.app.name}`;
@@ -1138,24 +877,12 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     renderIdleBadge();
     renderCodeBar();
     renderPresenceButton();
-    renderAsk();
     $('#build').innerHTML = `<span class="live-dot ${state.live ? 'on' : ''}" title="${state.live ? 'Live' : 'Reconnecting'}"></span>
-      <span title="Build|Version · build · board hash — the hash changes on every board edit">v${esc(state.app.version || '')} · ${esc(state.app.build || '')} · ${esc((state.hash || '').slice(0, 8))}</span>`;
+      <button type="button" class="build-ver" data-about title="About|Version, build and alerts">v${esc(state.app.version || '')} · ${esc(state.app.build || '')} · ${esc((state.hash || '').slice(0, 8))}</button>`;
+    $('#build [data-about]').onclick = () => openSettings('about', { about: true });
   }
 
   function renderPresenceButton() {
-    const online = state.presence.filter((p) => p.online);
-    // Up to three faces for who's online (a bot glyph when nobody is), "+N" beyond that; the inbox count
-    // and the digest dot are drawn by renderInboxBtn / renderHeader. One summary in the tooltip.
-    const shown = online.length > 3 ? 2 : 3;
-    $('#agentAvs').innerHTML = online.length ? online.slice(0, shown).map((p) => avatar({ kind: 'agent', name: p.name })).join('') : icon('bot');
-    $('#agentCount').textContent = online.length > shown ? `+${online.length - shown}` : '';
-    const btn = $('#hubBtn');
-    const unread = state.inbox.filter(isUnread).length;
-    const bits = [online.length ? `${online.length} online: ${online.slice(0, 4).map((p) => p.name).join(', ')}${online.length > 4 ? '…' : ''}` : state.app.sandbox ? 'No agents online · agents do not run on a sandbox' : 'No agents online',
-      unread ? `${unread} unread in your inbox` : '', !$('.dot', btn).hidden ? 'new digest entry' : ''].filter(Boolean);
-    btn.dataset.tip = `Agents & inbox|${bits.join(' · ')}`;
-    btn.setAttribute('aria-label', `Agents and inbox — ${bits.join(', ')}`);
     renderAwake();
   }
 
@@ -1188,6 +915,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       for (const b of $$('.wk', box)) { const a = state.standing[b.dataset.wake]; if (a) b.dataset.tip = line(a); }
     }
     const n = $('#awakeN');
+    if (!n) return;
     n.hidden = !awake.length;
     n.textContent = awake.length || '';
     n.dataset.ring = awake.some((a) => a.status === 'failed') ? 'fail' : awake.some((a) => RING[a.status] === 'wait') ? 'wait' : 'run';
@@ -1272,10 +1000,13 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   const activeFocusBoard = () => focusBoards().find((f) => f.id === state.board?.activeFocus) || null;
   const inView = (id) => { const f = viewFocus(); return !f || f.itemIds.includes(id); };
   const withFocus = (body) => (state.focusId ? { ...body, focus: state.focusId } : body);
-  const boardHash = () => `#/${state.boardId}${state.focusId ? `/focus/${state.focusId}` : ''}`;
+  // no board loaded yet: the bare address, never #/null (which a reload would then try to open)
+  const boardHash = () => (state.boardId ? `#/${state.boardId}${state.focusId ? `/focus/${state.focusId}` : ''}` : '#/');
   function parseHash() {
     const m = /^#\/?([^/=]+)(?:\/focus\/([\w-]+))?/.exec(location.hash);
-    return { board: m ? decodeURIComponent(m[1]) : '', focus: m?.[2] || null };
+    const board = m ? decodeURIComponent(m[1]) : '';
+    // a board the server doesn't have (a stale or broken address, e.g. #/null) opens the default one instead
+    return { board: state.boards.some((b) => b.id === board) ? board : '', focus: m?.[2] || null };
   }
   function showFocus(id, { push = true } = {}) {
     if ((id || null) === state.focusId) return;
@@ -1532,12 +1263,12 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   // the back sheets borrow the front card's box), driven by transform only. Back cards keep their content
   // hidden while moving and reveal it once they are nearly in place; on close it goes first. The tray
   // grows/shrinks with the cards. Interrupting mid-way starts from wherever things are on screen.
-  const stackFaces = (c) => [...c.children].filter((x) => x.matches('.c-body, .tape, .c-ask, .c-check'));
+  const stackFaces = (c) => [...c.children].filter((x) => x.matches('.c-body, .c-ask, .c-check'));
   const stackLook = (g) => new Map([...$('.group-cards', g).children].map((c) => [c, { o: +getComputedStyle(c).opacity, f: +getComputedStyle($('.c-body', c) || c).opacity }]));
   function morphStack({ g, opening, was }, before) {
     const cards = [...$('.group-cards', g).children];
     const faces = stackFaces;
-    for (const c of cards) for (const x of [c, ...faces(c), $('.g-bg', g)]) for (const an of x.getAnimations()) if (an.id === 'morph') an.cancel();
+    for (const c of cards) for (const x of [c, ...faces(c)]) for (const an of x.getAnimations()) if (an.id === 'morph') an.cancel();
     const ends = cards.map((c) => c.getBoundingClientRect());
     const opts = (delay = 0, extra = {}) => ({ id: 'morph', duration: MORPH_MS, delay, easing: EASE_IO, fill: 'backwards', ...extra });
     const runs = [];
@@ -1563,12 +1294,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         for (const x of fs) x.animate(k, opts(delay, { easing: 'linear' }));
       }
     });
-    const ga = before.get(g)?.r;
-    if (ga) {
-      const dh = g.getBoundingClientRect().height - ga.height;
-      const bg = $('.g-bg', g), b0 = parseFloat(getComputedStyle(bg).bottom) || 0;
-      if (Math.abs(dh) > 1) bg.animate([{ bottom: `${b0 + dh}px` }, { bottom: `${b0}px` }], opts());
-    }
     // Hand the cards back to CSS only once their own trip is over (a later toggle takes over the token).
     const token = (g._morph = (g._morph || 0) + 1);
     Promise.allSettled(runs.map((x) => x.finished)).then(() => { if (g._morph === token) delete g.dataset.morph; });
@@ -1578,7 +1303,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   function fly(node, from, to) {
     const ghost = node.cloneNode(true);
     ghost.classList.add('drag-ghost');
-    ghost.classList.remove('flash', 'morph-src');
+    ghost.classList.remove('flash');
     Object.assign(ghost.style, { left: `${from.left}px`, top: `${from.top}px`, width: `${from.width}px`, height: `${from.height}px` });
     document.body.append(ghost);
     // Hide instantly: the card's CSS opacity transition would otherwise fade it out at its destination.
@@ -1708,7 +1433,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   function ensureGroup(key) {
     let g = groupEls.get(key);
     if (g) return g;
-    g = el(`<section class="group" data-key="${esc(key)}"><button class="group-head"><i class="tape"></i><span class="g-dot"></span><span class="g-name"></span><span class="g-count"></span><span class="grow"></span>${icon('chev', 'g-chev')}<span class="g-sum"></span></button><i class="g-bg"></i><div class="group-cards"></div></section>`);
+    g = el(`<section class="group" data-key="${esc(key)}"><button class="group-head"><span class="g-dot"></span><span class="g-name"></span><span class="g-count"></span><span class="grow"></span>${icon('chev', 'g-chev')}</button><div class="group-cards"></div></section>`);
     $('.group-head', g).onclick = () => toggleGroup(key);
     // dragging the header carries the whole group, open or closed; a plain click still folds or fans it (INT-272)
     $('.group-head', g).addEventListener('pointerdown', (e) => { if (e.button === 0 && g._ids?.length) armDrag(e, (start) => beginDrag(g, g._ids, start)); });
@@ -1725,22 +1450,10 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     g._ids = n.ids; // what a drag of this group carries
     $('.g-name', g).textContent = n.parent;
     $('.g-count', g).textContent = n.ids.length;
-    const cover = pick('groups') === 'cover';
-    const sum = cover ? groupSummary(n.ids.map((id) => state.board.items[id]).filter(Boolean)) : '';
-    const se = $('.g-sum', g);
-    if (se._html !== sum) { se.innerHTML = sum; se._html = sum; }
     const open = mode === 'stack' ? state.expanded.has(n.key) : !state.folded.has(n.key);
     const head = $('.group-head', g);
     head.setAttribute('aria-expanded', open);
     head.dataset.tip = `#${n.parent} · ${n.ids.length} tickets|${mode === 'stack' ? (open ? 'Click to stack them again' : 'Click to fan the stack out') : (open ? 'Click to fold' : 'Click to unfold')}`;
-  }
-  // The cover look's summary of a group: what kind of work, how urgent, who is on it, how far along.
-  function groupSummary(items) {
-    const types = ['task', 'issue', 'spike'].map((t) => [t, items.filter((it) => it.type === t).length]).filter(([, k]) => k);
-    const top = [...PRIORITIES].reverse().find((p) => items.some((it) => it.priority === p));
-    const ck = items.reduce((a, it) => { const c = checklist(it.description); return { done: a.done + c.done, total: a.total + c.total }; }, { done: 0, total: 0 });
-    const who = [...new Set(items.flatMap((it) => [activeLease(it)?.claimant, it.assignee]).filter(Boolean))];
-    return `${types.map(([t, k]) => `<span class="g-t" data-type="${t}">${icon(t, 'sm')}${k}</span>`).join('')}${top === 'High' || top === 'Critical' ? `<span class="prio" data-p="${top.toLowerCase()}">${top}</span>` : ''}<span class="grow"></span>${who.length ? `<span class="stack-av">${who.slice(0, 3).map((name) => avatar({ name })).join('')}</span>` : ''}${ck.total ? `<span class="g-ck">${icon('checks', 'sm')}${ck.done}/${ck.total}</span><span class="g-prog"><i style="width:${(ck.done / ck.total) * 100}%"></i></span>` : ''}`;
   }
   function toggleGroup(key) {
     const stack = settings.grouping === 'stack';
@@ -1758,7 +1471,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   function ensureCard(id) {
     let c = cardEls.get(id);
     if (c) return c;
-    c = el(`<article class="card" data-id="${esc(id)}" tabindex="0"><i class="tape"></i><div class="c-body"></div><span class="c-check">${icon('check')}</span><span class="c-ask" title="Needs you|An agent is waiting for your answer">?</span></article>`);
+    c = el(`<article class="card" data-id="${esc(id)}" tabindex="0"><div class="c-body"></div><span class="c-check">${icon('check')}</span><span class="c-ask" title="Needs you|An agent is waiting for your answer">?</span></article>`);
     c.addEventListener('pointerdown', onCardPointerDown);
     c.addEventListener('keydown', (e) => { if (e.key === 'Enter') openItem(id, c); });
     cardEls.set(id, c);
@@ -1771,9 +1484,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const blockers = openBlockers(it);
     const inGroup = !!c.closest('.group');
     c.dataset.type = it.type;
-    c.style.setProperty('--tilt', `${tilt(it.id)}deg`);
-    for (const kv of decoVars(it.id).split(';')) { const [k, v] = kv.split(':'); c.style.setProperty(k, v); }
-    c.dataset.slot = decoSlot(it.id);
     c.classList.toggle('needs', !!it.needsHuman);
     c.classList.toggle('focused', !state.focusId && focusBoards().some((f) => f.itemIds.includes(it.id)));
     c.classList.toggle('focus-active', !state.focusId && !!activeFocusBoard()?.itemIds.includes(it.id));
@@ -2279,38 +1989,9 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     document.body.append(lb);
   }
 
-  /* ═════════════════════════ scrims, shared-element morph ═════════════════════════ */
+  /* ═════════════════════════ scrims ═════════════════════════ */
 
-  function syncScrimmed() { document.body.classList.toggle('scrimmed', !!$('.scrim:not(.closing):not(.closing-morph)')); }
-
-  // Grow the modal out of the card: start at the card's exact rect, cross-fade a copy of the card away.
-  function morphOpen(modal, fromEl) {
-    if (reduced() || !fromEl?.isConnected) { modal.classList.add('pop'); return null; }
-    const r = fromEl.getBoundingClientRect();
-    if (!r.width || r.bottom < 0 || r.top > innerHeight) { modal.classList.add('pop'); return null; }
-    const mr = modal.getBoundingClientRect();
-    const sx = r.width / mr.width;
-    const sy = r.height / mr.height;
-    const ghost = fromEl.cloneNode(true);
-    ghost.classList.add('morph-ghost');
-    ghost.classList.remove('flash', 'landed', 'morph-src', 'selected');
-    Object.assign(ghost.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
-    document.body.append(ghost);
-    fromEl.classList.add('morph-src');
-    const dur = 280;
-    const ease = 'cubic-bezier(.2,.8,.2,1)';
-    modal.animate([
-      { transformOrigin: '0 0', transform: `translate(${r.left - mr.left}px, ${r.top - mr.top}px) scale(${sx}, ${sy})` },
-      { transformOrigin: '0 0', transform: 'none' },
-    ], { duration: dur, easing: ease });
-    for (const c of modal.children) c.animate([{ opacity: 0 }, { opacity: 0, offset: 0.25 }, { opacity: 1 }], { duration: dur, easing: 'ease-out' });
-    ghost.animate([
-      { transform: 'none', opacity: 1 },
-      { transform: `translate(${mr.left - r.left}px, ${mr.top - r.top}px) scale(${mr.width / r.width}, ${mr.height / r.height})`, opacity: 0, offset: 0.55 },
-      { transform: `translate(${mr.left - r.left}px, ${mr.top - r.top}px) scale(${mr.width / r.width}, ${mr.height / r.height})`, opacity: 0 },
-    ], { duration: dur, easing: ease }).onfinish = () => ghost.remove();
-    return fromEl;
-  }
+  function syncScrimmed() { document.body.classList.toggle('scrimmed', !!$('.scrim:not(.closing)')); }
 
   function closeModal(instant) {
     const m = state.modal;
@@ -2327,48 +2008,15 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const src = (m.kind === 'item' && cardEls.get(m.id)) || m.src;
     const finish = () => {
       m.root.remove();
-      for (const c of [m.src, src]) c?.classList.remove('morph-src', 'is-open');
+      for (const c of [m.src, src]) c?.classList.remove('is-open');
       syncScrimmed();
     };
-    const r = src?.isConnected ? src.getBoundingClientRect() : null;
-    const morph = m.enter === 'zoom' && !instant && !reduced() && r && r.width && r.bottom > 0 && r.top < innerHeight;
-    // A morph keeps the modal visible and only fades the scrim's tint; otherwise the whole scrim fades.
-    m.root.classList.add(morph ? 'closing-morph' : 'closing');
+    m.root.classList.add('closing');
     syncScrimmed();
     if (instant || reduced()) { finish(); return; }
-    if (morph) {
-      src.classList.add('morph-src');
-      const mr = m.modal.getBoundingClientRect();
-      const sx = r.width / mr.width;
-      const sy = r.height / mr.height;
-      const dur = 240;
-      const ease = 'cubic-bezier(.4,0,.2,1)';
-      for (const c of m.modal.children) c.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 90, fill: 'forwards' });
-      m.modal.animate([
-        { transformOrigin: '0 0', transform: 'none', opacity: 1 },
-        { transformOrigin: '0 0', transform: `translate(${r.left - mr.left}px, ${r.top - mr.top}px) scale(${sx}, ${sy})`, opacity: 1, offset: 0.85 },
-        { transformOrigin: '0 0', transform: `translate(${r.left - mr.left}px, ${r.top - mr.top}px) scale(${sx}, ${sy})`, opacity: 0 },
-      ], { duration: dur, easing: ease, fill: 'forwards' });
-      // The card itself fades in as the modal arrives, so the panel visibly "becomes" the stub.
-      const ghost = src.cloneNode(true);
-      ghost.classList.add('morph-ghost');
-      ghost.classList.remove('flash', 'landed', 'morph-src', 'selected');
-      Object.assign(ghost.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
-      document.body.append(ghost);
-      ghost.animate([
-        { transform: `translate(${mr.left - r.left}px, ${mr.top - r.top}px) scale(${1 / sx}, ${1 / sy})`, opacity: 0 },
-        { opacity: 0, offset: 0.35 },
-        { transform: 'none', opacity: 1 },
-      ], { duration: dur, easing: ease, fill: 'forwards' }).onfinish = () => {
-        finish();
-        ghost.remove();
-        src.classList.remove('landed'); void src.offsetWidth; src.classList.add('landed');
-      };
-    } else {
-      m.modal.classList.remove('entering');
-      m.modal.classList.add('leaving');
-      setTimeout(() => { finish(); if (src && m.kind === 'item') { src.classList.remove('landed'); void src.offsetWidth; src.classList.add('landed'); } }, 170);
-    }
+    m.modal.classList.remove('entering');
+    m.modal.classList.add('leaving');
+    setTimeout(() => { finish(); if (src && m.kind === 'item') { src.classList.remove('landed'); void src.offsetWidth; src.classList.add('landed'); } }, 170);
   }
 
   function pulseSaved() {
@@ -2424,9 +2072,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     syncScrimmed();
     const m = { kind: 'item', id, root, modal: $('.modal', root), item: got.item, archived: got.archived, rail, tab: 'comments', editingDesc: false, staged: [], draft: {}, baseVersion: null };
     state.modal = m;
-    m.enter = pick('enter');
-    if (m.enter === 'zoom') m.src = morphOpen(m.modal, fromEl);
-    else { m.modal.classList.add('entering'); m.src = fromEl?.isConnected ? fromEl : null; m.src?.classList.add('is-open'); }
+    m.modal.classList.add('entering'); m.src = fromEl?.isConnected ? fromEl : null; m.src?.classList.add('is-open');
     m.refresh = () => {
       if (m.rail) renderRail(m);
       const fresh = state.board.items[m.id];
@@ -2448,9 +2094,9 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       if (isDirty(m) && !pre?.force) { nudgeDraft(m); return; }
       const g = pre || await fetchItem(nid).catch(() => null);
       if (!g) return;
-      if (m.src) m.src.classList.remove('morph-src', 'is-open');
+      if (m.src) m.src.classList.remove('is-open');
       m.src = cardEls.get(nid) || null;
-      if (m.src && state.modal === m) m.src.classList.add(m.enter === 'zoom' ? 'morph-src' : 'is-open');
+      if (m.src && state.modal === m) m.src.classList.add('is-open');
       Object.assign(m, { id: nid, item: g.item, archived: g.archived, editingDesc: false, staged: [], tab: 'comments', draft: {}, baseVersion: null, unanswered: [], unansStamp: null });
       renderSaveBar(m);
       buildModalBody(m);
@@ -2494,7 +2140,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     syncScrimmed();
     const m = { kind: 'item', create: { columnId: colId, template: null }, id: 'NEW', root, modal: $('.modal', root), item: blankItem(colId), archived: false, rail: false, tab: 'comments', editingDesc: false, staged: [], draft: {}, baseVersion: 0 };
     state.modal = m;
-    m.enter = pick('enter');
     m.modal.classList.add('entering');
     m.refresh = () => { fillModal(m); renderSaveBar(m); };
     m.switchTo = async (nid) => { closeModal(true); openItem(nid); };
@@ -2809,7 +2454,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     if (!names.length) return;
     const stale = m.baseVersion != null && m.item.version > m.baseVersion;
     $('.txt', bar).innerHTML = `<b>${names.length} unsaved</b> · ${esc(names.join(', '))}${stale ? ' · <span class="stale">updated meanwhile</span>' : ''}`;
-    if (!was) bar.animate([{ opacity: 0, translate: '0 10px' }, { opacity: 1, translate: '0 0' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    if (!was) bar.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
   }
 
   function nudgeDraft(m) {
@@ -3771,7 +3416,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     try {
       const evs = await api('GET', I(m.id, '/history'));
       box.innerHTML = evs.length ? evs.slice().reverse().map((ev) => `<div class="act">${icon(eventIcon(ev.type), 'sm')}<div>${describe(ev, true)}</div><time title="${esc(ev.ts)}">${rel(ev.ts)}</time></div>`).join('')
-        : `<div class="empty-note">${icon('activity')}</div>`;
+        : `<div class="empty-note">${icon('activity')}<span>Nothing has happened on it yet</span></div>`;
     } catch { box.innerHTML = ''; }
   }
 
@@ -3812,6 +3457,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status', 'master.status', 'master.renewed', 'agent.status', 'agent.run.finished', 'reaction.added', 'reaction.removed']);
   function onEvent(ev) {
     if (ev.type === 'hello') return;
+    deployments.onEvent(ev);
+    rules.onEvent(ev);
     if (ev.type === 'item.typing') { // live only: no seq, no hash, nothing to refresh
       if (ev.board === state.boardId && ev.actor?.name && ev.actor.name !== settings.userName) setTyping(ev.itemId, ev.actor.name, true);
       return;
@@ -3820,7 +3467,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     if (ev.type === 'presence.changed' || (ev.type?.startsWith('lease.') && ev.type !== 'lease.status')) refreshPresence();
     if (ev.type === 'presence.changed') scheduleListeners();
     if (ev.type === 'item.created' && ev.itemId) freshUntil.set(ev.itemId, Date.now() + FRESH_MS);
-    if (ev.type?.startsWith('request.')) { $('#requestsDrawer .drawer-body')?._reload?.(); if (ev.board === state.boardId) reloadAsk(); }
+    if (ev.type?.startsWith('request.')) { $('#requestsDrawer .drawer-body')?._reload?.(); }
     if (/^(item\.moved|item\.archived|attention\.|review\.)/.test(ev.type || '')) loadMetrics();
     if (ev.type === 'permissions.changed') { rolesCache = null; $('#permsDrawer .drawer-body')?._reload?.(); }
     if (ev.type === 'permissions.changed' || ev.type === 'agent.managed' || ev.type === 'agents.changed') $('#gridDrawer .drawer-body')?._reload?.();
@@ -3853,8 +3500,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     if (ev.type === 'agents.changed' && !ev.error) return; // the add, save and remove toasts already say it; the drawer refreshes itself (INT-329)
     const important = ev.type === 'attention.raised' || (ev.type === 'comment.added' && ev.mentions?.some((n) => n.toLowerCase() === settings.userName.toLowerCase()));
     if ((ev.type === 'request.replied' || ev.type === 'request.done') && ev.actor?.kind === 'agent') {
-      if (askOpen() && ev.board === state.boardId) return; // the reply is landing in the open thread already
-      toast(describe(ev), { actor: ev.actor, onClick: () => (ev.board === state.boardId ? openAsk() : openRequests()), timeout: 6000 });
+      if ($('#requestsDrawer')) return; // the reply is landing in the open thread already
+      toast(describe(ev), { actor: ev.actor, onClick: () => openRequests(), timeout: 6000 });
       return;
     }
     if (ev.type === 'agent.failed') {
@@ -3902,23 +3549,81 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
 
   // Each page: [page id, label, icon, opener]. Sub-pages (an agent's profile, a run log) light up their parent.
   const HUB = [
-    ['requestsDrawer', 'Ask an agent', 'send', () => openRequests()],
-    ['inboxDrawer', 'Inbox', 'bell', () => openInbox()],
-    ['catchDrawer', 'While you were away', 'sparkle', () => openCatchup()],
-    ['digestDrawer', 'Digest', 'news', () => openDigest()],
-    ['agentsDrawer', 'Agents', 'bot', () => openAgents()],
-    ['permsDrawer', 'Permissions', 'lock', () => openPermissions()],
-    ['gridDrawer', 'Who holds what', 'sliders', () => openPermGrid()],
-    ['contextDrawer', 'Context', 'text', () => openContext()],
-    ['metricsDrawer', 'Flow', 'activity', () => openMetrics()],
-    ['analyticsDrawer', 'Analytics', 'layers', () => openAnalytics()],
     ['archiveDrawer', 'Archive', 'archive', () => openArchive()],
   ];
   const HUB_PARENT = { agentDrawer: 'agentsDrawer', runLogDrawer: 'agentsDrawer' };
 
+  /* ─── sections: Manager, Board, Agents, Deployments, Rules ─── */
+  // The board is one section of five. The Agents, Deployments and Rules views open as full pages in their section
+  // rather than in the hub: openDrawer sends them there under the same element ids, so the code that refreshes
+  // `#agentsDrawer .drawer-body` and the rest finds them wherever they are. Sections live at #/@<name>; a board's
+  // id never holds an @, so a board called "agents" keeps #/agents.
+  // Manager is set aside for now: #/@manager opens the board
+  const SECTIONS = [['board', 'Board', 'board'], ['agents', 'Agents', 'bot'], ['deployments', 'Integrations', 'link'], ['rules', 'Rules', 'zap']];
+  const PAGES = {
+    agents: [['agentsDrawer', 'Agents', 'bot', () => openAgents()], ['requestsDrawer', 'Ask an agent', 'send', () => openRequests()], ['inboxDrawer', 'Inbox', 'bell', () => openInbox()], ['catchDrawer', 'While you were away', 'sparkle', () => openCatchup()], ['digestDrawer', 'Digest', 'news', () => openDigest()], ['metricsDrawer', 'Flow', 'activity', () => openMetrics()], ['analyticsDrawer', 'Analytics', 'layers', () => openAnalytics()], ['contextDrawer', 'Context', 'text', () => openContext()], ['permsDrawer', 'Permissions', 'lock', () => openPermissions()], ['gridDrawer', 'Assignments', 'sliders', () => openPermGrid()]],
+    deployments: [['deployDrawer', 'Integrations', 'link', () => openDeployments()]],
+    rules: [[...RULE_VIEWS.mine, () => rules.open('mine')], [...RULE_VIEWS.log, () => rules.open('log')]],
+  };
+  const pageSection = (id) => Object.keys(PAGES).find((s) => PAGES[s].some(([pid]) => pid === (HUB_PARENT[id] || id))) || null;
+  const sectionHash = (s) => (s === 'board' ? boardHash() : `#/@${s}`);
+  const parseSection = () => /^#\/@(agents|deployments|rules)(?:$|[/?])/.exec(location.hash)?.[1] || 'board';
+  function setSection(s, { push = true } = {}) {
+    const was = state.section;
+    state.section = s;
+    document.body.dataset.section = s;
+    for (const b of $$('#sections [data-section]')) { const on = b.dataset.section === s; b.classList.toggle('on', on); b.toggleAttribute('aria-current', on); if (on) b.setAttribute('aria-current', 'page'); }
+    $('#page').hidden = s === 'board';
+    const h = sectionHash(s);
+    if (location.hash !== h) history[push ? 'pushState' : 'replaceState'](null, '', h);
+    if (was !== s && s === 'board' && state.board) render();
+    updateOverflow(); // off the board too: the header and the picker line up with its (unseen) columns
+  }
+  // A section opens on its first view (Agents: the agents), Manager on nothing yet
+  function goSection(s, { push = true } = {}) {
+    if (s === state.section && s !== 'board' && $('#page').childElementCount) return;
+    closeModal(true);
+    if (s === 'board' || s === 'manager') {
+      setSection(s, { push });
+      if (s === 'manager') $('#page').innerHTML = `<div class="page-empty">${icon('target')}<b>Manager</b><span>Nothing here yet.</span></div>`;
+      return;
+    }
+    state.sectionPush = push;
+    PAGES[s][0][3]();
+  }
+  // openDrawer for a view that lives in a section: that section's page, with its views beside it
+  function openPage(id, title, iconName) {
+    const section = pageSection(id);
+    closeModal(true);
+    setSection(section, { push: state.sectionPush ?? state.section !== section });
+    state.sectionPush = null;
+    const parent = HUB_PARENT[id] || id;
+    const views = PAGES[section];
+    let root = $('#page > .page-wrap');
+    if (root?.dataset.for !== section) {
+      $('#page').innerHTML = `<div class="page-wrap" data-for="${section}">${views.length > 1 ? `<nav class="page-nav" aria-label="${esc(SECTIONS.find(([k]) => k === section)[1])}">${views.map(([vid, label, ic]) => `<button type="button" data-view="${vid}">${icon(ic)}<span>${esc(label)}</span></button>`).join('')}</nav>` : ''}
+        <section class="page-pane"><header class="page-head"><button class="pill-btn icon-btn sm page-back" hidden title="Back">${icon('chev', 'back')}</button><span class="page-ic"></span><h1 class="page-title"></h1></header><div class="page-body"></div></section></div>`;
+      root = $('#page > .page-wrap');
+      // the view already showing stays as it is: a second click doesn't redraw it
+      for (const b of $$('[data-view]', root)) b.onclick = () => { if (!b.classList.contains('on')) views.find(([vid]) => vid === b.dataset.view)[3](); };
+      renderInboxBtn();
+      $('.page-back', root).onclick = () => views.find(([vid]) => vid === root._parent)?.[3]();
+    }
+    root._parent = parent;
+    for (const b of $$('[data-view]', root)) { const on = b.dataset.view === parent; b.classList.toggle('on', on); b.toggleAttribute('aria-current', on); if (on) b.setAttribute('aria-current', 'page'); }
+    $('.page-ic', root).innerHTML = icon(iconName);
+    $('.page-title', root).textContent = title;
+    $('.page-back', root).hidden = !HUB_PARENT[id];
+    $('.page-body', root).innerHTML = `<div class="hub-page" id="${id}"><div class="drawer-body"><div class="ent-list" aria-busy="true">${'<div class="ent sk" aria-hidden="true"><i></i><b></b><b class="s"></b></div>'.repeat(3)}</div></div></div>`;
+    $('#page').scrollTop = 0;
+    return $(`#${id} .drawer-body`, root);
+  }
+
   // Opens (or reuses) the hub on a page and returns that page's body element. Pages keep their old
-  // drawer ids, so code that looks for `#agentsDrawer .drawer-body` still finds them.
+  // drawer ids, so code that looks for `#agentsDrawer .drawer-body` still finds them. A view that lives in a
+  // section (Agents, Deployments) opens there instead.
   function openDrawer(id, title, iconName) {
+    if (pageSection(id)) return openPage(id, title, iconName);
     let m = state.modal?.kind === 'hub' ? state.modal : null;
     if (!m) {
       closeModal(true);
@@ -3945,7 +3650,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const pane = $('.hub-pane', m.root);
     pane.innerHTML = `<div class="hub-page" id="${id}"><div class="drawer-body"></div></div>`;
     pane.scrollTop = 0;
-    if (!reduced()) pane.animate([{ opacity: 0, translate: '0 6px' }, { opacity: 1, translate: '0 0' }], { duration: 240, easing: 'cubic-bezier(.22, 1, .36, 1)' });
+    if (!reduced()) pane.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'cubic-bezier(.22, 1, .36, 1)' });
     return $('.drawer-body', pane);
   }
   function closeDrawers() { if (state.modal?.kind === 'hub') closeModal(); }
@@ -3978,34 +3683,28 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   let reqWho = ''; // the conversation picked in the chat ('' = all agents); kept while the page is open
   async function openRequests() {
     const body = openDrawer('requestsDrawer', 'Ask an agent', 'send');
-    const pane = body.closest('.hub-pane');
-    let to = reqWho || state.board.coordinator || '';
+    let pane = null; // the thread: it scrolls on its own, the composer stays at the bottom
+    let to = reqWho || '';
     let list = [];
     let seen = null; // message ids already drawn: only new ones animate in
-    const toLabel = () => (to ? `${avatar({ name: to })}${nameHTML(to)}${to === state.board.coordinator ? ' <span class="muted">· coordinator</span>' : ''}` : '<span class="muted">Choose an agent</span>');
-    const ph = () => (to ? `Message ${nameOf(to)}… — @mention to loop someone in` : 'Choose an agent to message');
-    body.innerHTML = `<div class="req-chats"></div><div class="req-thread"></div>
-      <div class="req-compose">
-        <div class="req-to"><span class="muted">To</span><button class="dd" data-req-to>${toLabel()}${icon('chev', 'sm')}</button></div>
-        ${tboxHTML({ ph: ph(), okIcon: 'send', okTitle: 'Send (Ctrl+Enter)', rows: 2 })}
-      </div>`;
+    // In All, @names pick who gets it (several work); nobody named, the coordinator does
+    const ph = () => (reqWho ? `Message ${nameOf(reqWho)}…` : `Message any agent: @name picks who${state.board.coordinator ? ` (nobody named: ${nameOf(state.board.coordinator)})` : ''}`);
+    body.innerHTML = `<div class="req-layout"><nav class="req-side" aria-label="Conversations"></nav>
+      <div class="req-main"><div class="req-thread"></div>
+        <div class="req-compose">${tboxHTML({ ph: ph(), okIcon: 'send', okTitle: 'Send (Ctrl+Enter)', rows: 2 })}</div></div></div>`;
+    pane = $('.req-thread', body);
     const ta = $('.req-compose textarea', body);
     const staged = pasteStage($('.req-compose .tbox', body));
-    const setTo = (n) => {
-      to = n;
-      $('[data-req-to]', body).innerHTML = `${toLabel()}${icon('chev', 'sm')}`;
-      ta.placeholder = ph();
-    };
-    // One chip per agent that has requests (plus the current recipient), most recent conversation first.
+    const setTo = (n) => { to = n; ta.placeholder = ph(); };
+    // The conversations: All (any agent, by @name), then every agent, the ones you talked to last first
     const drawChats = () => {
-      const last = new Map();
+      const last = new Map(agentChoices().map((n) => [n, 0]));
       for (const q of list) last.set(q.to, Math.max(last.get(q.to) || 0, Date.parse(q.updatedAt || q.at)));
-      if (to && !last.has(to)) last.set(to, Infinity);
-      if (reqWho && !last.has(reqWho)) last.set(reqWho, Infinity);
-      const who = [...last.keys()].sort((a, b) => last.get(b) - last.get(a));
+      const who = [...last.keys()].sort((x, y) => last.get(y) - last.get(x) || x.localeCompare(y));
       const open = (n) => list.filter((q) => q.status === 'open' && (!n || q.to === n)).length;
-      const chip = (n, inner, tip) => { const k = open(n); return `<button class="req-chat ${reqWho === n ? 'on' : ''}" data-req-who="${esc(n)}" title="${tip}${k ? ` · ${k} open` : ''}">${inner}${k ? `<span class="n">${k}</span>` : ''}</button>`; };
-      $('.req-chats', body).innerHTML = chip('', `${icon('send', 'sm')}All`, 'All conversations') + who.map((n) => chip(n, `${avatar({ name: n })}<span class="nm">${esc(nameOf(n))}</span>`, `${esc(nameOf(n))}|Only your conversation with @${esc(n)}`)).join('');
+      const item = (n, inner, tip) => { const k = open(n); return `<button type="button" class="req-chan ${reqWho === n ? 'on' : ''}" data-req-who="${esc(n)}" title="${tip}">${inner}${k ? `<span class="n" title="${k} open">${k}</span>` : ''}</button>`; };
+      $('.req-side', body).innerHTML = item('', `<span class="req-hash">${icon('hash', 'sm')}</span><span class="nm">All</span>`, 'All|Every conversation; @name the agents a message is for')
+        + `<div class="req-side-h">Agents</div>` + who.map((n) => item(n, `${avatar({ name: n })}<span class="nm">${esc(nameOf(n))}</span>${n === state.board.coordinator ? '<span class="req-coord" title="Coordinator">coordinator</span>' : ''}`, `${esc(nameOf(n))}|Your conversation with ${esc(nameOf(n))}`)).join('');
     };
     const msgHTML = (m) => {
       const q = m.q;
@@ -4043,9 +3742,13 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const send = async () => {
       const text = ta.value.trim();
       if (!text && !staged.files.length) { ta.focus(); return; }
-      if (!to) { toast('Choose an agent first (or set a coordinator on the Agents page)', { kind: 'error' }); return; }
+      const agents = agentChoices();
+      const named = reqWho ? [reqWho] : [...new Set([...text.matchAll(/(?:^|[^\w@])@([\w.-]+)/g)].map((m) => agents.find((n) => n.toLowerCase() === m[1].toLowerCase())).filter(Boolean))];
+      const recipients = named.length ? named : [state.board.coordinator].filter(Boolean);
+      if (!recipients.length) { toast('Name an agent with @, or pick one on the left (there is no coordinator to take it)', { kind: 'error' }); return; }
       try {
-        await api('POST', B('/requests'), { body: text, to, ...(staged.files.length ? { attachments: await staged.payload() } : {}) });
+        const files = staged.files.length ? await staged.payload() : null;
+        for (const n of recipients) await api('POST', B('/requests'), { body: text, to: n, ...(files ? { attachments: files } : {}) });
         staged.clear();
         ta.value = '';
         autosize(ta);
@@ -4058,15 +3761,9 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       const who = e.target.closest('[data-req-who]');
       if (who) {
         reqWho = who.dataset.reqWho;
-        if (reqWho) setTo(reqWho);
+        setTo(reqWho);
         seen = null; // a different conversation: land on its newest message, no entrance animation
         draw();
-        return;
-      }
-      const pickTo = e.target.closest('[data-req-to]');
-      if (pickTo) {
-        // Choosing a recipient opens that conversation (unless you're reading All).
-        menu(pickTo, agentChoices().map((n) => ({ label: nameOf(n), avatar: { name: n }, hint: n === state.board.coordinator ? 'coordinator' : '', cls: n === to ? 'on' : '', run: () => { setTo(n); if (reqWho) { reqWho = n; seen = null; draw(); } } })), { search: true });
         return;
       }
       const jump = e.target.closest('[data-req-jump]');
@@ -4084,221 +3781,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     });
     load();
     setTimeout(() => ta.focus(), 250);
-  }
-
-  /* ─── the Ask field: the same requests, one keystroke away in the top bar ───
-     A quiet field beside the agents button ("Ask recipe-bot…"). Focusing it (click, Tab, or A) unfolds a
-     composer over it, with the recipient as a chip and the last few requests as a short thread underneath.
-     The field itself reports back: the agent's run dot while it works, an accent dot once it has replied. */
-  const ASK_KEY = 'intellagent.ask.v1';
-  const askStorage = stored(ASK_KEY, {});
-  const askStore = askStorage.get();
-  askStore.seen ||= {}; askStore.to ||= {};
-  const saveAsk = () => askStorage.save(askStore);
-  const ask = { pop: null, to: {}, draft: {}, closing: null };
-  const askOpen = () => !!ask.pop?.isConnected && !ask.pop.classList.contains('leaving');
-  // Who a new ask goes to: what you picked this session, else the coordinator, else whoever you asked last, else a standing agent.
-  const askTo = () => {
-    const b = state.boardId;
-    return ask.to[b] || state.board?.coordinator || askStore.to[b] || '';
-  };
-  const askReqs = () => (state.board?.requests || []).slice().reverse();
-  const agentReplied = (q) => q.replies.filter((r) => r.author?.kind === 'agent');
-  const lastAgentReplyAt = () => askReqs().reduce((m, q) => agentReplied(q).reduce((n, r) => (r.at > n ? r.at : n), m), '');
-  // Newest open request whose agent hasn't answered since it was asked (or since the human last added to it).
-  const askPending = () => askReqs().find((q) => q.status === 'open' && q.replies.at(-1)?.author?.kind !== 'agent');
-
-  function renderAsk() {
-    const f = $('#askField');
-    if (!f || !state.board) return;
-    const to = askTo();
-    const pending = askPending();
-    const unread = (lastAgentReplyAt() || '') > (askStore.seen[state.boardId] || '') && !askOpen();
-    const draft = (ask.draft[state.boardId] || '').trim();
-    const lead = pending ? pending.to : to;
-    $('#askAv').innerHTML = lead ? avatar({ kind: 'agent', name: lead }) : icon('send');
-    const inp = $('#askIn');
-    inp.placeholder = draft ? draft.split('\n')[0]
-      : unread ? `${(askReqs().find((q) => agentReplied(q).length)?.to) || 'An agent'} replied`
-        : pending ? `${pending.to} is on it…`
-          : to ? `Ask ${to}…` : 'Ask an agent…';
-    f.classList.toggle('draft', !!draft);
-    f.classList.toggle('unread', unread);
-    f.classList.toggle('pending', !!pending && !unread && !draft);
-    $('.ask-dot', f).hidden = !unread;
-  }
-
-  async function reloadAsk() {
-    try { state.board.requests = (await api('GET', B('/requests'))).reverse(); } catch { return; }
-    renderAsk();
-    if (askOpen()) { drawAskThread(); markAskSeen(); }
-  }
-  function markAskSeen() {
-    const t = lastAgentReplyAt();
-    if (t && t > (askStore.seen[state.boardId] || '')) { askStore.seen[state.boardId] = t; saveAsk(); }
-  }
-
-  function wireAskField() {
-    const f = $('#askField');
-    const inp = $('#askIn');
-    // Readonly: the field is a doorway; typing happens in the composer that opens over it.
-    inp.addEventListener('focus', () => { if (!ask.suppress) openAsk(); });
-    // Focus left on the field after Esc: Enter / Space / ↓ reopen it, and typing carries straight on.
-    inp.addEventListener('keydown', (e) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); openAsk(); return; }
-      if (e.key.length === 1) {
-        e.preventDefault();
-        ask.draft[state.boardId] = (ask.draft[state.boardId] || '') + e.key;
-        openAsk();
-      }
-    });
-    f.addEventListener('pointerdown', (e) => { e.preventDefault(); if (askOpen()) closeAsk(); else openAsk(); });
-  }
-
-  function placeAsk() {
-    const pop = ask.pop;
-    const r = $('#askField').getBoundingClientRect();
-    const narrow = innerWidth < 640;
-    const w = narrow ? innerWidth - 16 : Math.min(460, innerWidth - 16);
-    const left = narrow ? 8 : clamp(r.right - w, 8, innerWidth - w - 8);
-    Object.assign(pop.style, { width: `${w}px`, left: `${left}px`, top: `${Math.max(8, r.top - 4)}px` });
-  }
-
-  function openAsk() {
-    if (!state.board) return;
-    if (askOpen()) { $('textarea', ask.pop).focus(); return; }
-    if (state.modal) closeModal(true);
-    closeMenus();
-    ask.pop?.remove();
-    const examples = ['Create tickets for…', 'What’s blocked, and why?', 'Summarise what changed today'];
-    const pop = el(`<div class="ask-pop" role="dialog" aria-label="Ask an agent">
-      ${tboxHTML({ cls: 'ask-box', ph: '', okIcon: 'send', okTitle: 'Send|Enter · Shift+Enter for a new line', hint: '↵ send', tools: '<button class="ask-to" type="button"></button>' })}
-      <div class="ask-paused" hidden></div>
-      <div class="ask-thread"></div>
-      <div class="ask-foot"><button class="ask-all" type="button">All requests${icon('chev', 'sm')}</button><span class="grow"></span><span><kbd>@</kbd> loop someone in</span><span><kbd>Esc</kbd> close</span></div>
-    </div>`);
-    pop._examples = examples;
-    ask.pop = pop;
-    document.body.append(pop);
-    placeAsk();
-    $('#askField').classList.add('open');
-    const ta = $('textarea', pop);
-    const staged = pasteStage($('.ask-box', pop));
-    ta.value = ask.draft[state.boardId] || '';
-    autosize(ta);
-    const drawTo = () => {
-      const to = askTo();
-      $('.ask-to', pop).innerHTML = to ? `<span class="muted">To</span>${avatar({ kind: 'agent', name: to })}<b>${nameHTML(to)}</b>${icon('chev', 'sm')}` : `<span class="muted">To</span><b class="ph">Choose an agent</b>${icon('chev', 'sm')}`;
-      $('.ask-to', pop).dataset.tip = to && to === state.board.coordinator ? 'Coordinator|The board’s default agent for asks · click to send to someone else' : to ? 'Recipient|Click to choose another agent' : 'No coordinator|Pick who gets the ask: the board has no coordinator and no saved choice';
-      ta.placeholder = to ? `Ask ${nameOf(to)} to plan, create tickets, explain…` : 'Ask an agent…';
-      // A paused (or failed) standing agent won't answer: say so here, with one click to wake it.
-      const sa = to && state.standing?.[to];
-      const stuck = sa && (sa.status === 'paused' || sa.status === 'failed');
-      const bar = $('.ask-paused', pop);
-      bar.hidden = !stuck;
-      if (stuck) bar.innerHTML = `${icon('pause', 'sm')}<span><b>${esc(nameOf(to))}</b> is ${sa.status}${sa.queued ? ` · ${sa.queued} waiting` : ''} — it won't answer until resumed</span><button class="btn sm" type="button" data-ask-resume>${icon('play', 'sm')}Resume</button>`;
-    };
-    pop.addEventListener('click', async (e) => {
-      if (!e.target.closest('[data-ask-resume]')) return;
-      e.stopPropagation();
-      const to = askTo();
-      try {
-        await api('POST', `/api/agents/${encodeURIComponent(to)}/resume`, {});
-        toast(`${nameOf(to)} resumed`, { icon: 'play', kind: 'ok', timeout: 2200 });
-        await refreshPresence();
-        drawTo();
-      } catch (err) { toast(err.message, { kind: 'error' }); }
-    });
-    const pickTo = () => {
-      const btn = $('.ask-to', pop);
-      const to = askTo();
-      menu(btn, agentChoices().map((n) => ({ label: nameOf(n), avatar: { kind: 'agent', name: n }, hint: n === state.board.coordinator ? 'coordinator' : state.standing?.[n] ? 'standing' : '', cls: n === to ? 'on' : '', run: () => { ask.to[state.boardId] = n; drawTo(); renderAsk(); ta.focus(); } })),
-        { search: true, placeholder: 'Find or type a name…', onClose: () => setTimeout(() => { if (askOpen() && !pop.contains(document.activeElement)) ta.focus(); }), creatable: (n) => { ask.to[state.boardId] = n; drawTo(); renderAsk(); ta.focus(); } });
-    };
-    pop._pickTo = pickTo;
-    drawTo();
-    drawAskThread();
-    const send = async () => {
-      const text = ta.value.trim();
-      if (!text && !staged.files.length) { ta.focus(); return; }
-      const to = askTo();
-      if (!to) { pickTo(); return; }
-      pop.classList.add('sending');
-      try {
-        await api('POST', B('/requests'), { body: text, to, ...(staged.files.length ? { attachments: await staged.payload() } : {}) });
-        staged.clear();
-        ta.value = '';
-        ask.draft[state.boardId] = '';
-        autosize(ta);
-        askStore.to[state.boardId] = to; saveAsk();
-        await reloadAsk();
-      } catch (e) { toast(e.message, { kind: 'error' }); }
-      pop.classList.remove('sending');
-      ta.focus();
-    };
-    wireTbox($('.ask-box', pop), send, { submitOnEnter: true, escape: () => closeAsk(true) });
-    ta.addEventListener('input', () => { ask.draft[state.boardId] = ta.value; });
-    $('.ask-to', pop).onclick = pickTo;
-    $('.ask-all', pop).onclick = () => { closeAsk(); openRequests(); };
-    pop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAsk(true); } });
-    pop.addEventListener('click', (e) => {
-      const ex = e.target.closest('[data-example]');
-      if (ex) { ta.value = ex.dataset.example.replace(/…$/, ' '); ask.draft[state.boardId] = ta.value; autosize(ta); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); return; }
-      if (e.target.closest('a, .avatar')) return;
-      if (e.target.closest('[data-req]')) { closeAsk(); openRequests(); }
-    });
-    const off = (e) => {
-      if (!pop.isConnected) { document.removeEventListener('pointerdown', off, true); return; }
-      if (pop.contains(e.target) || e.target.closest?.('.menu, .mention-pop, #askField')) return;
-      closeAsk();
-    };
-    setTimeout(() => document.addEventListener('pointerdown', off, true));
-    pop._off = off;
-    // Tabbing out of the composer folds it back into the field (the draft is kept).
-    pop.addEventListener('focusout', (e) => { if (e.relatedTarget && !pop.contains(e.relatedTarget) && !e.relatedTarget.closest('.menu, .mention-pop')) closeAsk(); });
-    addEventListener('resize', placeAsk);
-    ta.focus();
-    markAskSeen();
-    renderAsk();
-  }
-
-  function closeAsk(refocus = false) {
-    const pop = ask.pop;
-    if (!pop || pop.classList.contains('leaving')) return;
-    document.removeEventListener('pointerdown', pop._off, true);
-    removeEventListener('resize', placeAsk);
-    closeMenus();
-    pop.classList.add('leaving');
-    $('#askField')?.classList.remove('open');
-    const done = () => { pop.remove(); if (ask.pop === pop) ask.pop = null; renderAsk(); };
-    if (reduced() || matchMedia('(prefers-reduced-motion: reduce)').matches) done(); else setTimeout(done, 140);
-    if (refocus) { ask.suppress = true; $('#askIn').focus(); ask.suppress = false; }
-    else if (pop.contains(document.activeElement)) document.activeElement.blur();
-    renderAsk();
-  }
-
-  function drawAskThread() {
-    const pop = ask.pop;
-    if (!pop) return;
-    const box = $('.ask-thread', pop);
-    const reqs = askReqs().slice(0, 4);
-    const seen = pop._seenAt ??= askStore.seen[state.boardId] || '';
-    if (!reqs.length) {
-      box.innerHTML = `<div class="ask-empty"><span class="muted">Anything that isn’t one ticket — the agent replies here.</span><div class="ask-ex">${pop._examples.map((x) => `<button type="button" data-example="${esc(x)}">${esc(x)}</button>`).join('')}</div></div>`;
-      return;
-    }
-    box.innerHTML = `<div class="ask-sec">Recent</div>${reqs.map((q) => {
-      const r = agentReplied(q).at(-1);
-      const waiting = q.status === 'open' && q.replies.at(-1)?.author?.kind !== 'agent';
-      const fresh = r && r.at > seen;
-      return `<div class="ask-item ${q.status} ${fresh ? 'fresh' : ''}" data-req="${esc(q.id)}" title="Open the thread|All replies, and mark it done">
-        <div class="ai-q"><span class="ai-body">${q.attachments?.length ? icon('clip', 'sm') : ''}${esc(q.body.split('\n')[0])}</span><span class="ai-meta">${q.status === 'done' ? icon('check', 'sm') : ''}${esc(nameOf(q.to))} · ${rel(q.at)}</span></div>
-        ${waiting && state.app.sandbox ? `<div class="ai-r">${avatar({ kind: 'agent', name: q.to })}<span>Agents do not run on a sandbox, so no reply will come.</span></div>`
-          : waiting ? `<div class="ai-r wait">${avatar({ kind: 'agent', name: q.to })}<span>${r ? 'Following up' : 'On it'}<i class="ai-dots"><b></b><b></b><b></b></i></span></div>`
-          : r ? `<div class="ai-r">${avatar(r.author)}<div class="md">${md(r.body)}</div></div>` : ''}
-      </div>`;
-    }).join('')}`;
   }
 
   function mountRules(body) {
@@ -4341,10 +3823,10 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         const users = (r.agents || []).map((a) => esc(a.name || a)).join(', ');
         const head = `<summary><b class="ly-label">${esc(r.label || r.key)}</b><span class="mini-chip">${r.builtin ? `${icon('lock', 'sm')}built in` : `${icon('pencil', 'sm')}yours`}</span><span class="muted ctx-users">${users ? `used by ${users}` : 'no agent uses it'}</span><span class="grow"></span>${icon('chev', 'ly-chev')}</summary>`;
         const body = r.builtin
-          ? `${r.description ? `<p class="perm-intro">${esc(r.description)}</p>` : ''}<pre class="ly-text">${esc(r.brief || '')}</pre>`
+          ? `${r.description ? `<p class="perm-intro">${esc(r.description)}</p>` : ''}<div class="md ly-md">${md(r.brief || '')}</div>`
           : `<label class="ctx-f"><span>Label</span><input class="inp" data-role-f="label" value="${esc(r.label || '')}"></label>
             <label class="ctx-f"><span>Description</span><input class="inp" data-role-f="description" value="${esc(r.description || '')}"></label>
-            <label class="ctx-f"><span>Brief</span><textarea class="inp spec-ctx" data-role-f="brief" spellcheck="true">${esc(r.brief || '')}</textarea></label>
+            <div class="ctx-f"><span>Brief</span><div class="md desc-view" data-role-read title="Click to edit">${md(r.brief || '') || '<p class="muted">Empty: click to write it</p>'}</div><textarea class="inp spec-ctx" data-role-f="brief" spellcheck="true" hidden>${esc(r.brief || '')}</textarea></div>
             <div class="spec-foot"><span class="spec-state muted" aria-live="polite"></span><span class="grow"></span><button class="btn primary sm" type="button" data-role-save="${esc(r.key)}">${icon('check', 'sm')}Save</button></div>`;
         return `<details class="ly ctx-role" data-role-key="${esc(r.key)}" ${open.has(r.key) ? 'open' : ''}>${head}<div class="ctx-role-body">${body}</div></details>`;
       }).join('') || '<div class="empty-note">No roles</div>';
@@ -4352,6 +3834,9 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     };
     host.addEventListener('toggle', (e) => { const d = e.target.closest?.('[data-role-key]'); if (d) d.open ? open.add(d.dataset.roleKey) : open.delete(d.dataset.roleKey); }, true);
     host.onclick = async (e) => {
+      // a brief reads as markdown until it is clicked: then the raw text to edit
+      const rd = e.target.closest('[data-role-read]');
+      if (rd && !e.target.closest('a')) { rd.hidden = true; const t = rd.nextElementSibling; t.hidden = false; autosize(t); t.focus(); return; }
       const b = e.target.closest('[data-role-save]');
       if (!b) return;
       const r = roles.find((x) => x.key === b.dataset.roleSave), d = b.closest('[data-role-key]');
@@ -4392,7 +3877,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const draw = (q = '') => {
       const f = rows.filter((r) => `${r.id} ${r.title} ${r.parent || ''}`.toLowerCase().includes(q.toLowerCase()));
       list.innerHTML = f.length ? f.map((r, i) => `<div class="arch-row" style="animation-delay:${Math.min(i, 12) * 25}ms"><div style="min-width:0;cursor:pointer" data-open="${esc(r.id)}"><div class="t">${icon(r.type, 'sm')}<span>${esc(r.title)}</span></div><div class="s">${esc(r.id)} · ${new Date(r.archivedAt).toLocaleString()} · ${esc(r.archivedBy?.name || '')}</div></div><button class="btn sm" data-restore="${esc(r.id)}" title="Restore">${icon('restore', 'sm')}</button></div>`).join('')
-        : `<div class="empty-note">${icon('archive')}</div>`;
+        : `<div class="empty-note">${icon('archive')}<span>No archived tickets</span></div>`;
     };
     $('input', body).oninput = (e) => draw(e.target.value);
     list.onclick = async (e) => {
@@ -4407,6 +3892,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     };
     draw();
   }
+
+  const openDeployments = (tab) => deployments.open(tab);
 
   // With a name (from the awake strip), scrolls to that agent's Now row (else its row below) and marks it for a moment.
   function openAgents(name) {
@@ -4424,9 +3911,9 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   const listenLabel = (l) => [].concat(l || 'inbox').map((x) => (typeof x === 'string' ? LISTEN_LABEL[x] || x : Object.entries(x).map(([k, v]) => `${k}=${v}`).join(' '))).join(' + ');
 
   // "mid · sonnet · last run 12.3k in / 800 out · today 41k in / 3.2k out (5 runs)"; n/a when the run reported none
-  function usageLine(a) {
+  function usageLine(a, cls = 'standing-usage') {
     const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
-    const pair = (u) => `${k(u.input)} in / ${k(u.output)} out`;
+    const pair = (u) => `${k((u.input || 0) + (u.output || 0))} tokens`; // in and out together: one number a person reads
     const last = a.lastRun?.usage;
     const day = a.usageToday;
     // only what says something: the model when it isn't the default, usage when there is a number (INT-268)
@@ -4435,8 +3922,22 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       last && `<span title="cache read ${last.cacheRead || 0}, cache written ${last.cacheCreated || 0}">last run ${pair(last)}</span>`,
       day && `<span>today ${pair(day)} (${day.runs} run${day.runs === 1 ? '' : 's'})</span>`,
     ].filter(Boolean);
-    return parts.length ? `<div class="standing-usage">${parts.join('')}</div>` : '';
+    return parts.length ? `<div class="${cls}">${parts.join('')}</div>` : '';
   }
+  const RUN_TONE = { running: 'accent', queued: 'warn', retrying: 'warn', throttled: 'warn', failed: 'danger' };
+  const RUN_WORD = { running: 'Running', queued: 'Queued', retrying: 'Retrying', throttled: 'Throttled', failed: 'Failed', paused: 'Paused', idle: 'Idle' };
+  const runPill = (a) => `<span class="status-pill${a.status === 'running' ? ' live' : ''}" data-tone="${RUN_TONE[a.status] || 'muted'}">${esc(RUN_WORD[a.status] || a.status)}${a.queued ? `<span class="status-sub">· ${a.queued} waiting</span>` : ''}</span>`;
+  function standingButtons(a) {
+    const btn = (act, ic, label, tip, primary = false) => `<button class="btn sm${primary ? ' primary' : ' ghost'}" data-standing="${act}" data-name="${esc(a.name)}" title="${tip}">${icon(ic, 'sm')}<span>${label}</span></button>`;
+    return [
+      a.status === 'paused' || a.status === 'failed' ? btn('resume', 'play', 'Resume', 'Resume|Clear failures and run any waiting events', a.status === 'failed') : btn('pause', 'pause', 'Pause', 'Pause|The current run finishes; new events wait'),
+      btn('run', 'sparkle', 'Run now', 'Run now|Start a run with whatever is waiting, or just to check the board'),
+      a.status === 'running' ? btn('log', 'terminal', 'Watch live', 'Watch live|What it is doing now, as it happens; its earlier runs are in the same view') : btn('log', 'terminal', 'Runs', 'Runs|What it did in its last runs, step by step'),
+      btn('edit', 'pencil', 'Edit', 'Edit|Change role, permissions, model, what wakes it and its throttle'),
+    ].join('');
+  }
+  // why the last run failed, from the first failure on (INT-346)
+  const failWhy = (a) => (a.lastRun?.error && a.lastRun.code !== 0 && a.status !== 'running' ? `<div class="ent-detail ent-note" data-fail-reason title="${esc(a.lastRun.error)}">${icon('x', 'sm')}<span>${a.failures ? `failed ${a.failures}×: ` : ''}${esc(a.lastRun.error.slice(0, 160))}</span></div>` : '');
   function standingControls(a) {
     const btn = (act, ic, label, tip) => `<button class="btn sm ghost" data-standing="${act}" data-name="${esc(a.name)}" title="${tip}">${icon(ic, 'sm')}<span>${label}</span></button>`;
     // why the last run failed, from the first failure on (INT-346)
@@ -4700,11 +4201,13 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     }).join('');
     const runs = Object.values(state.standing || {}).flatMap((a) => (a.history || []).map((h) => ({ agent: a.name, ...h })))
       .sort((x, y) => y.startedAt.localeCompare(x.startedAt)).slice(0, 10);
-    const recent = runs.map((r) => `<div class="run-row"><time datetime="${esc(r.startedAt)}" title="${esc(new Date(r.startedAt).toLocaleString())}">${new Date(r.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
-      <b>${esc(nameOf(r.agent))}</b><span class="run-dur">${secs(r.durationMs)}</span>
-      <span class="run-why">${r.why ? `woken by ${esc(whyWords(r.why))}` : ''}${r.items?.length ? ` on ${ticketLinks(r.items)}` : ''}</span>${runResult(r.code)}</div>`).join('');
+    // the shared list rows: who ran, why and on what; when and how long; how it ended
+    const recent = runs.map((r) => `<article class="ent run-row"><div class="ent-lead">${avatar({ kind: 'agent', name: r.agent })}</div>
+      <div class="ent-body"><h3 class="ent-title"><span class="ent-name">${esc(nameOf(r.agent))}</span></h3>
+        <div class="ent-sub"><time datetime="${esc(r.startedAt)}" title="${esc(new Date(r.startedAt).toLocaleString())}">${new Date(r.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time> · ${secs(r.durationMs)}${r.why ? ` · woken by ${esc(whyWords(r.why))}` : ''}${r.items?.length ? ` on ${ticketLinks(r.items)}` : ''}</div></div>
+      <div class="ent-status">${runResult(r.code)}</div></article>`).join('');
     if (!now && !recent) return '';
-    return `<section class="ag-now"><div class="ag-sec">Now</div>${now || '<div class="now-quiet">Nobody is awake.</div>'}</section>${recent ? `<section class="ag-runs"><div class="ag-sec">Recent runs</div>${recent}</section>` : ''}`;
+    return `<section class="ag-now"><div class="ag-sec">Now</div>${now || '<div class="now-quiet">Nobody is awake.</div>'}</section>${recent ? `<section class="ag-runs"><div class="ag-sec">Recent runs</div><div class="ent-list">${recent}</div></section>` : ''}`;
   }
 
   // "Approves for you": who may approve on the human's behalf and when, in plain words, with the one switch
@@ -4739,69 +4242,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     };
   }
 
-  // "Board admin": who holds an admin.* power, with the one switch that suspends them all (INT-351). Same row as
-  // "Approves for you"; the board answers 403 ADMIN_OFF to agents while it is off.
-  async function fillAdmin(el) {
-    if (!el || !state.board) return;
-    let v;
-    try { v = await api('GET', `/api/boards/${state.board.id}/admin`); } catch { el.innerHTML = ''; return; }
-    const who = v.holders.map((a) => `<div class="appr-who">${avatar({ kind: 'agent', name: a.name })}<b>${esc(nameOf(a.name))}</b><span>${esc([...new Set(a.grants.map((g) => g.power))].join(', '))}</span></div>`).join('')
-      || '<div class="appr-who"><span>No agent holds an admin power yet</span></div>';
-    patchHTML(el, `<div class="cr-label"><span>Board admin</span><span class="sr-auto">${v.on ? 'On: these agents may change how the board is run' : 'Off: every admin.* power is suspended (agents.control, agents.manage and work.land stay on)'}</span></div>
-      <button class="switch ${v.on ? 'on' : ''}" role="switch" aria-checked="${v.on}" aria-label="Board admin" data-admin-toggle title="${v.on ? 'Suspend board admin|Suspend every admin.* power on this board until you switch it back on' : 'Allow board admin|Let these agents use their admin powers again'}"></button>
-      <div class="appr-list ${v.on ? '' : 'off'}">${who}</div>`);
-    $('[data-admin-toggle]', el).onclick = async () => {
-      try {
-        await api('PUT', `/api/boards/${state.board.id}/admin`, { on: !v.on });
-        toast(v.on ? 'Board admin suspended: agents get ADMIN_OFF' : 'Board admin on', { icon: v.on ? 'x' : 'check', kind: v.on ? '' : 'ok', timeout: 2500 });
-        fillAdmin(el);
-      } catch (e) { toast(e.data?.hint ? `${e.message}. ${e.data.hint}` : e.message, { kind: 'error' }); }
-    };
-  }
-
-  // The idle-board alarm (INT-265): who is woken when tickets wait but no builder has run for a while, after
-  // how long, and a note for them. One switch, a summary, and Edit for the rest.
-  async function fillIdleAlarm(el, editing = false) {
-    if (!el || !state.board) return;
-    let v;
-    try { v = await api('GET', `/api/boards/${state.board.id}/idle-alarm`); } catch { el.innerHTML = ''; return; }
-    if (!v.agents.length) { el.innerHTML = ''; return; }
-    const last = v.recent[0];
-    const summary = !v.wake.length ? 'Nobody to wake yet: pick who'
-      : `${v.on ? 'Wakes' : 'Would wake'} ${v.wake.map(nameOf).join(' and ')} when tickets wait and no builder has run for ${v.minutes} min`;
-    el.innerHTML = `<div class="cr-label"><span>When the board goes idle</span><span class="sr-auto">${esc(summary)}${last ? ` · last alarm ${esc(rel(last.at))}` : ''}</span></div>
-      <button class="switch ${v.on ? 'on' : ''}" data-idle-toggle ${v.wake.length ? '' : 'disabled'} title="${v.on ? 'Switch the alarm off|Nobody is woken when the board goes idle' : 'Switch the alarm on|Wake the agents you picked when the board goes idle'}"></button>
-      ${editing ? `<div class="idle-form">
-        <div class="aa-row"><input class="inp" type="number" min="5" max="1440" step="1" data-idle-min value="${v.minutes}" style="max-width:7em"><span class="aa-note">minutes with no builder running before the alarm</span></div>
-        <div class="aa-perms">${v.agents.map((n) => `<button class="toggle-chip ${v.wake.includes(n) ? 'on' : ''}" data-idle-wake="${esc(n)}">${esc(nameOf(n))}</button>`).join('')}<span class="aa-note">who to wake</span></div>
-        <textarea class="inp" rows="3" maxlength="1000" data-idle-note placeholder="What they should do, e.g. nudge the assignees first, ask Gamora to route anything unassigned">${esc(v.note)}</textarea>
-        <div class="idle-actions"><button class="btn sm" data-idle-cancel>Cancel</button><button class="btn sm primary" data-idle-save>Save</button></div>
-      </div>` : `<button class="btn sm ghost idle-edit" data-idle-edit>${icon('pencil', 'sm')}Edit</button>`}`;
-    const put = async (body, msg) => {
-      try { await api('PUT', `/api/boards/${state.board.id}/idle-alarm`, body); toast(msg, { icon: 'check', kind: 'ok', timeout: 2200 }); fillIdleAlarm(el); }
-      catch (e) { toast(e.message, { kind: 'error' }); }
-    };
-    $('[data-idle-toggle]', el).onclick = () => put({ on: !v.on }, v.on ? 'Idle alarm off' : 'Idle alarm on');
-    const ed = $('[data-idle-edit]', el);
-    if (ed) ed.onclick = () => fillIdleAlarm(el, true);
-    if (!editing) return;
-    for (const b of $$('[data-idle-wake]', el)) b.onclick = () => b.classList.toggle('on');
-    $('[data-idle-cancel]', el).onclick = () => fillIdleAlarm(el);
-    $('[data-idle-save]', el).onclick = () => {
-      const wake = $$('[data-idle-wake].on', el).map((b) => b.dataset.idleWake);
-      put({ minutes: Number($('[data-idle-min]', el).value), wake, note: $('[data-idle-note]', el).value, ...(wake.length ? {} : { on: false }) }, 'Idle alarm saved');
-    };
-  }
-
-  /* The base context (INT-277, on INT-276's routes): what every agent is taught first. The human reads it, keeps
-     their own copy (base-context.md, untouched by updates) and sees how it differs from the shipped text. */
-  async function fillBaseRow(el) {
-    if (!el) return;
-    let v;
-    try { v = await api('GET', '/api/agents/base-context'); } catch { el.innerHTML = ''; return; }
-    patchHTML(el, `<div class="cr-label"><span>Base context</span><span class="sr-auto">what every agent is taught first · ${v.edited ? 'your own copy' : 'the shipped text'}</span></div>
-      <button class="btn sm ghost" data-open-base>${icon('text', 'sm')}Open</button>`);
-  }
   // Line diff of a → b by longest common subsequence: [[' ' | '-' | '+', line]], removals before additions.
   function lineDiff(a, b) {
     const x = a.split('\n'), y = b.split('\n'), n = x.length, m = y.length;
@@ -4844,16 +4284,16 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     let v;
     try { v = await api('GET', '/api/agents/base-context'); } catch (e) { body.innerHTML = `<div class="empty-note">${esc(e.message)}</div>`; return; }
     if (!body.isConnected) return;
-    let view = 'text';
+    let view = 'read'; // shown as markdown; Edit (or a click on it) opens the raw text
     body.innerHTML = `<p class="perm-intro">Every agent reads this first, before the board rules, its role and its own context. Your copy is kept when Intellagent updates; <b>Reset to shipped</b> puts back the text Intellagent ships, so later updates reach your agents again.</p>
-      <div class="base-bar"><span data-base-state></span><span class="grow"></span>
-        <div class="seg mini" role="tablist" aria-label="View"><button type="button" role="tab" data-base-view="text">Text</button><button type="button" role="tab" data-base-view="diff">Changes from shipped</button></div></div>
+      <div class="base-bar"><div class="seg mini" role="tablist" aria-label="View"><button type="button" role="tab" data-base-view="read">Read</button><button type="button" role="tab" data-base-view="text">Edit</button><button type="button" role="tab" data-base-view="diff">Changes from shipped</button></div><span class="grow"></span><span data-base-state></span></div>
+      <div class="md desc-view base-read" data-base-read title="Click to edit"></div>
       <textarea class="inp spec-ctx base-ta" spellcheck="true" aria-label="Base context" maxlength="${v.max}"></textarea>
       <div class="base-diff" data-base-diff role="region" aria-label="Changes from the shipped text" tabindex="0" hidden></div>
       <div class="spec-foot"><span class="spec-state muted" data-base-count aria-live="polite"></span><span class="grow"></span>
         <button class="btn sm ghost" type="button" data-base-reset title="Reset to shipped|Fill in the text Intellagent ships; Save to use it">${icon('x', 'sm')}Reset to shipped</button>
         <button class="btn primary sm" type="button" data-base-save disabled>${icon('check', 'sm')}Save</button></div>`;
-    const ta = $('.base-ta', body), save = $('[data-base-save]', body), reset = $('[data-base-reset]', body), diff = $('[data-base-diff]', body);
+    const read = $('[data-base-read]', body), ta = $('.base-ta', body), save = $('[data-base-save]', body), reset = $('[data-base-reset]', body), diff = $('[data-base-diff]', body);
     const norm = (t) => t.replace(/\r\n/g, '\n').trim();
     ta.value = v.text;
     const sync = () => {
@@ -4868,6 +4308,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       $('[data-base-view="diff"]', body).textContent = changes ? `Changes from shipped · ${changes}` : 'Changes from shipped';
       for (const b of $$('[data-base-view]', body)) { const on = b.dataset.baseView === view; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
       ta.hidden = view !== 'text';
+      read.hidden = view !== 'read';
+      if (view === 'read') read.innerHTML = md(ta.value.trim() || v.shipped);
       diff.hidden = view !== 'diff';
       if (view === 'diff') diff.innerHTML = changes ? diffHTML(rows) : '<div class="empty-note">No changes: this is the text Intellagent ships.</div>';
       else autosize(ta);
@@ -4897,48 +4339,19 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     reset.onclick = () => { ta.value = v.shipped; view = 'text'; sync(); ta.focus(); };
     const tabs = $('[role="tablist"]', body);
     tabs.onclick = (e) => { const b = e.target.closest('[data-base-view]'); if (b) { view = b.dataset.baseView; sync(); } };
-    // arrows move between the two views, as in any tab list
+    read.onclick = (e) => { if (!e.target.closest('a')) { view = 'text'; sync(); ta.focus(); } };
+    // arrows move between the views, as in any tab list
     tabs.onkeydown = (e) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       e.preventDefault();
-      view = view === 'text' ? 'diff' : 'text';
+      const views = ['read', 'text', 'diff'];
+      view = views[(views.indexOf(view) + (e.key === 'ArrowRight' ? 1 : 2)) % 3];
       sync();
       $(`[data-base-view="${view}"]`, body).focus();
     };
     sync();
   }
 
-  // What an agent is taught on its first turn, layer by layer (INT-277, from GET /api/agents/<name>/layers: the
-  // same layers the runner joins). Fetched once when the page opens; a redraw leaves it alone (data-keep).
-  // The speciality layer has no label of its own (its text brings its heading into the prompt), so the page names it
-  const LAYER_NAMES = { agent: 'Speciality: areas, concerns and context page' };
-  // Read-only here: each row says where its layer is edited (INT-363)
-  const LAYER_EDIT = { base: ['base', 'Edit on the Context page'], rules: ['rules', 'Edit on the Context page'], role: ['roles', 'Edit on the Context page'] };
-  const layerEdit = (layer) => {
-    const [target, label] = LAYER_EDIT[layer] || [];
-    if (target) return `<div class="ly-edit"><button class="btn sm ghost" type="button" data-ctx-open="${target}">${icon('pencil', 'sm')}${label}</button></div>`;
-    if (layer === 'agent') return `<div class="ly-edit"><button class="btn sm ghost" type="button" data-ctx-spec>${icon('pencil', 'sm')}Edit below</button></div>`;
-    return '<div class="ly-edit muted">Kept by the agent itself</div>';
-  };
-  function layersSection(name) {
-    const root = el(`<div class="section layers"><div class="section-head">${icon('layers', 'sm')}<span>Context layers</span><span class="rule"></span></div>
-      <p class="perm-intro ly-intro">What it is taught on its first turn, in this order.</p><div class="ly-list">${'<div class="act sk" aria-hidden="true"><i></i><span></span><time></time></div>'.repeat(3)}</div></div>`);
-    root.addEventListener('click', (e) => {
-      const c = e.target.closest('[data-ctx-open]');
-      if (c) { openContext(c.dataset.ctxOpen); return; }
-      if (e.target.closest('[data-ctx-spec]')) { const s = $('.spec'); s?.scrollIntoView({ block: 'start' }); $('input, textarea', s)?.focus({ preventScroll: true }); }
-    });
-    api('GET', `/api/agents/${encodeURIComponent(name)}/layers?board=${encodeURIComponent(state.boardId)}`).then((r) => {
-      const total = r.layers.reduce((s, l) => s + l.chars, 0);
-      const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
-      $('.ly-intro', root).textContent = `What it is taught on its first turn, in this order: ${total.toLocaleString()} characters in all.${r.standing ? '' : ' Not a standing agent: it reads the base in its brief.'}`;
-      $('.ly-list', root).innerHTML = r.layers.length ? r.layers.map((l, i) => `<details class="ly" data-layer="${esc(l.layer)}"><summary>
-          <span class="ly-n">${i + 1}</span><b class="ly-label">${esc(l.label || LAYER_NAMES[l.layer] || l.layer)}</b><span class="grow"></span>
-          <span class="mini-chip ly-size">${l.chars.toLocaleString()} chars · ${pct(l.chars)}%</span>${icon('chev', 'ly-chev')}<span class="ly-bar" aria-hidden="true"><i style="width:${Math.max(2, pct(l.chars))}%"></i></span></summary>
-          <pre class="ly-text">${esc(l.text)}</pre>${layerEdit(l.layer)}</details>`).join('') : '<div class="empty-note">Nothing yet</div>';
-    }, (e) => { $('.ly-list', root).innerHTML = `<div class="empty-note">${esc(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message)}</div>`; });
-    return root;
-  }
   /* An agent's memory (INT-407, on INT-243's and INT-402's /api/profiles/<name>/memory): its entries, the human's
      first, and the notes colleagues suggested, which the human accepts (reworded, pinned) or declines with a reason. */
   function memorySection(name) {
@@ -5017,6 +4430,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     verbal: ['Verbal', 'Only words. The agent reads them in its brief; nothing enforces them.', 'msg'],
     builtin: ['Built-in tools', 'From the code. What a run may do with files and commands.', 'terminal'],
     power: ['Board powers', 'Human-only by default. An agent holds one only as a grant.', 'flag'],
+    deployment: ['Integrations', 'One per action and sequence, made on the Integrations page. Human-only unless granted, with rules on what it touches.', 'link'],
   };
   const PERM_NEW = ['command', 'tool', 'folders', 'bundle', 'verbal'];
   const permLines = (v) => String(v || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
@@ -5145,13 +4559,15 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   /* The permissions grid (INT-231, on INT-239's /api/agents/grid): agents down the side, the library across,
      grouped by kind. A cell is off, on, or on with rules (the tick plus a padlock). A click opens a panel under
      the grid to change it. Labels lie flat; the grid scrolls inside its box, so 375 px never scrolls the page. */
-  const GRID_KIND_ORDER = ['builtin', 'power', 'command', 'tool', 'folders', 'bundle', 'verbal'];
+  const GRID_KIND_ORDER = ['builtin', 'power', 'deployment', 'command', 'tool', 'folders', 'bundle', 'verbal'];
+  const deployKey = (k) => /^(deploy\.(step|sequence)|(jira|devstack|confluence|ado)\.action)\./.test(k);
   const GRID_MODE = { off: 'off', on: 'on', rules: 'on, with rules' };
   const gridOks = (g) => (g.minOks != null || g.from ? ` · needs ${g.minOks === 'all' ? 'all' : g.minOks ?? 'every'} ok${g.from ? ` from ${g.from.join(', ')}` : ''}` : '');
-  function openPermGrid(agent) {
-    const body = openDrawer('gridDrawer', 'Who holds what', 'sliders');
+  function openPermGrid(agent, key) {
+    const body = openDrawer('gridDrawer', 'Assignments', 'sliders');
     body._reload = () => fillPermGrid(body);
     body._focusAgent = agent;
+    body._focusKey = key;
     fillPermGrid(body);
   }
   async function fillPermGrid(body) {
@@ -5162,23 +4578,21 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const perms = [...g.permissions].sort((a, b) => GRID_KIND_ORDER.indexOf(a.kind) - GRID_KIND_ORDER.indexOf(b.kind));
     const groups = GRID_KIND_ORDER.map((k) => [k, perms.filter((p) => p.kind === k)]).filter(([, ps]) => ps.length);
     const flat = groups.flatMap(([, ps]) => ps);
+    // a permission per row (its name on one line), an agent per column: there are always far more permissions than agents
     const cellHtml = (a, p, r, c) => {
       const cell = a.cells[p.key];
       const word = GRID_MODE[cell.mode] + (p.enforced ? '' : ', not enforced') + (cell.implied ? `, needed by ${(cell.by || []).join(', ')}` : '') + (cell.differsFromRole ? ', differs from its role' : '');
       const mark = cell.mode === 'off' ? '' : icon(p.enforced ? 'check' : 'msg', 'sm') + (cell.mode === 'rules' ? `<i class="pg-lk">${icon('lock', 'sm')}</i>` : '');
-      return `<td><button class="pg-cell m-${cell.mode}${p.enforced ? '' : ' verbal'}${cell.implied ? ' implied' : ''}${cell.differsFromRole ? ' differs' : ''}" data-agent="${esc(a.name)}" data-key="${esc(p.key)}" data-r="${r}" data-c="${c}" aria-label="${esc(`${nameOf(a.name)}, ${p.name}: ${word}`)}" title="${esc(`${p.name}|${word}`)}">${mark}</button></td>`;
+      return `<td><button class="pg-cell m-${cell.mode}${p.enforced ? '' : ' verbal'}${cell.implied ? ' implied' : ''}" data-agent="${esc(a.name)}" data-key="${esc(p.key)}" data-r="${r}" data-c="${c}" aria-label="${esc(`${nameOf(a.name)}, ${p.name}: ${word}`)}" title="${esc(`${nameOf(a.name)} · ${p.name}|${word}`)}">${mark}</button></td>`;
     };
+    let r = 0;
     const table = `<table class="pg"><thead>
-      <tr><th class="pg-agent" rowspan="2" scope="col">Agent</th>${groups.map(([k, ps]) => `<th class="pg-kind" colspan="${ps.length}" scope="colgroup">${esc(PERM_KINDS[k][0])}</th>`).join('')}</tr>
-      <tr>${flat.map((p) => `<th class="pg-perm${p.enforced ? '' : ' verbal'}" scope="col" title="${esc(`${p.name}|${p.key}`)}"><span>${esc(p.name)}</span></th>`).join('')}</tr></thead>
-      <tbody>${g.agents.map((a, r) => {
-        const on = flat.filter((p) => a.cells[p.key].mode !== 'off').length;
-        const differs = flat.some((p) => a.cells[p.key].differsFromRole);
-        return `<tr><th class="pg-agent" scope="row">${avatar({ kind: 'agent', name: a.name })}<span class="pg-who"><b>${esc(nameOf(a.name))}</b><small>${esc(a.role || 'no role')}${differs ? `<i class="pg-dot" title="Differs from its role|Some of what it holds is not what its role gives" aria-label="differs from its role"></i>` : ''}</small></span><span class="pg-load" role="img" aria-label="${on} of ${flat.length} permissions on" title="${on} of ${flat.length} on"><i style="width:${Math.round((100 * on) / Math.max(1, flat.length))}%"></i></span></th>${flat.map((p, c) => cellHtml(a, p, r, c)).join('')}</tr>`;
-      }).join('')}</tbody></table>`;
+      <tr><th class="pg-perm-h" scope="col">Permission</th>${g.agents.map((a) => `<th class="pg-agent" scope="col" title="${esc(nameOf(a.name))}|${esc(a.role || 'no role')} · ${flat.filter((p) => a.cells[p.key].mode !== 'off').length} of ${flat.length} on">${avatar({ kind: 'agent', name: a.name })}<span>${esc(nameOf(a.name))}</span></th>`).join('')}</tr></thead>
+      <tbody>${groups.map(([k, ps]) => `<tr class="pg-grp"><th colspan="${g.agents.length + 1}" scope="colgroup">${esc(PERM_KINDS[k][0])}<span class="cnt">${ps.length}</span></th></tr>`
+        + ps.map((p) => { const row = r++; return `<tr><th class="pg-perm${p.enforced ? '' : ' verbal'}" scope="row" title="${esc(`${p.name}|${p.description || p.key}`)}">${esc(p.name)}</th>${g.agents.map((a, c) => cellHtml(a, p, row, c)).join('')}</tr>`; }).join('')).join('')}</tbody></table>`;
     const first = !$('.pg-scroll', body);
     if (first) {
-      body.innerHTML = `<p class="perm-intro">Every standing agent against every permission. Click a cell to change it; the change is written to <code>agents.json</code>. A dot means it differs from the agent's role.</p>
+      body.innerHTML = `<p class="perm-intro">Every standing agent against every permission. Click a cell to change it.</p>
         ${me.boardHasUserToken === false ? `<div class="aa-lock">${icon('lock', 'sm')}<span>Read only: cells can be changed only on a board with a sign-in token. Run <code>intellagent token</code>, restart the board and sign in with <code>intellagent open</code>.</span></div>` : ''}
         ${g.errors?.length ? `<div class="perm-warn risk perm-errors">${icon('info', 'sm')}<span>Skipped: ${g.errors.map(esc).join(' · ')}</span></div>` : ''}
         <div class="pg-scroll" tabindex="0" role="region" aria-label="Permissions grid, scrolls sideways"></div>
@@ -5203,6 +4617,11 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     if (body._focusAgent) { // opened from an agent's page: land on that agent's row, once
       const c = $(`.pg-cell[data-agent="${CSS.escape(body._focusAgent)}"]`, body);
       body._focusAgent = null;
+      if (c) { c.focus(); c.scrollIntoView({ block: 'nearest', inline: 'center' }); }
+    }
+    if (body._focusKey) { // opened from a deployment: land on its row, once
+      const c = $(`.pg-cell[data-key="${CSS.escape(body._focusKey)}"]`, body);
+      body._focusKey = null;
       if (c) { c.focus(); c.scrollIntoView({ block: 'center', inline: 'nearest' }); }
     }
     const sel = body._sel;
@@ -5233,7 +4652,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       <div class="pg-rules" ${cell.mode === 'rules' ? '' : 'hidden'}>
         ${approval ? `<div class="perm-two"><label><span class="aa-label">Oks needed</span><input class="inp" data-r="minOks" value="${esc(r.minOks ?? '')}" placeholder="2, or all" inputmode="numeric"></label>
           <label><span class="aa-label">From reviewers</span><input class="inp" data-r="from" value="${esc((r.from || []).join(', '))}" placeholder="nebula, kraglin"></label></div>` : ''}
-        <label><span class="aa-label">Only where</span><textarea class="inp mono" data-r="where" rows="2" spellcheck="false" placeholder="column=Done&#10;fields.risk=low">${esc(whereText)}</textarea></label>
+        <label><span class="aa-label">Only where</span><textarea class="inp mono" data-r="where" rows="2" spellcheck="false" placeholder="${key.startsWith('jira.action.') ? 'project=BET&#10;status=Done' : key.startsWith('devstack.action.') ? 'service=placement&#10;source=branch:feature/*' : key.startsWith('confluence.action.') ? 'space=ENG' : key.startsWith('ado.action.') ? 'repo=SB.Placement' : key.startsWith('deploy.sequence.') ? 'inputs.environment=int,test1&#10;branch=release/*' : deployKey(key) ? 'parameters.environment=int,test1&#10;branch=release/*' : 'column=Done&#10;fields.risk=low'}">${esc(whereText)}</textarea></label>
+        ${deployKey(key) ? `<label class="aa-check"><input type="checkbox" data-r="approve" ${r.approve === 'human' ? 'checked' : ''}> <span>Each run waits for your OK (on the Integrations page)</span></label>` : ''}
       </div>
       <label><span class="aa-label">Guidance (not enforced; the agent reads it in its brief)</span><textarea class="inp" data-pg-guide rows="2" maxlength="1000">${esc(cell.guidance || '')}</textarea></label>
       <div class="pg-brief"><span class="aa-label">Adds to its brief</span>${cell.brief?.length ? cell.brief.map((l) => `<q class="perm-brief">${esc(l)}</q>`).join('') : '<span class="muted">Nothing: it is off, or the permission has no brief line.</span>'}</div>
@@ -5272,6 +4692,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
           if (i > 0) where[line.slice(0, i).trim()] = line.slice(i + 1).split(',').map((s) => s.trim()).filter(Boolean);
         }
         if (Object.keys(where).length) rules.where = where;
+        if ($('[data-r="approve"]', pan)?.checked) rules.approve = 'human';
         send.rules = rules;
       }
       if (!Object.keys(send).length) { err.hidden = false; err.textContent = 'Nothing changed.'; return; }
@@ -5304,7 +4725,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     if (!body.isConnected) return;
     const all = lib.permissions || [];
     const byKey = Object.fromEntries(all.map((p) => [p.key, p]));
-    const chips = (xs, cls = '') => xs.map((x) => `<span class="mini-chip ${cls}">${esc(x)}</span>`).join('');
+    // the first few, then "+N more" (all of them in its tooltip): a row stays one line, not a wall of chips
+    const chips = (xs, cls = '') => xs.slice(0, 4).map((x) => `<span class="mini-chip ${cls}">${esc(x)}</span>`).join('') + (xs.length > 4 ? `<span class="mini-chip more" title="${esc(xs.slice(4).join(', '))}">+${xs.length - 4} more</span>` : '');
     const facts = (p) => {
       const rows = [];
       const gives = [...(p.allows?.commands || []), ...(p.allows?.tools || []), ...(p.allows?.folders || []), ...(p.allows?.powers || [])];
@@ -5319,11 +4741,12 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const row = (p) => {
       const risks = permRisks(p);
       const mark = p.enforced ? `<span class="perm-mark" title="Enforced|The board builds the agent's tools from it">${icon('lock', 'sm')}</span>` : `<span class="perm-mark" title="Not enforced|Words only: nothing stops the agent">${icon('msg', 'sm')}</span>`;
-      const acts = p.builtin ? '<span class="perm-tag">built-in</span>'
+      const acts = p.kind === 'deployment' ? `<span class="perm-tag" title="Made, renamed and deleted with its deployment">from Deployments</span>`
+        : p.builtin ? '<span class="perm-tag">built-in</span>'
         : `<button class="btn sm ghost" data-perm-edit="${esc(p.key)}" title="Edit">${icon('pencil', 'sm')}<span>Edit</span></button><button class="btn sm ghost" data-perm-rm="${esc(p.key)}" title="Remove|Only when no agent or permission uses it">${icon('trash', 'sm')}<span>Remove</span></button>`;
       return `<article class="perm ${p.enforced ? '' : 'verbal'}" data-perm="${esc(p.key)}">
         <header class="perm-head">${mark}<b class="perm-nm">${esc(p.name)}</b><code class="perm-key">${esc(p.key)}</code><span class="grow"></span><span class="perm-acts">${acts}</span></header>
-        ${p.description && p.description !== p.name ? `<p class="perm-desc">${esc(p.description)}</p>` : ''}
+        ${p.description && p.description !== p.name ? `<p class="perm-desc" title="${esc(p.name)}|${esc(p.description)}">${esc(p.description)}</p>` : ''}
         ${p.enforced ? '' : `<p class="perm-warn">${icon('info', 'sm')}<span><b>Not enforced:</b> ${esc(String(p.warning || 'not enforced: the agent is trusted to follow it, and it could be dangerous on its own').replace(/^not enforced:\s*/i, ''))}</span></p>`}
         ${risks.map((r) => `<p class="perm-warn risk">${icon('info', 'sm')}<span>${esc(r)}</span></p>`).join('')}
         ${facts(p)}<p class="perm-err" hidden></p></article>`;
@@ -5335,7 +4758,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     }).join('');
     body.innerHTML = `<p class="perm-intro">Everything an agent can hold. Built-ins come from the code. Yours are kept in <code>${esc(lib.file || 'agents.json')}</code>, and an agent holds them like a built-in.</p>
       ${lib.errors?.length ? `<div class="perm-warn risk perm-errors">${icon('info', 'sm')}<span>Skipped in ${esc(lib.file || 'agents.json')}: ${lib.errors.map(esc).join(' · ')}</span></div>` : ''}
-      <button class="add-agent-btn" data-perm-add>＋ New permission</button><div data-perm-form></div>${groups}`;
+      ${groups}<div data-perm-form></div><button class="add-agent-btn" data-perm-add>＋ New permission</button>`;
 
     body.onclick = async (e) => {
       if (e.target.closest('.perm-form')) return;
@@ -5548,29 +4971,39 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     // One control to halt everything; once everyone is paused it offers to bring them back.
     const sa = Object.values(state.standing || {});
     const allPaused = sa.length && sa.every((a) => a.status === 'paused');
-    const stopRow = sa.length || state.presence.some((p) => p.leases?.length) ? `<div class="stop-row">${allPaused
-      ? `<button class="btn sm" data-resume-all title="Resume all|Unpause every standing agent; their queued events run">${icon('play', 'sm')}Resume all agents</button>`
-      : `<button class="btn sm danger${body._stopArmed ? ' armed' : ''}" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}${body._stopArmed ? 'Click again to stop everything' : 'Stop all agents'}</button>`}</div>` : '';
-    // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266).
+    const busy = sa.filter((a) => a.status === 'running').length;
+    // the one control that halts everything: a bar at the very top, saying what it would stop
+    const stopRow = sa.length || state.presence.some((p) => p.leases?.length) ? `<div class="stop-row${allPaused ? ' paused' : ''}"><span class="stop-ic">${icon(allPaused ? 'pause' : 'bot')}</span><div class="stop-txt"><b>${allPaused ? 'Every agent is paused' : `${sa.length} standing agent${sa.length === 1 ? '' : 's'}${busy ? ` · ${busy} running now` : ''}`}</b><span>${allPaused ? 'Nothing runs until you resume them; their events wait.' : 'Stop kills every run, pauses every agent and sends their tickets back to Ready.'}</span></div>${allPaused
+      ? `<button class="btn primary" data-resume-all title="Resume all|Unpause every standing agent; their queued events run">${icon('play', 'sm')}Resume all agents</button>`
+      : `<button class="btn danger${body._stopArmed ? ' armed' : ''}" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}${body._stopArmed ? 'Click again to stop everything' : 'Stop all agents'}</button>`}</div>` : '';
+    // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266). The agents come
+    // first; the idle alarm is a rule now, the base context is on the Context page and admin powers in Assignments.
     const first = !body._agentsFilled;
     body._agentsFilled = true;
-    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(`<div class="focusbar codebar code-row" ${state.app.behind ? '' : 'hidden'}>${codeBehindHTML()}</div>` + stopRow + usageHTML() + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div><div class="appr-row" data-admin data-keep="admin"></div><div class="appr-row idle-row" data-idle data-keep="idle"></div>' + coordRow + '<div class="coord-row base-row" data-base data-keep="base"></div>' + addBtn + (rows.length ? rows.map((p, i) => {
+    (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(`<div class="focusbar codebar code-row" ${state.app.behind ? '' : 'hidden'}>${codeBehindHTML()}</div>` + stopRow + addBtn + (rows.length ? '<div class="ent-list">' + rows.map((p, i) => {
       const sa = state.standing[p.name];
       const mode = sa?.status === 'running' ? 'running now' : p.connections.stream ? 'stream' : p.connections.waiting ? 'polling' : p.online ? 'active' : sa ? 'standing by' : 'offline';
-      const leases = p.leases.map((l) => `<span class="mini-chip link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${icon('clock', 'sm')}${esc(l.id)}</span>`).join('');
-      const subs = p.subscriptions.map((s) => `<span class="mini-chip" title="${esc(JSON.stringify(s.filter))}">${icon('bell', 'sm')}${esc(s.label || Object.entries(s.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join('');
+      // what it holds, in the same line: ticket ids (each opens its ticket) and a subscription count
+      const leases = p.leases.length ? ` · holds ${p.leases.map((l) => `<a class="link" data-board="${esc(l.board)}" data-open="${esc(l.id)}" title="${esc(l.title)}">${esc(l.id)}</a>`).join(', ')}` : '';
+      const subs = p.subscriptions.length ? ` · <span title="${esc(p.subscriptions.map((x) => x.label || JSON.stringify(x.filter)).join(', '))}">${p.subscriptions.length} subscription${p.subscriptions.length === 1 ? '' : 's'}</span>` : '';
+      const failed = sa?.lastRun?.error && sa.lastRun.code !== 0 && sa.status !== 'running';
+      const tok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k tokens` : `${n} tokens`);
       // the row's rarer actions live in its ⋯ menu, so they take no room in the row (INT-268)
-      const more = [p.name !== coord && 'Make coordinator', forgettable(p) && 'Forget'].filter(Boolean);
-      return `<div class="agent-row ${p.online || sa ? '' : 'off'}" data-agent="${esc(p.name)}"${first ? ` style="animation-delay:${i * 40}ms"` : ''}>${avatar({ kind: 'agent', name: p.name }, 'lg')}
-        <div style="min-width:0"><div class="nm"><span class="status-dot ${p.online ? 'on' : ''}"></span>${esc(nameOf(p.name))}${nameOf(p.name) !== p.name ? `<span class="nm-id">@${esc(p.name)}</span>` : ''}${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from the Ask field go to this agent unless you pick another">takes requests</span>' : ''}${more.length ? `<button class="row-more" data-row-more="${esc(p.name)}" aria-label="More for ${esc(nameOf(p.name))}" title="More|${more.join(', ')}${more.includes('Forget') ? ' (it comes back if it connects again)' : ''}">${icon('more', 'sm')}</button>` : ''}</div><div class="sub"${p.lastAction ? ` title="${esc(p.lastAction)}"` : ''}>${sa?.role ? `<b class="ag-role">${esc(sa.role)}</b> · ` : ''}${mode === 'standing by' && !p.lastSeen ? 'waiting for its first run' : `${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}`}${p.lastAction ? ` · ${esc(callWords(p.lastAction))}` : ''}</div>${sa?.description ? `<div class="sub ag-about" title="${esc(sa.description)}">${esc(sa.description.replace(/\s+/g, ' '))}</div>` : ''}</div>
-        ${leases || subs ? `<div class="extra">${leases}${subs}</div>` : ''}${sa ? standingControls(sa) : ''}</div>`;
-    }).join('') : `<div class="empty-note">${icon('bot')}</div>`));
+      const more = [sa && 'Run now', sa && (sa.status === 'running' ? 'Watch live' : 'Runs'), sa && 'Edit', p.name !== coord && 'Make coordinator', forgettable(p) && 'Forget', sa && 'Remove'].filter(Boolean);
+      const role = sa?.role ? `${esc(sa.role[0].toUpperCase() + sa.role.slice(1))} · ` : '';
+      const modeText = mode === 'standing by' && !p.lastSeen ? 'waiting for its first run' : `${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}`;
+      return `<article class="ent agent-row${p.online || sa ? '' : ' off'}${sa?.status === 'failed' ? ' needs' : ''}" data-agent="${esc(p.name)}"${first ? ` style="animation-delay:${i * 40}ms"` : ''}>
+        <div class="ent-lead">${avatar({ kind: 'agent', name: p.name })}<span class="status-dot ${p.online ? 'on' : ''}"></span></div>
+        <div class="ent-body">
+          <h3 class="ent-title"${sa?.description ? ` title="${esc(nameOf(p.name))}|${esc(sa.description.replace(/\s+/g, ' '))}"` : ''}><span class="ent-name">${esc(nameOf(p.name))}</span>${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from Ask an agent go to this agent unless you pick another">takes requests</span>' : ''}</h3>
+          <div class="ent-sub"${failed ? ` title="${esc(sa.lastRun.error)}"` : p.lastAction ? ` title="${esc(p.lastAction)}"` : ''}>${role}${failed ? `<span class="bad-t">failed${sa.failures ? ` ${sa.failures}×` : ''}: ${esc(sa.lastRun.error.slice(0, 120))}</span>` : `${modeText}${p.lastAction ? ` · ${esc(callWords(p.lastAction))}` : ''}`}${leases}${subs}</div>
+        </div>
+        <div class="ent-side">${sa ? `<span class="ent-col extra" title="Tokens today${sa.usageToday ? `|${sa.usageToday.runs} run${sa.usageToday.runs === 1 ? '' : 's'}` : ''}">${sa.usageToday ? tok((sa.usageToday.input || 0) + (sa.usageToday.output || 0)) : '—'}</span><span class="ent-col pill">${runPill(sa)}</span>` : ''}
+          <div class="ent-acts">${sa ? standingButtons(sa).split('</button>')[0] + '</button>' : ''}${more.length ? `<button class="ent-more" data-row-more="${esc(p.name)}" aria-label="More for ${esc(nameOf(p.name))}" title="More|${more.join(', ')}">${icon('more', 'sm')}</button>` : ''}</div></div>
+      </article>`;
+    }).join('') + '</div>' : `<div class="ent-empty">${icon('bot')}<h3>No agents yet</h3><p>Add a standing agent: the board runs it when there is work for it.</p></div>`) + usageHTML() + agentsNowHTML() + '<div class="appr-row" data-appr data-keep="appr"></div>' + coordRow);
     fillApprovals($('[data-appr]', body));
-    fillAdmin($('[data-admin]', body));
-    fillIdleAlarm($('[data-idle]', body));
-    fillBaseRow($('[data-base]', body));
     body.onclick = async (e) => {
-      if (e.target.closest('[data-open-base]')) { e.stopPropagation(); openContext('base'); return; }
       const co = e.target.closest('[data-coord]');
       if (co) {
         e.stopPropagation();
@@ -5612,9 +5045,17 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
             row.animate([{ opacity: 1, translate: '0 0' }, { opacity: 0, translate: '12px 0' }], { duration: calm ? 1 : 220, easing: 'ease-in', fill: 'forwards' }).onfinish = () => refreshPresence();
           } catch (err) { toast(err.message, { kind: 'error' }); }
         };
+        // the row shows one action (Pause or Resume); the others are here
+        const act = (standing, label, ic) => ({ label, icon: ic, run: () => standingAction({ dataset: { standing, name } }) });
+        const sa = state.standing[name];
         const opened = menu(more, [
+          ...(sa ? [act('run', 'Run now', 'sparkle'), act('log', sa.status === 'running' ? 'Watch live' : 'Runs', 'terminal'), act('edit', 'Edit', 'pencil')] : []),
           ...(name !== coord ? [{ label: 'Make coordinator', icon: 'send', run: () => setCoordinator(name) }] : []),
           ...(p && forgettable(p) ? [{ label: 'Forget', icon: 'x', run: forget }] : []),
+          ...(state.standing[name] ? [{ label: 'Remove', icon: 'trash', run: async () => {
+            if (!confirm(`Remove ${nameOf(name)}? It leaves agents.json; its tickets and history stay.`)) return;
+            try { await api('DELETE', `/api/agents/${encodeURIComponent(name)}`); toast(`Removed ${name}`, { icon: 'bot', timeout: 2200 }); refreshPresence(); } catch (err) { toast(err.message, { kind: 'error' }); }
+          } }] : []),
         ], { onClose: () => more.removeAttribute('aria-expanded') });
         if (opened) more.setAttribute('aria-expanded', 'true');
         return;
@@ -5696,14 +5137,13 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   async function refreshLooks() {
     if (!state.boardId) return;
     let l = {};
-    if ((state.board?.cardRules || []).some((r) => r.enabled !== false)) {
+    // a card rule's look, or a style a rule saved on a ticket (it shows on a board with no card rules too)
+    if ((state.board?.cardRules || []).some((r) => r.enabled !== false) || Object.values(state.board?.items || {}).some((it) => it.style)) {
       try { l = await api('GET', B('/card-rules/matches')); } catch { return; /* offline: keep what is shown */ }
     }
     const sig = JSON.stringify(l);
     if (sig !== state.looksSig) { state.looks = l; state.looksSig = sig; render(); applyFilter(); }
   }
-  const RULE_TONES = ['ok', 'accent', 'warn', 'danger'];
-  const RULE_SHAPES = ['square', 'circle', 'triangle', 'diamond', 'bar', 'star'];
   const MARKS_SHOWN = 5;
   const markColour = (m) => (m.colour ? m.colour : toneVar(m.tone || 'accent'));
   // The corner marks (INT-288): one per matching rule, in rule order; past MARKS_SHOWN a "+N" holds the rest.
@@ -5771,12 +5211,12 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const s = seenFor(state.boardId);
     const ids = Object.keys(s.items).filter((id) => state.board.items[id]);
     body.innerHTML = ids.length
-      ? `<div class="feed-head"><span class="grow"></span><button class="btn sm" data-allseen>${icon('check', 'sm')}Mark all seen</button></div>${ids.map((id, i) => {
+      ? `<div class="ent-bar"><button class="btn sm" data-allseen>${icon('check', 'sm')}Mark all seen</button></div>${ids.map((id) => {
         const it = state.board.items[id];
-        return `<div class="catch-item" data-open="${esc(id)}" style="animation-delay:${Math.min(i, 12) * 30}ms"><div class="t">${icon(it.type, 'sm')}<span style="font:11px var(--mono);color:var(--muted)">${esc(id)}</span>${esc(it.title)}</div>
-          ${s.items[id].slice(-5).reverse().map((e) => `<div class="ev">${avatar(e.actor)}<span>${esc(e.text)}</span><time>${rel(e.ts)}</time></div>`).join('')}</div>`;
+        return `<div class="ent-list catch-list"><div class="ent-lh" data-open="${esc(id)}">${icon(it.type, 'sm')}<span class="ent-id">${esc(id)}</span>${esc(it.title)}</div>
+          ${s.items[id].slice(-5).reverse().map((e) => `<article class="ent feed-row" data-open="${esc(id)}"><div class="ent-lead">${avatar(e.actor)}</div><div class="ent-body"><div class="ent-title feed-what">${esc(e.text)}</div></div><div class="ent-side"><span class="ent-col when">${rel(e.ts)}</span></div></article>`).join('')}</div>`;
       }).join('')}`
-      : `<div class="empty-note">${icon('check')}</div>`;
+      : `<div class="empty-note">${icon('check')}<span>Nothing changed since you last looked</span></div>`;
   }
   function openCatchup() {
     const body = openDrawer('catchDrawer', 'While you were away', 'sparkle');
@@ -5796,7 +5236,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   function saveInbox() { inboxStorage.save(inboxRead); }
   const myName = () => (settings.userName || 'You').toLowerCase();
   const forMe = (ev) => ev.actor?.name?.toLowerCase() !== myName() && !QUIET.has(ev.type)
-    && ((ev.recipients || []).some((r) => r.toLowerCase() === myName()) || ev.type === 'attention.raised');
+    && ((ev.recipients || []).some((r) => r.toLowerCase() === myName()) || ev.type === 'attention.raised' || ev.type === 'deploy.run.requested');
   const isUnread = (ev) => ev.seq > inboxRead.seq && !inboxRead.ids.includes(ev.seq);
 
   async function refreshInbox() {
@@ -5804,7 +5244,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     try {
       const [a, b] = await Promise.all([
         api('GET', `/api/events?since=0&limit=400&tail=true&for=${n}`),
-        api('GET', '/api/events?since=0&limit=200&tail=true&types=attention.raised'),
+        api('GET', '/api/events?since=0&limit=200&tail=true&types=attention.raised,deploy.run.requested'),
       ]);
       const map = new Map();
       for (const ev of [...a.events, ...b.events]) if (forMe(ev)) map.set(ev.seq, ev);
@@ -5813,11 +5253,15 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     renderInboxBtn();
   }
   function renderInboxBtn() {
-    const badge = $('#hubBtn .badge');
-    if (!badge) return;
-    const n = state.inbox.filter(isUnread).length;
-    badge.hidden = !n;
-    badge.textContent = n > 99 ? '99+' : n;
+    // the unread count sits on the Inbox view in the Agents section (drawn when that page is open)
+    const nav = $('.page-nav [data-view="inboxDrawer"]');
+    if (nav) {
+      const n = state.inbox.filter(isUnread).length;
+      let badge = $('.badge', nav);
+      if (!badge) nav.append(badge = el('<span class="badge"></span>'));
+      badge.hidden = !n;
+      badge.textContent = n > 99 ? '99+' : n;
+    }
     renderPresenceButton();
     if ($('#inboxDrawer')) drawInbox($('#inboxDrawer .drawer-body'));
   }
@@ -5830,10 +5274,11 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   }
   function drawInbox(body) {
     const unread = state.inbox.filter(isUnread).length;
-    body.innerHTML = `<div class="feed-head"><span class="grow"></span>${unread ? `<button class="btn sm" data-allread>${icon('check', 'sm')}Mark all read</button>` : ''}</div>`
-      + (state.inbox.length ? state.inbox.map((ev, i) => `<div class="feed-row ${isUnread(ev) ? 'unread' : ''}" data-seq="${ev.seq}" data-board="${esc(ev.board || '')}" data-item="${esc(ev.itemId || '')}" style="animation-delay:${Math.min(i, 15) * 20}ms">
-          <span class="dot"></span>${avatar(ev.actor)}<div>${describe(ev, true)}${ev.board && ev.board !== state.boardId ? `<span class="brd">${esc(ev.board)}</span>` : ''}</div><time>${rel(ev.ts)}</time></div>`).join('')
-        : `<div class="empty-note">${icon('bell')}</div>`);
+    body.innerHTML = `<div class="ent-bar">${unread ? `<button class="btn sm" data-allread>${icon('check', 'sm')}Mark all read</button>` : ''}</div>`
+      // the shared list rows: who, what happened, when; unread ones marked New
+      + (state.inbox.length ? '<div class="ent-list">' + state.inbox.map((ev) => `<article class="ent feed-row ${isUnread(ev) ? 'unread' : ''}" data-seq="${ev.seq}" data-board="${esc(ev.board || '')}" data-item="${esc(ev.itemId || '')}">
+          <div class="ent-lead">${avatar(ev.actor)}</div><div class="ent-body"><div class="ent-title feed-what">${describe(ev, true)}</div></div><div class="ent-side">${ev.board && ev.board !== state.boardId ? `<span class="ent-col">${esc(ev.board)}</span>` : ''}<span class="ent-col when">${esc(rel(ev.ts) || '')}</span></div></article>`).join('') + '</div>'
+        : `<div class="empty-note">${icon('bell')}<span>Nothing for you right now</span></div>`);
   }
   function openInbox() {
     const body = openDrawer('inboxDrawer', 'Inbox', 'bell');
@@ -5845,6 +5290,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       if (!row) return;
       markRead(Number(row.dataset.seq));
       renderInboxBtn();
+      if (state.inbox.find((x) => x.seq === Number(row.dataset.seq))?.type?.startsWith('deploy.')) { openDeployments('runs'); return; }
       if (!row.dataset.item) return;
       if (row.dataset.board && row.dataset.board !== state.boardId) await loadBoard(row.dataset.board);
       openItem(row.dataset.item, cardEls.get(row.dataset.item));
@@ -5881,7 +5327,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       const byDay = new Map();
       for (const e of (state.board.digest || []).slice().reverse()) { if (!byDay.has(e.date)) byDay.set(e.date, []); byDay.get(e.date).push(e); }
       body.innerHTML = `<div class="digest-compose">${tboxHTML({ ph: 'Add a note…', okIcon: 'send', okTitle: 'Post (Ctrl+Enter)' })}</div>${[...byDay].map(([d, list]) => `<div class="dg-day"><div class="section-head"><span>${esc(dayLabel(d))}</span><span class="rule"></span></div>
-        ${list.map((e) => `<div class="dg-entry">${avatar(e.author, 'lg')}<div style="min-width:0"><div class="cmt-head"><b>${nameHTML(e.author?.name)}</b><span>${new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>${(e.items || []).map((id) => `<span class="mini-chip link" data-open="${esc(id)}">${esc(id)}</span>`).join('')}</div><div class="md">${md(e.summary)}</div></div></div>`).join('')}</div>`).join('') || `<div class="empty-note">${icon('news')}</div>`}`;
+        ${list.map((e) => `<div class="dg-entry">${avatar(e.author, 'lg')}<div style="min-width:0"><div class="cmt-head"><b>${nameHTML(e.author?.name)}</b><span>${new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>${(e.items || []).map((id) => `<span class="mini-chip link" data-open="${esc(id)}">${esc(id)}</span>`).join('')}</div><div class="md">${md(e.summary)}</div></div></div>`).join('')}</div>`).join('') || `<div class="empty-note">${icon('news')}<span>No digest entries yet</span></div>`}`;
       wireTbox($('.tbox', body), post);
     };
     body._redraw = draw;
@@ -5902,8 +5348,22 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     // a list of objects (context items) reads as its titles, never [object Object]
     const fmtOne = (x) => (x && typeof x === 'object' ? x.title || x.name || x.path || x.url || x.kind || JSON.stringify(x) : String(x));
     const fmt = (v) => (v == null ? '—' : typeof v === 'object' ? (Array.isArray(v) ? (v.length ? v.map(fmtOne).join(', ') : '—') : Object.entries(v).map(([k, x]) => `${k}: ${Array.isArray(x) ? x.map(fmtOne).join('/') : x}`).join(', ')) : String(v));
-    const changes = (a.changes || []).slice(-5).reverse().map((c) => `<div class="chg"><span class="who">${avatar(c.by)}${nameHTML(c.by?.name)}</span><span class="what">${c.admin ? `<b>${esc(c.admin.power)}</b> ${esc(c.admin.text)}${c.reverted ? ' (reverted)' : ''}` : Object.entries(c.changes).map(([k, v]) => `<b>${esc(k.replace(/^profile\./, ''))}</b> ${esc(fmt(v.from))} → ${esc(fmt(v.to))}`).join(' · ')}</span><time>${rel(c.at)}</time>${c.reverted ? '' : `<button class="btn sm ghost" data-revert="${esc(c.id)}" data-agent="${esc(a.name)}" title="Revert|Put these values back">${icon('restore', 'sm')}</button>`}</div>`).join('');
-    return `<div class="section"><div class="section-head">${icon('radio', 'sm')}<span>Standing agent</span><span class="rule"></span></div>${standingControls(a)}<div class="standing-meta">${meta}</div>${changes ? `<div class="chg-list"><div class="chg-head">Recent changes</div>${changes}</div>` : ''}</div>`;
+    const changes = (a.changes || []).slice(-20).reverse().map((c) => {
+      const what = c.admin ? `${esc(c.admin.power)}: ${esc(c.admin.text)}` : Object.entries(c.changes).map(([k, v]) => `<b>${esc(k.replace(/^profile\./, ''))}</b> ${esc(fmt(v.to))}`).join(' · ');
+      const was = c.admin ? '' : Object.entries(c.changes).map(([k, v]) => `${k.replace(/^profile\./, '')}: ${fmt(v.from)} → ${fmt(v.to)}`).join('\n');
+      return `<article class="ent feed-row"><div class="ent-lead">${avatar(c.by)}</div><div class="ent-body"><div class="ent-title feed-what"${was ? ` title="Changed by ${esc(nameOf(c.by?.name || ''))}|${esc(was)}"` : ''}>${what}${c.reverted ? ' <span class="muted">(reverted)</span>' : ''}</div></div>
+        <div class="ent-side"><span class="ent-col when">${rel(c.at)}</span><div class="ent-acts">${c.reverted ? '' : `<button class="btn sm ghost" data-revert="${esc(c.id)}" data-agent="${esc(a.name)}" title="Revert|Put these values back">${icon('restore', 'sm')}Revert</button>`}</div></div></article>`;
+    }).join('');
+    return changes ? `<div class="ent-list">${changes}</div>` : '<div class="ent-empty"><p>No changes yet: edits made here, or by an agent manager, show up here with a way to undo them.</p></div>';
+  }
+  // The agent page's header actions: its state, the one action it needs now, Run now, its runs, and ⋯ for Remove
+  function agentActs(a) {
+    const btn = (act, ic, label, tip, cls = 'ghost') => `<button class="btn sm ${cls}" data-standing="${act}" data-name="${esc(a.name)}" title="${tip}">${icon(ic, 'sm')}<span>${label}</span></button>`;
+    return `${runPill(a)}
+      ${a.status === 'paused' || a.status === 'failed' ? btn('resume', 'play', 'Resume', 'Resume|Clear failures and run any waiting events', '') : btn('pause', 'pause', 'Pause', 'Pause|The current run finishes; new events wait', '')}
+      ${btn('run', 'sparkle', 'Run now', 'Run now|Start a run with whatever is waiting, or just to check the board')}
+      ${a.status === 'running' ? btn('log', 'terminal', 'Watch live', 'Watch live|What it is doing now, as it happens') : btn('log', 'terminal', 'Runs', 'Runs|What it did in its last runs, step by step')}
+      ${btn('remove', 'trash', 'Remove', 'Remove|Delete this standing agent from agents.json — its tickets and history stay')}`;
   }
   // Undo one change: send the old values back (as the human).
   async function revertChange(btn) {
@@ -5927,7 +5387,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     const body = openDrawer('agentDrawer', state.profiles[name]?.label || name, 'bot'); // named as the hero names it (INT-269)
     let spec = null; // the Speciality editor survives redraws (a half-typed edit must not vanish)
     let mem = null; // and the memory panel
-    let layers = null; // so do the context layers, with whichever ones are open
     let showDone = false; // Assigned lists open tickets; the done ones wait behind "N done — show" (INT-269)
     // Open tickets grouped by column in board order, then one line for the done ones.
     const assignedSection = (mine, chip) => {
@@ -5950,23 +5409,34 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       const chip = (id, ic) => `<span class="mini-chip link" data-open="${esc(id)}" title="${esc(state.board.items[id]?.title || '')}">${icon(ic, 'sm')}${esc(id)}</span>`;
       const section = (title, ic, html) => (html ? `<div class="section"><div class="section-head">${icon(ic, 'sm')}<span>${title}</span><span class="rule"></span></div><div class="deps">${html}</div></div>` : '');
       const mode = pres ? (pres.connections.stream ? 'stream' : pres.connections.waiting ? 'polling' : pres.online ? 'active' : 'offline') : 'never seen';
-      const html = `<div class="agent-hero">${avatar({ kind: p.kind || 'agent', name }, 'xl')}<div style="min-width:0"><div class="ah-name">${esc(p.label || name)}</div>
-          <div class="ah-sub"><span class="status-dot ${pres?.online ? 'on' : ''}"></span><span>${esc(name)}</span><span>· ${mode}</span>${pres?.lastSeen ? `<span>· ${rel(pres.lastSeen)}</span>` : ''}</div></div></div>
-        ${p.description || state.standing[name]?.description ? `<div class="md ah-desc">${md(p.description || state.standing[name].description)}</div>` : ''}
-        ${state.standing[name] ? standingSection(state.standing[name]) : ''}
-        ${state.standing[name] ? '<div class="spec-slot" data-keep="spec"></div>' : ''}
-        ${p.kind === 'user' ? '' : '<div class="layers-slot" data-keep="layers"></div><div class="mem-slot" data-keep="mem"></div>'}
+      const sa = state.standing[name];
+      const desc = p.description || sa?.description;
+      const fail = sa?.lastRun?.error && sa.lastRun.code !== 0 && sa.status !== 'running' ? sa.lastRun.error : '';
+      const html = `<div class="agent-hero">${avatar({ kind: p.kind || 'agent', name }, 'lg')}<div class="ah-main"><div class="ah-line"><span class="ah-name">${esc(p.label || name)}</span>
+          <span class="ah-sub">${sa?.role ? `${esc(sa.role[0].toUpperCase() + sa.role.slice(1))} · ` : ''}${mode}${pres?.lastSeen ? ` · ${rel(pres.lastSeen)}` : ''}${sa?.model ? ` · ${esc(sa.model)}` : ''}</span></div>
+          ${desc ? `<p class="ah-desc" title="${esc(desc)}">${esc(desc.replace(/\s+/g, ' '))}</p>` : ''}</div>
+          ${sa ? `<div class="ah-acts">${agentActs(sa)}</div>` : ''}</div>
+        ${fail ? `<p class="perm-warn risk ah-fail" title="${esc(fail)}">${icon('x', 'sm')}<span>Last run failed${sa.failures ? ` ${sa.failures}×` : ''}: ${esc(fail.slice(0, 200))}</span></p>` : ''}
+        ${sa ? '<div class="spec-slot" data-keep="spec"></div>' : ''}
+        ${!sa && p.kind !== 'user' ? '<div class="mem-slot" data-keep="mem"></div>' : ''}
         ${section('Holding', 'clock', (pres?.leases || []).map((l) => chip(l.id, 'clock')).join(''))}
         ${assignedSection(items.filter((i) => i.assignee === name), chip)}
         ${section('Listening to', 'radio', Object.entries(state.listeners).filter(([, ns]) => ns.includes(name)).map(([id]) => chip(id, 'radio')).join(''))}
         ${section('Subscriptions', 'bell', (pres?.subscriptions || []).map((x) => `<span class="mini-chip" title="${esc(JSON.stringify(x.filter))}">${icon('bell', 'sm')}${esc(x.label || Object.entries(x.filter).map(([k, v]) => `${k}=${v}`).join(' ') || 'all')}</span>`).join(''))}
         <div class="section"><div class="section-head">${icon('activity', 'sm')}<span>Activity</span><span class="rule"></span></div>
-          <div class="ah-act">${activity == null ? '<div class="act sk" aria-hidden="true"><i></i><span></span><time></time></div>'.repeat(3) : activity.length ? activity.map((ev) => `<div class="act">${icon(eventIcon(ev.type), 'sm')}<div>${describe(ev, true)}</div><time>${rel(ev.ts)}</time></div>`).join('') : `<div class="empty-note">${icon('activity')}</div>`}</div></div>`;
+          <div class="ah-act">${activity == null ? '<div class="act sk" aria-hidden="true"><i></i><span></span><time></time></div>'.repeat(3) : activity.length ? `<div class="ent-list">${activity.map((ev) => `<article class="ent feed-row"><span class="ent-lead ent-tile" data-tone="muted">${icon(eventIcon(ev.type), 'sm')}</span><div class="ent-body"><div class="ent-title feed-what">${describe(ev, true)}</div></div><div class="ent-side"><span class="ent-col when">${rel(ev.ts)}</span></div></article>`).join('')}</div>` : `<div class="empty-note">${icon('activity')}<span>No activity yet</span></div>`}</div></div>`;
       if (drawn) patchHTML(body, html); else { body.innerHTML = html; drawn = true; }
       const slot = $('.spec-slot', body);
-      if (slot) { spec ||= specialityEditor(name); spec.dataset.keep = 'spec'; slot.replaceWith(spec); }
-      const lslot = $('.layers-slot', body);
-      if (lslot) { layers ||= layersSection(name); layers.dataset.keep = 'layers'; lslot.replaceWith(layers); }
+      if (slot) {
+        spec ||= specialityEditor(name);
+        spec.dataset.keep = 'spec';
+        slot.replaceWith(spec);
+        // Memory and History are tabs of the editor; History follows every redraw
+        const mh = $('[data-mem-host]', spec);
+        if (mh && !mh.firstChild) { mem ||= memorySection(name); mh.append(mem); }
+        const hh = $('[data-pane="history"]', spec);
+        if (hh) patchHTML(hh, standingSection(sa));
+      }
       const mslot = $('.mem-slot', body);
       if (mslot) { mem ||= memorySection(name); mem.dataset.keep = 'mem'; mslot.replaceWith(mem); }
     };
@@ -6042,7 +5512,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     speed: ['Careful', 'Fast'],
     autonomy: ['Asks first', 'Decides'],
   };
-  const AGENT_TABS = [['identity', 'Identity', 'user'], ['personality', 'Personality', 'sparkle'], ['role', 'Role and areas', 'target'], ['context', 'Context', 'text'], ['wake', 'Wake-ups', 'clock'], ['commands', 'Commands', 'sliders'], ['preview', 'Preview', 'eye']];
+  const AGENT_TABS = [['identity', 'Identity', 'user'], ['personality', 'Personality', 'sparkle'], ['role', 'Role and areas', 'target'], ['context', 'Context', 'text'], ['wake', 'Wake-ups', 'clock'], ['commands', 'Commands', 'sliders'], ['memory', 'Memory', 'pin'], ['preview', 'Preview', 'eye'], ['history', 'History', 'restore']];
   const hintOf = (e) => (e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message);
 
   function specialityEditor(name) {
@@ -6076,7 +5546,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         <div class="muted pe-note"><button type="button" class="btn sm ghost" data-open-grid>See this agent's row in the permissions grid</button></div>`;
     }
     const pane = (k, html) => `<div class="pe-pane" role="tabpanel" id="pepane-${k}-${id}" aria-labelledby="petab-${k}-${id}" data-pane="${k}" ${k === 'identity' ? '' : 'hidden'}>${html}</div>`;
-    const root = el(`<div class="section spec"><div class="section-head">${icon('target', 'sm')}<span>Edit ${esc(prof.label || name)}</span><span class="rule"></span></div>
+    const root = el(`<div class="section spec">
       <nav class="tabs pe-tabs" role="tablist" aria-label="Agent settings">${AGENT_TABS.map(([k, l, ic], i) => `<button type="button" role="tab" id="petab-${k}-${id}" aria-controls="pepane-${k}-${id}" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}" data-pt="${k}" class="${i === 0 ? 'on' : ''}">${icon(ic, 'sm')}<span>${l}</span></button>`).join('')}</nav>
       <div class="spec-ed">
         ${pane('identity', `<label class="spec-label" for="pe-label-${id}">Title</label><input class="inp" id="pe-label-${id}" data-id="label" maxlength="60" value="${esc(prof.label || '')}">
@@ -6095,6 +5565,10 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
           <div class="spec-label">Watches for <span class="muted">— concerns it checks before asking for review</span></div>
           <div class="spec-chips" data-k="concerns"></div>
           <div class="spec-add"><input class="inp" data-add="concerns" aria-label="Add a concern" placeholder="e.g. accessibility contrast, dark/light parity, performance" autocomplete="off"><button class="btn sm ghost" type="button" data-add-btn="concerns">${icon('plus', 'sm')}Add</button></div>
+          <div class="spec-label">What the role tells it <span class="muted" data-role-note></span></div>
+          <div class="md desc-view pe-rolebrief" data-role-brief><p class="muted">Loading…</p></div>
+          <textarea class="inp spec-ctx" data-role-brief-ta spellcheck="true" hidden></textarea>
+          <div class="spec-add" data-role-brief-bar hidden><span class="grow"></span><button class="btn sm primary" type="button" data-role-brief-save>${icon('check', 'sm')}Save role</button></div>
           <label class="spec-toggle"><input type="checkbox" data-reviewer ${a.reviewer ? 'checked' : ''}> <span><b>Can review</b> other agents' work in its areas — the receptionist may assign it; it comments, you approve</span></label>
           <div class="muted pe-note">What it may do is the <button type="button" class="btn sm ghost" data-open-grid>permissions grid</button>; when it wakes is the Wake-ups tab.</div>`)}
         ${pane('wake', wakePane())}
@@ -6104,6 +5578,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         ${pane('commands', `<div class="muted pe-note">A command is exact, or ends in <code>:*</code> to allow any arguments. Type one to see what the run builder would do with it. Nothing is changed here: commands live in agents.json.</div>
           <div class="spec-add"><input class="inp" data-cmd aria-label="Command to check" placeholder="npm run measure:board" autocomplete="off" spellcheck="false"><button class="btn sm ghost" type="button" data-cmd-check>${icon('check', 'sm')}Check</button></div>
           <div class="pe-result" data-cmd-out aria-live="polite"></div>`)}
+        ${pane('memory', '<div data-mem-host></div>')}
+        ${pane('history', '')}
         ${pane('preview', `<div class="muted pe-note">The first turn the board would send now, built by the code a real run uses. It shows the saved agent: save first to see an edit in it.</div>
           <div class="spec-add"><button class="btn sm ghost" type="button" data-pv>${icon('restore', 'sm')}Rebuild</button><span class="muted" data-pv-state></span></div>
           <div class="pe-layers" data-pv-layers></div>
@@ -6120,6 +5596,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       tabs.forEach((b) => { const on = b.dataset.pt === k; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); b.tabIndex = on ? 0 : -1; if (on && focus) b.focus(); });
       $$('[data-pane]', root).forEach((p) => { p.hidden = p.dataset.pane !== k; });
       if (k === 'preview' && !st.preview) loadPreview();
+      $('.spec-foot', root).hidden = ['memory', 'history', 'preview', 'commands'].includes(k); // those tabs save nothing
     };
     $('.pe-tabs', root).addEventListener('keydown', (e) => {
       const i = tabs.indexOf(document.activeElement);
@@ -6160,9 +5637,41 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       $$('textarea', host).forEach(autosize);
     };
     api('GET', `/api/agents/${encodeURIComponent(name)}/context`).then((r) => { st.items = (r.items || []).map((i) => ({ ...i })); drawItems(); }, (e) => { $('[data-items]', root).innerHTML = `<div class="pe-bad">${esc(hintOf(e))}</div>`; });
+    // the role's brief, under the role it belongs to: read as markdown; a role of yours opens to edit on a click
+    let roles = [];
+    const roleBrief = () => {
+      const r = roles.find((x) => x.key === $('[data-role]', root).value);
+      const view = $('[data-role-brief]', root), ta = $('[data-role-brief-ta]', root);
+      ta.hidden = true; $('[data-role-brief-bar]', root).hidden = true; view.hidden = false;
+      view.innerHTML = r ? md(r.brief || '') || '<p class="muted">Empty</p>' : '<p class="muted">No role: it gets no role brief.</p>';
+      view.title = r && !r.builtin ? 'Click to edit' : '';
+      view.classList.toggle('editable', !!r && !r.builtin);
+      $('[data-role-note]', root).textContent = r ? `— shared by every ${r.label || r.key} agent${r.builtin ? '; built in, so it is read-only' : ''}` : '';
+      ta.value = r?.brief || '';
+    };
     api('GET', '/api/roles').then((r) => {
-      $('[data-role]', root).innerHTML = `<option value="">none</option>${(r.roles || []).map((x) => `<option value="${esc(x.key)}" ${x.key === a.role ? 'selected' : ''}>${esc(x.label || x.key)}</option>`).join('')}`;
-    }, () => { /* the current role stays as the only option */ });
+      roles = r.roles || [];
+      $('[data-role]', root).innerHTML = `<option value="">none</option>${roles.map((x) => `<option value="${esc(x.key)}" ${x.key === a.role ? 'selected' : ''}>${esc(x.label || x.key)}</option>`).join('')}`;
+      roleBrief();
+    }, () => { $('[data-role-brief]', root).innerHTML = '<p class="muted">Could not load the roles.</p>'; });
+    $('[data-role]', root).addEventListener('change', roleBrief);
+    $('[data-role-brief]', root).addEventListener('click', (e) => {
+      const r = roles.find((x) => x.key === $('[data-role]', root).value);
+      if (!r || r.builtin || e.target.closest('a')) return;
+      e.currentTarget.hidden = true;
+      const ta = $('[data-role-brief-ta]', root);
+      ta.hidden = false; $('[data-role-brief-bar]', root).hidden = false; autosize(ta); ta.focus();
+    });
+    $('[data-role-brief-save]', root).addEventListener('click', async (e) => {
+      const b = e.currentTarget;
+      const r = roles.find((x) => x.key === $('[data-role]', root).value);
+      if (!r) return;
+      const next = { ...Object.fromEntries(ROLE_KEYS.filter((k) => r[k] != null).map((k) => [k, r[k]])), brief: $('[data-role-brief-ta]', root).value };
+      b.disabled = true;
+      try { Object.assign(r, (await api('PUT', `/api/roles/${encodeURIComponent(r.key)}`, next)).role); roleBrief(); toast(`Role ${r.label || r.key} saved: its agents get it from their next session`, { icon: 'check', kind: 'ok' }); }
+      catch (err) { toast(hintOf(err), { kind: 'error', wrap: true }); }
+      b.disabled = false;
+    });
 
     // commands: what the run builder would do with one
     const checkCmd = async () => {
@@ -6332,15 +5841,14 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       activeMaster()
         ? { section: A, label: `Release the board (${activeMaster().holder})`, icon: 'x', run: () => api('DELETE', B('/master')).then(() => scheduleRefresh(0), (e) => toast(e.message, { kind: 'error' })) }
         : { section: A, label: 'Hold the whole board', icon: 'lock', hint: 'master lease', run: () => api('POST', B('/master'), { force: true }).then(() => scheduleRefresh(0), (e) => toast(e.message, { kind: 'error' })) },
-      { section: A, label: 'Ask an agent…', icon: 'send', hint: askTo() || '', run: () => setTimeout(openAsk, 0) },
+      { section: A, label: 'Ask an agent…', icon: 'send', run: () => openRequests() },
       { section: A, label: 'Agents', icon: 'bot', run: openAgents },
       { section: A, label: 'Archive', icon: 'archive', run: openArchive },
       { section: A, label: 'Select mode', icon: 'checks', run: () => setBulk(!state.bulk) },
       { section: A, label: 'Settings', icon: 'sliders', run: () => openSettings() },
       { section: A, label: 'Ticket fields', icon: 'layers', run: () => openSettings('fields') },
       { section: 'Go to', label: 'Switch board…', icon: 'board', run: () => ({ title: 'Board', items: state.boards.map((x) => ({ label: x.name, icon: 'board', hint: String(x.items), run: () => { closeModal(true); loadBoard(x.id); } })) }) },
-      { section: 'Look', label: 'Theme…', icon: 'palette', run: () => ({ title: 'Theme', items: Object.entries(THEMES).map(([k, t]) => ({ label: t.label, color: t.vars.accent, hint: k === settings.theme ? '●' : '', run: () => switchTheme(k) })) }) },
-      { section: 'Look', label: 'Background…', icon: 'wave', run: () => ({ title: 'Background', items: BACKGROUNDS.map(([k, l]) => ({ label: l, icon: 'wave', hint: k === pick('bg') ? '●' : '', run: () => { settings.bg = k; saveSettings(); } })) }) },
+      { section: 'Look', label: 'Theme…', icon: 'palette', run: () => ({ title: 'Theme', items: Object.entries(THEMES).map(([k, t]) => ({ label: t.label, color: t.vars.accent, hint: k === themeKey() ? '●' : '', run: () => switchTheme(k) })) }) },
     ];
     const tickets = b ? b.columns.flatMap((c) => c.itemIds).map((id) => b.items[id]).filter(Boolean)
       .map((it) => ({ section: 'Tickets', label: `${it.id}  ${it.title}`, icon: it.type, hint: colById(it.columnId)?.name, keys: `${it.parent || ''} ${it.assignee || ''}`, run: () => ticketStage(it) })) : [];
@@ -6420,21 +5928,17 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     ['writing', 'Writing', 'pencil'],
   ];
 
-  function openSettings(tab = 'look') {
+  function openSettings(tab = 'look', { about = false } = {}) {
     closeModal(true);
-    lookKind = null;
-    const root = el(`<div class="scrim"><div class="modal settings entering" role="dialog" aria-modal="true">
-      <header class="m-head"><span class="m-type" style="color:var(--accent)">${icon('sliders')}</span><span style="font:700 16px var(--display);color:var(--text)">Settings</span><span class="saved">${icon('check', 'sm')}</span><span class="grow"></span><button class="pill-btn icon-btn sm" data-close>${icon('x')}</button></header>
-      <div class="m-frame"><nav class="set-nav">
+    const root = el(`<div class="scrim"><div class="modal settings${about ? ' about' : ''} entering" role="dialog" aria-modal="true">
+      <header class="m-head"><span class="m-type" style="color:var(--accent)">${icon('sliders')}</span><span style="font:700 16px var(--display);color:var(--text)">${about ? esc(state.app.name || 'About') : 'Board settings'}</span><span class="saved">${icon('check', 'sm')}</span><span class="grow"></span><button class="pill-btn icon-btn sm" data-close>${icon('x')}</button></header>
+      <div class="m-frame${about ? ' solo' : ''}"><nav class="set-nav"${about ? ' hidden' : ''}>
         <button data-tab="look">${icon('palette')}Appearance</button>
         <button data-tab="cards">${icon('card')}Cards</button>
         <button data-tab="board">${icon('board')}Board</button>
         <button data-tab="fields">${icon('layers')}Fields</button>
         <button data-tab="columns">${icon('board')}Columns</button>
         <button data-tab="templates">${icon('copy')}Templates</button>
-        <button data-tab="rules">${icon('sparkle')}Card rules</button>
-        <button data-tab="notify">${icon('bell')}Alerts</button>
-        <button data-tab="about">${icon('info')}About</button>
       </nav><div class="set-pane"></div></div></div></div>`);
     document.body.append(root);
     const m = { kind: 'settings', id: null, root, modal: $('.modal', root), tab, refresh: () => {} };
@@ -6450,7 +5954,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       $$('.set-nav button', root).forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
       pane.innerHTML = settingsPane(t);
       if (quiet) pane.scrollTop = scroll;
-      else pane.animate([{ opacity: 0, translate: '0 6px' }, { opacity: 1, translate: '0 0' }], { duration: 260, easing: SPRING });
+      else pane.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: SPRING });
       for (const r of $$('input[type="range"]', pane)) paintRange(r);
       wirePane(t, pane, show);
     };
@@ -6459,7 +5963,7 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     // Live data (schema, profiles) changed elsewhere: redraw quietly unless the user is typing in the pane.
     m.refresh = () => {
       const typing = pane.contains(document.activeElement) && document.activeElement.matches('input, textarea');
-      if (!['fields', 'board', 'templates', 'columns', 'rules'].includes(m.tab) || typing) return;
+      if (!['fields', 'board', 'templates', 'columns'].includes(m.tab) || typing) return;
       const keep = pane.contains(document.activeElement) && focusSel(document.activeElement);
       show(m.tab, true);
       if (keep) $(keep, pane)?.focus({ preventScroll: true });
@@ -6476,9 +5980,9 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
 
   const paintRange = (r) => r.style.setProperty('--p', `${((r.value - r.min) / (r.max - r.min)) * 100}%`);
   // A labelled row of equal-width options (settings). opts: [value, label, tip?]
-  const choiceRow = (key, label, opts, val, { themeVal = null, sub = '' } = {}) => `<div class="choice-row">
-      <div class="cr-label"><span>${label}</span>${sub}</div>
-      <div class="opt-grid" data-set="${key}" style="--n:${opts.length}">${opts.map(([v, l, tip]) => `<button class="${v === val ? 'on' : ''} ${v === themeVal ? 'is-theme' : ''}" data-v="${v}"${tip ? ` title="${l}|${tip}${v === themeVal ? ' · the theme\'s choice' : ''}"` : ''}>${l}</button>`).join('')}</div></div>`;
+  const choiceRow = (key, label, opts, val) => `<div class="choice-row">
+      <div class="cr-label"><span>${label}</span></div>
+      <div class="opt-grid" data-set="${key}" style="--n:${opts.length}">${opts.map(([v, l, tip]) => `<button class="${v === val ? 'on' : ''}" data-v="${v}"${tip ? ` title="${l}|${tip}"` : ''}>${l}</button>`).join('')}</div></div>`;
   const seg = (key, opts, val) => `<div class="seg" data-set="${key}">${opts.map(([v, label, tip]) => `<button class="${v === val ? 'on' : ''}" data-v="${v}"${tip ? ` title="${label}|${tip}"` : ''}>${label}</button>`).join('')}</div>`;
   const sw = (key, on) => `<button class="switch ${on ? 'on' : ''}" data-sw="${key}" role="switch" aria-checked="${on}"></button>`;
 
@@ -6511,10 +6015,10 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   const SAMPLE_IMG = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b7bff"/><stop offset="1" stop-color="#2fe0c4"/></linearGradient></defs><rect width="320" height="180" fill="url(#s)"/><circle cx="240" cy="52" r="22" fill="#fff" opacity=".85"/><path d="M0 150 L70 92 L120 128 L190 70 L320 160 V180 H0Z" fill="#1d2035" opacity=".55"/></svg>')}`;
   const demoLease = () => ({ claimant: 'claude-builder', expiresAt: new Date(nowMs() + 18 * 60000).toISOString(), minutes: 30, status: 'running tests 4/12' });
   function previewCard(it, { lease = null, blockers = [], listeners = [], needs = false, inGroup = false, si = null } = {}) {
-    return `<article class="card ${needs ? 'needs' : ''}" data-type="${it.type}" data-slot="${decoSlot(it.id)}" style="--tilt:${tilt(it.id)}deg;${decoVars(it.id)}${si != null ? `;--si:${si}` : ''}"><i class="tape"></i><div class="c-body">${cardHTML(it, lease, blockers, inGroup, listeners)}</div><span class="c-check">${icon('check')}</span><span class="c-ask">?</span></article>`;
+    return `<article class="card ${needs ? 'needs' : ''}" data-type="${it.type}"${si != null ? ` style="--si:${si}"` : ''}><div class="c-body">${cardHTML(it, lease, blockers, inGroup, listeners)}</div><span class="c-check">${icon('check')}</span><span class="c-ask">?</span></article>`;
   }
   // A group exactly as the board draws it (grouping mode and label placement come from the page's classes/attributes).
-  const pvGroup = (parent, items, first = {}) => `<section class="group ${settings.grouping === 'list' ? 'listed' : settings.grouping}" style="--tagc:${tagColor(parent)}"><button class="group-head"><i class="tape"></i><span class="g-dot"></span><span class="g-name">${esc(parent)}</span><span class="g-count">${items.length}</span><span class="grow"></span>${icon('chev', 'g-chev')}<span class="g-sum">${pick('groups') === 'cover' ? groupSummary(items) : ''}</span></button><i class="g-bg"></i><div class="group-cards">${items.map((it, i) => previewCard(it, { ...(i ? {} : first), inGroup: true, si: i })).join('')}</div></section>`;
+  const pvGroup = (parent, items, first = {}) => `<section class="group ${settings.grouping === 'list' ? 'listed' : settings.grouping}" style="--tagc:${tagColor(parent)}"><button class="group-head"><span class="g-dot"></span><span class="g-name">${esc(parent)}</span><span class="g-count">${items.length}</span><span class="grow"></span>${icon('chev', 'g-chev')}</button><div class="group-cards">${items.map((it, i) => previewCard(it, { ...(i ? {} : first), inGroup: true, si: i })).join('')}</div></section>`;
   function previewStage(kind) {
     const col = (name, color, inner, n) => `<section class="column pv-col" style="--col:${color}"><header class="col-head"><span class="col-dot"></span><h2 class="col-name">${name}</h2><span class="col-count">${n}</span></header><div class="list">${inner}</div></section>`;
     const bare = { parent: null, assignee: null, description: '', comments: [], attachments: [], fields: {}, properties: {} };
@@ -6534,57 +6038,21 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     return `<div class="pv-stage">${col('Ready', '#5aa9e6', inner, 3)}</div>`;
   }
 
-  // The kind of theme open in Appearance; null shows the kind of the current theme (reset each time Settings opens).
-  let lookKind = null;
-
   function settingsPane(t) {
     if (t === 'look') {
-      const kind = lookKind || themeKind(settings.theme);
-      const kinds = THEME_KINDS.map(([id, label, keys]) => `<button class="theme-kind ${id === kind ? 'on' : ''}" data-theme-kind="${id}" aria-pressed="${id === kind}">${label}<small>${keys.length}</small></button>`).join('');
-      const tiles = THEME_KINDS.find(([id]) => id === kind)[2].map((k) => [k, THEMES[k]]).map(([k, th]) => {
+      const tiles = Object.entries(THEMES).map(([k, th]) => {
         const v = th.vars;
-        return `<button class="tile ${settings.theme === k ? 'on' : ''}" data-pick-theme="${k}"><span class="pv" style="background:${v.bg}">
+        return `<button class="tile ${themeKey() === k ? 'on' : ''}" data-pick-theme="${k}"><span class="pv" style="background:${v.bg}">
           <i style="background:${v.panel}"><b style="background:${v.issue};opacity:.85"></b><b style="background:${v.surface}"></b></i>
           <i style="background:${v.panel}"><b style="background:${v.task};opacity:.85"></b><b style="background:${v.accent}"></b></i>
           <i style="background:${v.panel}"><b style="background:${v.spike};opacity:.85"></b></i></span><span class="nm">${th.label}</span></button>`;
       }).join('');
-      const themeBg = themeStyle().bg;
-      const bgs = [['theme', `Theme · ${BACKGROUNDS.find(([k]) => k === themeBg)?.[1] || ''}`], ...BACKGROUNDS].map(([k, label]) => `<button class="tile ${(settings.bg || 'theme') === k ? 'on' : ''}" data-bgfx="${k}"><span class="bgpv ${k === 'theme' ? themeBg : k}" style="${art.tile(k === 'theme' ? themeBg : k)}"></span><span class="nm">${label}</span></button>`).join('');
-      // A style choice: equal-width options, the theme's own pick marked with a dot. Choosing one overrides
-      // the theme; "Theme default" (shown only while overridden) hands the choice back to the theme.
-      const opt = (key, label, list) => {
-        const tv = themeStyle()[key];
-        const themeVal = typeof tv === 'boolean' ? (tv ? 'on' : 'off') : tv; // texture is stored as a boolean
-        const own = settings[key] != null && settings[key] !== 'theme';
-        return choiceRow(key, label, list, own ? settings[key] : themeVal, {
-          themeVal,
-          sub: own ? `<button class="sr-reset" data-reset="${key}" title="Theme default|Use what ${esc(THEMES[settings.theme]?.label || 'the theme')} chooses">${icon('restore', 'sm')}Theme default</button>` : '<span class="sr-auto">from theme</span>',
-        });
-      };
-      return `<div class="theme-pick"><div class="theme-kinds" role="group" aria-label="Kind of theme">${kinds}</div><div class="tiles theme-tiles">${tiles}</div></div>
-        <p class="set-note">Kept in this browser. A new browser or profile starts with the default look.</p>
-        <div class="look-sticky">${previewStage('style')}</div>
-        <h3>Style</h3>
-        <div class="choices">
-        ${opt('cards', 'Cards', [['sticky', 'Sticky', 'Tinted sticky notes, slightly tilted'], ['clean', 'Clean', 'Flat cards with a type marker'], ['elevated', 'Raised', 'Borderless, lifted on layered soft shadows'], ['outline', 'Line', 'Transparent with a fine outline'], ['glass', 'Glass', 'Frosted, see-through cards'], ['index', 'Index', 'Ruled index cards with a type-coloured header rule']])}
-        ${opt('tape', 'Decoration', [['tape', 'Tape', 'A strip of tape on sticky notes'], ['pin', 'Pin', 'A push-pin at the top'], ['clip', 'Clip', 'A binder clip on the edge'], ['none', 'None', 'No decoration']])}
-        ${opt('attn', 'Needs you', [['orbit', 'Orbit', 'Spinning ring and a bouncing badge'], ['glow', 'Glow', 'A soft breathing halo'], ['bar', 'Bar', 'Accent edge and tint — calm'], ['outline', 'Outline', 'A solid outline and small badge'], ['ribbon', 'Ribbon', 'A bookmark tab on the card']])}
-        ${opt('enter', 'Opening', [['rise', 'Rise', 'Fades in with a small lift'], ['sheet', 'Sheet', 'Slides in from the right as a side panel'], ['fade', 'Fade', 'A quick cross-fade'], ['pop', 'Pop', 'Snaps in with a little bounce'], ['zoom', 'Zoom', 'Grows out of the ticket']])}
-        ${opt('groups', 'Groups', [['tray', 'Tray', 'Tickets sharing a parent sit on a faintly tinted panel'], ['rail', 'Rail', 'A coloured rail beside the cards, no panel'], ['rule', 'Rule', 'A header with a hairline underneath'], ['tab', 'Tab', 'A folder tab joined to the top of the cards'], ['spine', 'Spine', 'The #tag runs down a spine beside the cards'], ['foot', 'Footer', 'A quiet #tag caption under the cards'], ['cover', 'Cover', 'A summary card on top of the pile; the tickets list out beneath it']])}
-        ${opt('lanes', 'Columns', [['glass', 'Glass', 'Translucent panels'], ['solid', 'Solid', 'Opaque panels'], ['outline', 'Outline', 'Bordered, see-through'], ['lane', 'Lanes', 'No panels — dividers between lanes']])}
-        ${opt('texture', 'Texture', [['on', 'On', 'Film grain and dotted board'], ['off', 'Off', 'Plain surfaces']])}
-        ${opt('drop', 'Drop target', [['ring', 'Ring', 'An outline glow in the column colour'], ['tint', 'Tint', 'The column floods with its colour'], ['lift', 'Lift', 'The column rises to meet the card'], ['spotlight', 'Spot', 'Other columns dim; the target lights up'], ['dashed', 'Dashed', 'A technical dashed outline'], ['pulse', 'Pulse', 'A gentle breathing glow']])}
-        ${opt('toast', 'Toasts', [['pill', 'Pill', 'A capsule tinted in its tone'], ['card', 'Card', 'A small card in the theme’s own shape and shadow'], ['note', 'Note', 'A quiet line; the tone is only in the icon'], ['ink', 'Ink', 'An inverted strip that reads on any theme']])}
-        ${opt('avStyle', 'Avatars', [['gem', 'Gem', 'Glossy colour with depth'], ['flat', 'Flat', 'Solid colour'], ['tint', 'Tint', 'Soft colour fill, coloured initials'], ['ring', 'Ring', 'Outline only'], ['pebble', 'Pebble', 'Organic, slightly irregular stone'], ['stamp', 'Stamp', 'Printed, with an offset shadow']])}
-        ${opt('md', 'Markdown', [['clean', 'Clean', 'Hairline rows, small-caps headers, soft code blocks'], ['grid', 'Grid', 'Ruled cells and strong rules — structured'], ['paper', 'Paper', 'Editorial: serif headings, double-ruled tables, pull quotes'], ['terminal', 'Terminal', 'Monospace, dashed rules, inverted headers'], ['notebook', 'Notebook', 'Ruled paper, margin line, handwritten headings'], ['ledger', 'Ledger', 'Green-bar rows, tabular figures, accountant rules']])}
-        </div>
+      return `<div class="look-sticky">${previewStage('style')}</div>
         <h3>Layout</h3>
         <div class="choices">
-        ${choiceRow('density', 'Density', [['cozy', 'Cozy', 'Roomy cards'], ['compact', 'Compact', 'Tighter cards, more on screen']], settings.density)}
         ${choiceRow('motion', 'Motion', [['full', 'Full', 'All animations'], ['reduced', 'Reduced', 'Only the essentials']], settings.motion)}
         <div class="choice-row"><div class="cr-label"><span>Column width</span><span class="sr-auto">${settings.colw}px</span></div><input type="range" min="240" max="440" step="10" value="${settings.colw}" data-range="colw"></div>
-        </div>
-        <h3>Background</h3><div class="tiles">${bgs}</div>`;
+        </div>`;
     }
     if (t === 'cards') {
       return `<div class="look-sticky">${previewStage('cards')}</div><h3>Show on card</h3><div class="chips-grid">${STUB_FIELDS.map(([k, label, ic]) => `<button class="toggle-chip ${settings.stub[k] ? 'on' : ''}" data-stub="${k}" title="${label}|${STUB_TIPS[k] || ''}">${icon(ic)}${label}</button>`).join('')}</div>`;
@@ -6606,22 +6074,19 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     }
     if (t === 'fields') return fieldsPane();
     if (t === 'templates') return templatesPane();
-    if (t === 'rules') return rulesPane();
     if (t === 'columns') return columnsPane();
-    if (t === 'notify') {
-      const perm = 'Notification' in window ? Notification.permission : 'unsupported';
-      return `<h3>Alerts</h3>
-        <div class="row"><span>Toasts</span>${sw('toasts', settings.toasts)}</div>
-        <div class="row"><span>Sound</span>${sw('sound', settings.sound)}</div>
-        <div class="row"><span>Desktop notifications</span>${perm === 'denied' ? '<span class="chip blocked">blocked</span>' : sw('notify', settings.notify && perm === 'granted')}</div>
-        <div class="row"><span>Only when hidden</span>${sw('notifyHidden', settings.notifyHidden)}</div>`;
-    }
-    return `<h3>${esc(state.app.name)}</h3><div class="about-grid">
+    const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+    return `<h3>About</h3><div class="about-grid">
         <span>Version</span><code>${esc(state.app.version)}</code>
         <span>Build</span><code>${esc(state.app.build)}</code>
         <span>Board</span><code>${esc(state.boardId)}</code>
         <span>Hash</span><code>${esc(state.hash)}</code>
         <span>API</span><code>${esc(location.origin)}/api</code></div>
+      <h3>Alerts</h3>
+        <div class="row"><span>Toasts</span>${sw('toasts', settings.toasts)}</div>
+        <div class="row"><span>Sound</span>${sw('sound', settings.sound)}</div>
+        <div class="row"><span>Desktop notifications</span>${perm === 'denied' ? '<span class="chip blocked">blocked</span>' : sw('notify', settings.notify && perm === 'granted')}</div>
+        <div class="row"><span>Notify only when this tab isn’t showing</span>${sw('notifyHidden', settings.notifyHidden)}</div>
       <h3>Agents</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" data-copy>${icon('copy')}Copy agent prompt</button><a class="btn" href="/api/docs" target="_blank" rel="noopener">${icon('ext')}Docs</a></div>
       <pre class="md" style="margin-top:12px"><code>${esc(agentPrompt())}</code></pre>`;
@@ -6671,398 +6136,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
         ${Object.keys(t.fields || {}).length ? `<div class="tfields">${Object.entries(t.fields).map(([k, v]) => `<span class="mini-chip">${esc(k)}=${esc(Array.isArray(v) ? v.join(',') : v)}</span>`).join('')}</div>` : ''}
       </div>`).join('');
     return `<h3>${esc(state.board?.name || '')} · ticket templates</h3>
-      ${cards || `<div class="empty-note">${icon('copy')}</div>`}
+      ${cards || `<div class="empty-note">${icon('copy')}<span>No ticket templates yet</span></div>`}
       <div class="fadd"><input class="inp" data-newtpl placeholder="New template, e.g. Bug"><button class="btn primary sm" data-tpladd>${icon('plus', 'sm')}Add</button></div>`;
-  }
-
-  /* ─── card rules: a condition and the look a matching card earns (INT-253) ─── */
-  const RULE_ICONS = ['check', 'checks', 'eye', 'flag', 'sparkle', 'lock', 'clock', 'ask', 'bot', 'pin', 'target'];
-  const toneSeg = (key, val) => `<div class="seg mini tone-seg" data-rseg="${key}">${['', ...RULE_TONES].map((t) => `<button class="${(val || '') === t ? 'on' : ''}" data-v="${t}" title="${t ? `${key === 'outline' ? 'Outline' : 'Tint'}: ${t}` : `No ${key}`}">${t ? `<i style="--rc:${toneVar(t)}"></i>${t}` : '–'}</button>`).join('')}</div>`;
-  /* ─── rule builder: a condition made of rows (field, test, value), all of which must hold (INT-289) ─── */
-  // The builder writes INT-253's condition text and reads it back, so the server stays the one place a rule is matched.
-  // kind: choice (one value from a list), tags (a list on the ticket), number, flag (yes or no), text, who, raw (a term as written).
-  function ruleFields() {
-    const of = (vals) => vals.map((v) => ({ v, l: v }));
-    const people = of(knownPeople());
-    return [
-      { path: 'type', label: 'Type', kind: 'choice', options: of(TYPES) },
-      { path: 'priority', label: 'Priority', kind: 'choice', options: of(PRIORITIES) },
-      { path: 'columnId', label: 'Column', kind: 'choice', options: state.board.columns.map((c) => ({ v: c.id, l: c.name })) },
-      { path: 'assignee', label: 'Assignee', kind: 'choice', options: people },
-      { path: '@', label: 'Assigned or held by', kind: 'who', options: people },
-      { path: 'needsHuman', label: 'Has an open question', kind: 'flag' },
-      { path: 'blockedBy', label: 'Is blocked', kind: 'flag' },
-      { path: 'columnDays', label: 'Days in its column', kind: 'number' },
-      { path: 'review.oks', label: 'Reviewers who said ok', kind: 'number' },
-      { path: 'review.concerns', label: 'Reviewers with concerns', kind: 'number' },
-      { path: 'review.pending', label: 'Reviewers yet to answer', kind: 'number' },
-      { path: 'review.allOk', label: 'Every reviewer said ok', kind: 'flag' },
-      { path: 'review.evidence', label: 'The review has evidence', kind: 'flag' },
-      ...knownPeople().filter(isAgentName).map((n) => ({ path: `reviewers.${n.toLowerCase()}`, label: `${nameOf(n)}'s verdict`, kind: 'choice', options: of(['ok', 'concerns']) })),
-      ...schema().fields.map((f) => ({
-        path: `fields.${f.key}`, label: f.label || f.key,
-        kind: f.type === 'number' ? 'number' : f.type === 'boolean' ? 'flag' : f.type === 'tags' ? 'tags' : f.options?.length || f.type === 'user' ? 'choice' : 'text',
-        options: f.type === 'user' ? people : (f.options || []).map((o) => ({ v: o.value, l: o.value })),
-      })),
-      { path: '', label: 'Written as text', kind: 'raw' },
-    ];
-  }
-  const RULE_TESTS = {
-    is: { label: 'is', op: ':' }, not: { label: 'is not', op: ':', not: true }, any: { label: 'is one of', op: ':', many: true }, none: { label: 'is none of', op: ':', not: true, many: true },
-    set: { label: 'is set', op: 'set' }, unset: { label: 'is not set', op: 'set', not: true }, yes: { label: 'yes', op: 'set' }, no: { label: 'no', op: 'set', not: true },
-    gte: { label: 'at least', op: '>=' }, lte: { label: 'at most', op: '<=' }, gt: { label: 'more than', op: '>' }, lt: { label: 'fewer than', op: '<' }, eq: { label: 'exactly', op: '=' },
-    raw: { label: '', op: 'raw' },
-  };
-  const KIND_TESTS = { choice: ['is', 'not', 'any', 'none', 'set', 'unset'], tags: ['is', 'not', 'any', 'none', 'set', 'unset'], number: ['gte', 'lte', 'gt', 'lt', 'eq'], flag: ['yes', 'no'], text: ['is', 'not', 'set', 'unset'], who: ['is'], raw: ['raw'] };
-  const TAG_LABELS = { is: 'has', not: 'has no', any: 'has any of', none: 'has none of', set: 'has some', unset: 'has none' };
-  const testLabel = (kind, t) => (kind === 'tags' && TAG_LABELS[t]) || RULE_TESTS[t].label;
-  // One term back to a row. A term the builder has no field for stays as written.
-  function termRow(raw, fields) {
-    const asText = { path: '', test: 'raw', value: raw };
-    if (/^@[\w.-]+$/.test(raw)) return { path: '@', test: 'is', value: raw.slice(1) };
-    const m = /^(!?)([A-Za-z_][\w.-]*?)(?:(>=|<=|>|<|=|:)(.+))?$/.exec(raw);
-    const f = m && fields.find((x) => x.path === m[2]);
-    if (!f || f.kind === 'who' || f.kind === 'raw') return asText;
-    const [, not, path, op, value] = m;
-    let test;
-    if (!op) test = f.kind === 'flag' ? (not ? 'no' : 'yes') : (not ? 'unset' : 'set');
-    else if (op === ':') test = value.includes('|') ? (not ? 'none' : 'any') : (not ? 'not' : 'is');
-    else test = !not && Object.keys(RULE_TESTS).find((k) => RULE_TESTS[k].op === op);
-    if (!test || !KIND_TESTS[f.kind].includes(test)) return asText;
-    return { path, test, value: RULE_TESTS[test].many ? value.split('|') : value ?? '' };
-  }
-  // "type:issue review.oks>=2 (@drax or @nebula)" -> { mode: 'all', items: [row, row, { group, mode: 'any', items: [row, row] }] }.
-  // all = every item holds (terms side by side), any = one of them does (joined by or). A condition that mixes both at one
-  // level ("a b or c") is not a switch the builder has: it stays whole as one row of text, which still saves as written.
-  function ruleTree(text, fields = ruleFields()) {
-    const src = String(text || '').trim();
-    const whole = { mode: 'all', items: [{ path: '', test: 'raw', value: src, whole: true }] };
-    const tokens = src.match(/\(|\)|is:rule:"[^"]*"|[^\s()]+(?:\([^\s()]*\)[^\s()]*)*/gi) || [];
-    let at = 0;
-    const level = (depth) => {
-      const alts = [[]];
-      for (;;) {
-        const tok = tokens[at++];
-        if (tok === undefined || tok === ')') { if ((tok === ')') !== (depth > 0)) throw new Error('unbalanced'); return alts; }
-        if (/^or$/i.test(tok)) alts.push([]);
-        else if (tok === '(') { if (depth) throw new Error('nested'); alts[alts.length - 1].push(node(level(depth + 1), true)); }
-        else alts[alts.length - 1].push(termRow(tok, fields));
-      }
-    };
-    const node = (alts, group) => {
-      if (alts.some((a) => !a.length)) throw new Error('empty');
-      const mode = alts.length === 1 ? 'all' : alts.every((a) => a.length === 1) ? 'any' : null;
-      if (!mode) throw new Error('mixed');
-      const items = mode === 'all' ? alts[0] : alts.map((a) => a[0]);
-      return group ? { group: true, mode, items } : { mode, items };
-    };
-    try { return node(level(0)); } catch { return whole; }
-  }
-  // One row back to its term, or null while it is not finished (no value yet, or a value with a space in it).
-  const RAW_TERM = /^(?:is:rule:"[^"]*"|[^\s()]+(?:\([^\s()]*\)[^\s()]*)*)$/;
-  function ruleTerm(row) {
-    if (row.group) {
-      const inner = row.items.map(ruleTerm);
-      return row.items.length && inner.every(Boolean) ? `(${inner.join(row.mode === 'any' ? ' or ' : ' ')})` : null;
-    }
-    const t = RULE_TESTS[row.test];
-    if (!t) return null;
-    if (t.op === 'raw') {
-      const v = String(row.value || '').trim();
-      // Free text is only safe as the whole condition; beside other rows it must stay one term, or the saved text would group differently than the rows show
-      return v && (row.whole || (RAW_TERM.test(v) && !/^or$/i.test(v))) ? v : null;
-    }
-    if (row.path === '@') return /^[\w.-]+$/.test(row.value || '') ? `@${row.value}` : null;
-    if (t.op === 'set') return `${t.not ? '!' : ''}${row.path}`;
-    const vals = [].concat(row.value ?? []).map((v) => String(v).trim()).filter(Boolean);
-    if (!vals.length || vals.some((v) => /\s/.test(v)) || (t.op !== ':' && !Number.isFinite(Number(vals[0])))) return null;
-    return `${t.not ? '!' : ''}${row.path}${t.op}${vals.join('|')}`;
-  }
-  // The whole tree as condition text, or null while any row is unfinished.
-  const treeText = (tree) => {
-    const terms = tree.items.map(ruleTerm);
-    return tree.items.length && terms.every(Boolean) ? terms.join(tree.mode === 'any' ? ' or ' : ' ') : null;
-  };
-  // A row or group by its address: "2" is the third item, "2.0" the first row of the group there.
-  const treeAt = (tree, addr) => String(addr).split('.').reduce((n, k) => n.items[k], tree);
-  const needsNoSpace = (row) => ` needs a value${/\s/.test([].concat(row.value ?? []).join('')) ? ' without spaces' : ''}`;
-  // What is missing, numbered as a person counts ("Condition 2", "Condition 3 in group 1"), or '' when nothing is
-  function firstTodo(tree) {
-    let gn = 0;
-    for (let j = 0; j < tree.items.length; j++) {
-      const it = tree.items[j];
-      if (!it.group) { if (!ruleTerm(it)) return `Condition ${j + 1}${needsNoSpace(it)}`; continue; }
-      gn++;
-      if (!it.items.length) return `Group ${gn} needs a condition`;
-      const k = it.items.findIndex((r) => !ruleTerm(r));
-      if (k >= 0) return `Condition ${k + 1} in group ${gn}${needsNoSpace(it.items[k])}`;
-    }
-    return '';
-  }
-  const ruleDrafts = new Map(); // rule name -> tree being built that is not a whole condition yet, or that the text cannot hold (the switch on "any" with one row)
-  const ruleAsText = new Set(); // rule names shown as text
-  // The tree a rule is shown as: its draft while that still stands for the saved condition, else the condition read afresh
-  function treeOf(r, fields) {
-    const d = ruleDrafts.get(r.name);
-    if (d && (treeText(d) == null || treeText(d) === r.condition)) return d;
-    ruleDrafts.delete(r.name);
-    return ruleTree(r.condition, fields);
-  }
-  const modeSeg = (mode, label) => `<div class="seg mini" data-rbmode role="group" aria-label="${label}">${[['all', 'All of'], ['any', 'Any of']].map(([v, l]) => `<button class="${v === mode ? 'on' : ''}" data-v="${v}" aria-pressed="${v === mode}" title="${v === 'all' ? 'Every one must hold' : 'One of them is enough'}">${l}</button>`).join('')}</div>`;
-  function ruleBuilderHTML(r, i, fields) {
-    const tree = treeOf(r, fields);
-    const rowHTML = (row, addr, name) => {
-      const f = fields.find((x) => x.path === row.path) || fields[fields.length - 1];
-      const t = RULE_TESTS[row.test];
-      const id = String(addr).replace('.', '-');
-      const shown = (v) => esc(f.options?.find((o) => o.v === v)?.l || v);
-      let val = '';
-      if (f.kind === 'raw') val = `<input class="inp mono" data-bv value="${esc(row.value || '')}" spellcheck="false" aria-label="Condition term" placeholder="e.g. is:rule:urgent">`;
-      else if (t.op === 'set') val = '';
-      else if (f.options?.length) val = ddHTML(`rbv-${id}`, [].concat(row.value ?? []).filter(Boolean).map(shown).join(', '), { placeholder: t.many ? 'pick some' : 'pick one' }).replace('<button', `<button data-bvdd aria-label="${esc(f.label)}: value"`);
-      else val = `<input class="inp" data-bv ${f.kind === 'number' ? 'type="number" min="0" inputmode="numeric"' : 'spellcheck="false"'} value="${esc(row.value ?? '')}" aria-label="${esc(f.label)}: value" placeholder="${f.kind === 'number' ? '2' : 'value'}">`;
-      return `<div class="rb-row ${ruleTerm(row) ? '' : 'todo'}" data-row="${addr}" role="group" aria-label="${name}">
-        ${ddHTML(`rbf-${id}`, esc(f.label)).replace('<button', `<button data-bfdd aria-label="${name}: field"`)}
-        ${f.kind === 'raw' ? '' : ddHTML(`rbt-${id}`, esc(testLabel(f.kind, row.test))).replace('<button', `<button data-btdd aria-label="${name}: test"`)}
-        ${val}<button class="icon-x" data-rbdel title="Remove this condition" aria-label="Remove ${name.toLowerCase()}">${icon('x', 'sm')}</button></div>`;
-    };
-    let gn = 0; // groups are counted among themselves ("Group 1"), not by their place among the rows
-    const items = tree.items.map((it, j) => it.group
-      ? `<div class="rb-group" data-group="${j}" role="group" aria-label="Group ${++gn}">
-          <div class="rb-head"><span>Group ${gn}</span>${modeSeg(it.mode, `Group ${gn}: all of or any of`)}<button class="icon-x" data-rbgdel title="Remove this group" aria-label="Remove group ${gn}">${icon('x', 'sm')}</button></div>
-          ${it.items.map((row, k) => rowHTML(row, `${j}.${k}`, `Condition ${k + 1} in group ${gn}`)).join('')}
-          <button class="btn ghost sm rb-add" data-rbadd>${icon('plus', 'sm')}Add a condition</button></div>`
-      : rowHTML(it, String(j), `Condition ${j + 1}`)).join('');
-    return `<div class="rbuild" data-rbuild>
-        <div class="rb-head"><span>When</span>${modeSeg(tree.mode, 'All of or any of these conditions')}<span>${tree.mode === 'any' ? 'holds' : 'hold'}</span><button class="link-btn" data-rtext aria-pressed="false">Show as text</button></div>
-        ${items}<div class="rb-adds"><button class="btn ghost sm rb-add" data-rbadd>${icon('plus', 'sm')}Add a condition</button><button class="btn ghost sm rb-add" data-rbgadd>${icon('plus', 'sm')}Add a group</button></div></div>`;
-  }
-  const shapeSeg = (m) => `<div class="seg mini shape-seg" data-rshape role="group" aria-label="Mark shape">${['', ...RULE_SHAPES].map((sh) => `<button class="${(m?.shape || '') === sh ? 'on' : ''}" data-v="${sh}" title="${sh ? `Mark: ${sh}` : 'No mark'}" aria-label="${sh || 'No mark'}">${sh ? `<i class="mk" data-shape="${sh}" style="--mc:${m ? markColour(m) : 'var(--muted)'}"></i>` : '–'}</button>`).join('')}</div>`;
-  const markColourPick = (m) => `<div class="mk-colour ${m ? '' : 'off'}"><div class="seg mini tone-seg" data-rmtone>${['', ...RULE_TONES].map((t) => `<button class="${(m?.tone || '') === t && !m?.colour ? 'on' : ''}" data-v="${t}"${m ? '' : ' disabled'} title="${t ? `Mark colour: ${t}` : 'Pick your own colour'}">${t ? `<i style="--rc:${toneVar(t)}"></i>${t}` : '–'}</button>`).join('')}</div><input type="color" class="mk-pick" data-rmcolour value="${esc(m?.colour || '#6aa8ff')}" aria-label="Own mark colour"${m ? '' : ' disabled'}></div>`;
-  function rulesPane() {
-    const rules = state.board?.cardRules || [];
-    const fields = rules.length ? ruleFields() : [];
-    const cards = rules.map((r, i) => {
-      const n = Object.values(state.looks).filter((l) => l.rules?.includes(r.name)).length;
-      return `<div class="fcard rcard ${r.enabled === false ? 'off' : ''}" data-ri="${i}">
-        <div class="srow">${sw(`rule-${i}`, r.enabled !== false)}<input class="inp lab" data-rf="name" value="${esc(r.name)}" maxlength="40" aria-label="Rule name"><span class="ccount" data-rcount title="Matching cards|Open tickets this rule matches now">${r.enabled === false ? '–' : n}</span>
-          <button class="icon-x" data-rmove="-1" ${i === 0 ? 'disabled' : ''} title="Earlier|The first rule's outline, tint and ribbon win">${icon('chev', 'cup')}</button><button class="icon-x" data-rmove="1" ${i === rules.length - 1 ? 'disabled' : ''} title="Later">${icon('chev', 'cdown')}</button>
-          <button class="icon-x" data-rdel title="Remove rule">${icon('x', 'sm')}</button></div>
-        ${ruleAsText.has(r.name) ? `<label class="rcond"><span>When</span><input class="inp mono" data-rf="condition" value="${esc(r.condition)}" spellcheck="false" autocomplete="off" aria-label="Condition" placeholder="review.allOk review.oks>=2 review.evidence"></label>
-        <div class="rb-head as-text"><button data-rtext aria-pressed="true">Use the builder</button></div>` : ruleBuilderHTML(r, i, fields)}
-        <div class="rcount"><div class="rhint" data-rhint aria-live="polite"></div>${r.enabled === false ? '' : `<button class="rb-show" data-rshow title="Show on the board|Filters the board to this rule's cards">${icon('eye', 'sm')}Show on board</button>`}</div>
-        <div class="rlook">
-          <span class="rl">Outline</span>${toneSeg('outline', r.look.outline)}
-          <span class="rl">Tint</span>${toneSeg('tint', r.look.tint)}
-          <span class="rl">Badge</span><span class="rbadge-in"><button class="ficon icon-pick" data-ricon title="Badge icon">${icon(ICONS[r.look.badge?.icon] ? r.look.badge.icon : 'tag')}</button><input class="inp" data-rf="badge" value="${esc(r.look.badge?.text || '')}" maxlength="24" placeholder="none"></span>
-          <span class="rl">Mark</span>${shapeSeg(r.look.mark)}
-          <span class="rl">Mark colour</span>${markColourPick(r.look.mark)}
-          <span class="rl">Ribbon</span><input class="inp" data-rf="ribbon" value="${esc(r.look.ribbon || '')}" maxlength="16" placeholder="none">
-        </div>
-      </div>`;
-    }).join('');
-    return `<h3>${esc(state.board?.name || '')} · card rules</h3>
-      <p class="set-note">A card that meets a rule's condition takes its look. Rules are checked in order: the first outline, tint and ribbon win; badges stack, two at most; every rule's mark shows in the corner, five at most, then a +N. <code>is:rule:&lt;name&gt;</code> in the filter shows a rule's cards.</p>
-      ${cards || `<div class="empty-note">${icon('sparkle')}</div>`}
-      <div class="fadd"><input class="inp" data-newrule placeholder="New rule, e.g. full approval"><button class="btn primary sm" data-ruleadd>${icon('plus', 'sm')}Add</button></div>`;
-  }
-  async function rulesCall(rules) {
-    try { const r = await api('PUT', B('/card-rules'), { rules }); state.board.cardRules = r.rules; pulseSaved(); scheduleRefresh(0); scheduleLooks(); return true; }
-    catch (e) { toast(e.data?.hint ? `${e.message} — ${e.data.hint}` : e.message, { kind: 'error' }); state.modal?.refresh(); return false; }
-  }
-  function wireRules(pane) {
-    const rules = () => (state.board.cardRules || []).map((r) => ({ ...r, look: { ...r.look } }));
-    const idx = (n) => Number(n.closest('[data-ri]')?.dataset.ri ?? -1);
-    const save = (i, fn) => { const all = rules(); if (!all[i]) return; fn(all[i], all); return rulesCall(all); };
-    pane.addEventListener('click', (e) => {
-      const i = idx(e.target);
-      const s = e.target.closest('[data-sw^="rule-"]');
-      if (s && i >= 0) { save(i, (r) => { r.enabled = r.enabled === false; }); return; }
-      const sb = e.target.closest('[data-rseg] button');
-      if (sb && i >= 0) { const k = sb.parentElement.dataset.rseg; save(i, (r) => { if (sb.dataset.v) r.look[k] = sb.dataset.v; else delete r.look[k]; }); return; }
-      // A new mark starts in the accent tone; a colour of its own replaces the tone, and a tone replaces the colour
-      const sh = e.target.closest('[data-rshape] button');
-      if (sh && i >= 0) { save(i, (r) => { if (sh.dataset.v) r.look.mark = { ...(r.look.mark?.colour ? { colour: r.look.mark.colour } : { tone: r.look.mark?.tone || 'accent' }), shape: sh.dataset.v }; else delete r.look.mark; }); return; }
-      const mt = e.target.closest('[data-rmtone] button');
-      if (mt && i >= 0) { if (mt.dataset.v) save(i, (r) => { r.look.mark = { shape: r.look.mark.shape, tone: mt.dataset.v }; }); else $(`[data-ri="${i}"] [data-rmcolour]`, pane)?.click(); return; }
-      const ic = e.target.closest('[data-ricon]');
-      if (ic && i >= 0) {
-        const cur = rules()[i];
-        if (!cur.look.badge) { $(`[data-ri="${i}"] [data-rf="badge"]`, pane)?.focus(); return; }
-        menu(ic, [{ label: 'No icon', icon: 'x', run: () => save(i, (r) => { r.look.badge = { text: r.look.badge.text }; }) },
-          ...RULE_ICONS.map((n) => ({ label: n, icon: n, cls: n === cur.look.badge.icon ? 'on' : '', run: () => save(i, (r) => { r.look.badge = { ...r.look.badge, icon: n }; }) }))]);
-        return;
-      }
-      const mv = e.target.closest('[data-rmove]');
-      if (mv && i >= 0) { save(i, (r, all) => { const j = i + Number(mv.dataset.rmove); all.splice(i, 1); all.splice(j, 0, r); }); return; }
-      if (e.target.closest('[data-rdel]') && i >= 0) {
-        const before = rules();
-        save(i, (r, all) => all.splice(i, 1))?.then((ok) => ok && toast(`Removed ${before[i].name}`, { icon: 'sparkle', action: 'Undo', onAction: () => rulesCall(before) }));
-        return;
-      }
-      if (e.target.closest('[data-ruleadd]')) addRule(pane);
-    });
-    // The builder: a tree that makes a whole condition is saved; one still missing a value is kept as a draft.
-    const treeFor = (i) => structuredClone(treeOf(rules()[i], ruleFields()));
-    const at = (i, addr, sel) => `[data-ri="${i}"] [data-row="${addr}"] ${sel}`;
-    // The list a row sits in and its place there, from its address ("1.0" is the first row of the second item, a group)
-    const holder = (tree, addr) => { const p = String(addr).split('.'); return { list: p.length > 1 ? tree.items[p[0]].items : tree.items, k: Number(p[p.length - 1]) }; };
-    // sel: where the focus goes after the redraw; a list is tried in order (the value if the row has one, else its test)
-    const redraw = (sel) => { state.modal?.refresh(); if (sel) requestAnimationFrame(() => [].concat(sel).map((s) => $(s, pane)).find(Boolean)?.focus({ preventScroll: true })); };
-    const commit = (i, tree, sel) => {
-      const name = rules()[i]?.name;
-      if (!name) return;
-      const text = treeText(tree);
-      if (text != null) {
-        // Text cannot say "any of" over one row; keep the tree so the switch stays where it was put
-        if (JSON.stringify(ruleTree(text)) === JSON.stringify(tree)) ruleDrafts.delete(name); else ruleDrafts.set(name, tree);
-        save(i, (r) => { r.condition = text; })?.then(() => redraw(sel));
-      } else { ruleDrafts.set(name, tree); redraw(sel); }
-    };
-    const valueSel = (i, j) => [at(i, j, '[data-bvdd]'), at(i, j, '[data-bv]'), at(i, j, '[data-btdd]')];
-    const builderClick = (e, i) => {
-      const j = e.target.closest('[data-row]')?.dataset.row; // the row's address, e.g. "1" or "1.0"
-      const g = e.target.closest('[data-group]')?.dataset.group;
-      const fields = ruleFields();
-      const fdd = e.target.closest('[data-bfdd]');
-      if (fdd) {
-        const cur = treeAt(treeFor(i), j);
-        openDd(fdd, fields.map((f) => ({ label: f.label, cls: f.path === cur.path ? 'on' : '', run: () => {
-          const all = treeFor(i);
-          const { list, k } = holder(all, j);
-          list[k] = f.kind === 'raw' ? { path: '', test: 'raw', value: ruleTerm(cur) || '' } : { path: f.path, test: KIND_TESTS[f.kind][0], value: '' };
-          commit(i, all, f.kind === 'raw' ? at(i, j, '[data-bv]') : at(i, j, '[data-btdd]'));
-        } })), { search: true, placeholder: 'Find a field…' });
-        return true;
-      }
-      const tdd = e.target.closest('[data-btdd]');
-      if (tdd) {
-        const cur = treeAt(treeFor(i), j);
-        const f = fields.find((x) => x.path === cur.path);
-        openDd(tdd, KIND_TESTS[f.kind].map((t) => ({ label: testLabel(f.kind, t), cls: t === cur.test ? 'on' : '', run: () => {
-          const all = treeFor(i);
-          const v = [].concat(cur.value ?? []).filter(Boolean);
-          const { list, k } = holder(all, j);
-          list[k] = { ...cur, test: t, value: RULE_TESTS[t].many ? v : v[0] ?? '' };
-          commit(i, all, valueSel(i, j));
-        } })));
-        return true;
-      }
-      const vdd = e.target.closest('[data-bvdd]');
-      if (vdd) {
-        const cur = treeAt(treeFor(i), j);
-        const f = fields.find((x) => x.path === cur.path);
-        const setValue = (v) => { const all = treeFor(i); treeAt(all, j).value = v; commit(i, all, at(i, j, '[data-bvdd]')); };
-        if (!RULE_TESTS[cur.test].many) {
-          openDd(vdd, f.options.map((o) => ({ label: o.l, cls: o.v === cur.value ? 'on' : '', run: () => setValue(o.v) })), { search: f.options.length > 8 });
-          return true;
-        }
-        // Several values: pick and unpick with the menu open, saved once it closes
-        const picked = new Set([].concat(cur.value ?? []));
-        const items = f.options.map((o) => ({ label: o.l, cls: picked.has(o.v) ? 'on' : '', run: () => { if (picked.has(o.v)) picked.delete(o.v); else picked.add(o.v); items.find((x) => x.label === o.l).cls = picked.has(o.v) ? 'on' : ''; } }));
-        openDd(vdd, items, { keepOpen: true, onClose: () => setValue(f.options.map((o) => o.v).filter((v) => picked.has(v))) });
-        return true;
-      }
-      if (e.target.closest('[data-rbdel]')) { const all = treeFor(i); const { list, k } = holder(all, j); list.splice(k, 1); commit(i, all, `[data-ri="${i}"] [data-rbadd]`); return true; }
-      // New rows start as "Type is …", so the first thing to do is pick the field
-      if (e.target.closest('[data-rbadd]')) {
-        const all = treeFor(i);
-        const list = g != null ? all.items[g].items : all.items;
-        list.push({ path: 'type', test: 'is', value: '' });
-        for (const it of all.items) delete it.whole;
-        commit(i, all, at(i, g != null ? `${g}.${list.length - 1}` : list.length - 1, '[data-bfdd]'));
-        return true;
-      }
-      if (e.target.closest('[data-rbgadd]')) {
-        const all = treeFor(i);
-        for (const it of all.items) delete it.whole;
-        all.items.push({ group: true, mode: 'all', items: [{ path: 'type', test: 'is', value: '' }] });
-        commit(i, all, at(i, `${all.items.length - 1}.0`, '[data-bfdd]'));
-        return true;
-      }
-      if (e.target.closest('[data-rbgdel]')) { const all = treeFor(i); all.items.splice(g, 1); commit(i, all, `[data-ri="${i}"] [data-rbgadd]`); return true; }
-      const md = e.target.closest('[data-rbmode] button');
-      if (md) {
-        const all = treeFor(i);
-        (g != null ? all.items[g] : all).mode = md.dataset.v;
-        commit(i, all, `[data-ri="${i}"] ${g != null ? `[data-group="${g}"]` : '.rbuild > .rb-head'} [data-rbmode] [data-v="${md.dataset.v}"]`);
-        return true;
-      }
-      if (e.target.closest('[data-rtext]')) {
-        const name = rules()[i].name;
-        if (ruleAsText.has(name)) ruleAsText.delete(name); else { ruleAsText.add(name); ruleDrafts.delete(name); }
-        redraw(`[data-ri="${i}"] [data-rtext]`);
-        return true;
-      }
-      if (e.target.closest('[data-rshow]')) {
-        $('#search').value = state.query = `is:rule:${rules()[i].name.replace(/\s+/g, '-')}`;
-        applyFilter(); closeModal();
-        return true;
-      }
-      return false;
-    };
-    pane.addEventListener('click', (e) => { const i = idx(e.target); if (i >= 0 && builderClick(e, i)) e.stopPropagation(); }, true);
-    // The condition text is checked as it is typed: how many cards it would match, or why it does not parse.
-    let timer = null;
-    pane.addEventListener('input', (e) => { if (e.target.matches('[data-rf="condition"]')) { clearTimeout(timer); timer = setTimeout(() => ruleCheck(e.target.closest('.rcard'), e.target.value), 220); } });
-    pane.addEventListener('focusin', (e) => { if (e.target.matches('[data-rf="condition"]')) ruleCheck(e.target.closest('.rcard'), e.target.value); });
-    pane.addEventListener('change', (e) => {
-      if (e.target.matches('[data-bv]')) {
-        const i = idx(e.target);
-        const all = treeFor(i);
-        treeAt(all, e.target.closest('[data-row]').dataset.row).value = e.target.value.trim();
-        commit(i, all);
-        return;
-      }
-      if (e.target.matches('[data-rmcolour]')) { const i = idx(e.target); const c = e.target.value; save(i, (r) => { if (r.look.mark) r.look.mark = { shape: r.look.mark.shape, colour: c }; }); return; }
-      const f = e.target.dataset.rf;
-      const i = idx(e.target);
-      if (!f || i < 0) return;
-      const v = e.target.value.trim();
-      if ((f === 'name' || f === 'condition') && !v) { e.target.value = rules()[i][f]; return; }
-      save(i, (r) => {
-        if (f === 'badge') { if (v) r.look.badge = { ...r.look.badge, text: v }; else delete r.look.badge; }
-        else if (f === 'ribbon') { if (v) r.look.ribbon = v; else delete r.look.ribbon; }
-        else r[f] = v;
-      });
-    });
-    pane.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      if (e.target.matches('[data-newrule]')) addRule(pane);
-      else if (e.target.matches('input.inp')) e.target.blur();
-    });
-  }
-  // How many cards a condition matches now, or why it does not parse, under the rule. A builder draft says what is missing instead.
-  async function ruleCheck(card, text) {
-    const hint = card && $('[data-rhint]', card);
-    if (!hint) return;
-    const say = (msg, bad) => { hint.className = `rhint ${bad ? 'bad' : ''}`; hint.textContent = msg; };
-    const rule = (state.board.cardRules || [])[card.dataset.ri];
-    const draft = rule && !ruleAsText.has(rule.name) && ruleDrafts.get(rule.name);
-    if (draft && treeText(draft) == null) {
-      const todo = firstTodo(draft);
-      return say(todo ? `${todo}; the rule keeps its last whole condition until then` : 'Add at least one condition', !todo);
-    }
-    const v = String(text ?? '').trim();
-    card._checking = v;
-    if (!v) return say('Write at least one term, e.g. review.allOk', true);
-    try {
-      const r = await api('GET', B(`/card-rules/check?condition=${encodeURIComponent(v)}`));
-      if (card._checking === v) say(`Matches ${r.count} card${r.count === 1 ? '' : 's'} now${r.ids?.length ? `: ${r.ids.slice(0, 6).join(', ')}${r.count > 6 ? '…' : ''}` : ''}`);
-    } catch (e) { if (card._checking === v) say(e.data?.hint ? `${e.message}. ${e.data.hint}` : e.message, true); }
-  }
-  async function addRule(pane) {
-    const inp = $('[data-newrule]', pane);
-    const name = inp.value.trim();
-    if (!name) { inp.focus(); return; }
-    const n = (state.board.cardRules || []).length;
-    // A new rule starts with James's example: every assigned reviewer said ok, two at least, and the review carries evidence
-    if (await rulesCall([...(state.board.cardRules || []), { name, condition: 'review.allOk review.oks>=2 review.evidence', look: { outline: 'ok', badge: { text: name.slice(0, 24), icon: 'checks' } } }])) {
-      inp.value = '';
-      // Enter leaves the focus in this input, and the pane does not redraw while one is focused: let go and draw now
-      inp.blur(); state.modal?.refresh();
-      setTimeout(() => $(`[data-ri="${n}"] [data-rf="condition"]`, pane)?.focus(), 300);
-    }
   }
 
   /* ─── columns: rename, colour, icon, flags, reorder, add; delete only when empty ─── */
@@ -7270,19 +6345,11 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     if (t === 'fields' && !pane._fieldsWired) { pane._fieldsWired = true; wireFields(pane); }
     if (t === 'templates' && !pane._tplWired) { pane._tplWired = true; wireTemplates(pane); }
     if (t === 'columns' && !pane._colWired) { pane._colWired = true; wireColumns(pane); }
-    if (t === 'rules' && !pane._rulesWired) { pane._rulesWired = true; wireRules(pane); }
-    if (t === 'rules') $$('.rcard', pane).forEach((c) => ruleCheck(c, state.board.cardRules[c.dataset.ri]?.condition));
     pane.onclick = async (e) => {
       const uc = e.target.closest('[data-ucolor]');
       if (uc) { try { await api('PATCH', '/api/profiles/me', { color: uc.dataset.ucolor || null }); pulseSaved(); } catch (err) { toast(err.message, { kind: 'error' }); } return; }
-      const kd = e.target.closest('[data-theme-kind]');
-      if (kd) { lookKind = kd.dataset.themeKind; show('look', true); $(`[data-theme-kind="${lookKind}"]`, pane)?.focus(); return; }
       const th = e.target.closest("[data-pick-theme]");
       if (th) { switchTheme(th.dataset.pickTheme, e.clientX, e.clientY, () => show('look', true)); return; }
-      const bg = e.target.closest('[data-bgfx]');
-      if (bg) { settings.bg = bg.dataset.bgfx; saveSettings(); show('look', true); return; }
-      const rs = e.target.closest('[data-reset]');
-      if (rs) { settings[rs.dataset.reset] = 'theme'; saveSettings(); pulseSaved(); show(t, true); return; }
       const sb = e.target.closest('.seg[data-set] button, .opt-grid[data-set] button');
       if (sb) {
         const k = sb.parentElement.dataset.set;
@@ -7335,7 +6402,6 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     if (e.key === 'Escape') {
       if ($('.menu')) { closeMenus(); return; }
       if ($('.palette-scrim')) { closePalette(); return; }
-      if (askOpen()) { closeAsk(true); return; }
       if ($('.lightbox')) { $('.lightbox').remove(); return; }
       if (state.modal) { if (typing) e.target.blur(); closeModal(); return; }
       if (state.bulk) { setBulk(false); return; }
@@ -7343,8 +6409,8 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
       return;
     }
     if (typing) return;
-    if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
-    if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey && !e.altKey && !state.modal && !$('.palette-scrim')) { e.preventDefault(); openAsk(); }
+    if (e.key === '/' && state.section === 'board') { e.preventDefault(); $('#search').focus(); } // the filter is the board's
+    if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey && !e.altKey && !state.modal && !$('.palette-scrim')) { e.preventDefault(); openRequests(); }
     const m = state.modal;
     if (m?.kind === 'item' && m.rail && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       const ids = needsIds();
@@ -7355,6 +6421,10 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
   });
 
   addEventListener('hashchange', () => {
+    // back and forward between sections; the board's own address is handled below
+    const s = parseSection();
+    if (s !== 'board') { goSection(s, { push: false }); return; }
+    if (state.section !== 'board') setSection('board', { push: false });
     const h = parseHash();
     if (h.board && h.board !== state.boardId) { closeModal(true); state.focusId = h.focus; loadBoard(h.board).catch((e) => toast(e.message, { kind: 'error' })); }
     else if (h.board && h.focus !== state.focusId) showFocus(h.focus, { push: false });
@@ -7371,13 +6441,24 @@ import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/them
     document.body.append(tip);
     applySettings();
     buildChrome();
+    // the board's own sums (app.css .board/.column): the columns and its two spacers share what's left over equally, a column up to 1.4 × --colw
+    { const n = frameStore.get()?.cols, w = settings.colw, root = document.documentElement, inner = innerWidth - 44, free = inner - n * w - (n - 1) * 16;
+      const spacer = free / (n + 2) <= w * 0.4 ? free / (n + 2) : (inner - n * w * 1.4 - (n - 1) * 16) / 2, side = Math.round(22 + spacer);
+      if (n && free >= 0 && innerWidth >= 640) { root.classList.add('frame-now'); root.style.setProperty('--frame-l', `${side}px`); root.style.setProperty('--frame-r', `${side}px`); getComputedStyle($('#topbar')).paddingLeft; root.classList.remove('frame-now'); } }
+    // light the section's tab at once: the page itself waits for the board to load
+    { const s = parseSection(); document.body.dataset.section = s; for (const b of $$('#sections [data-section]')) b.classList.toggle('on', b.dataset.section === s); }
     try {
       Object.assign(state.app, await api('GET', '/api/app'));
       try { state.profiles = await api('GET', '/api/profiles'); } catch { /* none yet */ }
       await refreshBoards();
-      const h = parseHash();
+      // opened on a section: the board still loads (the inbox, the agents and the header need it) behind it
+      const section = parseSection();
+      state.section = section;
+      document.body.dataset.section = section;
+      const h = section === 'board' ? parseHash() : { board: '', focus: null };
       state.focusId = h.focus;
       await loadBoard(h.board || state.app.defaultBoard || state.boards[0]?.id);
+      if (section !== 'board') { state.section = 'board'; goSection(section, { push: false }); } else setSection('board', { push: false });
     } catch (e) {
       toast(`Can't reach the server · ${e.message}`, { kind: 'error', timeout: 10000 });
     }

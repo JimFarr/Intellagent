@@ -9,23 +9,16 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Caveat:wght@600&family=VT323&family=Archivo:wght@500;700;900&family=Bricolage+Grotesque:opsz,wght@12..96,500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<div class="bg-layer" id="bg" aria-hidden="true">
-  <div class="fx fx-blobs"><i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i></div>
-  <div class="fx fx-aurora"><i class="rib r1"></i><i class="rib r2"></i><i class="rib r3"></i></div>
-  <canvas class="fx fx-stars" id="stars"></canvas>
-  <div class="fx fx-mesh"><i></i><i></i><i></i></div><div class="fx fx-grid"></div>
-  <canvas class="fx fx-art" id="art"></canvas>
-</div>
-<div class="grain" aria-hidden="true"></div>
 <header class="topbar" id="topbar"></header>
 <div class="metrics" id="metrics" hidden></div>
 <div class="focusbar" id="focusbar" hidden></div>
 <div class="focusbar codebar" id="codebar" hidden></div>
-<main class="board" id="board"></main>
+<main class="board" id="board"><div class="boot-sk" aria-busy="true" aria-label="Loading the board"><div class="boot-col"><i></i><b></b><b></b><b></b></div><div class="boot-col"><i></i><b></b><b></b><b></b></div><div class="boot-col"><i></i><b></b><b></b><b></b></div><div class="boot-col"><i></i><b></b><b></b><b></b></div><div class="boot-col"><i></i><b></b><b></b><b></b></div></div></main>
+<main class="page" id="page" hidden></main>
 <div class="bulkbar" id="bulkbar"></div>
 <div id="toasts" aria-live="polite"></div>
 <footer class="build" id="build"></footer>
