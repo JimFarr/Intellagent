@@ -3067,12 +3067,14 @@ function checkAuth(req, q, actor, pathname, policy) {
   const fresh = tokenFor(readLocalAgentTokens());
   if (fresh && tokenFor(A.agentTokens) !== fresh) A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh };
   const need = fresh || tokenFor(A.agentTokens);
-  const tokenHint = `Send the token the human issued with: intellagent token --agent ${actor.name}, in INTELLAGENT_TOKEN (the CLI and MCP tools send it from there; a standing run has its own)`;
+  // what to put where (INT-467): the board keeps only hashes, so a lost token is rotated, never read back
+  const where = 'where the agent runs (a Claude Code session: env.INTELLAGENT_TOKEN in the project\'s .claude/settings.local.json, git-ignored)';
+  const tokenHint = `Send this agent's token in INTELLAGENT_TOKEN (a standing run has its own). Lost it? The human runs: intellagent token --agent ${actor.name} --rotate, and puts the printed token in INTELLAGENT_TOKEN ${where}`;
   // its standing runs' token, or the one the human issued (kept as a hash)
   const ok = (stored) => tokenEq(tok, runTokens.get(actor.name.toLowerCase())) || tokenMatches(tok, stored);
   if (need) { if (!ok(need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); return; }
   if (A.requireAgentTokens) {
-    fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name}, then gives it to the agent in INTELLAGENT_TOKEN` });
+    fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name}, and puts the printed token in INTELLAGENT_TOKEN ${where}` });
   }
   const p = permsFor(actor.name);
   // the route policy says what a read-only agent may still do (INT-144): talk, never change

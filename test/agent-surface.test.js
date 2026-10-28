@@ -294,6 +294,7 @@ describe('agent tokens on new boards', () => {
       const named = cli(['do', 'get_my_work'], { cwd: s.dir, env: { INTELLAGENT_AGENT: 'pat' } });
       assert.equal(named.code, 1);
       assert.match(named.err, /error 401 UNAUTHORIZED: Agent "pat" must send its token/);
+      assert.match(named.err, /intellagent token --agent pat --rotate.*INTELLAGENT_TOKEN.*\.claude\/settings\.local\.json/, 'the hint says how to get going again');
       assert.ok(!fs.readFileSync(path.join(s.dir, 'local.json'), 'utf8').includes(token), 'no file holds the token');
       // rotating replaces it at once, and the old one stops
       const next = cli(['token', '--agent', 'pat', '--rotate'], { cwd: s.dir }).out.match(/^ {2}(\S+)$/m)[1];
