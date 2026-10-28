@@ -222,13 +222,14 @@ describe('two boards on one repository (INT-453)', () => {
     const other = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-two-b-'));
     const agents = { agents: { dev: { enabled: false, worktree: true } } };
     const a = await startServer({ dir, agents });
-    const b = await startServer({ dir: other, manifest: { projectRoot: dir }, agents });
+    // the same name in other capitals is the same branch on Windows, so it clashes too
+    const b = await startServer({ dir: other, manifest: { projectRoot: dir }, agents: { agents: { Dev: { enabled: false, worktree: true } } } });
     const B = '/api/boards/main';
     try {
       const one = await a.ok('POST', `${B}/items`, { title: 'one', column: 'Ready' }, USER);
       await a.ok('POST', `${B}/items/${one.id}/start`, {}, { agent: 'dev' });
       const two = await b.ok('POST', `${B}/items`, { title: 'two', column: 'Ready' }, USER);
-      const r = await b.api('POST', `${B}/items/${two.id}/start`, {}, { agent: 'dev' });
+      const r = await b.api('POST', `${B}/items/${two.id}/start`, {}, { agent: 'Dev' });
       assert.deepEqual([r.status, r.body.code], [409, 'AGENT_NAME_TAKEN']);
       assert.ok(r.body.hint);
       const again = await a.api('POST', `${B}/items/${one.id}/start`, {}, { agent: 'dev' });
