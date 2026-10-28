@@ -4988,19 +4988,26 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     };
   }
 
-  function toast(msg, { kind = '', icon: ic = null, actor = null, action = null, onAction = null, onClick = null, timeout = 3800, wrap = false } = {}) {
-    const lead = actor ? avatar(actor) : ic ? icon(ic) : kind === 'error' ? icon('x') : kind === 'needs' ? icon('ask') : icon('sparkle');
-    const t = el(`<div class="toast ${kind} ${onClick ? 'click' : ''} ${wrap ? 'wrap' : ''}">${lead}<span class="msg"></span>${action ? `<button>${esc(action)}</button>` : ''}<i class="bar" style="animation-duration:${timeout}ms"></i></div>`);
-    $('.msg', t).textContent = msg;
+  // Toasts (INT-471, docs/design.md): bottom right, three at most, a dot for the meaning, a Dismiss button. Information stays
+  // 4 s, with an action 8 s, an error until dismissed; hover or focus pauses it; the same message twice shows once, counted.
+  function toast(msg, { kind = '', icon: ic = null, actor = null, action = null, onAction = null, onClick = null, timeout = null, wrap = false } = {}) {
     const host = $('#toasts');
+    const same = [...host.children].find((x) => !x.classList.contains('out') && x.dataset.msg === msg && x.dataset.kind === kind);
+    if (same) { const n = (+same.dataset.n || 1) + 1; same.dataset.n = n; $('.n', same).textContent = `×${n}`; same._arm(); return; }
+    const ms = timeout ?? (kind === 'error' ? 0 : action ? 8000 : 4000);
+    const t = el(`<div class="toast ${kind} ${onClick ? 'click' : ''} ${wrap ? 'wrap' : ''}" data-kind="${esc(kind)}">${actor ? avatar(actor) : '<i class="dot"></i>'}<span class="msg"></span><b class="n"></b>${action ? `<button class="btn ghost sm act">${esc(action)}</button>` : ''}<button class="btn ghost x" aria-label="Dismiss">${icon('x')}</button></div>`);
+    $('.msg', t).textContent = msg;
+    t.dataset.msg = msg;
     host.append(t);
-    while (host.children.length > 4) host.firstChild.remove();
-    const kill = () => { t.classList.add('out'); setTimeout(() => t.remove(), 250); };
-    if (action) $('button', t).onclick = (e) => { e.stopPropagation(); onAction?.(); kill(); };
+    while (host.children.length > 3) host.firstChild.remove();
+    const kill = () => { clearTimeout(t._timer); t.classList.add('out'); setTimeout(() => t.remove(), 120); };
+    $('.x', t).onclick = (e) => { e.stopPropagation(); kill(); };
+    if (action) $('.act', t).onclick = (e) => { e.stopPropagation(); onAction?.(); kill(); };
     if (onClick) t.onclick = () => { onClick(); kill(); };
-    let timer = setTimeout(kill, timeout);
-    t.onmouseenter = () => clearTimeout(timer);
-    t.onmouseleave = () => { timer = setTimeout(kill, 1500); };
+    t._arm = () => { clearTimeout(t._timer); if (ms) t._timer = setTimeout(kill, ms); };
+    t._arm();
+    t.onmouseenter = t.onfocusin = () => clearTimeout(t._timer);
+    t.onmouseleave = t.onfocusout = t._arm;
   }
 
   /* ═════════════════════════ token prompt ═════════════════════════ */
