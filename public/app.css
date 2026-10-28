@@ -2853,9 +2853,9 @@ input[type="checkbox"].ck { border-radius: 4px; }
 .ent.agent-row > .ent-body { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .ent.agent-row > .ent-body > .ent-title { flex: none; }
 .ent.agent-row > .ent-body > .ent-sub { flex: 1; min-width: 0; }
-/* Assignments: the table is as wide as its columns, so each tick sits beside its permission's name */
-.pg-scroll { width: fit-content; max-width: 100%; }
-.pg { width: auto; }
+/* Assignments: one column as wide as the design language's 960 px, the agent columns share what the names leave */
+.pg-scroll { width: 100%; max-width: 960px; }
+.pg { width: 100%; }
 .pg .pg-perm-h, .pg tbody .pg-perm { min-width: 280px; }
 
 /* the agent page: one header line (avatar, name, role · state · model, actions), the description under it as text */
@@ -2891,7 +2891,7 @@ input[type="checkbox"].ck { border-radius: 4px; }
 .pe-note .btn.ghost { height: auto; padding: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .pg thead th.pg-agent { background: color-mix(in oklab, var(--text) 3%, var(--surface)); }
 /* a sensible width with few agents: at least 760px, agent columns 160px; more agents widen it up to the page */
-.pg-scroll { min-width: min(100%, 760px); }
+.pg-scroll { min-width: 0; }
 .pg { width: 100%; }
 .pg thead .pg-agent { width: 160px; min-width: 160px; }
 .pg thead .pg-agent > span { max-width: 112px; }
@@ -2913,3 +2913,17 @@ input[type="checkbox"].ck { border-radius: 4px; }
 .modal.settings:not(.about) { height: min(780px, calc(100vh - 48px)); }
 .modal.settings:not(.about) .m-frame { flex: 1; min-height: 0; }
 .modal.about .set-pane { overflow-x: hidden; }
+
+/* Design pass (INT-471, docs/design.md): Assignments. The table fills the page's column, rows are 40 px with hairlines, group bands are
+   a caption on a tint, and the agent columns share the rest evenly so the cells sit under their names. */
+.pg-scroll { border-radius: 10px; border-color: var(--border); background: var(--surface); }
+.pg { width: 100%; font-size: 13px; }
+.pg th, .pg td { border-bottom-color: var(--card-line); }
+.pg tbody tr:last-child > * { border-bottom: 0; }
+.pg thead th { background: var(--surface); font: 500 12px/16px var(--font); text-transform: none; letter-spacing: 0; color: var(--muted); padding: 12px 8px; }
+.pg th.pg-perm, .pg th.pg-perm-h { text-align: left; padding-left: 16px; }
+.pg th.pg-perm { max-width: none; vertical-align: middle; height: 40px; font-weight: 400; }
+.pg .pg-grp th { height: 32px; padding: 0 16px; text-align: left; font: 600 12px/16px var(--font); text-transform: none; letter-spacing: 0; color: var(--muted); background: var(--hover); }
+.pg .pg-grp .cnt { margin-left: 6px; font-weight: 500; opacity: .8; }
+.pg thead :is(.pg-perm-h, .pg-agent) { background: var(--surface); }
+@media (max-width: 520px) { .pg .pg-perm-h, .pg tbody .pg-perm { min-width: 150px; } }
