@@ -5211,6 +5211,14 @@ route('GET', '/api/agents/:name/log', 'Human only: a run\'s log, the latest unle
     const from = clamp(Number(q.from) || 0, 0, size);
     const buf = read(from, Math.min(size - from, 500_000));
     const end = buf.lastIndexOf(0x0a) + 1;
+    // one line longer than the whole window (INT-470): look ahead for where it ends and skip it, or the reader
+    // would ask for the same bytes for ever; a line still being written is waited for
+    if (!end && buf.length === 500_000) {
+      for (let at = from + buf.length; at < size; at += 500_000) {
+        const nl = read(at, Math.min(size - at, 500_000)).indexOf(0x0a);
+        if (nl >= 0) return { run: path.basename(f), log: '', from, next: at + nl + 1, skipped: at + nl + 1 - from, size, running };
+      }
+    }
     return { run: path.basename(f), log: buf.subarray(0, end).toString('utf8'), from, next: from + end, size, running };
   }
   const n = clamp(Number(q.bytes) || 20000, 1000, 500_000);

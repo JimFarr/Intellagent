@@ -3935,6 +3935,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         const r = await api('GET', q({ from: next }));
         const stick = atEnd();
         if (r.log) list.insertAdjacentHTML('beforeend', r.log.split('\n').map((l) => (l.startsWith('$ ') ? `<details class="rl rl-meta"><summary>run command</summary><pre>${esc(l.slice(2))}</pre></details>` : runRows(l))).join(''));
+        if (r.skipped) list.insertAdjacentHTML('beforeend', `<div class="rl rl-meta">a line of ${Math.round(r.skipped / 1024)} KB left out</div>`);
         next = r.next ?? next;
         if (stick) list.scrollTop = list.scrollHeight;
         $('.rl-state', body).textContent = r.running ? '● live' : '';
