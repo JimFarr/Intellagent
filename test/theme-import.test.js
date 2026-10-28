@@ -27,9 +27,10 @@ describe('theme import', () => {
 
   test('an import cannot reach the internet', async () => {
     const t = await s.ok('POST', '/api/themes', {
-      css: theme('name: Leaky\nmode: light', '@import url(https://evil.example/x.css);\n.a { background: url(https://evil.example/p.png); }\n.b { background: url("data:image/png;base64,AAAA"); }\n.c { background: u\\rl(https://evil.example/q.png); }'),
+      css: theme('name: Leaky\nmode: light', '@import url(https://evil.example/x.css);\n.a { background: url(https://evil.example/p.png); }\n.b { background: url("data:image/png;base64,AAAA"); }\n.c { background: u\\rl(https://evil.example/q.png); }\n.d { background-image: image-set("https://evil.example/r.png" 1x); }\n.e { background-image: -webkit-image-set(\'https://evil.example/s.png\' 1x, "https://evil.example/t.png" 2x); }\n.f { background-image: image-set("data:image/png;base64,BBBB" 1x); }'),
     }, USER);
     assert.doesNotMatch(t.css, /evil\.example|@import/);
+    assert.match(t.css, /image-set\("data:image\/png;base64,BBBB" 1x\)/, 'data: strings stay');
     assert.match(t.css, /data:image\/png/, 'data: URLs stay');
   });
 
