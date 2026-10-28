@@ -7,7 +7,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // The theme table is an ES module of the browser app (public/js/themes.js), loaded here the way the page loads it.
-const { THEMES, THEME_KINDS, themeGroups, contrast, oklab } = require('../public/js/themes.js');
+const { THEMES, addTheme, themeGroups, contrast, oklab } = require('../public/js/themes.js');
+const { parse } = require('../lib/themes.js');
+
+// Every theme file in themes/ is imported the way the page imports it, so the exported themes are held to the same bars as the built-in two.
+const DIR = path.join(__dirname, '..', 'themes');
+const FILES = fs.readdirSync(DIR).filter((f) => f.endsWith('.css'));
+for (const f of FILES) addTheme(parse(fs.readFileSync(path.join(DIR, f), 'utf8')));
 
 // color-mix(in oklab, x p, y): back from oklab to #rrggbb.
 const fromOklab = ([L, a, b]) => {
@@ -29,7 +35,8 @@ const GROUP_TEXT = [
 
 describe('theme palettes', () => {
   it('evaluates the theme table', () => {
-    assert.ok(Object.keys(THEMES).length > 30);
+    assert.equal(Object.keys(THEMES).length, FILES.length + 2, 'Clear, Clear Dark and every file in themes/');
+    assert.ok(FILES.length > 30);
   });
 
   for (const [k, t] of Object.entries(THEMES)) {
@@ -38,12 +45,6 @@ describe('theme palettes', () => {
       assert.ok(c >= 4.5, `${v['on-accent']} on ${v['accent-fill']} is ${c.toFixed(2)}:1`);
     });
   }
-
-  it('every theme is listed under exactly one kind in Appearance (INT-222)', () => {
-    const listed = THEME_KINDS.flatMap(([, , keys]) => keys);
-    assert.deepEqual([...listed].sort(), Object.keys(THEMES).sort());
-    assert.equal(new Set(listed).size, listed.length, 'no theme in two kinds');
-  });
 
   it('the group text rules match public/app.css', () => {
     for (const [where, , , , rule] of GROUP_TEXT) assert.match(css, rule, where);

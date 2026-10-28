@@ -1,0 +1,30 @@
+/* intellagent-theme
+name: Gruvbox
+mode: dark
+style: {"card":6,"tape":"pin","attn":"ribbon","enter":"pop","bg":"none","heads":"caps","display":"'JetBrains Mono', monospace","avStyle":"flat","groups":"rail"}
+*/
+:root {
+  --bg: #1d2021;
+  --panel: #282828;
+  --surface: #3c3836;
+  --text: #ebdbb2;
+  --muted: #a89984;
+  --border: #504945;
+  --accent: #fabd2f;
+  --accent-2: #8ec07c;
+  --issue: #fb4934;
+  --task: #83a598;
+  --spike: #fabd2f;
+  --ok: #b8bb26;
+  --warn: #fe8019;
+  --danger: #fb4934;
+  --blob1: #d79921;
+  --blob2: #689d6a;
+  --blob3: #cc241d;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #1d2021;
+  --accent-fill: #fabd2f;
+}
+.c-title { font-family: var(--mono); font-size: 13px; }

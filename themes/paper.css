@@ -1,0 +1,32 @@
+/* intellagent-theme
+name: Paper
+mode: light
+style: {"md":"paper","card":2,"col":4,"modal":6,"ctl":4,"shadow":"flat","tape":"none","cards":"clean","typeInd":"top","attn":"ribbon","enter":"fade","lanes":"lane","chips":"outline","heads":"caps","bg":"doodles","display":"'Fraunces', serif","colAlpha":90,"avStyle":"ring","drop":"dashed","groups":"cover"}
+*/
+:root {
+  --bg: #f3efe6;
+  --panel: #ece6d9;
+  --surface: #fbf8f2;
+  --text: #2b2a26;
+  --muted: #7b756a;
+  --border: #d9d1c0;
+  --accent: #b4532a;
+  --accent-2: #2f6f62;
+  --issue: #b4362a;
+  --task: #2f5d8a;
+  --spike: #b98a1b;
+  --ok: #3d7a4a;
+  --warn: #c06a2b;
+  --danger: #b4362a;
+  --blob1: #e8d9bd;
+  --blob2: #d9e4d6;
+  --blob3: #efd3c8;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #b4532a;
+}
+.c-title { font-family: var(--display); font-size: 15.5px; }
+.board { background-image: repeating-linear-gradient(transparent 0 27px, color-mix(in oklab, var(--accent-2) 9%, transparent) 27px 28px); background-size: auto; }
+.col-name { font-style: italic; }

@@ -1,0 +1,29 @@
+/* intellagent-theme
+name: Rosé Pine
+mode: dark
+style: {"cards":"clean","tape":"none","typeInd":"tint","attn":"glow","enter":"fade","bg":"aurora"}
+*/
+:root {
+  --bg: #191724;
+  --panel: #1f1d2e;
+  --surface: #26233a;
+  --text: #e0def4;
+  --muted: #908caa;
+  --border: #393552;
+  --accent: #c4a7e7;
+  --accent-2: #ebbcba;
+  --issue: #eb6f92;
+  --task: #9ccfd8;
+  --spike: #f6c177;
+  --ok: #3e8fb0;
+  --warn: #f6c177;
+  --danger: #eb6f92;
+  --blob1: #c4a7e7;
+  --blob2: #ebbcba;
+  --blob3: #31748f;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #191724;
+  --accent-fill: #c4a7e7;
+}

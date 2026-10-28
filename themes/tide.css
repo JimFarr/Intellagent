@@ -1,0 +1,37 @@
+/* intellagent-theme
+name: Tide
+mode: light
+style: {"card":22,"col":28,"modal":28,"ctl":14,"bw":1,"cards":"clean","typeInd":"dot","tape":"none","attn":"glow","enter":"rise","lanes":"glass","chips":"pill","bg":"mesh","texture":false,"avatar":"round","md":"clean","titleW":600,"display":"'Outfit'","colAlpha":62,"avStyle":"tint","drop":"tint"}
+*/
+:root {
+  --bg: #e4eef0;
+  --panel: #d6e6e9;
+  --surface: #f4fafa;
+  --text: #173b44;
+  --muted: #5f8088;
+  --border: #c3d9dd;
+  --accent: #0f7a86;
+  --accent-2: #ff7f6b;
+  --issue: #ff7f6b;
+  --task: #2f8fb8;
+  --spike: #e8b04a;
+  --ok: #2fae8f;
+  --warn: #f09a4a;
+  --danger: #e35a4f;
+  --blob1: #a8dde0;
+  --blob2: #ffd1c4;
+  --blob3: #c7e7d9;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .75;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #0f7a86;
+}
+.column { border-radius: 34px; border-color: rgb(255 255 255 / .75); box-shadow: 0 22px 44px -30px rgb(15 90 100 / .5); }
+.col-head { position: relative; }
+.col-head::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: -6px; height: 9px; background: radial-gradient(circle at 8px -3px, transparent 7px, var(--col, var(--accent)) 7.5px, var(--col, var(--accent)) 9px, transparent 9.5px) 0 0 / 16px 9px repeat-x; opacity: .55; }
+.card { border-radius: 26px 26px 26px 6px; border-color: rgb(255 255 255 / .95); background: linear-gradient(170deg, rgb(255 255 255 / .95), rgb(232 246 246 / .88)); box-shadow: 0 10px 22px -12px rgb(15 90 100 / .45), inset 0 -2px 0 rgb(15 122 134 / .08); }
+.card:nth-child(2n) { border-radius: 26px 26px 6px 26px; }
+.card:hover { box-shadow: 0 16px 30px -12px rgb(15 90 100 / .5), 0 0 0 1px rgb(15 122 134 / .3); }
+.btn.primary { background: linear-gradient(135deg, #0f7a86, #2f8fb8); border-radius: 999px; }
+.app-name { color: #0f7a86; }

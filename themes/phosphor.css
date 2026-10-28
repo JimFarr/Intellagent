@@ -1,0 +1,36 @@
+/* intellagent-theme
+name: Phosphor
+mode: dark
+style: {"md":"terminal","card":0,"col":0,"modal":0,"ctl":0,"shadow":"flat","cards":"clean","typeInd":"dot","tape":"none","attn":"outline","enter":"fade","lanes":"outline","chips":"outline","heads":"caps","bg":"none","texture":false,"avatar":"square","avatars":"accent","colColor":"accent","titleW":400,"font":"'JetBrains Mono', monospace","display":"'VT323', monospace","avStyle":"ring","drop":"dashed","groups":"foot"}
+*/
+:root {
+  --bg: #050805;
+  --panel: #081008;
+  --surface: #0b160b;
+  --text: #b8ffb0;
+  --muted: #5f9a5a;
+  --border: #1d3a1c;
+  --accent: #39ff14;
+  --accent-2: #a3ff7a;
+  --issue: #ff5f5f;
+  --task: #39ff14;
+  --spike: #ffd84d;
+  --ok: #39ff14;
+  --warn: #ffb000;
+  --danger: #ff4040;
+  --blob1: #0f3d0f;
+  --blob2: #123a12;
+  --blob3: #0a2a0a;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #050805;
+  --accent-fill: #39ff14;
+}
+body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1000; background: repeating-linear-gradient(0deg, rgb(0 0 0 / .22) 0 1px, transparent 1px 3px); }
+.board { background-image: radial-gradient(ellipse at 50% 40%, rgb(57 255 20 / .07), transparent 70%); }
+.c-title, .col-name, .app-name { text-shadow: 0 0 6px color-mix(in oklab, var(--accent) 65%, transparent); }
+.c-title { font-family: var(--display); font-size: 20px; line-height: 1.05; letter-spacing: .02em; }
+.col-name { font-family: var(--display); font-size: 19px; letter-spacing: .04em; }
+.app-name { background: none; color: var(--accent); -webkit-text-fill-color: currentColor; font-family: var(--display); font-size: 23px; }
+.card:hover .c-title::after { content: "_"; animation: breathe 1s steps(1) infinite; }

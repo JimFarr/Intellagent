@@ -1,0 +1,39 @@
+/* intellagent-theme
+name: Bloom
+mode: dark
+style: {"card":22,"col":32,"modal":32,"ctl":14,"bw":1,"cards":"clean","typeInd":"dot","tape":"none","attn":"orbit","enter":"zoom","lanes":"glass","chips":"pill","bg":"blobs","texture":true,"avatar":"round","md":"clean","titleW":600,"display":"'Fraunces'","colAlpha":70,"avStyle":"gem","drop":"pulse"}
+*/
+:root {
+  --bg: #170f1c;
+  --panel: #1f1526;
+  --surface: #271b30;
+  --text: #f3e8f4;
+  --muted: #a08aa8;
+  --border: #3a2a44;
+  --accent: #e58ad6;
+  --accent-2: #f6c453;
+  --issue: #ff7a9a;
+  --task: #9d8cff;
+  --spike: #f6c453;
+  --ok: #7fd6a0;
+  --warn: #f2a05c;
+  --danger: #ff5f7e;
+  --blob1: #5b1e5a;
+  --blob2: #3a1d63;
+  --blob3: #6b4a12;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .6;
+  --grain: .07;
+  --on-accent: #170f1c;
+  --accent-fill: #e58ad6;
+}
+.card { border-radius: 34px 6px 34px 6px; border-color: rgb(229 138 214 / .18); background: radial-gradient(120% 100% at 100% 0%, rgb(229 138 214 / .14), transparent 60%), linear-gradient(150deg, #2e2038, #231a2b); box-shadow: 0 14px 28px -16px rgb(0 0 0 / .85); }
+.card:nth-child(2n) { border-radius: 6px 34px 6px 34px; background: radial-gradient(120% 100% at 0% 0%, rgb(246 196 83 / .10), transparent 60%), linear-gradient(150deg, #2e2038, #231a2b); }
+.card:hover { box-shadow: 0 20px 40px -16px rgb(229 138 214 / .45), 0 0 0 1px rgb(246 196 83 / .3); }
+.column { border-radius: 90px 90px 30px 30px / 60px 60px 30px 30px; border-color: rgb(229 138 214 / .14); background: linear-gradient(180deg, rgb(58 30 70 / .55), rgb(31 21 38 / .7)); }
+.col-head { padding-top: 22px; justify-content: center; }
+.col-name { font-family: var(--display); font-style: italic; font-weight: 600; }
+.app-name { background: linear-gradient(90deg, #e58ad6, #f6c453); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.btn.primary { background: linear-gradient(135deg, #e58ad6, #b56ae0); color: #1b0f20; border-radius: 18px 4px 18px 4px; }
+.group { --g-r: calc(34px + var(--gi)) calc(6px + var(--gi)); --cover-r: 34px 6px; --tab-x: 30px; }
+.group-cards > .card, .group-cards > .card:nth-child(2n) { border-radius: 34px 6px; }

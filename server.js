@@ -24,6 +24,7 @@ const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join
 const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
 const { readLocal, updateLocal, foreignCode } = require('./lib/locate');
 const cardrules = require('./lib/cardrules');
+const { createThemes, ThemeError } = require('./lib/themes');
 const jsonfile = require('./lib/jsonfile');
 const MANIFEST_DEFAULTS = {
   appName: 'Intellagent',
@@ -3176,6 +3177,8 @@ const POLICY = {
   'POST /api/agents/:name/resume': { who: 'agents.control' },
   'POST /api/agents/:name/run': { who: 'agents.control' },
   'DELETE /api/presence/:name': { who: 'human', why: 'Only the human can forget agents' },
+  'POST /api/themes': { who: 'human', why: 'Only the human imports a theme: it restyles the page', hint: 'Ask on a card' },
+  'DELETE /api/themes/:id': { who: 'human', why: 'Only the human removes a theme', hint: 'Ask on a card' },
   'PUT /api/profiles/me/status': { who: 'self', readOnly: true },
   'PATCH /api/profiles/me': { who: 'self', readOnly: true },
   'POST /api/profiles/:name/memory': { who: 'self', readOnly: true },
@@ -5232,6 +5235,20 @@ route('PUT', '/api/profiles/:name/memory', 'Human only: switch an agent\'s memor
   const r = memory.setOn(name, body.on, actor);
   memoryChanged(name, 'switched', actor, null, { on: r.on });
   return r;
+});
+
+/* ───────────────────────── themes (INT-465) ───────────────────────── */
+
+const themes = createThemes({ dir: path.join(DATA, 'themes'), writeFile: writeFileAtomic });
+const themeErrors = (fn) => { try { return fn(); } catch (e) { if (e instanceof ThemeError) fail(e.status, e.message, { code: e.status === 404 ? 'NOT_FOUND' : 'BAD_REQUEST', hint: e.hint }); throw e; } };
+route('GET', '/api/themes', 'The imported themes (Clear and Clear Dark are built into the page): { themes: [{ id, name, mode, css }] }', () => ({ themes: themes.list() }));
+route('POST', '/api/themes', 'Human only: import a theme { css } — a header comment (name:, mode: light|dark, optional style:), the palette in :root { --bg … }, then any rules. @import and remote url() are stripped. Importing the same name again replaces it', ({ body, actor }) => {
+  humanOnly(actor);
+  return themeErrors(() => themes.add(body.css));
+});
+route('DELETE', '/api/themes/:id', 'Human only: remove an imported theme; a browser that had picked it falls back to Clear', ({ p, actor }) => {
+  humanOnly(actor);
+  return themeErrors(() => themes.remove(p.id));
 });
 
 route('GET', '/avatars/:file', null, ({ res, p }) => {

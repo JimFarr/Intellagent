@@ -1,0 +1,29 @@
+/* intellagent-theme
+name: Daylight
+mode: light
+style: {"attn":"glow","avStyle":"tint","drop":"tint"}
+*/
+:root {
+  --bg: #f4f1ec;
+  --panel: #ebe6de;
+  --surface: #fffdf9;
+  --text: #23212b;
+  --muted: #7a7585;
+  --border: #ddd6cb;
+  --accent: #6c5cff;
+  --accent-2: #0fb59a;
+  --issue: #e5486b;
+  --task: #3b7bea;
+  --spike: #e3a019;
+  --ok: #1f9e66;
+  --warn: #d9822b;
+  --danger: #d93c56;
+  --blob1: #b6a8ff;
+  --blob2: #8ff0dc;
+  --blob3: #ffc2d9;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #6c5cff;
+}

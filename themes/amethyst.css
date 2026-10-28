@@ -1,0 +1,29 @@
+/* intellagent-theme
+name: Amethyst
+mode: dark
+style: {"avStyle":"gem"}
+*/
+:root {
+  --bg: #0d0e1a;
+  --panel: #161829;
+  --surface: #1d2035;
+  --text: #eceefe;
+  --muted: #8e93b8;
+  --border: #2b2f4a;
+  --accent: #8b7bff;
+  --accent-2: #2fe0c4;
+  --issue: #ff6b8b;
+  --task: #6aa8ff;
+  --spike: #ffc857;
+  --ok: #3ddc97;
+  --warn: #ffb454;
+  --danger: #ff5d73;
+  --blob1: #7b5cff;
+  --blob2: #00d4b0;
+  --blob3: #ff5fa2;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #0d0e1a;
+  --accent-fill: #8b7bff;
+}

@@ -1,0 +1,36 @@
+/* intellagent-theme
+name: Cloud
+mode: light
+style: {"card":18,"col":26,"modal":28,"ctl":14,"bw":1,"cards":"elevated","typeInd":"dot","tape":"none","attn":"glow","enter":"rise","lanes":"solid","chips":"pill","bg":"blobs","texture":false,"md":"clean","avStyle":"tint","titleW":600,"display":"'Outfit'","colAlpha":100,"drop":"tint","groups":"cover"}
+*/
+:root {
+  --bg: #f1efea;
+  --panel: #ebe8e1;
+  --surface: #fbfaf7;
+  --text: #2f2d35;
+  --muted: #8b8792;
+  --border: #e3dfd7;
+  --accent: #8d82d6;
+  --accent-2: #e39aa6;
+  --issue: #e2898c;
+  --task: #7fa6d6;
+  --spike: #dfb465;
+  --ok: #78b692;
+  --warn: #e0a36c;
+  --danger: #d66f6e;
+  --blob1: #ddd7f6;
+  --blob2: #f7d9de;
+  --blob3: #d3ebde;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .8;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #766eaf;
+}
+.column { background: linear-gradient(180deg, #edeae3, #e8e4dc); border-color: transparent; }
+.card { padding: 14px 15px 12px; }
+.group { --cpx: 15px; }
+.c-title { font-size: 14.5px; letter-spacing: -.005em; }
+.col-name { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.btn.primary { background: #2f2d35; color: #fbfaf7; }
+.app-name { color: #2f2d35; }
