@@ -25,6 +25,7 @@ const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
 const { readLocal, updateLocal, foreignCode, hashToken, isHashed } = require('./lib/locate');
 const cardrules = require('./lib/cardrules');
 const { createThemes, ThemeError } = require('./lib/themes');
+const { createPlugins, PluginError } = require('./lib/plugins');
 const jsonfile = require('./lib/jsonfile');
 const MANIFEST_DEFAULTS = {
   appName: 'Intellagent',
@@ -2964,7 +2965,8 @@ const SCHEMA = {
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.managed', 'agent.role_changed', 'admin.reverted', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
-      'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated', 'agent.base_updated', 'item.typing'],
+      'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated', 'agent.base_updated', 'item.typing',
+      'plugin.added', 'plugin.enabled', 'plugin.disabled', 'plugin.removed', 'plugin.connection', 'plugin.crashed', 'plugin.event'],
     actor: '{ kind, name }', itemId: 'string?', columnId: 'string? (destination for moves)', fromColumnId: 'string?',
     changes: '{ [field | "properties.<key>"]: { from, to } }?', item: 'snapshot { id,title,type,priority,columnId,column,parent,claimant,needsHuman }?',
     recipients: 'string[] — agents/users this event concerns (leaseholder and past leaseholders, asker, agent author, assignee, commenters, master-lease holder, @mentions)',
@@ -3267,6 +3269,14 @@ const POLICY = {
   'DELETE /api/presence/:name': { who: 'human', why: 'Only the human can forget agents' },
   'POST /api/themes': { who: 'human', why: 'Only the human imports a theme: it restyles the page', hint: 'Ask on a card' },
   'DELETE /api/themes/:id': { who: 'human', why: 'Only the human removes a theme', hint: 'Ask on a card' },
+  // a plugin is code the board runs: only the human adds, enables or connects one (INT-462)
+  'POST /api/plugins': { who: 'human', ...humanAsk('add a plugin') },
+  'POST /api/plugins/:name/enable': { who: 'human', ...humanAsk('enable a plugin') },
+  'POST /api/plugins/:name/disable': { who: 'human', ...humanAsk('disable a plugin') },
+  'DELETE /api/plugins/:name': { who: 'human', ...humanAsk('remove a plugin') },
+  'PUT /api/plugins/:name/connection': { who: 'human', ...humanAsk("set a plugin's connection") },
+  'POST /api/plugins/:name/connection/test': { who: 'human', ...humanAsk("test a plugin's connection") },
+  'DELETE /api/plugins/:name/connection': { who: 'human', ...humanAsk("clear a plugin's connection") },
   'PUT /api/profiles/me/status': { who: 'self', readOnly: true },
   'PATCH /api/profiles/me': { who: 'self', readOnly: true },
   'POST /api/profiles/:name/memory': { who: 'self', readOnly: true },
@@ -5719,6 +5729,26 @@ route('DELETE', '/api/themes/:id', 'Human only: remove an imported theme; a brow
   return themeErrors(() => themes.remove(p.id));
 });
 
+/* ───────────────────────── plugins (INT-462) ───────────────────────── */
+
+const plugins = createPlugins({
+  dir: path.join(path.dirname(MANIFEST_PATH), 'plugins'),
+  local: { read: () => readLocal(LOCAL_PATH), update: (fn) => updateLocal(LOCAL_PATH, fn) },
+  emit, now, coerce: coerceField,
+});
+const pluginErrors = async (fn) => {
+  try { return await fn(); } catch (e) { if (e instanceof PluginError) fail(e.status, e.message, { code: e.code, ...e.extra }); throw e; }
+};
+route('GET', '/api/plugins', 'Integration plugins: { plugins: [{ name, label, state: off|on|changed|crashed|invalid, problems, hash, enabled, asks, connection (secrets masked), actions, events, webhook, crashes, runs }] }', () => pluginErrors(() => ({ plugins: plugins.list() })));
+route('GET', '/api/plugins/:name', 'One plugin (the fields of the list)', ({ p }) => pluginErrors(() => plugins.view(p.name)));
+route('POST', '/api/plugins', 'Human only: add a plugin { path: absolute folder } or { zipBase64, filename } → 201 the plugin, off: nothing runs until it is enabled. 400 PLUGIN_INVALID lists the problems', ({ body, actor }) => pluginErrors(() => created(plugins.add(body, actor))));
+route('POST', '/api/plugins/:name/enable', 'Human only: run a plugin { hash } (the hash you were shown; 409 PLUGIN_CHANGED when its files differ). A later change to its files stops it until enabled again', ({ p, body, actor }) => pluginErrors(() => plugins.enable(p.name, body.hash, actor)));
+route('POST', '/api/plugins/:name/disable', 'Human only: stop a plugin and forget its pin', ({ p, actor }) => pluginErrors(() => plugins.disable(p.name, actor)));
+route('DELETE', '/api/plugins/:name', 'Human only: remove a plugin: its folder and connection go → { removed, grantsDropped, runsCanceled }', ({ p, actor }) => pluginErrors(() => plugins.remove(p.name, actor)));
+route('PUT', '/api/plugins/:name/connection', 'Human only: save a plugin\'s connection { values: { key: value } }: a key left out keeps its value, null clears it. Secrets are never read back (•••• and the last 4)', ({ p, body, actor }) => pluginErrors(() => plugins.setConnection(p.name, body.values, actor)));
+route('POST', '/api/plugins/:name/connection/test', 'Human only: ask the plugin whether its connection works { values? } (unsaved values are tried, not kept) → { ok, message }', ({ p, body, actor }) => pluginErrors(() => plugins.test(p.name, body.values ?? null, actor)));
+route('DELETE', '/api/plugins/:name/connection', 'Human only: forget a plugin\'s connection', ({ p, actor }) => pluginErrors(() => plugins.clearConnection(p.name, actor)));
+
 route('GET', '/avatars/:file', null, ({ res, p }) => {
   const name = path.basename(decodeURIComponent(p.file));
   const ext = path.extname(name).slice(1).toLowerCase();
@@ -6002,11 +6032,13 @@ server.listen(M.port, M.host, () => {
   console.log(`  started ${now()} (pid ${process.pid})\n`);
   if (FOREIGN_CODE) console.warn(`WARNING: this board runs code from an agent's worktree (${ROOT}), not its own installation: unreviewed code. Restart it from the installed intellagent: intellagent restart\n`);
   try { fs.writeFileSync(path.join(DATA, 'server.pid'), String(process.pid)); } catch { /* read-only data dir */ }
+  try { plugins.startAll(); } catch (e) { console.warn(`plugins: ${e.message}`); }
 });
 
 const shutdown = () => {
   try { fs.rmSync(path.join(DATA, 'server.pid')); } catch { /* gone */ }
   standing?.stop();
+  plugins.stopAll();
   writeFileAtomic(PRESENCE_FILE, JSON.stringify({ updatedAt: now(), agents: Object.fromEntries(presence) }, null, 2));
   process.exit(0);
 };
