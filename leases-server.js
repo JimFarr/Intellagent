@@ -103,12 +103,12 @@ async function main() {
 
   setInterval(() => { if (ledger.sweep().length) save(ledger); }, SWEEP_MS).unref();
   // An exclusive lease on a quiet machine is a run that stopped (INT-456): read the machine once a minute while one
-  // is live, and let the ledger free it after QUIET_MINUTES. Nothing is read while no exclusive lease is held.
+  // is live, and let the ledger free it after QUIET_MINUTES. The busiest card counts: on a PC with two, the first may be the idle one. Nothing is read while no exclusive lease is held.
   setInterval(async () => {
     if (!ledger.leases.some((l) => l.exclusive)) return;
     try {
       const [cpu, cards] = await Promise.all([machine.cpuBusy(), forced ? [] : machine.gpus()]);
-      const ended = ledger.quiet({ cpu: cpu.busyPercent, gpu: cards[0]?.busyPercent ?? null });
+      const ended = ledger.quiet({ cpu: cpu.busyPercent, gpu: cards.length ? Math.max(...cards.map((g) => g.busyPercent ?? 0)) : null });
       if (ended.length) { save(ledger); for (const l of ended) console.log(`${l.id} (${l.holder}) ended: the machine was quiet for ${QUIET_MINUTES} minutes`); }
     } catch (e) { console.warn(`quiet check: ${e.message}`); }
   }, 60_000).unref();
