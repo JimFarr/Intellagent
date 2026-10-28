@@ -125,16 +125,16 @@ describe('the CLI keeps an agent to its own files and token', () => {
 });
 
 describe('the board\'s own secrets stay out of agent runs', () => {
-  it('a claude run inherits no INTELLAGENT_* from the board (the deploy PAT among them), and still gets its own', () => {
+  it('a claude run inherits no INTELLAGENT_* from the board, and still gets its own', () => {
     const { childEnv } = require('../lib/agents/runner');
-    process.env.INTELLAGENT_ADO_PAT = 'secret-pat';
+    process.env.INTELLAGENT_SOME_SECRET = 'secret-pat';
     try {
       const env = childEnv({ run: 'claude -p go' }, { INTELLAGENT_URL: 'u' }, { INTELLAGENT_AGENT: 'me' });
-      assert.equal(env.INTELLAGENT_ADO_PAT, undefined);
+      assert.equal(env.INTELLAGENT_SOME_SECRET, undefined);
       assert.equal(env.INTELLAGENT_URL, 'u');
       assert.equal(env.INTELLAGENT_AGENT, 'me');
-      assert.equal(childEnv({ inheritEnv: ['INTELLAGENT_ADO_PAT'] }, {}, {}).INTELLAGENT_ADO_PAT, 'secret-pat', 'unless inheritEnv names it');
-    } finally { delete process.env.INTELLAGENT_ADO_PAT; }
+      assert.equal(childEnv({ inheritEnv: ['INTELLAGENT_SOME_SECRET'] }, {}, {}).INTELLAGENT_SOME_SECRET, 'secret-pat', 'unless inheritEnv names it');
+    } finally { delete process.env.INTELLAGENT_SOME_SECRET; }
   });
 });
 

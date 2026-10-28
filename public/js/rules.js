@@ -8,7 +8,7 @@
 import { $, $$, esc, el, icon } from './util.js';
 
 const ROLE = { coordinator: 'the coordinator', assignee: 'the assignee', last_worker: 'whoever worked it last' };
-const ACTION_ICON = { look: 'card', wake: 'bot', ask_human: 'ask', move: 'move', assign: 'user', release_lease: 'lock', archive: 'archive', comment: 'msg', set_field: 'braces', set_property: 'braces', extract: 'sparkle', land: 'checks', merge: 'send', deploy: 'play', style: 'palette', unstyle: 'x' };
+const ACTION_ICON = { look: 'card', wake: 'bot', ask_human: 'ask', move: 'move', assign: 'user', release_lease: 'lock', archive: 'archive', comment: 'msg', set_field: 'braces', set_property: 'braces', extract: 'sparkle', land: 'checks', merge: 'send', style: 'palette', unstyle: 'x' };
 // what every text and value may say: shown as each one's placeholder hint
 const PLACEHOLDERS = '{id} {title} {field.key} {property.name} {pr.url} {pr.title} {comment.text} {comment.author} {comment.url}';
 let uid = 0;
@@ -149,7 +149,7 @@ function condText(c, fields) {
 }
 
 export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board, people = () => [] }) {
-  const S = { tab: 'mine', view: null, data: null, log: [], agents: [], deploys: null, body: null };
+  const S = { tab: 'mine', view: null, data: null, log: [], agents: [], body: null };
   const base = () => `/api/boards/${encodeURIComponent(board().id)}/rules`;
   const ago = (ts) => { const r = rel(ts); return !r ? '' : r === 'now' ? 'just now' : `${r} ago`; };
   const fail = (e) => toast(e.message + (e.data?.hint ? ` — ${e.data.hint}` : ''), { kind: 'error', wrap: true, timeout: 7000 });
@@ -279,8 +279,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
           <optgroup label="While">${Object.entries(v.events).filter(([, x]) => x.state).map(([k, x]) => option(k, `${x.label} (its card's look)`, k === st.when.on)).join('')}</optgroup></select>
         ${d.column ? `<select class="inp" data-w="column" aria-label="Column">${board().columns.map((c) => option(c.id, c.name, c.id === st.when.column)).join('')}</select>` : ''}
         ${v.times[st.when.on] ? `<span class="rb-unit"><input class="inp" type="number" data-w="minutes" min="${d.minMinutes || 5}" step="5" value="${esc(st.when.minutes || 60)}" aria-label="Minutes"><span>min</span></span>` : ''}
-        ${st.when.on === 'assigned' || st.when.on === 'mentioned' ? `<span class="rb-unit"><span>${st.when.on === 'assigned' ? 'to' : 'who'}</span><input class="inp" data-w="to" list="rl-people" placeholder="anyone" value="${esc(st.when.to || '')}" spellcheck="false"></span>` : ''}
-        ${st.when.on === 'deploy_finished' ? `<select class="inp" data-w="result" aria-label="Result">${option('', 'either way', !st.when.result)}${option('succeeded', 'and succeeds', st.when.result === 'succeeded')}${option('failed', 'and fails', st.when.result === 'failed')}</select>` : ''}</div>`;
+        ${st.when.on === 'assigned' || st.when.on === 'mentioned' ? `<span class="rb-unit"><span>${st.when.on === 'assigned' ? 'to' : 'who'}</span><input class="inp" data-w="to" list="rl-people" placeholder="anyone" value="${esc(st.when.to || '')}" spellcheck="false"></span>` : ''}</div>`;
     }
     // one condition: field · operator · value
     function rowHTML(row, addr) {
@@ -440,7 +439,6 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         if (a.do === 'move') a.column = g('column');
         if (a.do === 'comment' || a.do === 'ask_human') a.text = g('text');
         if (a.do === 'set_field' || a.do === 'set_property') { a.key = g('key'); const raw = g('value'); a.value = raw === '' ? null : raw; if (/^(true|false|-?\d+(\.\d+)?|\[.*\])$/.test(raw)) try { a.value = JSON.parse(raw); } catch { /* text as typed */ } }
-        if (a.do === 'deploy') { const [kind, ...rest] = g('target').split(':'); a.kind = kind; a.id = rest.join(':'); }
         if (a.do === 'merge') { a.branch = g('branch'); a.push = !!$('[name="push"]', row)?.checked; }
         if (a.do === 'extract') {
           Object.assign(a, { from: g('from') || 'all', how: g('how') || 'pattern', into: g('into') || 'property' });
@@ -462,7 +460,6 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       if (d.column) when.column = st.when.column;
       if (v.times[when.on]) when.minutes = Number(st.when.minutes) || 60;
       if ((when.on === 'assigned' || when.on === 'mentioned') && st.when.to?.trim()) when.to = st.when.to.trim();
-      if (when.on === 'deploy_finished' && st.when.result) when.result = st.when.result;
       return { name: f.elements.name.value.trim(), enabled: st.enabled, when, if: cond === null ? null : cond || undefined, then };
     }
 
@@ -477,7 +474,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         const p = await api('POST', `${base()}/preview`, { rule: { ...body, name: body.name || 'preview' } });
         const items = p.items.map((x) => `<li><code>${esc(x.id)}</code><span>${esc(x.title)}</span></li>`).join('');
         out.innerHTML = `<p class="rl-sentence">${sentence(p.text)}</p>
-          <div class="rb-count"><b>${p.mode === 'board' ? '—' : p.count}</b><span>${p.mode === 'board' ? 'Acts on no ticket: it wakes or deploys once each time' : p.mode === 'due' ? `ticket${p.count === 1 ? '' : 's'} it would fire for right now` : `ticket${p.count === 1 ? '' : 's'} on the board fit the conditions now`}</span></div>
+          <div class="rb-count"><b>${p.mode === 'board' ? '—' : p.count}</b><span>${p.mode === 'board' ? 'Acts on no ticket: it wakes once each time' : p.mode === 'due' ? `ticket${p.count === 1 ? '' : 's'} it would fire for right now` : `ticket${p.count === 1 ? '' : 's'} on the board fit the conditions now`}</span></div>
           ${items ? `<ul class="rb-items">${items}</ul>` : ''}`;
         out.classList.remove('bad');
       } catch (e) { out.innerHTML = `<p>${esc(e.message)}</p>${e.data?.hint ? `<p class="rb-wait">${esc(e.data.hint)}</p>` : ''}`; out.classList.add('bad'); }
@@ -517,30 +514,14 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       rest = `${tone('outline', l.outline, 'no outline')}${tone('tint', l.tint, 'no tint')}<input class="inp" name="badge" maxlength="24" value="${esc(l.badge?.text || '')}" placeholder="badge text"><input class="inp" name="ribbon" maxlength="16" value="${esc(l.ribbon || '')}" placeholder="ribbon">
         <select class="inp" name="shape" aria-label="mark">${option('', 'no mark', !l.mark)}${v.shapes.map((x) => option(x, `${x} mark`, x === l.mark?.shape)).join('')}</select>${tone('markTone', l.mark?.tone, 'mark colour')}`;
     }
-    if (a.do === 'deploy') {
-      // one list of every action by name, its value "kind:id"; filled once the actions arrive
-      const cur = a.kind && a.id ? `${a.kind}:${a.id}` : '';
-      rest = `<select class="inp rb-wide" name="target" id="rl-dp-${id}" aria-label="Which action">${option(cur, cur ? a.id : 'Loading…', true)}</select>`;
-      deploys().then((d) => {
-        const sel = document.getElementById(`rl-dp-${id}`);
-        if (!sel) return;
-        const KIND = { jira: 'Jira', devstack: 'DevStack', confluence: 'Confluence', ado: 'Pull request', step: 'Azure DevOps', sequence: 'Sequence' };
-        sel.innerHTML = d.length ? d.map((x) => option(`${x.kind}:${x.id}`, `${KIND[x.kind]} · ${x.name}`, `${x.kind}:${x.id}` === cur)).join('') : option('', 'No actions yet: add one in Integrations', true);
-        if (!cur) sel.dispatchEvent(new Event('change', { bubbles: true })); // the first one is the pick: the preview hears it
-      });
-    }
     return `<div class="rb-act"><span class="rb-n"></span><span class="rb-aic">${icon(ACTION_ICON[a.do] || 'zap', 'sm')}</span>
       <div class="rb-afields"><select class="inp" data-do aria-label="Action">${Object.entries(v.actions).filter(([k, d]) => (!d.nativeOnly || k === a.do) && (k === 'look') === (a.do === 'look')).map(([k, d]) => option(k, d.label, k === a.do)).join('')}</select>${rest}</div>
       <button type="button" class="icon-x" data-act-del title="Remove" aria-label="Remove this action">${icon('x', 'sm')}</button></div>`;
   }
-  // the integration actions (Jira actions, Azure DevOps steps and sequences), for the deploy action's list
-  const deploys = () => (S.deploys ||= Promise.all([api('GET', '/api/deploy/steps').catch(() => []), api('GET', '/api/deploy/sequences').catch(() => []), api('GET', '/api/jira/actions').catch(() => []), api('GET', '/api/devstack/actions').catch(() => []), api('GET', '/api/confluence/actions').catch(() => []), api('GET', '/api/ado/actions').catch(() => [])])
-    .then(([st, sq, jr, ds, cf, pr]) => [...pr.map((x) => ({ ...x, kind: 'ado' })), ...jr.map((x) => ({ ...x, kind: 'jira' })), ...cf.map((x) => ({ ...x, kind: 'confluence' })), ...ds.map((x) => ({ ...x, kind: 'devstack' })), ...st.map((x) => ({ ...x, kind: 'step' })), ...sq.map((x) => ({ ...x, kind: 'sequence' }))]));
-
   /* ─── the log ─── */
   function drawLog(pane) {
     // one row a firing: what fired and on what, what its actions did (in words), when
-    const said = (x) => (!x.ok ? `${x.do.replace('_', ' ')} failed: ${x.error}` : x.woke ? `woke ${nameOf(x.woke)}` : x.column ? `moved to ${colName(x.column)}` : 'assignee' in x ? (x.assignee ? `assigned ${nameOf(x.assignee)}` : 'unassigned') : x.run ? `started run ${x.run}` : x.landing ? `merging: ${x.landing}`
+    const said = (x) => (!x.ok ? `${x.do.replace('_', ' ')} failed: ${x.error}` : x.woke ? `woke ${nameOf(x.woke)}` : x.column ? `moved to ${colName(x.column)}` : 'assignee' in x ? (x.assignee ? `assigned ${nameOf(x.assignee)}` : 'unassigned') : x.landing ? `merging: ${x.landing}`
       : x.branch ? `merged into ${x.branch}${x.created ? ' (new)' : ''}${x.pushed ? ', pushed' : x.pushError ? `, not pushed: ${x.pushError}` : ''}`
       : 'found' in x ? (x.found === false ? 'found nothing to extract' : `extracted "${x.found}"`) : x.do.replace('_', ' '));
     pane.innerHTML = S.log.length ? `<div class="ent-list"><div class="ent-lh">What the rules did <span class="cnt">${S.log.length}</span></div>${S.log.map((l) => {

@@ -5,7 +5,6 @@ import { $, $$, esc, el, clamp, hashStr, hue, initials, ICONS, icon } from './js
 import { md } from './js/markdown.js';
 import { tip, hideTip, focusTip, tipPausedWhen } from './js/tooltips.js';
 import { eventIcon, describe as describeEvent } from './js/events.js';
-import { createDeployments } from './js/deploy.js';
 import { createRules, RULE_VIEWS } from './js/rules.js';
 import { state, settings, settingsStore, themeKey, onSystemTheme, DEFAULTS, stored, AUTH, tokenStore } from './js/state.js';
 import { THEMES, themeGroups, contrast } from './js/themes.js';
@@ -294,8 +293,6 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
     if (!res.ok) { const e = new Error(data?.error || res.statusText); e.status = res.status; e.data = data; throw e; }
     return data;
   }
-  // Deployments (public/js/deploy.js): made here, before any event can arrive for it
-  const deployments = createDeployments({ api, toast, openDrawer, rel, nameOf, menu, isOpen: () => !!$('#deployDrawer'), openGrant: (key) => openPermGrid(null, key) });
   // Rules (public/js/rules.js)
   // the If's dropdowns offer the people on the board and the card looks' names
   const rules = createRules({ api, toast, openDrawer, rel, nameOf, isOpen: () => Object.values(RULE_VIEWS).some(([id]) => document.getElementById(id)), board: () => state.board,
@@ -3457,7 +3454,6 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
   const QUIET = new Set(['item.reordered', 'presence.changed', 'lease.renewed', 'board.external-edit', 'profile.updated', 'schema.updated', 'lease.status', 'master.status', 'master.renewed', 'agent.status', 'agent.run.finished', 'reaction.added', 'reaction.removed']);
   function onEvent(ev) {
     if (ev.type === 'hello') return;
-    deployments.onEvent(ev);
     rules.onEvent(ev);
     if (ev.type === 'item.typing') { // live only: no seq, no hash, nothing to refresh
       if (ev.board === state.boardId && ev.actor?.name && ev.actor.name !== settings.userName) setTyping(ev.itemId, ev.actor.name, true);
@@ -3893,7 +3889,8 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
     draw();
   }
 
-  const openDeployments = (tab) => deployments.open(tab);
+  // Integrations come from plugins (INT-462/463): until one is installed the section says so
+  const openDeployments = () => { openDrawer('deployDrawer', 'Integrations', 'link').innerHTML = `<div class="ent-empty">${icon('link')}<h3>No integrations yet</h3><p>Integrations are plugins: a folder you add here, whose actions agents and rules can run once you grant them.</p></div>`; };
 
   // With a name (from the awake strip), scrolls to that agent's Now row (else its row below) and marks it for a moment.
   function openAgents(name) {
@@ -4560,7 +4557,8 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
      grouped by kind. A cell is off, on, or on with rules (the tick plus a padlock). A click opens a panel under
      the grid to change it. Labels lie flat; the grid scrolls inside its box, so 375 px never scrolls the page. */
   const GRID_KIND_ORDER = ['builtin', 'power', 'deployment', 'command', 'tool', 'folders', 'bundle', 'verbal'];
-  const deployKey = (k) => /^(deploy\.(step|sequence)|(jira|devstack|confluence|ado)\.action)\./.test(k);
+  // a plugin's action (plugin.<name>.<action>, INT-462): granted like a power, and its runs may wait for the human's OK
+  const deployKey = (k) => /^plugin\./.test(k);
   const GRID_MODE = { off: 'off', on: 'on', rules: 'on, with rules' };
   const gridOks = (g) => (g.minOks != null || g.from ? ` · needs ${g.minOks === 'all' ? 'all' : g.minOks ?? 'every'} ok${g.from ? ` from ${g.from.join(', ')}` : ''}` : '');
   function openPermGrid(agent, key) {
@@ -4652,7 +4650,7 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
       <div class="pg-rules" ${cell.mode === 'rules' ? '' : 'hidden'}>
         ${approval ? `<div class="perm-two"><label><span class="aa-label">Oks needed</span><input class="inp" data-r="minOks" value="${esc(r.minOks ?? '')}" placeholder="2, or all" inputmode="numeric"></label>
           <label><span class="aa-label">From reviewers</span><input class="inp" data-r="from" value="${esc((r.from || []).join(', '))}" placeholder="nebula, kraglin"></label></div>` : ''}
-        <label><span class="aa-label">Only where</span><textarea class="inp mono" data-r="where" rows="2" spellcheck="false" placeholder="${key.startsWith('jira.action.') ? 'project=BET&#10;status=Done' : key.startsWith('devstack.action.') ? 'service=placement&#10;source=branch:feature/*' : key.startsWith('confluence.action.') ? 'space=ENG' : key.startsWith('ado.action.') ? 'repo=SB.Placement' : key.startsWith('deploy.sequence.') ? 'inputs.environment=int,test1&#10;branch=release/*' : deployKey(key) ? 'parameters.environment=int,test1&#10;branch=release/*' : 'column=Done&#10;fields.risk=low'}">${esc(whereText)}</textarea></label>
+        <label><span class="aa-label">Only where</span><textarea class="inp mono" data-r="where" rows="2" spellcheck="false" placeholder="${deployKey(key) ? 'environment=int,test1' : 'column=Done&#10;fields.risk=low'}">${esc(whereText)}</textarea></label>
         ${deployKey(key) ? `<label class="aa-check"><input type="checkbox" data-r="approve" ${r.approve === 'human' ? 'checked' : ''}> <span>Each run waits for your OK (on the Integrations page)</span></label>` : ''}
       </div>
       <label><span class="aa-label">Guidance (not enforced; the agent reads it in its brief)</span><textarea class="inp" data-pg-guide rows="2" maxlength="1000">${esc(cell.guidance || '')}</textarea></label>
@@ -5236,7 +5234,7 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
   function saveInbox() { inboxStorage.save(inboxRead); }
   const myName = () => (settings.userName || 'You').toLowerCase();
   const forMe = (ev) => ev.actor?.name?.toLowerCase() !== myName() && !QUIET.has(ev.type)
-    && ((ev.recipients || []).some((r) => r.toLowerCase() === myName()) || ev.type === 'attention.raised' || ev.type === 'deploy.run.requested');
+    && ((ev.recipients || []).some((r) => r.toLowerCase() === myName()) || ev.type === 'attention.raised');
   const isUnread = (ev) => ev.seq > inboxRead.seq && !inboxRead.ids.includes(ev.seq);
 
   async function refreshInbox() {
@@ -5244,7 +5242,7 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
     try {
       const [a, b] = await Promise.all([
         api('GET', `/api/events?since=0&limit=400&tail=true&for=${n}`),
-        api('GET', '/api/events?since=0&limit=200&tail=true&types=attention.raised,deploy.run.requested'),
+        api('GET', '/api/events?since=0&limit=200&tail=true&types=attention.raised'),
       ]);
       const map = new Map();
       for (const ev of [...a.events, ...b.events]) if (forMe(ev)) map.set(ev.seq, ev);
@@ -5290,7 +5288,6 @@ import { THEMES, themeGroups, contrast } from './js/themes.js';
       if (!row) return;
       markRead(Number(row.dataset.seq));
       renderInboxBtn();
-      if (state.inbox.find((x) => x.seq === Number(row.dataset.seq))?.type?.startsWith('deploy.')) { openDeployments('runs'); return; }
       if (!row.dataset.item) return;
       if (row.dataset.board && row.dataset.board !== state.boardId) await loadBoard(row.dataset.board);
       openItem(row.dataset.item, cardEls.get(row.dataset.item));

@@ -724,7 +724,7 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
   .page-nav { display: flex; overflow-x: auto; position: static; gap: 4px; }
 }
 
-/* Deployments page (public/js/deploy.js) */
+/* Integrations page (the fork's public/js/deploy.js, kept for the plugins' page, INT-463) */
 .dp-tabs:not(.page-nav) { margin-bottom: 12px; }
 .dp-pane { display: grid; gap: 8px; align-content: start; }
 .dp-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

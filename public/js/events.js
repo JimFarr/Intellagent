@@ -17,9 +17,6 @@ export function eventIcon(t) {
   if (t === 'item.restored') return 'restore';
   if (t === 'item.created') return 'plus';
   if (t === 'schema.updated') return 'layers';
-  if (t.startsWith('deploy.')) return 'play';
-  if (t === 'pr.opened') return 'send';
-  if (t === 'pr.commented') return 'msg';
   if (t.startsWith('rule.')) return 'zap';
   return 'pencil';
 }
@@ -92,17 +89,6 @@ export function describe(ev, html, nameOf, RUN_LABEL) {
       if (ev.did?.length) return `${who} fired${id ? ` on ${b(id)}` : ''}: ${ev.did.map((d) => d.ok ? t(d.text) : `${t(d.text)} (failed${d.error ? `: ${t(d.error)}` : ''})`).join(', ')}`;
       const bad = (ev.results || []).filter((x) => !x.ok).length;
       return `${who} fired${id ? ` on ${b(id)}` : ''}${bad ? ` (${bad} action${bad > 1 ? 's' : ''} failed)` : ''}`;
-    }
-    case 'deploy.run.requested': return `${who} asks to run ${b(ev.run?.name || '')}: it waits for your OK on the Integrations page`;
-    case 'deploy.run.approved': return `${who} let ${nb(ev.run?.by?.name || '')} run ${b(ev.run?.name || '')}`;
-    case 'deploy.run.rejected': return `${who} turned down ${nb(ev.run?.by?.name || '')}'s run of ${b(ev.run?.name || '')}`;
-    case 'deploy.run.started': return `${b(ev.run?.name || '')} started (${nameOf(ev.run?.by?.name || '')})`;
-    case 'deploy.run.updated': return `${b(ev.run?.name || '')} is running`;
-    case 'pr.commented': { const t = String(ev.comment?.text || '').slice(0, 140); return `${b(ev.comment?.author || 'someone')} commented on PR ${b(`#${ev.pr?.id ?? ''}`)}: ${html ? esc(t) : t}`; }
-    case 'pr.opened': return `${b(ev.pr?.by || 'someone')} raised a PR for ${b(id)}: ${html ? esc(ev.pr?.title || '') : ev.pr?.title || ''}${ev.pr?.target ? ` → ${b(ev.pr.target)}` : ''}`;
-    case 'deploy.run.finished': {
-      const branch = ev.run?.steps?.find((s) => s.branch)?.branch;
-      return `${b(ev.run?.name || '')} ${ev.run?.status || 'ended'}${branch ? ` on ${b(branch)}` : ''}${ev.run?.message ? `: ${html ? esc(ev.run.message) : ev.run.message}` : ''}`;
     }
     default: return `${who} · ${ev.type}`;
   }
