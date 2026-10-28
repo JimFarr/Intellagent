@@ -65,7 +65,7 @@ Three levels, told apart by a hairline first and a tint second. **Shadows are fo
 
 **Chips and badges.** 20 px tall, Caption, `--r-s`, tint of the meaning colour at 14 % with its text at full. No chip carries both an icon and a colour for the same fact.
 
-**Menus, popovers, toasts, command palette.** `--r-m`, `--panel`, hairline, the only shadow in the app, 8 px padding, items 32 px. Toasts bottom centre, 8 s at most, never over the primary action.
+**Menus, popovers, toasts, command palette.** `--r-m`, `--panel`, hairline, the only shadow in the app, 8 px padding, items 32 px. Toasts: see Toasts below.
 
 **Settings window.** One size whatever the tab (kept from INT-469): tabs on the left as the side menu, content as a form.
 
@@ -107,10 +107,28 @@ Every control shares one skeleton, so a row of mixed controls lines up. Imported
 
 - **Text, number, date.** One look. Number: no browser spinner; quiet − / + buttons (24 px) at the right edge, shown on hover and focus; tabular figures. Date: the same field with a 16 px calendar icon; the popup is a month grid in a menu.
 - **Select and menu.** The field with a 16 px chevron; opens a menu under it (see Menus), 32 px items, the chosen one with a check, keys: arrows, type-ahead, Esc. Never the native popup.
-- **Checkbox and radio.** 16 px, `--r-s` (radio round), `--field-bg`, hairline. Checked: `--accent` fill, mark in `--on-accent`; the mark draws in 120 ms. The label is the click target, 32 px tall.
+- **Checkbox and radio.** 16 px, `--r-s` (radio round), `--field-bg`, hairline. Checked: `--accent` fill, mark in `--on-accent`; the mark is a 10 px SVG check centred in the box by the grid (a rotated border sits off-centre) and draws in 120 ms. The label is the click target, 32 px tall.
 - **Switch.** 32 × 18 track, 14 px knob; off `--border`, on `--accent`; the knob slides 120 ms ease, no bounce. The label stays the same when it flips.
 - **Segmented choice.** For 2–4 short exclusive options: one 32 px bar, `--r-s`, hairline separators. Chosen: `--surface` with a 2 px `--accent` underline, bold. No pills.
 - **Slider.** 4 px `--border` track, `--accent` fill, 16 px `--surface` knob with a 1 px `--accent` ring, value in Caption at the right. Arrows step 1, PageUp/Down step 10.
 - **Colour picker.** A 32 px field: round 20 px swatch, the hex in mono, chevron. Opens a popover with a saturation square, a hue strip, a row of theme swatches (`--accent`, `--ok`, `--warn`, `--danger`, `--accent-2`) and the hex input. The native `<input type=color>` stays underneath as the fallback.
 - **Emoji / glyph.** A 32 px square button showing the glyph (empty: dashed outline and a plus). Opens a menu with search and a grid of 32 px cells, recent first, Clear at the bottom. One grapheme only.
 - **Buttons.** 32 px, `--r-s`, Body at weight 500, icon 16 px with an 8 px gap. Primary: `--accent` fill (once or twice per screen). Default: `--surface` and hairline. Quiet: no border or fill, `--hover` on hover. Danger: a default button with `--danger` text and ring, filled only on the confirm step. Icon-only: 32 px square with a tooltip. Busy: label stays, a 14 px spinner replaces the icon, clicks ignored. Press deepens `--hover`; nothing scales.
+
+## Toasts
+
+- **Where.** Bottom right, 16 px from the edges (24 from 1280 px), stacked upward with the newest at the bottom, at most three; a fourth pushes the oldest out. Bottom centre sat over the board's own actions and the bulk bar; the right corner is the one place nothing lives. With the ticket drawer or a side panel open the stack moves left of it by its width (`--drawer-w`, 0 when closed); the side menu is on the left and never meets it. Under a modal a toast stays above its backdrop and clear of its buttons. At 375 px the toasts are full width minus 16 px each side, above the bottom edge and above any bottom bar.
+- **Look.** The menu family: `--r-m`, `--panel`, hairline, the floating shadow, 40 px tall at least, 12 px left padding, Body type. The meaning is a 6 px dot (`--ok`, `--danger`, `--accent-2`, `--accent`), never a tinted fill or an edge bar. An action is a Quiet button; every toast has a 32 px Dismiss button. Text is `--text`, so it holds in any theme. It fades in with a 4 px rise in 200 ms and out in 120 ms; under reduced motion it only fades.
+- **How long.** Information 4 s, with an action 8 s, errors stay until dismissed. All pause while hovered or focused. The progress bar is dropped: the dot is enough. The same message twice shows once with a count.
+- **Imported themes.** Their `toast` style option keeps working for the look (glass, texture); the place and the timing are the app's.
+
+## Colour audit
+
+Clear and Clear Dark clear every check. The 40 imported themes (`themes/*.css`, measured by `scripts/audit-theme-contrast.mjs` on each `:root`) do not: 29 miss at least one. Themes that miss: muted text under 4.5:1 on its surface 24, `--warn` as text 20, `--danger` 17, `--ok` 16, `--accent` as text 13, white text on the `--accent` fill 9. Worst: Soft and Cloud (warn 2.0 and 2.1, ok 2.1 and 2.3), then Riso, Tide and Pop.
+
+So the language does not ask a theme to be perfect; it guards the places that matter:
+1. **Meaning colours are never body text.** `--ok`, `--warn`, `--danger`, `--accent-2` appear as dots, icons, edges and 14 % chip tints, with the chip's words in `--text`.
+2. **Text on an accent fill** uses `--on-accent`: near-white or near-black, whichever has the higher contrast with `--accent`, worked out when the theme is applied. A theme may set its own.
+3. **Muted text** gets a floor when applied: if `--muted` is under 4.5:1 on `--surface` or `--bg`, it is mixed toward `--text` until it clears. The theme file is not changed.
+4. **Accent as text** (links, the current item's name) is `--text` with the accent in an underline or bar, unless `--accent` clears 4.5:1.
+5. **Complementary colour:** one accent and one live colour (`--accent-2`); the type colours are 6 px dots; no other hue on a page.
