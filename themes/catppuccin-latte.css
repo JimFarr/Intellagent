@@ -1,0 +1,29 @@
+/* intellagent-theme
+name: Catppuccin Latte
+mode: light
+style: {"attn":"glow","avStyle":"tint","drop":"tint"}
+*/
+:root {
+  --bg: #dce0e8;
+  --panel: #e6e9ef;
+  --surface: #eff1f5;
+  --text: #4c4f69;
+  --muted: #6c6f85;
+  --border: #ccd0da;
+  --accent: #8839ef;
+  --accent-2: #179299;
+  --issue: #d20f39;
+  --task: #1e66f5;
+  --spike: #df8e1d;
+  --ok: #40a02b;
+  --warn: #fe640b;
+  --danger: #d20f39;
+  --blob1: #8839ef;
+  --blob2: #04a5e5;
+  --blob3: #ea76cb;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #8839ef;
+}

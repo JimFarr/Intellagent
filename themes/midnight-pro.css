@@ -1,0 +1,31 @@
+/* intellagent-theme
+name: Midnight Pro
+mode: dark
+style: {"card":8,"col":14,"modal":16,"ctl":8,"tape":"none","cards":"clean","typeInd":"dot","attn":"glow","enter":"rise","lanes":"outline","chips":"tag","bg":"aurora","titleW":500,"display":"'Inter'","avStyle":"ring","drop":"spotlight","groups":"rule"}
+*/
+:root {
+  --bg: #08090c;
+  --panel: #101116;
+  --surface: #15161c;
+  --text: #ededf0;
+  --muted: #8a8f98;
+  --border: #23252d;
+  --accent: #5e6ad2;
+  --accent-2: #4cb782;
+  --issue: #eb5757;
+  --task: #5e6ad2;
+  --spike: #f2c94c;
+  --ok: #4cb782;
+  --warn: #f2994a;
+  --danger: #eb5757;
+  --blob1: #5e6ad2;
+  --blob2: #26b5ce;
+  --blob3: #8e4ec6;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #fff;
+  --accent-fill: #5e6ad2;
+}
+.col-name { font-weight: 500; font-size: 13px; color: var(--muted); }
+.c-title { font-size: 13.5px; }

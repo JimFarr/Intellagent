@@ -1,0 +1,30 @@
+/* intellagent-theme
+name: Synthwave '84
+mode: dark
+style: {"glow":true,"shadow":"glow","cards":"clean","tape":"none","typeInd":"top","attn":"orbit","enter":"zoom","bg":"mesh","heads":"caps","groups":"rail"}
+*/
+:root {
+  --bg: #1a1025;
+  --panel: #241b2f;
+  --surface: #2a2139;
+  --text: #f4eee4;
+  --muted: #a29bc8;
+  --border: #3b2f52;
+  --accent: #ff7edb;
+  --accent-2: #36f9f6;
+  --issue: #fe4450;
+  --task: #36f9f6;
+  --spike: #fede5d;
+  --ok: #72f1b8;
+  --warn: #f97e72;
+  --danger: #fe4450;
+  --blob1: #ff7edb;
+  --blob2: #36f9f6;
+  --blob3: #fede5d;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #1a1025;
+  --accent-fill: #ff7edb;
+}
+.col-name { color: var(--accent); text-shadow: 0 0 8px var(--accent); }

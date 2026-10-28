@@ -1,0 +1,33 @@
+/* intellagent-theme
+name: Blueprint
+mode: dark
+style: {"md":"terminal","card":3,"col":6,"modal":8,"ctl":4,"shadow":"flat","tape":"clip","cards":"clean","typeInd":"dot","attn":"outline","enter":"fade","lanes":"outline","chips":"outline","heads":"caps","bg":"none","texture":false,"display":"'JetBrains Mono', monospace","avStyle":"ring","drop":"dashed","groups":"foot"}
+*/
+:root {
+  --bg: #0b2545;
+  --panel: #0f2f57;
+  --surface: #13396a;
+  --text: #e8f1ff;
+  --muted: #8fb3e0;
+  --border: #2f5d93;
+  --accent: #7cc4ff;
+  --accent-2: #ffd166;
+  --issue: #ff8fa3;
+  --task: #7cc4ff;
+  --spike: #ffd166;
+  --ok: #8ef0b0;
+  --warn: #ffb86b;
+  --danger: #ff8fa3;
+  --blob1: #1d4e89;
+  --blob2: #2b6cb0;
+  --blob3: #0b3d73;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #0b2545;
+  --accent-fill: #7cc4ff;
+  --topo-index: #e8f1ff;
+}
+.board { background-image: linear-gradient(color-mix(in oklab, var(--text) 8%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in oklab, var(--text) 8%, transparent) 1px, transparent 1px); background-size: 24px 24px; }
+.column, .card { border-style: dashed; }
+.c-title { text-transform: uppercase; font-size: 12.5px; letter-spacing: .04em; }

@@ -1,0 +1,33 @@
+/* intellagent-theme
+name: Bauhaus
+mode: light
+style: {"md":"grid","card":0,"col":0,"modal":0,"ctl":20,"bw":2,"shadow":"hard","cards":"clean","typeInd":"top","tape":"none","attn":"ribbon","enter":"pop","lanes":"solid","chips":"pill","heads":"caps","bg":"none","texture":true,"avatar":"round","titleW":700,"font":"'Archivo'","display":"'Archivo'","avStyle":"flat","drop":"lift","groups":"spine"}
+*/
+:root {
+  --bg: #f1ebdd;
+  --panel: #e8e0cd;
+  --surface: #fbf7ee;
+  --text: #1a1a1a;
+  --muted: #6a645a;
+  --border: #1a1a1a;
+  --accent: #d6312a;
+  --accent-2: #1f4fa3;
+  --issue: #d6312a;
+  --task: #1f4fa3;
+  --spike: #f2b705;
+  --ok: #2e7d32;
+  --warn: #e8701a;
+  --danger: #d6312a;
+  --blob1: #d6312a;
+  --blob2: #1f4fa3;
+  --blob3: #f2b705;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #d6312a;
+}
+.card::before { display: none; }
+.column { border-top: 10px solid var(--col); }
+.col-name { font-weight: 900; letter-spacing: .06em; }
+.app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 900; }

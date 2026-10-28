@@ -1,0 +1,36 @@
+/* intellagent-theme
+name: Bauhaus Studio Dark
+mode: dark
+style: {"md":"grid","card":2,"col":2,"modal":4,"ctl":4,"bw":1,"shadow":"flat","cards":"clean","typeInd":"top","tape":"none","attn":"bar","enter":"fade","lanes":"solid","chips":"tag","heads":"caps","bg":"none","texture":false,"avatar":"square","titleW":600,"font":"'Inter'","display":"'Archivo'","colAlpha":100,"avStyle":"tint","drop":"dashed","groups":"rule"}
+*/
+:root {
+  --bg: #16171b;
+  --panel: #1d1f24;
+  --surface: #23262c;
+  --text: #e7e6e1;
+  --muted: #8d9099;
+  --border: #30333b;
+  --accent: #e0584a;
+  --accent-2: #5b84d6;
+  --issue: #e0584a;
+  --task: #5b84d6;
+  --spike: #e3b341;
+  --ok: #4caf6e;
+  --warn: #e08a3a;
+  --danger: #e0584a;
+  --blob1: #e0584a;
+  --blob2: #5b84d6;
+  --blob3: #e3b341;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #16171b;
+  --accent-fill: #e0584a;
+}
+.card::before { display: none; }
+.column { border-top: 4px solid var(--col); }
+.col-name { font-weight: 900; letter-spacing: .06em; }
+.app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 900; }
+.col-name { font-weight: 700; letter-spacing: .1em; font-size: 12px; }
+.c-title { font-size: 14px; }
+.app-name { font-weight: 700; letter-spacing: -.01em; }

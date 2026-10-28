@@ -1,0 +1,34 @@
+/* intellagent-theme
+name: Bauhaus Noir
+mode: dark
+style: {"md":"grid","card":0,"col":0,"modal":0,"ctl":20,"bw":2,"shadow":"hard","cards":"clean","typeInd":"top","tape":"none","attn":"ribbon","enter":"pop","lanes":"solid","chips":"pill","heads":"caps","bg":"none","texture":false,"avatar":"round","titleW":700,"font":"'Archivo'","display":"'Archivo'","avatars":"ink","colColor":"ink","avStyle":"flat","drop":"lift","groups":"spine"}
+*/
+:root {
+  --bg: #0e0e0e;
+  --panel: #161616;
+  --surface: #1c1c1c;
+  --text: #ededea;
+  --muted: #8c8c88;
+  --border: #ededea;
+  --accent: #ededea;
+  --accent-2: #8c8c88;
+  --issue: #ededea;
+  --task: #ededea;
+  --spike: #ededea;
+  --ok: #bdbdbd;
+  --warn: #a0a0a0;
+  --danger: #ff4a3d;
+  --blob1: #ededea;
+  --blob2: #8c8c88;
+  --blob3: #4a4a4a;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #0e0e0e;
+  --accent-fill: #ededea;
+}
+.card::before { display: none; }
+.column { border-top: 10px solid var(--col); }
+.col-name { font-weight: 900; letter-spacing: .06em; }
+.app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; font-weight: 900; }
+.btn.primary { background: var(--text); color: var(--bg); box-shadow: none; }

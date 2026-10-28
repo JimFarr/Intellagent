@@ -6,7 +6,7 @@ import { md } from './js/markdown.js';
 import { tip, hideTip, focusTip, tipPausedWhen } from './js/tooltips.js';
 import { eventIcon, describe as describeEvent } from './js/events.js';
 import { state, settings, settingsStore, BASE_THEME, DEFAULTS, stored, AUTH, tokenStore } from './js/state.js';
-import { THEMES, THEME_KINDS, themeKind, themeGroups, contrast } from './js/themes.js';
+import { THEMES, BUILT_IN, addTheme, removeTheme, themeGroups, contrast } from './js/themes.js';
 import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, rel, fmtLeft, TYPES, PRIORITIES, PRIO_VAR, TYPE_VAR, FIELD_ICON, LOGO, avatar, emojiGlyph, nameOf, nameHTML, dotsHTML, minsSince, standingOf, runAgo, thinkAge } from './js/core.js';
 
 (() => {
@@ -6331,7 +6331,6 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
 
   function openSettings(tab = 'look') {
     closeModal(true);
-    lookKind = null;
     const root = el(`<div class="scrim"><div class="modal settings entering" role="dialog" aria-modal="true">
       <header class="m-head"><span class="m-type" style="color:var(--accent)">${icon('sliders')}</span><span style="font:700 16px var(--display);color:var(--text)">Settings</span><span class="saved">${icon('check', 'sm')}</span><span class="grow"></span><button class="pill-btn icon-btn sm" data-close>${icon('x')}</button></header>
       <div class="m-frame"><nav class="set-nav">
@@ -6443,14 +6442,9 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     return `<div class="pv-stage">${col('Ready', '#5aa9e6', inner, 3)}</div>`;
   }
 
-  // The kind of theme open in Appearance; null shows the kind of the current theme (reset each time Settings opens).
-  let lookKind = null;
-
   function settingsPane(t) {
     if (t === 'look') {
-      const kind = lookKind || themeKind(settings.theme);
-      const kinds = THEME_KINDS.map(([id, label, keys]) => `<button class="theme-kind ${id === kind ? 'on' : ''}" data-theme-kind="${id}" aria-pressed="${id === kind}">${label}<small>${keys.length}</small></button>`).join('');
-      const tiles = THEME_KINDS.find(([id]) => id === kind)[2].map((k) => [k, THEMES[k]]).map(([k, th]) => {
+      const tiles = Object.entries(THEMES).map(([k, th]) => {
         const v = th.vars;
         return `<button class="tile ${settings.theme === k ? 'on' : ''}" data-pick-theme="${k}"><span class="pv" style="background:${v.bg}">
           <i style="background:${v.panel}"><b style="background:${v.issue};opacity:.85"></b><b style="background:${v.surface}"></b></i>
@@ -6470,8 +6464,10 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
           sub: own ? `<button class="sr-reset" data-reset="${key}" title="Theme default|Use what ${esc(THEMES[settings.theme]?.label || 'the theme')} chooses">${icon('restore', 'sm')}Theme default</button>` : '<span class="sr-auto">from theme</span>',
         });
       };
-      return `<div class="theme-pick"><div class="theme-kinds" role="group" aria-label="Kind of theme">${kinds}</div><div class="tiles theme-tiles">${tiles}</div></div>
-        <p class="set-note">Kept in this browser. A new browser or profile starts with the default look.</p>
+      const imported = !BUILT_IN.includes(settings.theme) && THEMES[settings.theme];
+      return `<div class="theme-pick"><div class="tiles theme-tiles">${tiles}</div>
+        <div class="theme-actions"><button class="btn" data-pick-file>${icon('plus', 'sm')}Import a theme</button><input type="file" accept=".css,text/css" hidden data-import-theme>${imported ? `<button class="btn" data-remove-theme="${esc(settings.theme)}">${icon('trash', 'sm')}Remove ${esc(imported.label)}</button>` : ''}</div></div>
+        <p class="set-note">Clear and Clear Dark are built in; any other theme is a .css file (see themes/ in the repo), kept with the board. Your pick is kept in this browser; a removed theme falls back to Clear.</p>
         <div class="look-sticky">${previewStage('style')}</div>
         <h3>Style</h3>
         <div class="choices">
@@ -7184,8 +7180,12 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     pane.onclick = async (e) => {
       const uc = e.target.closest('[data-ucolor]');
       if (uc) { try { await api('PATCH', '/api/profiles/me', { color: uc.dataset.ucolor || null }); pulseSaved(); } catch (err) { toast(err.message, { kind: 'error' }); } return; }
-      const kd = e.target.closest('[data-theme-kind]');
-      if (kd) { lookKind = kd.dataset.themeKind; show('look', true); $(`[data-theme-kind="${lookKind}"]`, pane)?.focus(); return; }
+      if (e.target.closest('[data-pick-file]')) { $('[data-import-theme]', pane).click(); return; }
+      const rm = e.target.closest('[data-remove-theme]');
+      if (rm) {
+        try { await api('DELETE', `/api/themes/${rm.dataset.removeTheme}`); removeTheme(rm.dataset.removeTheme); saveSettings(); show('look', true); } catch (err) { toast(err.message, { kind: 'error' }); }
+        return;
+      }
       const th = e.target.closest("[data-pick-theme]");
       if (th) { switchTheme(th.dataset.pickTheme, e.clientX, e.clientY, () => show('look', true)); return; }
       const bg = e.target.closest('[data-bgfx]');
@@ -7219,7 +7219,18 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       const r = e.target.dataset.range;
       if (r) { paintRange(e.target); settings[r] = Number(e.target.value); applySettings(); updateOverflow(); }
     };
-    pane.onchange = (e) => {
+    pane.onchange = async (e) => {
+      if (e.target.matches('[data-import-theme]')) {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const added = await api('POST', '/api/themes', { css: await file.text() });
+          addTheme(added);
+          toast(`Imported ${added.name}`, { kind: 'ok', timeout: 2000 });
+          switchTheme(added.id, innerWidth / 2, 0, () => show('look', true));
+        } catch (err) { toast(err.message, { kind: 'error', timeout: 8000 }); }
+        return;
+      }
       if (e.target.dataset.range) { saveSettings(); pulseSaved(); }
       const k = e.target.dataset.text;
       if (k) { settings[k] = e.target.value.trim() || DEFAULTS[k]; saveSettings(); pulseSaved(); show(t, true); if (k === 'userName') refreshInbox(); }
@@ -7280,6 +7291,8 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     document.body.append(tip);
     applySettings();
     buildChrome();
+    // imported themes (INT-465); a saved pick of one shows once they are here
+    try { (await api('GET', '/api/themes')).themes.forEach(addTheme); applySettings(); } catch { /* Clear stays */ }
     try {
       Object.assign(state.app, await api('GET', '/api/app'));
       try { state.profiles = await api('GET', '/api/profiles'); } catch { /* none yet */ }

@@ -1,0 +1,30 @@
+/* intellagent-theme
+name: Tokyo Night
+mode: dark
+style: {"cards":"clean","tape":"none","typeInd":"dot","attn":"glow","enter":"zoom","bg":"stars","chips":"outline","avStyle":"ring","drop":"spotlight","groups":"rail"}
+*/
+:root {
+  --bg: #16161e;
+  --panel: #1a1b26;
+  --surface: #24283b;
+  --text: #c0caf5;
+  --muted: #8089b3;
+  --border: #2f3549;
+  --accent: #7aa2f7;
+  --accent-2: #bb9af7;
+  --issue: #f7768e;
+  --task: #7dcfff;
+  --spike: #e0af68;
+  --ok: #9ece6a;
+  --warn: #ff9e64;
+  --danger: #f7768e;
+  --blob1: #7aa2f7;
+  --blob2: #bb9af7;
+  --blob3: #2ac3de;
+  --shadow: rgb(0 0 0 / .6);
+  --fx-o: .34;
+  --grain: .07;
+  --on-accent: #16161e;
+  --accent-fill: #7aa2f7;
+}
+.column { border-top: 2px solid color-mix(in oklab, var(--col) 80%, transparent); }

@@ -1,0 +1,36 @@
+/* intellagent-theme
+name: Riso
+mode: light
+style: {"md":"paper","card":4,"col":6,"modal":8,"ctl":6,"bw":2,"shadow":"hard","cards":"clean","typeInd":"tint","tape":"none","attn":"ribbon","enter":"pop","lanes":"outline","chips":"tag","heads":"caps","bg":"halftone","texture":true,"grain":".4","titleW":700,"font":"'Bricolage Grotesque'","display":"'Bricolage Grotesque'","avStyle":"stamp","drop":"lift","groups":"tab"}
+*/
+:root {
+  --bg: #f5f0e6;
+  --panel: #efe8da;
+  --surface: #fbf8f1;
+  --text: #1d2b6b;
+  --muted: #5c6aa3;
+  --border: #1d2b6b;
+  --accent: #ff48b0;
+  --accent-2: #0078bf;
+  --issue: #ff48b0;
+  --task: #0078bf;
+  --spike: #ffe800;
+  --ok: #00a95c;
+  --warn: #ff6c2f;
+  --danger: #ff48b0;
+  --blob1: #ff48b0;
+  --blob2: #0078bf;
+  --blob3: #ffe800;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #c4409e;
+}
+.card { --card-line: var(--text); box-shadow: 3px 3px 0 var(--accent); }
+.card:hover { box-shadow: 5px 5px 0 var(--accent), -2px -2px 0 color-mix(in oklab, var(--accent-2) 70%, transparent); }
+.c-title { text-shadow: 1.5px 1px 0 color-mix(in oklab, var(--accent) 50%, transparent); }
+.col-name { color: var(--accent-2); text-shadow: 2px 1px 0 color-mix(in oklab, var(--accent) 60%, transparent); }
+.column { box-shadow: 6px 6px 0 color-mix(in oklab, var(--accent-2) 28%, transparent); }
+.app-name { background: none; color: var(--accent-2); -webkit-text-fill-color: currentColor; text-shadow: 2px 1.5px 0 var(--accent); }
+.btn.primary { background: var(--accent-fill); box-shadow: 3px 3px 0 var(--accent-2); }

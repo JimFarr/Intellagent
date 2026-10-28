@@ -1,0 +1,29 @@
+/* intellagent-theme
+name: Solarized Light
+mode: light
+style: {"md":"paper","card":6,"col":12,"modal":14,"ctl":6,"cards":"clean","tape":"none","shadow":"flat","attn":"bar","enter":"fade","lanes":"solid","bg":"none","avStyle":"tint","groups":"tab"}
+*/
+:root {
+  --bg: #eee8d5;
+  --panel: #f5efdc;
+  --surface: #fdf6e3;
+  --text: #073642;
+  --muted: #657b83;
+  --border: #ddd6c1;
+  --accent: #268bd2;
+  --accent-2: #2aa198;
+  --issue: #dc322f;
+  --task: #268bd2;
+  --spike: #b58900;
+  --ok: #859900;
+  --warn: #cb4b16;
+  --danger: #dc322f;
+  --blob1: #268bd2;
+  --blob2: #2aa198;
+  --blob3: #d33682;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #207cb8;
+}

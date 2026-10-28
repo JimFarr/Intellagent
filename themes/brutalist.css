@@ -1,0 +1,33 @@
+/* intellagent-theme
+name: Brutalist
+mode: light
+style: {"md":"grid","card":0,"col":0,"modal":0,"ctl":0,"bw":2,"shadow":"hard","tape":"none","cards":"clean","typeInd":"top","attn":"outline","enter":"pop","lanes":"solid","chips":"tag","heads":"caps","bg":"none","texture":false,"avatar":"square","titleW":700,"font":"'Space Grotesk'","display":"'Space Grotesk'","colAlpha":100,"avStyle":"stamp","drop":"lift","groups":"spine"}
+*/
+:root {
+  --bg: #f4f1ea;
+  --panel: #ffffff;
+  --surface: #ffffff;
+  --text: #111111;
+  --muted: #555555;
+  --border: #111111;
+  --accent: #ff4d00;
+  --accent-2: #0047ff;
+  --issue: #ff2e2e;
+  --task: #0047ff;
+  --spike: #ffcc00;
+  --ok: #00a651;
+  --warn: #ff8a00;
+  --danger: #ff2e2e;
+  --blob1: #ffcc00;
+  --blob2: #0047ff;
+  --blob3: #ff4d00;
+  --shadow: rgb(60 45 30 / .22);
+  --fx-o: .5;
+  --grain: .09;
+  --on-accent: #fff;
+  --accent-fill: #d44203;
+}
+.c-title { font-size: 15px; }
+.app-name { background: none; color: var(--text); -webkit-text-fill-color: currentColor; }
+.btn.primary { background: var(--accent-fill); border: 2px solid var(--text); box-shadow: 3px 3px 0 var(--text); }
+.pill-btn:hover { translate: -2px -2px; box-shadow: 3px 3px 0 var(--text); }
