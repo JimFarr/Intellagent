@@ -2905,7 +2905,9 @@ input[type="checkbox"].ck { border-radius: 4px; }
   .page { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 0; }
   .page-wrap { flex: 1; min-height: 0; align-items: stretch; }
   .page-wrap > .page-nav { position: static; max-height: none; min-height: 0; overflow: hidden auto; padding-bottom: 24px; }
-  .page-pane { min-height: 0; overflow: hidden auto; padding-bottom: 40px; scrollbar-gutter: stable; }
+  /* it scrolls with the wheel, trackpad and keys, but draws no bar: a bar would run along the cards' edges */
+  .page-pane { min-height: 0; overflow: hidden auto; padding-bottom: 40px; scrollbar-width: none; }
+  .page-pane::-webkit-scrollbar { display: none; }
   /* a page that is one window (the chat, Assignments) fills the pane and keeps clear of the bottom edge */
   .page-pane:has(.req-main) { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 24px; }
   .page-pane:has(.req-main) > .page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
