@@ -33,7 +33,6 @@ const ROOT = path.join(__dirname, '..');
 // and which board folder's manifest and tokens to use, like INTELLAGENT_URL, INTELLAGENT_AGENT and INTELLAGENT_MANIFEST, for a shell that may only run commands starting with "intellagent"
 // (a standing agent reaching its sandbox).
 const given = new Set();
-const runAgent = process.env.INTELLAGENT_AGENT; // who this process runs as, before --as renames it
 for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_AGENT'], ['--manifest', 'INTELLAGENT_MANIFEST']]) {
   const a = process.argv;
   const stop = a.indexOf('--'); // after -- (sandbox exec) the words belong to the command it runs
@@ -44,8 +43,8 @@ for (const [flag, env] of [['--url', 'INTELLAGENT_URL'], ['--as', 'INTELLAGENT_A
   a.splice(i, inline ? 1 : 2);
   if (v) { process.env[env] = v; given.add(flag); }
 }
-// --manifest names the board: a standing run's INTELLAGENT_URL and INTELLAGENT_TOKEN are its own board's, so they
-// give way to that board's address (unless --url is given too) and to the agent's token in its local.json
+// --manifest names the board: a standing run's INTELLAGENT_URL and INTELLAGENT_TOKEN are its own board's, so the
+// address gives way to that board's (unless --url is given too), and the token is never sent to another board
 if (given.has('--manifest')) {
   const mp = path.resolve(process.env.INTELLAGENT_MANIFEST);
   if (!fs.existsSync(mp) || fs.statSync(mp).isDirectory()) {
@@ -53,12 +52,11 @@ if (given.has('--manifest')) {
     console.error(`error 400 BAD_REQUEST: no manifest at ${mp} — hint: ${near ? `did you mean ${near}?` : "--manifest takes the path of a board's intellagent.manifest.json (in a project, inside its .intellagent folder)"}`);
     process.exit(2);
   }
+  const runUrl = process.env.INTELLAGENT_URL;
   if (!given.has('--url')) delete process.env.INTELLAGENT_URL;
-  const own = require('../lib/locate').localSecrets(path.resolve(process.env.INTELLAGENT_MANIFEST)).agentTokens?.[process.env.INTELLAGENT_AGENT];
-  // only this agent's own token there: --as another name keeps the run's token, so the board refuses it,
-  // instead of borrowing that agent's token from the shared local.json
-  const asOther = given.has('--as') && runAgent && runAgent.toLowerCase() !== process.env.INTELLAGENT_AGENT.toLowerCase();
-  if (own && !asOther) delete process.env.INTELLAGENT_TOKEN;
+  const { baseUrl: urlOf, readManifest: manifestAt } = require('../lib/locate');
+  // (agent tokens are kept as hashes, INT-467: there is no token in that board's local.json to take instead)
+  if (runUrl && runUrl !== urlOf(manifestAt(mp))) delete process.env.INTELLAGENT_TOKEN;
 }
 const [cmd = 'help', ...rest] = process.argv.slice(2);
 
@@ -146,13 +144,16 @@ async function init() {
     presets.record(folder, preset, Object.keys(presets.parts(preset)));
   }
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  const agentTokens = f['open-agents'] ? undefined : { [agent]: crypto.randomBytes(18).toString('base64url') };
+  // the default agent's token is printed once and kept only as a hash (INT-467)
+  const agentToken = f['open-agents'] ? null : crypto.randomBytes(18).toString('base64url');
+  const agentTokens = agentToken ? { [agent]: require('../lib/locate').hashToken(agentToken) } : undefined;
   if (userToken || agentTokens) fs.writeFileSync(path.join(folder, 'local.json'), `${JSON.stringify({ ...(userToken ? { userToken } : {}), ...(agentTokens ? { agentTokens } : {}) }, null, 2)}\n`);
   const url =`http://127.0.0.1:${port}`;
   fs.writeFileSync(path.join(folder, 'README.md'), `# ${name} · Intellagent board\n\n- \`intellagent start\` runs it (from anywhere in this project); \`intellagent open\` opens it signed in; \`intellagent stop\` stops it.\n- \`intellagent brief\` shows an agent everything it needs.\n- \`local.json\` holds your user token (git-ignored). Only requests with it act as you; \`intellagent open\` signs the browser in.\n\n## Agent instructions\n\n${agentPrompt(url, agent)}\n`);
   fs.writeFileSync(path.join(folder, '.gitignore'), 'data/\ncursors/\nlocal.json\nworktrees/\n');
   console.log(`\n  ✓ ${path.relative(process.cwd(), manifestPath) || manifestPath}`);
   console.log(`    board "${name}" · ${preset ? `${preset.label || preset.name} preset` : `${TEMPLATES[template].label} template`} · tickets ${manifest.idPrefix}-1, ${manifest.idPrefix}-2… · port ${port}`);
+  if (agentToken) console.log(`    ${agent}'s token (shown once; the board keeps only its hash): set INTELLAGENT_TOKEN=${agentToken} where your agent runs`);
 
   if (preset?.team?.slots) {
     console.log(`    ${f.agents ? '--agents is ignored by init: ' : ''}no agents installed yet. The slots (${Object.keys(preset.team.slots).join(', ')}) are places, not people: once the board runs, add each agent you want with "intellagent agents add <name> --role <role>"; set idleAlarm and supervise in agents.json by hand.`);
@@ -247,9 +248,12 @@ function tokenCmd() {
   if (f.agent) {
     const name = String(f.agent);
     if (local.agentTokens?.[name] && !f.rotate) { console.log(`${name} already has a token in ${file}. --rotate replaces it.`); return; }
-    updateLocal(file, (l) => { l.agentTokens = { ...(l.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') }; });
-    console.log(`Token for "${name}" saved in ${file} (git-ignored). The board accepts it at once.`);
-    console.log(`In this project the CLI and MCP tools send it by themselves when they act as ${name}. Elsewhere, give the agent INTELLAGENT_TOKEN=<the token>.`);
+    // kept only as a hash (INT-467): printed here once, never written down in the clear
+    const token = crypto.randomBytes(18).toString('base64url');
+    updateLocal(file, (l) => { l.agentTokens = { ...(l.agentTokens || {}), [name]: require('../lib/locate').hashToken(token) }; });
+    console.log(`Token for "${name}" (shown once; ${file} keeps only its hash). The board accepts it at once:`);
+    console.log(`  ${token}`);
+    console.log(`Give it to the agent as INTELLAGENT_TOKEN=<the token>: the CLI and MCP tools send it from there. Standing agents need none: the board gives each run its own.`);
     return;
   }
   if (local.userToken && !f.rotate) {
@@ -1000,7 +1004,7 @@ async function sandboxExec(sb, mp) {
   if (agent) {
     const m = readManifest(mp);
     const url = baseUrl(m);
-    const token = require('../lib/locate').tokenFor(agent, m);
+    const token = require('../lib/locate').tokenFor();
     let me;
     try { me = await (await fetch(`${url}/api/permissions/me`, { headers: { 'x-agent': agent, ...(token ? { authorization: `Bearer ${token}` } : {}) } })).json(); }
     catch { console.error(`The board isn't running (${url}). Start it with: intellagent start`); process.exit(1); }

@@ -12,20 +12,22 @@ const { startServer, cleanEnv } = require('./helpers');
 const CLI = path.join(__dirname, '..', 'bin', 'intellagent.js');
 const cli = (args, env) => spawnSync(process.execPath, [CLI, ...args], { cwd: os.tmpdir(), env: cleanEnv(env), encoding: 'utf8', input: '', timeout: 60000 });
 
-it('--manifest wins over a run\'s INTELLAGENT_URL and INTELLAGENT_TOKEN; an explicit --url still picks the address', async () => {
+it('--manifest wins over a run\'s INTELLAGENT_URL, and the run\'s INTELLAGENT_TOKEN is never sent to another board (INT-467)', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-manifest-'));
-  fs.writeFileSync(path.join(dir, 'local.json'), JSON.stringify({ agentTokens: { quill: 'quill-docs-token' } }));
+  // the board would accept the run's token, so a 200 shows it was sent and a 401 that it was held back
+  fs.writeFileSync(path.join(dir, 'local.json'), JSON.stringify({ agentTokens: { quill: require('../lib/locate').hashToken('run-token') } }));
   const s = await startServer({ dir, manifest: { auth: { requireAgentTokens: true } } });
-  const run = { INTELLAGENT_URL: 'http://127.0.0.1:9', INTELLAGENT_TOKEN: 'main-board-token', INTELLAGENT_AGENT: 'quill' };
+  const run = { INTELLAGENT_URL: 'http://127.0.0.1:9', INTELLAGENT_TOKEN: 'run-token', INTELLAGENT_AGENT: 'quill' };
   const mp = path.join(dir, 'intellagent.manifest.json');
   try {
     const r = cli(['api', 'GET', '/api/permissions/me', '--manifest', mp], run);
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(JSON.parse(r.stdout).name, 'quill');
-    const u = cli(['api', 'GET', '/api/permissions/me', '--manifest', mp, '--url', s.base], run);
-    assert.equal(u.status, 0, u.stderr);
+    assert.equal(r.status, 1, 'the address is the manifest\'s board; the token, another board\'s, stays home');
+    assert.match(r.stderr, /error 401 UNAUTHORIZED: Agent "quill" must send its token/);
+    const same = cli(['api', 'GET', '/api/permissions/me', '--manifest', mp], { ...run, INTELLAGENT_URL: s.base });
+    assert.equal(same.status, 0, `the run's own board: its token goes with it: ${same.stderr}`);
+    assert.equal(JSON.parse(same.stdout).name, 'quill');
     const without = cli(['api', 'GET', '/api/permissions/me', '--url', s.base], run);
-    assert.notEqual(without.status, 0, 'without --manifest the run\'s token is still the one sent');
+    assert.equal(without.status, 0, `without --manifest the run's token is the one sent: ${without.stderr}`);
   } finally { await s.stop(); }
 });
 
