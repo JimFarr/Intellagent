@@ -469,7 +469,7 @@ Schema       GET/PUT …/schema                    POST …/schema/fields       
              GET/POST …/ticket-templates         PATCH/DELETE …/ticket-templates/:key
 Focus        GET/POST …/focus                    GET/PATCH/DELETE …/focus/:id      PUT …/focus/active
 Idle alarm   GET/PUT …/idle-alarm (PUT human)
-Stuck watch  GET …/stuck
+Stuck watch  GET …/stuck  …/report (team report in one read: digest, metrics, stuck, failed landings, cost, main branch; ?since=<ISO>)
 Approvals    GET/PUT …/approvals  …/admin (PUT human)
 Rebalancing  GET/PUT …/rebalance (PUT human or admin.rebalancing)  POST/DELETE …/items/:id/pin  POST …/items/:id/rebalance/undo (human)
 Rules        GET/PUT …/directives                PATCH /api/boards/:board          POST /api/boards      PATCH /api/app  POST /api/app/restart (human)

@@ -4258,8 +4258,7 @@ route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason
   const { item, questionId } = askHuman(ctx, p.id, body.reason, actor, body.form ?? null);
   return { ...itemView(ctx, item), questionId };
 });
-route('GET', '/api/boards/:board/stuck', 'The stuck watch (INT-394): tickets picked up and not done that have been quiet, with since, reason (waiting_on_human, no_owner, owner_down, owner_quiet, held_quiet), owner, whether the board is sure, its round, and whether the human was asked', ({ p }) => {
-  const ctx = getCtx(p.board);
+const stuckOf = (ctx) => {
   const nowMs = Date.now();
   const stuck = Object.entries(ctx.board.stuck || {}).map(([id, e]) => {
     const it = ctx.board.items[id];
@@ -4268,6 +4267,26 @@ route('GET', '/api/boards/:board/stuck', 'The stuck watch (INT-394): tickets pic
   }).sort((a, b) => b.minutes - a.minutes);
   const T = STUCK_TIMINGS;
   return { stuck, rules: { quietMinutes: T.quietMs / 60_000, sureAfterMinutes: T.confirmMs / 60_000, roundMinutes: T.roundMs / 60_000, rounds: T.rounds } };
+};
+route('GET', '/api/boards/:board/stuck', 'The stuck watch (INT-394): tickets picked up and not done that have been quiet, with since, reason (waiting_on_human, no_owner, owner_down, owner_quiet, held_quiet), owner, whether the board is sure, its round, and whether the human was asked', ({ p }) => stuckOf(getCtx(p.board)));
+route('GET', '/api/boards/:board/report', 'A team report in one read (INT-441): ?since=<ISO time> (default 24 hours ago; 400 BAD_REQUEST when not a time). { since, digest (days since then), metrics { done, cycleHours, waiting { open, reviews, oldestHours, oldestId } }, stuck [tickets], failedLandings [{ id, title, reason }], agents { runs, cost, unpriced, tokens }, mainBranch { runningCommit, mainCommit, behind } }. Read-only; the stuck, metrics, digest and analytics routes hold the detail', async ({ p, q }) => {
+  const ctx = getCtx(p.board);
+  const sinceMs = q.since == null ? Date.now() - 86_400_000 : Date.parse(q.since);
+  if (!Number.isFinite(sinceMs)) fail(400, `"${String(q.since).slice(0, 40)}" is not a time`, { code: 'BAD_REQUEST', hint: 'Pass ?since=2026-10-28T09:00:00Z, or leave it out for the last 24 hours' });
+  const days = clamp(Math.ceil((Date.now() - sinceMs) / 86_400_000), 1, 90);
+  const m = metrics(ctx, days);
+  await codeState.refresh();
+  const { runningCommit, mainCommit, behind } = codeState.snapshot();
+  const { runs, cost, unpriced, tokens } = analytics({ days, agent: null, waiting: [] }).totals;
+  return {
+    since: new Date(sinceMs).toISOString(),
+    digest: digest.read(ctx, days).filter((d) => Date.parse(d.date) + 86_400_000 > sinceMs),
+    metrics: { done: m.done, cycleHours: m.cycleHours, waiting: m.waiting },
+    stuck: stuckOf(ctx).stuck,
+    failedLandings: liveItems(ctx).filter((it) => it.landing?.state === 'failed').map((it) => ({ id: it.id, title: it.title, reason: it.landing.reason ?? null })),
+    agents: { runs, cost, unpriced, tokens },
+    mainBranch: { runningCommit, mainCommit, behind },
+  };
 });
 route('POST', '/api/boards/:board/items/:id/asks', 'Ask another agent for something, as an obligation instead of an @mention (INT-391): { to, kind: answer|decide|review|fix|assign_reviewer|unblock|other, what, options?, dueMinutes? (default 60) } → { ask }. A work item for its owner; closes itself when done (review: its verdict; fix: its next review request; assign_reviewer: a reviewer assigned) or with …/asks/<askId>/done; escalates once when overdue', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);

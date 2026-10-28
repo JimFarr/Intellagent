@@ -20,6 +20,20 @@ describe('board API', () => {
   before(async () => { s = await startServer(); });
   after(async () => { await s.stop(); });
 
+  test('the team report: one read with every part, and a bad ?since is coded and hinted', async () => {
+    const r = await s.ok('GET', `${B}/report`);
+    for (const k of ['since', 'digest', 'metrics', 'stuck', 'failedLandings', 'agents', 'mainBranch']) assert.ok(k in r, `${k} is in the report`);
+    assert.ok(Array.isArray(r.stuck) && Array.isArray(r.failedLandings) && Array.isArray(r.digest));
+    assert.ok('open' in r.metrics.waiting && 'done' in r.metrics);
+    assert.ok('runs' in r.agents && 'behind' in r.mainBranch);
+    const since = '2026-01-01T00:00:00Z';
+    assert.equal((await s.ok('GET', `${B}/report?since=${since}`)).since, new Date(since).toISOString());
+    const bad = await s.api('GET', `${B}/report?since=yesterday`);
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.code, 'BAD_REQUEST');
+    assert.ok(bad.body.hint);
+  });
+
   test('board starts from the template', async () => {
     const sum = await s.ok('GET', `${B}/summary`);
     assert.deepEqual(sum.columns.map((c) => c.name), ['Backlog', 'Ready', 'In Progress', 'Review', 'Done']);
