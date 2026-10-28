@@ -812,7 +812,7 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
 .toggle-chip .i { opacity: .7; }
 .toggle-chip.on { border-color: var(--accent); color: var(--text); background: color-mix(in oklab, var(--accent) 10%, transparent); }
 .toggle-chip.on .i { color: var(--accent); opacity: 1; }
-.about-grid { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; font-size: 13px; align-items: center; }
+.about-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 16px; font-size: 13px; align-items: center; }
 .about-grid span { color: var(--muted); }
 .about-grid code { font: 12px var(--mono); overflow-wrap: anywhere; }
 
@@ -2435,7 +2435,8 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
 .dragging, .dragging .card { cursor: grabbing; }
 
 /* the page's first load: a board of skeleton columns until it arrives, and a thin bar while a request is slow */
-.boot-sk { display: flex; gap: var(--gap, 10px); padding: 4px 22px; }
+/* its columns sit in the board exactly as real ones do: the same gap, between the same centring spacers */
+.boot-sk { display: contents; }
 .boot-col { flex: 0 0 var(--colw, 300px); display: grid; gap: 8px; align-content: start; }
 .boot-col > * { display: block; border-radius: var(--r-card, 10px); background: color-mix(in oklab, var(--text, #888) 7%, transparent); animation: sk-breathe 1.6s ease-in-out infinite alternate; }
 .boot-col > i { height: 22px; width: 55%; border-radius: 99px; margin: 4px 0 6px; }
@@ -2896,3 +2897,19 @@ input[type="checkbox"].ck { border-radius: 4px; }
 .pg thead .pg-agent > span { max-width: 112px; }
 /* paired fields line up at the top: help text under one never pushes its neighbour's input down */
 .dp-form label:not(.aa-check), .dp-grid > * { align-content: start; align-self: start; }
+
+/* ───────── one scroller, fixed windows (James, 2026-10-28) ─────────
+   On a section page only the content scrolls: the page itself never does, so the side menu stays put.
+   The settings window is one size whatever its tab shows, and About never scrolls sideways. */
+@media (min-width: 861px) {
+  .page { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 0; }
+  .page-wrap { flex: 1; min-height: 0; align-items: stretch; }
+  .page-wrap > .page-nav { position: static; max-height: none; min-height: 0; overflow: hidden auto; padding-bottom: 24px; }
+  .page-pane { min-height: 0; overflow: hidden auto; padding-bottom: 40px; scrollbar-gutter: stable; }
+  /* a page that is one window (the chat, Assignments) fills the pane and keeps clear of the bottom edge */
+  .page-pane:has(.req-main) { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 24px; }
+  .page-pane:has(.req-main) > .page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+}
+.modal.settings:not(.about) { height: min(780px, calc(100vh - 48px)); }
+.modal.settings:not(.about) .m-frame { flex: 1; min-height: 0; }
+.modal.about .set-pane { overflow-x: hidden; }

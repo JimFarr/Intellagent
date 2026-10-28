@@ -3475,7 +3475,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
   const SECTIONS = [['board', 'Board', 'board'], ['agents', 'Agents', 'bot'], ['deployments', 'Integrations', 'link'], ['rules', 'Rules', 'zap']];
   const PAGES = {
     agents: [['agentsDrawer', 'Agents', 'bot', () => openAgents()], ['requestsDrawer', 'Ask an agent', 'send', () => openRequests()], ['inboxDrawer', 'Inbox', 'bell', () => openInbox()], ['catchDrawer', 'While you were away', 'sparkle', () => openCatchup()], ['digestDrawer', 'Digest', 'news', () => openDigest()], ['metricsDrawer', 'Flow', 'activity', () => openMetrics()], ['analyticsDrawer', 'Analytics', 'layers', () => openAnalytics()], ['contextDrawer', 'Context', 'text', () => openContext()], ['permsDrawer', 'Permissions', 'lock', () => openPermissions()], ['gridDrawer', 'Assignments', 'sliders', () => openPermGrid()]],
-    deployments: [['deployDrawer', 'Integrations', 'link', () => openDeployments()]],
+    deployments: [['deployDrawer', 'Connectors', 'link', () => openDeployments('connectors')], ['actionsDrawer', 'Actions', 'play', () => openDeployments('actions')]],
     rules: [[...RULE_VIEWS.mine, () => rules.open('mine')], [...RULE_VIEWS.log, () => rules.open('log')]],
   };
   const pageSection = (id) => Object.keys(PAGES).find((s) => PAGES[s].some(([pid]) => pid === (HUB_PARENT[id] || id))) || null;
@@ -3806,8 +3806,13 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     draw();
   }
 
-  // Integrations come from plugins (INT-462/463): until one is installed the section says so
-  const openDeployments = () => { openDrawer('deployDrawer', 'Integrations', 'link').innerHTML = `<div class="ent-empty">${icon('link')}<h3>No integrations yet</h3><p>Integrations are plugins: a folder you add here, whose actions agents and rules can run once you grant them.</p></div>`; };
+  // Integrations come from plugins (INT-462/463): until one is installed each view says so
+  const openDeployments = (view = 'connectors') => {
+    const [id, title, ic, h, p] = view === 'actions'
+      ? ['actionsDrawer', 'Actions', 'play', 'No actions yet', 'Each plugin brings its actions. Agents and rules run the ones you grant them.']
+      : ['deployDrawer', 'Connectors', 'link', 'No connectors yet', 'A connector is a plugin: a folder you add here that connects the board to a service.'];
+    openDrawer(id, title, ic).innerHTML = `<div class="ent-empty">${icon(ic)}<h3>${h}</h3><p>${p}</p></div>`;
+  };
 
   // With a name (from the awake strip), scrolls to that agent's Now row (else its row below) and marks it for a moment.
   function openAgents(name) {
