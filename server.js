@@ -4269,18 +4269,21 @@ const stuckOf = (ctx) => {
   return { stuck, rules: { quietMinutes: T.quietMs / 60_000, sureAfterMinutes: T.confirmMs / 60_000, roundMinutes: T.roundMs / 60_000, rounds: T.rounds } };
 };
 route('GET', '/api/boards/:board/stuck', 'The stuck watch (INT-394): tickets picked up and not done that have been quiet, with since, reason (waiting_on_human, no_owner, owner_down, owner_quiet, held_quiet), owner, whether the board is sure, its round, and whether the human was asked', ({ p }) => stuckOf(getCtx(p.board)));
-route('GET', '/api/boards/:board/report', 'A team report in one read (INT-441): ?since=<ISO time> (default 24 hours ago; 400 BAD_REQUEST when not a time). { since, digest (days since then), metrics { done, cycleHours, waiting { open, reviews, oldestHours, oldestId } }, stuck [tickets], failedLandings [{ id, title, reason }], agents { runs, cost, unpriced, tokens }, mainBranch { runningCommit, mainCommit, behind } }. Read-only; the stuck, metrics, digest and analytics routes hold the detail', async ({ p, q }) => {
+route('GET', '/api/boards/:board/report', 'A team report in one read (INT-441): ?since=<ISO time> (default 24 hours ago; 400 BAD_REQUEST when not a time; earlier than 90 days is clamped and the clamped time echoed). { since, days (metrics and agents count whole days, so they can reach back before since: this is the window they cover), digest { entries (count since then), latest (newest 5, summaries cut to 300; the rest at …/digest) }, metrics { done, cycleHours, waiting { open, reviews, oldestHours, oldestId } }, stuck [tickets], failedLandings [{ id, title, reason }], agents { runs, cost, unpriced, tokens }, mainBranch { runningCommit, mainCommit, behind } }. Read-only; the stuck, metrics, digest and analytics routes hold the detail', async ({ p, q }) => {
   const ctx = getCtx(p.board);
-  const sinceMs = q.since == null ? Date.now() - 86_400_000 : Date.parse(q.since);
-  if (!Number.isFinite(sinceMs)) fail(400, `"${String(q.since).slice(0, 40)}" is not a time`, { code: 'BAD_REQUEST', hint: 'Pass ?since=2026-10-28T09:00:00Z, or leave it out for the last 24 hours' });
+  const parsed = q.since == null ? Date.now() - 86_400_000 : Date.parse(q.since);
+  if (!Number.isFinite(parsed)) fail(400, `"${String(q.since).slice(0, 40)}" is not a time`, { code: 'BAD_REQUEST', hint: 'Pass ?since=2026-10-28T09:00:00Z, or leave it out for the last 24 hours' });
+  const sinceMs = Math.max(parsed, Date.now() - 90 * 86_400_000); // 90 days is the longest window metrics keep
   const days = clamp(Math.ceil((Date.now() - sinceMs) / 86_400_000), 1, 90);
   const m = metrics(ctx, days);
+  const entries = digest.read(ctx, days).flatMap((d) => d.entries).filter((e) => Date.parse(e.ts) >= sinceMs).sort((a, b) => b.ts.localeCompare(a.ts));
   await codeState.refresh();
   const { runningCommit, mainCommit, behind } = codeState.snapshot();
   const { runs, cost, unpriced, tokens } = analytics({ days, agent: null, waiting: [] }).totals;
   return {
     since: new Date(sinceMs).toISOString(),
-    digest: digest.read(ctx, days).filter((d) => Date.parse(d.date) + 86_400_000 > sinceMs),
+    days,
+    digest: { entries: entries.length, latest: entries.slice(0, 5).map((e) => ({ id: e.id, ts: e.ts, by: e.author?.name, summary: String(e.summary).slice(0, 300) })) },
     metrics: { done: m.done, cycleHours: m.cycleHours, waiting: m.waiting },
     stuck: stuckOf(ctx).stuck,
     failedLandings: liveItems(ctx).filter((it) => it.landing?.state === 'failed').map((it) => ({ id: it.id, title: it.title, reason: it.landing.reason ?? null })),

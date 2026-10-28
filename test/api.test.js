@@ -23,11 +23,13 @@ describe('board API', () => {
   test('the team report: one read with every part, and a bad ?since is coded and hinted', async () => {
     const r = await s.ok('GET', `${B}/report`);
     for (const k of ['since', 'digest', 'metrics', 'stuck', 'failedLandings', 'agents', 'mainBranch']) assert.ok(k in r, `${k} is in the report`);
-    assert.ok(Array.isArray(r.stuck) && Array.isArray(r.failedLandings) && Array.isArray(r.digest));
+    assert.ok(Array.isArray(r.stuck) && Array.isArray(r.failedLandings));
     assert.ok('open' in r.metrics.waiting && 'done' in r.metrics);
     assert.ok('runs' in r.agents && 'behind' in r.mainBranch);
-    const since = '2026-01-01T00:00:00Z';
-    assert.equal((await s.ok('GET', `${B}/report?since=${since}`)).since, new Date(since).toISOString());
+    assert.ok(r.days >= 1 && typeof r.digest.entries === 'number' && r.digest.latest.length <= 5);
+    const old = await s.ok('GET', `${B}/report?since=2000-01-01T00:00:00Z`);
+    assert.equal(old.days, 90);
+    assert.ok(Date.parse(old.since) > Date.now() - 91 * 86_400_000, 'since is clamped to 90 days and echoed so');
     const bad = await s.api('GET', `${B}/report?since=yesterday`);
     assert.equal(bad.status, 400);
     assert.equal(bad.body.code, 'BAD_REQUEST');
