@@ -2051,6 +2051,9 @@ async function startTicketBranch(ctx, id, d, actor) {
   if (actor.kind !== 'agent' || !worktrees || !agentBranch(actor.name)) return null;
   const item = getItem(ctx, id);
   const { target } = startChecks(ctx, item, d, actor);
+  let known = []; try { known = standing.list().agents.map((a) => a.name); } catch { /* no standing agents */ }
+  const other = require('./lib/boards').claim(PROJECT_ROOT, MANIFEST_PATH, [...known, actor.name], actor.name);
+  if (other) fail(409, `${item.id} was not started: another board on this repository (${other}) already has an agent named ${actor.name}, and they would share its branches`, { code: 'AGENT_NAME_TAKEN', hint: `Give one of the agents another name (agents.json), so each board's branches stay its own` });
   // the move's own refusals, before git: a full or locked working column must not leave the worktree switched.
   // (The gates, which grants can open, stay with moveInto in startWork.)
   const blocked = target ? moveBlocker(ctx, item, target, actor) : null;
