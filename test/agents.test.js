@@ -538,7 +538,8 @@ describe('standing agents pick up work already on the board', () => {
       // INT-294: nobody named is fine while the human hears it
       const none = await s.ok('PUT', `${B}/idle-alarm`, { on: true, wake: [] }, USER);
       assert.deepEqual([none.on, none.wake, none.human], [true, [], true]);
-      const stored = () => JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).idleAlarm || {};
+      // the alarm is the board's Idle-board alarm rule (INT-472)
+      const stored = () => JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).automations.rules.find((r) => r.id === 'board-idle-alarm').when;
       assert.equal('human' in stored(), false, 'not sent, not stored: it follows the default');
       assert.equal((await s.ok('PUT', `${B}/idle-alarm`, { human: false, wake: ['lead'] }, USER)).human, false);
       assert.equal((await s.ok('PUT', `${B}/idle-alarm`, { minutes: 40 }, USER)).human, false, 'once set, it stays');
@@ -657,7 +658,8 @@ describe('standing agents pick up work already on the board', () => {
 
       // switched off: a change to the team moves nothing
       await s.ok('PUT', `${B}/rebalance`, { on: false }, USER);
-      assert.deepEqual(stored(), { minWaitMinutes: 0, minGap: 2, on: false });
+      assert.deepEqual(stored(), { minWaitMinutes: 0, minGap: 2 }, 'on/off is the Rebalancing rule (INT-472)');
+      assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).automations.rules.find((r) => r.id === 'board-rebalance').enabled, false);
       await s.ok('DELETE', '/api/agents/other', undefined, USER);
       await new Promise((r) => setTimeout(r, 3500));
       assert.equal((await s.ok('GET', `${B}/rebalance`)).recent.length, 1);
