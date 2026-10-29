@@ -197,8 +197,11 @@ test('plugins: the human adds, pins and connects one; it runs sandboxed and gets
     const again = await s.ok('GET', '/api/plugins/fake');
     assert.strictEqual((await s.ok('POST', '/api/plugins/fake/enable', { hash: again.hash }, USER)).state, 'on');
 
-    // off, then gone with its connection
+    // off, then gone with its connection, even when it is running again (Windows holds the folder until the process exits)
     assert.strictEqual((await s.ok('POST', '/api/plugins/fake/disable', {}, USER)).state, 'off');
+    const off = await s.ok('GET', '/api/plugins/fake');
+    assert.strictEqual((await s.ok('POST', '/api/plugins/fake/enable', { hash: off.hash }, USER)).state, 'on');
+    assert.strictEqual((await s.ok('POST', '/api/plugins/fake/connection/test', {}, USER)).ok, true);
     assert.deepStrictEqual(await s.ok('DELETE', '/api/plugins/fake', undefined, USER), { removed: 'fake', grantsDropped: [], runsCanceled: 0 });
     assert.ok(!fs.existsSync(path.join(s.dir, 'plugins', 'fake')));
     assert.strictEqual(JSON.parse(fs.readFileSync(local, 'utf8')).plugins?.fake, undefined);
