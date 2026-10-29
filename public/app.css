@@ -2718,9 +2718,10 @@ html.busy::before { opacity: 1; animation: busy-bar 1.1s linear infinite; }
 .ent-list .ent-sub code, .ent-list .rl-sentence code { font-size: 11.5px; padding: 0 4px; }
 /* a list whose rows read on one line: the name, then its muted line beside it (cut with … when it runs long) */
 .ent-list.one-line > .ent { min-height: 44px; padding-block: 6px; }
-.ent-list.one-line > .ent > .ent-body { display: flex; align-items: baseline; gap: 12px; }
-.ent-list.one-line > .ent > .ent-body > .ent-title { flex: 0 1 auto; max-width: 45%; }
-.ent-list.one-line > .ent > .ent-body > :is(.ent-sub, .rl-sentence) { flex: 1 1 0; min-width: 0; margin: 0; }
+.ent-list.one-line > .ent > .ent-body { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px; }
+.ent-list.one-line > .ent > .ent-body > .ent-title { flex: 0 0 auto; max-width: 100%; }
+/* the sentence takes what is left; with less than 24ch beside the name it drops to its own line, and is cut with … only there */
+.ent-list.one-line > .ent > .ent-body > :is(.ent-sub, .rl-sentence) { flex: 1 1 24ch; min-width: 0; margin: 0; }
 .ent-side { grid-area: side; display: flex; align-items: center; gap: 12px; justify-self: end; }
 .ent-col { font: 400 13px var(--font); color: var(--muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ent-col.when { width: 88px; }
