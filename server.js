@@ -528,6 +528,9 @@ function normalizeBoard(b) {
   b.requests = Array.isArray(b.requests) ? b.requests : [];
   b.coordinator = b.coordinator || null;
   b.schema = { builtins: normBuiltins(b.schema?.builtins, true), fields: Array.isArray(b.schema?.fields) ? b.schema.fields : [] };
+  // rules from before FOR / IF / THEN, in today's words: their subject, and their "if" as an expression where it says the same (INT-480)
+  const tdesc = RULES.ticketDesc(b.columns, b.schema.fields);
+  b.automations.rules = b.automations.rules.map((r) => RULES.upgrade(r, tdesc));
   for (const it of Object.values(b.items)) {
     it.fields = isObj(it.fields) ? it.fields : {}; it.cover = it.cover || 'auto'; it.assignee = it.assignee || null;
     // flow: when the item entered each column (metrics). Older boards start from what is known.
@@ -4791,11 +4794,37 @@ const RULES = require('./lib/rules');
 const rulesOf = (ctx) => (ctx.board.automations ||= { rules: [], log: [] });
 const ruleActor = (rule) => ({ ...SYSTEM, rule: { id: rule.id, name: rule.name } });
 const liveItems = (ctx) => ctx.board.columns.flatMap((c) => c.itemIds.map((id) => ctx.board.items[id])).filter((it) => it && !it.test);
-function ruleHolds(ctx, rule, item, blocksOf = blocksIndex(ctx)) {
+// ev: the event that set it off (a comment rule's comment is in it)
+function ruleHolds(ctx, rule, item, blocksOf = blocksIndex(ctx), ev = null) {
   if (!rule.if) return true;
   if (!item) return false;
-  return cardrules.holds(cardrules.parseCondition(rule.if), searchView(ctx, item, false, blocksOf), cardRulesOf(ctx).filter((r) => r.enabled !== false));
+  if (rule.lang !== 'expr') return cardrules.holds(cardrules.parseCondition(rule.if), searchView(ctx, item, false, blocksOf), cardRulesOf(ctx).filter((r) => r.enabled !== false));
+  const tree = ruleTree(ctx, rule);
+  if (!tree) return false;
+  const subject = rule.for || 'ticket';
+  const names = { ...RULES.DEFAULT_NAMES, ...rule.names };
+  const data = { [names.ticket]: searchView(ctx, item, false, blocksOf) };
+  if (subject === 'comment') {
+    const c = ev?.comment?.id ? (item.comments || []).find((x) => x.id === ev.comment.id) : null;
+    data[names.comment] = { id: ev?.comment?.id || null, author: ev?.actor?.name || '', authorKind: ev?.actor?.kind || '', text: c?.body ?? ev?.comment?.body ?? '', mentions: ev?.mentions || [], intent: ev?.comment?.intent || ev?.intent || '' };
+  }
+  return EXPR.evaluate(tree, data);
 }
+// A rule's "if", compiled against the board's fields as they are now. Kept per rule object (an edit makes a new one) and
+// text; a field change that makes it unreadable makes it hold for nothing, which the log's silence shows.
+// shortcut: a field's type changed since the last compile is not seen until the rule is edited or the board restarts
+const ruleTrees = new WeakMap();
+function ruleTree(ctx, rule) {
+  const hit = ruleTrees.get(rule);
+  if (hit?.text === rule.if) return hit.tree;
+  const c = EXPR.compile(rule.if, RULES.schemaFor(rule.for || 'ticket', rule.names, ctx.board.columns, ctx.board.schema.fields));
+  ruleTrees.set(rule, { text: rule.if, tree: c.ok ? c.tree : null });
+  if (!c.ok) console.warn(`rule ${rule.id}: its "if" doesn't read: ${c.error.message}`);
+  return c.ok ? c.tree : null;
+}
+// The rules' expression language (INT-479), shared with the page: an ES module, loaded before the board listens
+let EXPR = null;
+const EXPR_READY = import(require('url').pathToFileURL(path.join(__dirname, 'public', 'js', 'expr.js')).href).then((m) => { EXPR = m; });
 // coordinator / assignee / last_worker, or a name as it is
 function ruleWho(ctx, who, item) {
   if (who === 'coordinator') return coordinatorOf(ctx);
@@ -4949,7 +4978,7 @@ function onRuleEvent(e) {
   setImmediate(() => {
     for (const rule of rules) ruleFails(async () => {
       const item = itemId ? ctx.board.items[itemId] : null;
-      if (rule.if && !ruleHolds(ctx, rule, item)) return;
+      if (rule.if && !ruleHolds(ctx, rule, item, undefined, e)) return;
       await fireRule(ctx, rule, itemId, whyOf(ctx, rule), undefined, e);
     });
   });
@@ -5027,14 +5056,18 @@ function checkEngineWords(ctx, rule) {
   fail(400, `"${label}" is carried out by the board's ${e.name} rule, so it works only in that rule's shape`, { code: 'BAD_REQUEST', hint: `Edit or copy the ${e.name} rule and change its numbers: ${RULES.describe(engineRule(ctx, ENGINE_WORDS[word], true) || { when: { on: word }, then: [] }, ctx.board.columns)}` });
 }
 const ruleView = (ctx, r) => ({ ...r, text: RULES.describe(r, ctx.board.columns), state: undefined, fired: (r.state?.recent || []).length ? new Date(Math.max(...r.state.recent)).toISOString() : null });
-const ruleErr = (fn) => { try { return fn(); } catch (e) { if (e instanceof RULES.RuleError) fail(400, e.message, { code: 'BAD_REQUEST', hint: e.hint }); throw e; } };
+// at / end: where an "if" that doesn't read went wrong, for the page to mark
+const ruleErr = (fn) => { try { return fn(); } catch (e) { if (e instanceof RULES.RuleError) fail(400, e.message, { code: 'BAD_REQUEST', hint: e.hint, ...(e.at != null ? { at: e.at, end: e.end } : {}) }); throw e; } };
+const ruleOpts = (ctx) => ({ compile: EXPR.compile, fields: ctx.board.schema.fields });
 function saveRule(ctx, body, actor, prev = null) {
-  const rule = ruleErr(() => RULES.cleanRule(body, ctx.board.columns, { id: rid('rule'), prev, nowIso: now() }));
+  let rule = ruleErr(() => RULES.cleanRule(body, ctx.board.columns, { id: rid('rule'), prev, nowIso: now(), ...ruleOpts(ctx) }));
   // an engine's rule keeps its mark while it fits; a rule in an engine's words takes it only when the engine has none
   const word = [rule.when.on, ...rule.then.map((x) => x.do)].find((k) => ENGINE_WORDS[k]);
   const key = prev?.engine || (word && !engineRule(ctx, ENGINE_WORDS[word], true) ? ENGINE_WORDS[word] : null);
   if (key && ENGINES[key].fits(rule, ctx)) rule.engine = key;
   checkEngineWords(ctx, rule);
+  // a filter-language "if" sent by an older caller is kept in the expression language when it says the same (INT-480)
+  rule = RULES.upgrade(rule, RULES.ticketDesc(ctx.board.columns, ctx.board.schema.fields));
   if (rule.engine === 'idleAlarm') {
     const known = new Set(standingAgents().map((x) => x.name));
     const unknown = rule.then.filter((x) => x.do === 'wake' && !known.has(x.agent)).map((x) => x.agent);
@@ -5060,12 +5093,15 @@ function saveRule(ctx, body, actor, prev = null) {
 const boardRules = (ctx) => rulesOf(ctx).rules.filter((r) => !r.item);
 const getRule = (ctx, id) => boardRules(ctx).find((r) => r.id === id) || fail(404, `No rule "${id}"`, { code: 'NOT_FOUND', hint: rulesOf(ctx).rules.some((r) => r.id === id) ? 'That is a trigger on a ticket: GET or DELETE /api/boards/<board>/items/<ID>/triggers' : `GET /api/boards/${ctx.id}/rules lists them` });
 
-route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, when, if?, then, text (in words), fired, native? }], vocabulary: { events, times, actions, roles } }. The board\'s behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing) are ordinary stored rules (ids board-…, marked engine: <key>): each runs from its marked rule, deleting it switches it off, and reshaped it loses the mark and is ordinary. A rule of yours in the same shape stays yours. The words board_idle, stuck, assignee_away, escalate, unstick and reassign work only in a marked rule, in its shape; a new rule in those words takes the mark only when its behaviour has no rule. native: a column\'s release-lease or auto-archive flag, listed and edited as a rule', ({ p }) => {
+route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, for, names, when, lang?, if?, then, text (in words), fired, native? }], vocabulary: { subjects: { ticket|comment: { label, names, parts: expression-language descriptors of each part, for suggestions } }, events (each with its subject), times, actions, roles } }. The board\'s behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing) are ordinary stored rules (ids board-…, marked engine: <key>): each runs from its marked rule, deleting it switches it off, and reshaped it loses the mark and is ordinary. A rule of yours in the same shape stays yours. The words board_idle, stuck, assignee_away, escalate, unstick and reassign work only in a marked rule, in its shape; a new rule in those words takes the mark only when its behaviour has no rule. native: a column\'s release-lease or auto-archive flag, listed and edited as a rule', ({ p }) => {
   const ctx = getCtx(p.board);
-  const labels = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { label: v.label, ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}) }]));
-  return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...boardRules(ctx).map((r) => ruleView(ctx, r))], vocabulary: { events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
+  const labels = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => !v.legacy).map(([k, v]) => [k, { label: v.label, subject: v.subject || 'ticket', ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}) }]));
+  // each subject: its parts with their default names, and the expr.js descriptor of each part (the page's suggestions)
+  const tdesc = RULES.ticketDesc(ctx.board.columns, ctx.board.schema.fields);
+  const subjects = Object.fromEntries(Object.entries(RULES.SUBJECTS).map(([k, s]) => [k, { label: s.label, ...(s.event ? { event: s.event } : {}), names: Object.fromEntries(s.roles.map((r) => [r, RULES.DEFAULT_NAMES[r]])), parts: Object.fromEntries(s.roles.map((r) => [r, r === 'ticket' ? tdesc : RULES.COMMENT_DESC])) }]));
+  return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...boardRules(ctx).map((r) => ruleView(ctx, r))], vocabulary: { subjects, events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
 });
-route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, when: { on, column?, minutes?, to? }, if?: card-rules condition, then: [{ do, … }], enabled? }. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented, mentioned (to?), unblocked, lease_expired, ask_overdue; or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
+route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, for?: ticket|comment, names?: { ticket: "T", comment: "C" }, when: { on, column?, minutes?, to? }, lang?: "expr", if?: an expression over the names (e.g. C.text.contains("?") && T.priority == "High"; without lang, the card-rules filter language, kept as the expression that says the same where there is one), then: [{ do, … }], enabled? }. An "if" that does not read answers 400 with at/end. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented (a comment rule\'s trigger; may be left out), unblocked, lease_expired, ask_overdue; or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
 route('PUT', '/api/boards/:board/rules/:id', 'Human: replace a rule (as POST); { enabled: false } with the rest switches it off', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const n = nativeRules(ctx).find((x) => x.id === p.id);
@@ -5086,7 +5122,7 @@ route('DELETE', '/api/boards/:board/rules/:id', 'Human: delete a rule (its log s
 });
 route('POST', '/api/boards/:board/rules/preview', 'Before saving: which tickets a rule would act on now { rule } → { mode: "due" (a time rule: these would fire now) | "match" (an event rule: these match its "if", so would be acted on when the event happens to them) | "board" (no ticket), count, items: [{ id, title }] (first 20), text }', ({ p, body }) => {
   const ctx = getCtx(p.board);
-  const rule = ruleErr(() => RULES.cleanRule(body.rule ?? body, ctx.board.columns, { id: 'preview', nowIso: now() }));
+  const rule = ruleErr(() => RULES.cleanRule(body.rule ?? body, ctx.board.columns, { id: 'preview', nowIso: now(), ...ruleOpts(ctx) }));
   const text = RULES.describe(rule, ctx.board.columns);
   if (rule.when.on === 'every' && !rule.if) return { mode: 'board', count: 0, items: [], text };
   const nowMs = Date.now();
@@ -6276,7 +6312,8 @@ server.on('error', (e) => {
   process.exit(1);
 });
 
-server.listen(M.port, M.host, () => {
+// the rules' expression language is an ES module shared with the page; nothing is served until it is loaded
+EXPR_READY.then(() => server.listen(M.port, M.host, () => {
   const base = `http://${M.host}:${M.port}`;
   console.log(`\n  ${app.name}  v${VERSION} (${BUILD})`);
   console.log(`  board   ${base}`);
@@ -6287,7 +6324,7 @@ server.listen(M.port, M.host, () => {
   if (FOREIGN_CODE) console.warn(`WARNING: this board runs code from an agent's worktree (${ROOT}), not its own installation: unreviewed code. Restart it from the installed intellagent: intellagent restart\n`);
   try { fs.writeFileSync(path.join(DATA, 'server.pid'), String(process.pid)); } catch { /* read-only data dir */ }
   try { plugins.startAll(); } catch (e) { console.warn(`plugins: ${e.message}`); }
-});
+}), (e) => { console.error(`public/js/expr.js: ${e.message}`); process.exit(1); });
 
 const shutdown = () => {
   try { fs.rmSync(path.join(DATA, 'server.pid')); } catch { /* gone */ }
