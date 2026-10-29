@@ -17,7 +17,8 @@ const cursor = async () => (await s.ok('GET', '/api/app')).seq;
 const eventsSince = async (since, q = '') => (await s.ok('GET', `/api/events?since=${since}&board=main${q}`)).events;
 
 describe('board API', () => {
-  before(async () => { s = await startServer(); });
+  // the avatar-by-URL test fetches from a stand-in on 127.0.0.1, which a real board refuses (INT-468)
+  before(async () => { s = await startServer({ env: { INTELLAGENT_TEST_LOCAL_FETCH: '1' } }); });
   after(async () => { await s.stop(); });
 
   test('the team report: one read with every part, and a bad ?since is coded and hinted', async () => {
@@ -147,6 +148,41 @@ describe('board API', () => {
       await refused(path.join(s.dir, f));
     }
     assert.equal((await att(path.join(s.dir, 'agents.json'), USER)).status, 201, 'the human still can');
+  });
+
+  test('the page loads only from the board and Google Fonts; an avatar by URL is kept by the board (INT-468)', async () => {
+    const page = await fetch(`${s.base}/`);
+    const csp = page.headers.get('content-security-policy');
+    assert.match(csp, /script-src 'self';/);
+    assert.match(csp, /img-src 'self' data: blob:;/, 'no remote images');
+    assert.match(csp, /connect-src 'self';/);
+    assert.match(csp, /frame-ancestors 'none'/);
+
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+    const host = http.createServer((req, res) => {
+      if (req.url === '/a.png') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(png); }
+      // chunked, so no Content-Length: 3 MB in 64 KB pieces
+      if (req.url === '/big.png') { res.writeHead(200, { 'Content-Type': 'image/png' }); for (let i = 0; i < 48; i++) res.write(Buffer.alloc(65536)); return res.end(); }
+      if (req.url === '/moved') { res.writeHead(302, { Location: '/a.png' }); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<p>not an image</p>');
+    });
+    await new Promise((r) => host.listen(0, '127.0.0.1', r));
+    const at = `http://127.0.0.1:${host.address().port}`;
+    try {
+      const me = await s.ok('PATCH', '/api/profiles/me', { image: `${at}/a.png` }, { agent: 'pic' });
+      assert.match(me.image, /^\/avatars\/pic-\w+\.png$/, 'stored, not hotlinked');
+      assert.deepEqual(Buffer.from(await (await fetch(`${s.base}${me.image}`)).arrayBuffer()), png);
+      const page2 = await s.api('PATCH', '/api/profiles/me', { image: `${at}/page` }, { agent: 'pic' });
+      assert.equal(page2.status, 400);
+      assert.equal(page2.body.code, 'BAD_REQUEST');
+      assert.match(page2.body.hint, /imagePath or imageBase64/);
+      assert.equal((await s.api('PATCH', '/api/profiles/me', { image: 'not a url' }, { agent: 'pic' })).status, 400);
+      // read with a cap even with no Content-Length, and no redirects (Kraglin's review)
+      const big = await s.api('PATCH', '/api/profiles/me', { image: `${at}/big.png` }, { agent: 'pic' });
+      assert.deepEqual([big.status, big.body.code], [413, 'TOO_LARGE']);
+      const moved = await s.api('PATCH', '/api/profiles/me', { image: `${at}/moved` }, { agent: 'pic' });
+      assert.deepEqual([moved.status, moved.body.code], [400, 'BAD_REQUEST']);
+    } finally { host.close(); }
   });
 
   test('leases lock other agents but never the human', async () => {
@@ -565,6 +601,31 @@ describe('the UI stream never carries the token in its URL (INT-209)', () => {
     assert.equal(bot.status, 403, 'an agent opens the stream with its own token');
     assert.equal((await bot.json()).code, 'HUMAN_ONLY');
     assert.equal((await stream('/api/stream?ui=1')).status, 401, 'no ticket, no token: no stream');
+  });
+});
+
+describe('an avatar URL can\'t make the board call this PC or its network (INT-468)', () => {
+  const { isPrivateAddress, publicUrlProblem } = require('../lib/local-only');
+  test('private, loopback, link-local and unique-local addresses are recognised; public ones are not', () => {
+    for (const a of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.9.9', '192.168.1.10', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', 'fd12::1', 'fe80::1', '::ffff:127.0.0.1', '[::1]']) assert.equal(isPrivateAddress(a), true, a);
+    for (const a of ['8.8.8.8', '172.32.0.1', '1.1.1.1', '2606:4700::1111', '::ffff:8.8.8.8']) assert.equal(isPrivateAddress(a), false, a);
+  });
+  test('only https, and never a host that resolves here', async () => {
+    assert.match(await publicUrlProblem('http://example.com/a.png'), /only https/);
+    assert.match(await publicUrlProblem('https://127.0.0.1:7499/status'), /this PC or its network/);
+    assert.match(await publicUrlProblem('https://localhost/a.png'), /this PC or its network/);
+    assert.match(await publicUrlProblem('https://[::1]/a.png'), /this PC or its network/);
+    assert.match(await publicUrlProblem('nope'), /not a web address/);
+  });
+  test('a real board refuses an agent\'s local avatar URL before fetching it', async () => {
+    const t = await startServer();
+    try {
+      const r = await t.api('PATCH', '/api/profiles/me', { image: 'http://127.0.0.1:7499/status' }, { agent: 'pic' });
+      assert.deepEqual([r.status, r.body.code], [400, 'BAD_REQUEST']);
+      assert.match(r.body.error, /only https/);
+      const r2 = await t.api('PATCH', '/api/profiles/me', { image: 'https://127.0.0.1:7499/status' }, { agent: 'pic' });
+      assert.match(r2.body.error, /this PC or its network/);
+    } finally { await t.stop(); }
   });
 });
 

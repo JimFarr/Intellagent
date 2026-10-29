@@ -2781,7 +2781,8 @@ input[type="checkbox"].ck { border-radius: 4px; }
 .ent.agent-row > .ent-lead { position: relative; }
 .ent.agent-row > .ent-lead > .status-dot { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border: 2px solid var(--surface); margin: 0; }
 .ent.agent-row .ent-col.extra { width: 88px; }
-.ent-col.pill { width: 92px; display: flex; justify-content: flex-end; }
+/* at least the usual width so the rows line up, wider for longer text ("waiting · 2 waiting") instead of spilling over the column beside it */
+.ent-col.pill { min-width: 92px; display: flex; justify-content: flex-end; }
 .ent-col.pill .status-pill { margin: 0; }
 .ent-side .ent-acts .btn { margin: 0; }
 .ent-list .ent-sub .link { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--muted) 45%, transparent); cursor: pointer; }
@@ -2904,7 +2905,8 @@ input[type="checkbox"].ck { border-radius: 4px; }
 @media (min-width: 861px) {
   .page { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 0; }
   .page-wrap { flex: 1; min-height: 0; align-items: stretch; }
-  .page-wrap > .page-nav { position: static; max-height: none; min-height: 0; overflow: hidden auto; padding-bottom: 24px; }
+  /* the menu runs the page's full height, so its divider does too, short of the bottom by the same gap as the content */
+  .page-wrap > .page-nav { position: static; align-self: stretch; max-height: none; min-height: 0; overflow: hidden auto; margin-bottom: 24px; }
   /* it scrolls with the wheel, trackpad and keys, but draws no bar: a bar would run along the cards' edges */
   .page-pane { min-height: 0; overflow: hidden auto; padding-bottom: 40px; scrollbar-width: none; }
   .page-pane::-webkit-scrollbar { display: none; }

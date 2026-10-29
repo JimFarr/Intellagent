@@ -538,7 +538,8 @@ describe('standing agents pick up work already on the board', () => {
       // INT-294: nobody named is fine while the human hears it
       const none = await s.ok('PUT', `${B}/idle-alarm`, { on: true, wake: [] }, USER);
       assert.deepEqual([none.on, none.wake, none.human], [true, [], true]);
-      const stored = () => JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).idleAlarm || {};
+      // the alarm is the board's Idle-board alarm rule (INT-472)
+      const stored = () => JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).automations.rules.find((r) => r.id === 'board-idle-alarm').when;
       assert.equal('human' in stored(), false, 'not sent, not stored: it follows the default');
       assert.equal((await s.ok('PUT', `${B}/idle-alarm`, { human: false, wake: ['lead'] }, USER)).human, false);
       assert.equal((await s.ok('PUT', `${B}/idle-alarm`, { minutes: 40 }, USER)).human, false, 'once set, it stays');
@@ -548,6 +549,19 @@ describe('standing agents pick up work already on the board', () => {
       assert.equal(set.note, 'Nudge the assignees first; ask Gamora for anything unassigned.');
       const off = await s.ok('PUT', `${B}/idle-alarm`, { on: false }, USER);
       assert.deepEqual([off.on, off.wake], [false, ['lead']], 'switching off keeps who it wakes');
+      // INT-472: its rule deleted, the alarm is off; agents.json's flag on lander doesn't switch it back on
+      await s.ok('PUT', `${B}/idle-alarm`, { on: true }, USER);
+      // reshaped, it loses its mark: off too, not back to agents.json (Rocket's review)
+      await s.ok('PUT', `${B}/rules/board-idle-alarm`, { name: 'Mine now', enabled: true, when: { on: 'idle', minutes: 60 }, then: [{ do: 'wake', agent: 'coordinator' }] }, USER);
+      const reshaped = await s.ok('GET', `${B}/idle-alarm`);
+      assert.deepEqual([reshaped.on, reshaped.wake], [false, []]);
+      // switched on again from settings it gets a new marked rule; deleting that one leaves it off
+      await s.ok('PUT', `${B}/idle-alarm`, { on: true }, USER);
+      const mark = (await s.ok('GET', `${B}/rules`, undefined, USER)).rules.find((r) => r.engine === 'idleAlarm');
+      assert.ok(mark && mark.id !== 'board-idle-alarm', 'a new rule, marked');
+      await s.ok('DELETE', `${B}/rules/${mark.id}`, undefined, USER);
+      const gone = await s.ok('GET', `${B}/idle-alarm`);
+      assert.deepEqual([gone.on, gone.wake], [false, []]);
     } finally { await s.stop(); }
   });
 
@@ -657,7 +671,8 @@ describe('standing agents pick up work already on the board', () => {
 
       // switched off: a change to the team moves nothing
       await s.ok('PUT', `${B}/rebalance`, { on: false }, USER);
-      assert.deepEqual(stored(), { minWaitMinutes: 0, minGap: 2, on: false });
+      assert.deepEqual(stored(), { minWaitMinutes: 0, minGap: 2 }, 'on/off is the Rebalancing rule (INT-472)');
+      assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).automations.rules.find((r) => r.id === 'board-rebalance').enabled, false);
       await s.ok('DELETE', '/api/agents/other', undefined, USER);
       await new Promise((r) => setTimeout(r, 3500));
       assert.equal((await s.ok('GET', `${B}/rebalance`)).recent.length, 1);
@@ -1397,12 +1412,17 @@ describe('token usage', () => {
   });
 
   it('asks one-shot claude runs for JSON output and leaves everything else alone', () => {
-    assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --output-format stream-json --verbose');
+    assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --setting-sources user,project --output-format stream-json --verbose');
     // the usage read takes the last result line of a stream (INT-458)
     const stream = [{ type: 'system' }, { type: 'assistant', message: { content: [] } }, { type: 'result', usage: { input_tokens: 5, output_tokens: 2 } }].map((m) => JSON.stringify(m)).join('\n');
     assert.deepEqual(parseUsage(`--- output ---\n${stream}\n`), { input: 5, output: 2, cacheRead: 0, cacheCreated: 0 });
-    assert.equal(withJsonOutput('claude -p "x" --output-format stream-json'), 'claude -p "x" --output-format stream-json');
+    assert.equal(withJsonOutput('claude -p "x" --output-format stream-json'), 'claude -p "x" --output-format stream-json --setting-sources user,project');
     assert.equal(withJsonOutput('node fake.js ok'), 'node fake.js ok');
+  });
+  it('never lets a run load the person\'s .claude/settings.local.json: its env would override the run\'s own token', () => {
+    const { keepAliveCmd } = require('../lib/agents');
+    for (const cmd of [withJsonOutput('claude -p "x"'), keepAliveCmd('claude -p "x" --tools "Bash"')]) assert.match(cmd, /--setting-sources user,project(\s|$)/, cmd);
+    assert.equal(withJsonOutput('claude -p "x" --setting-sources user --output-format json'), 'claude -p "x" --setting-sources user --output-format json', 'a run that names its sources keeps them');
   });
 
   it('records usage per run and per day, keeps it over a restart, and has none for runs that report none', async () => {
@@ -2448,6 +2468,11 @@ describe('watching a run (INT-457)', () => {
       const c = await s.ok('GET', `/api/agents/dev/log?from=${a.next}&run=${runs[0].run}`, undefined, USER);
       assert.deepEqual([c.log, c.skipped, c.next], ['', 600_001, a.next + 600_001]);
       assert.equal((await s.ok('GET', `/api/agents/dev/log?from=${c.next}&run=${runs[0].run}`, undefined, USER)).log, '{"type":"after"}\n');
+      // a long line still being written (no newline yet) is waited for, not skipped
+      const end = fs.statSync(file).size;
+      fs.appendFileSync(file, 'y'.repeat(600_000));
+      const w = await s.ok('GET', `/api/agents/dev/log?from=${end}&run=${runs[0].run}`, undefined, USER);
+      assert.deepEqual([w.log, w.next, w.skipped], ['', end, undefined]);
       // a run name is a log file name, never a path
       assert.equal((await s.api('GET', '/api/agents/dev/log?run=..%2Fx.log', undefined, USER)).status, 400);
       // the human's only: a log holds file contents and command output
