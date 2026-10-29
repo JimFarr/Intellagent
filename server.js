@@ -478,7 +478,7 @@ function migrateTriggers(b) {
   }
   delete b.triggerQueue;
 }
-const IDLE_ALARM_TEXT ='The board is idle: tickets wait and no builder is running';
+const IDLE_ALARM_TEXT = 'The board is idle: tickets wait and no builder is running';
 // An old setting route writes its engine's rule and nothing else (INT-472): that rule, or a new one marked for it
 function setEngineRule(ctx, key, patch) {
   const cur = engineRule(ctx, key, true);
@@ -3020,7 +3020,8 @@ async function sweepTriggers(ctx) {
     }
     const queue = pending().flatMap((r) => Object.entries(r.state.pending).map(([itemId, p]) => {
       const a = r.then[0];
-      return { wake: a.agent === 'coordinator' ? null : a.agent, itemId, ruleId: r.id, priority: a.batch === false ? 'now' : 'batch', why: p.why, note: a.note || null, firedAt: p.firedAt };
+      // a role word (assignee, last_worker) names the card's agent; none: the coordinator's (null)
+      return { wake: ruleWho(ctx, a.agent === 'coordinator' ? null : a.agent, ctx.board.items[itemId]), itemId, ruleId: r.id, priority: a.batch === false ? 'now' : 'batch', why: p.why, note: a.note || null, firedAt: p.firedAt };
     }));
     const { send } = TRIGGERS.due(queue, nowMs, TRIGGER_BATCH_MS);
     for (const [named, list] of Object.entries(send)) {

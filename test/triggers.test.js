@@ -185,16 +185,22 @@ describe('triggers on a real board', () => {
       assert.deepEqual([rules['board-idle-check'].skip, rules['board-idle-check'].state.pending[a.id].why, rules['board-idle-check'].state.fired[a.id]], [[b.id], 'idle for 61 min', at]);
       await u.stop({ keep: true });
     } catch (e) { await u.stop(); throw e; }
-    // and the sweep sends them: the trigger's to the agent it names, the idle check's to the coordinator
+    // and the sweep sends them: the trigger's to the agent it names, the idle check's to the agent its role word names
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    saved.automations.rules.find((r) => r.id === 'board-idle-check').then[0].agent = 'assignee';
+    saved.items[a.id].assignee = 'groot';
+    fs.chmodSync(file, 0o666);
+    fs.writeFileSync(file, JSON.stringify(saved));
     const w = await startServer({ dir, agents: TEAM, manifest: { triggers: { sweepSeconds: 1, batchMinutes: 0.02 } } });
     try {
       await w.ok('PATCH', B, { coordinator: 'gamora' }, USER);
       const got = await waitFor(async () => {
         const evs = (await w.ok('GET', '/api/events?types=trigger.fired')).events;
-        return evs.some((e) => e.wake === 'gamora') && evs.some((e) => e.wake === 'nebula') && evs;
+        return evs.some((e) => e.wake === 'groot') && evs.some((e) => e.wake === 'nebula') && evs;
       });
       assert.ok(got, 'both sent');
-      assert.deepEqual(got.filter((e) => e.wake === 'gamora').flatMap((e) => e.cards.map((c) => [c.id, c.why])), [[a.id, 'idle for 61 min']]);
+      assert.ok(!got.some((e) => e.wake === 'assignee'), 'a role word is never used as an agent\'s name');
+      assert.deepEqual(got.filter((e) => e.wake === 'groot').flatMap((e) => e.cards.map((c) => [c.id, c.why])), [[a.id, 'idle for 61 min']]);
       assert.deepEqual(got.filter((e) => e.wake === 'nebula').flatMap((e) => e.cards.map((c) => [c.id, c.note, c.priority])), [[a.id, 'run it', 'now']]);
     } finally { await w.stop(); }
   });
