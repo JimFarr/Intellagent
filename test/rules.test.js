@@ -5,6 +5,9 @@
 // in the same words, the preview, the log, and the guards (no chains, gates still apply, a runaway is held back).
 const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { startServer, until, USER } = require('./helpers');
 const RULES = require('../lib/rules');
 
@@ -55,37 +58,82 @@ describe('rules on a board', () => {
   const logFor = (rule) => s.ok('GET', `/api/boards/main/rules/log?rule=${rule}`, undefined, USER);
   const newItem = (d = {}) => s.ok('POST', '/api/boards/main/items', { title: 'A ticket', column: 'Ready', ...d }, USER);
 
-  it("the board's own behaviours are rules in the same list, with the values it runs with", async () => {
+  it("the board's own behaviours are ordinary stored rules, seeded with the values it runs with (INT-472)", async () => {
     const v = await s.ok('GET', '/api/boards/main/rules', undefined, USER);
-    const own = Object.fromEntries(v.rules.filter((r) => r.native).map((r) => [r.id, r]));
-    for (const id of ['board-land', 'board-idle-check', 'board-ask-escalation', 'board-stuck-watch', 'board-idle-alarm', 'board-rebalance']) assert.ok(own[id], id);
+    const own = Object.fromEntries(v.rules.filter((r) => r.id.startsWith('board-')).map((r) => [r.id, r]));
+    for (const id of ['board-land', 'board-idle-check', 'board-ask-escalation', 'board-stuck-watch', 'board-rebalance']) {
+      assert.ok(own[id], id);
+      assert.ok(!own[id].native, `${id} is an ordinary rule`);
+    }
+    assert.ok(!own['board-idle-alarm'], 'an alarm the board never set follows agents.json, with no rule');
     assert.deepEqual(own['board-idle-check'].when, { on: 'idle', minutes: 60 });
     assert.match(own['board-idle-check'].text, /^If a ticket idles for 1 h → wake coordinator/);
-    assert.ok(v.vocabulary.times.board_idle.nativeOnly, "the board's own words are marked");
+    assert.ok(!v.vocabulary.times.board_idle.nativeOnly, 'no word is reserved any more');
     assert.ok(v.vocabulary.events.entered.column);
   });
 
-  it("one of the board's own rules edits its setting; reshaped, it becomes an ordinary rule and the behaviour goes off", async () => {
+  it("the board's rules drive its behaviours: edited, switched off, copied or deleted like any rule (INT-472)", async () => {
     const get = async (id) => (await s.ok('GET', '/api/boards/main/rules', undefined, USER)).rules.find((r) => r.id === id);
     const ic = await get('board-idle-check');
     const body = { name: ic.name, enabled: ic.enabled, when: ic.when, then: ic.then };
     assert.deepEqual((await s.ok('PUT', '/api/boards/main/rules/board-idle-check', { ...body, when: { on: 'idle', minutes: 90 } }, USER)).when, { on: 'idle', minutes: 90 });
-    assert.equal((await get('board-idle-check')).when.minutes, 90, 'kept as the board setting');
+    assert.equal((await get('board-idle-check')).when.minutes, 90);
     await s.ok('PUT', '/api/boards/main/rules/board-idle-check', { ...body, enabled: false }, USER);
     assert.equal((await get('board-idle-check')).enabled, false, 'switched off, still listed');
-    // reshaped: a condition the idle check doesn't have → an ordinary rule, and the idle check itself is off
+    // reshaped, it stays the same rule (same id) and is no longer the idle check
     const mine = await s.ok('PUT', '/api/boards/main/rules/board-idle-check', { ...body, enabled: true, if: 'priority:High' }, USER);
-    assert.ok(!mine.native && mine.id.startsWith('rule'));
-    assert.equal((await get('board-idle-check')).enabled, false);
-    // the board's own words stay the board's own
-    const bad = await s.api('POST', '/api/boards/main/rules', { name: 'x', when: { on: 'board_idle', minutes: 30 }, then: [{ do: 'wake', agent: 'drax' }] }, USER);
+    assert.equal(mine.id, 'board-idle-check');
+    assert.equal(mine.if, 'priority:High');
+    // an engine's words work only in its rule's shape, with a hint naming the rule
+    const bad = await s.api('POST', '/api/boards/main/rules', { name: 'x', when: { on: 'board_idle', minutes: 30 }, then: [{ do: 'comment', text: 'idle' }] }, USER);
     assert.equal(bad.status, 400);
+    assert.equal(bad.body.code, 'BAD_REQUEST');
+    assert.match(bad.body.hint, /Idle-board alarm/);
     const keep = await s.api('PUT', '/api/boards/main/rules/board-stuck-watch', { name: 'Stuck watch', when: { on: 'idle', minutes: 60 }, then: [{ do: 'unstick' }] }, USER);
     assert.equal(keep.status, 400, 'unstick only works as the stuck watch has it');
-    assert.equal((await s.ok('DELETE', '/api/boards/main/rules/board-rebalance', undefined, USER)).off, 'board-rebalance');
-    assert.equal((await get('board-rebalance')).enabled, false, 'deleting one of the board\'s own switches it off');
-    await s.ok('DELETE', `/api/boards/main/rules/${mine.id}`, undefined, USER);
+    // the idle alarm, in its shape, is anyone's rule now; its agents must be standing ones
+    const alarm = await s.api('POST', '/api/boards/main/rules', { name: 'Alarm', when: { on: 'board_idle', minutes: 30 }, then: [{ do: 'wake', agent: 'nobody' }] }, USER);
+    assert.equal(alarm.status, 400);
+    assert.match(alarm.body.error, /standing agents/);
+    // deleted, the behaviour is off; the old setting route writes the rule back
+    assert.ok((await s.ok('DELETE', '/api/boards/main/rules/board-rebalance', undefined, USER)).deleted);
+    assert.equal((await s.ok('GET', '/api/boards/main/rebalance', undefined, USER)).on, false);
+    await s.ok('PUT', '/api/boards/main/rebalance', { on: true }, USER);
+    assert.equal((await get('board-rebalance')).enabled, true, 'PUT …/rebalance made the rule again');
+    await s.ok('PUT', '/api/boards/main/idle-alarm', { on: false, minutes: 25 }, USER);
+    const ia = await get('board-idle-alarm');
+    assert.deepEqual([ia.enabled, ia.when], [false, { on: 'board_idle', minutes: 25 }], 'PUT …/idle-alarm writes its rule');
     await s.ok('PUT', '/api/boards/main/rules/board-idle-check', { ...body, enabled: true, when: { on: 'idle', minutes: 60 } }, USER);
+  });
+
+  it('an existing board moves its behaviour settings into rules once, keeping what was off (INT-472)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-seed-'));
+    const t = await startServer({ dir });
+    const file = path.join(dir, 'data', 'boards', 'main', 'board.json');
+    await t.stop({ keep: true });
+    const b = JSON.parse(fs.readFileSync(file, 'utf8'));
+    b.behaviours = { landOnApprove: false, idleCheck: { on: true, minutes: 45 }, stuckWatch: false };
+    b.idleAlarm = { on: true, minutes: 30, wake: [], note: '' };
+    b.rebalance = { on: false, maxMoves: 3 };
+    // a rule of the human's in the idle check's shape: it stays his, and the idle check gets its own
+    b.automations = { rules: [{ id: 'rule_mine', name: 'Mine', enabled: true, when: { on: 'idle', minutes: 120 }, then: [{ do: 'wake', agent: 'coordinator' }], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }], log: [] };
+    fs.chmodSync(file, 0o666);
+    fs.writeFileSync(file, JSON.stringify(b));
+    const u = await startServer({ dir });
+    try {
+      const rules = Object.fromEntries((await u.ok('GET', '/api/boards/main/rules', undefined, USER)).rules.map((r) => [r.id, r]));
+      assert.equal(rules['board-land'].enabled, false);
+      assert.deepEqual([rules['board-idle-check'].enabled, rules['board-idle-check'].when.minutes, rules['board-idle-check'].engine], [true, 45, 'idleCheck']);
+      assert.ok(!rules.rule_mine.engine, "the human's own rule in the same shape stays an ordinary rule");
+      assert.equal(rules['board-stuck-watch'].enabled, false);
+      assert.equal(rules['board-ask-escalation'].enabled, true, 'not set: the default, on');
+      assert.deepEqual([rules['board-idle-alarm'].enabled, rules['board-idle-alarm'].then[0].do], [true, 'ask_human']);
+      assert.equal(rules['board-rebalance'].enabled, false);
+      assert.equal((await u.ok('GET', '/api/boards/main/rebalance', undefined, USER)).maxMoves, 3, 'its numbers stay settings');
+      await u.ok('POST', '/api/boards/main/items', { title: 'saves the board', column: 'Ready' }, USER);
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.ok(!saved.behaviours && !saved.idleAlarm, 'the old settings are gone once saved');
+    } finally { await u.stop(); }
   });
 
   it('only the human makes rules; a bad one comes back 400 with a hint', async () => {

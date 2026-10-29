@@ -538,7 +538,8 @@ describe('standing agents pick up work already on the board', () => {
       // INT-294: nobody named is fine while the human hears it
       const none = await s.ok('PUT', `${B}/idle-alarm`, { on: true, wake: [] }, USER);
       assert.deepEqual([none.on, none.wake, none.human], [true, [], true]);
-      const stored = () => JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).idleAlarm || {};
+      // the alarm is the board's Idle-board alarm rule (INT-472)
+      const stored = () => JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).automations.rules.find((r) => r.id === 'board-idle-alarm').when;
       assert.equal('human' in stored(), false, 'not sent, not stored: it follows the default');
       assert.equal((await s.ok('PUT', `${B}/idle-alarm`, { human: false, wake: ['lead'] }, USER)).human, false);
       assert.equal((await s.ok('PUT', `${B}/idle-alarm`, { minutes: 40 }, USER)).human, false, 'once set, it stays');
@@ -548,6 +549,19 @@ describe('standing agents pick up work already on the board', () => {
       assert.equal(set.note, 'Nudge the assignees first; ask Gamora for anything unassigned.');
       const off = await s.ok('PUT', `${B}/idle-alarm`, { on: false }, USER);
       assert.deepEqual([off.on, off.wake], [false, ['lead']], 'switching off keeps who it wakes');
+      // INT-472: its rule deleted, the alarm is off; agents.json's flag on lander doesn't switch it back on
+      await s.ok('PUT', `${B}/idle-alarm`, { on: true }, USER);
+      // reshaped, it loses its mark: off too, not back to agents.json (Rocket's review)
+      await s.ok('PUT', `${B}/rules/board-idle-alarm`, { name: 'Mine now', enabled: true, when: { on: 'idle', minutes: 60 }, then: [{ do: 'wake', agent: 'coordinator' }] }, USER);
+      const reshaped = await s.ok('GET', `${B}/idle-alarm`);
+      assert.deepEqual([reshaped.on, reshaped.wake], [false, []]);
+      // switched on again from settings it gets a new marked rule; deleting that one leaves it off
+      await s.ok('PUT', `${B}/idle-alarm`, { on: true }, USER);
+      const mark = (await s.ok('GET', `${B}/rules`, undefined, USER)).rules.find((r) => r.engine === 'idleAlarm');
+      assert.ok(mark && mark.id !== 'board-idle-alarm', 'a new rule, marked');
+      await s.ok('DELETE', `${B}/rules/${mark.id}`, undefined, USER);
+      const gone = await s.ok('GET', `${B}/idle-alarm`);
+      assert.deepEqual([gone.on, gone.wake], [false, []]);
     } finally { await s.stop(); }
   });
 
@@ -657,7 +671,8 @@ describe('standing agents pick up work already on the board', () => {
 
       // switched off: a change to the team moves nothing
       await s.ok('PUT', `${B}/rebalance`, { on: false }, USER);
-      assert.deepEqual(stored(), { minWaitMinutes: 0, minGap: 2, on: false });
+      assert.deepEqual(stored(), { minWaitMinutes: 0, minGap: 2 }, 'on/off is the Rebalancing rule (INT-472)');
+      assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, 'data', 'boards', 'main', 'board.json'), 'utf8')).automations.rules.find((r) => r.id === 'board-rebalance').enabled, false);
       await s.ok('DELETE', '/api/agents/other', undefined, USER);
       await new Promise((r) => setTimeout(r, 3500));
       assert.equal((await s.ok('GET', `${B}/rebalance`)).recent.length, 1);

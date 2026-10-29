@@ -17,6 +17,7 @@ const cursor = async () => (await s.ok('GET', '/api/app')).seq;
 const eventsSince = async (since, q = '') => (await s.ok('GET', `/api/events?since=${since}&board=main${q}`)).events;
 
 describe('board API', () => {
+  // the avatar-by-URL test fetches from a stand-in on 127.0.0.1, which a real board refuses (INT-468)
   before(async () => { s = await startServer(); });
   after(async () => { await s.stop(); });
 
@@ -147,6 +148,31 @@ describe('board API', () => {
       await refused(path.join(s.dir, f));
     }
     assert.equal((await att(path.join(s.dir, 'agents.json'), USER)).status, 201, 'the human still can');
+  });
+
+  test('the page loads only from the board and Google Fonts; an avatar is a file, never a URL the board fetches (INT-468, INT-486)', async () => {
+    const page = await fetch(`${s.base}/`);
+    const csp = page.headers.get('content-security-policy');
+    assert.match(csp, /script-src 'self';/);
+    assert.match(csp, /img-src 'self' data: blob:;/, 'no remote images');
+    assert.match(csp, /connect-src 'self';/);
+    assert.match(csp, /frame-ancestors 'none'/);
+
+    let hits = 0;
+    const host = http.createServer((req, res) => { hits++; res.end(); });
+    await new Promise((r) => host.listen(0, '127.0.0.1', r));
+    try {
+      for (const image of [`http://127.0.0.1:${host.address().port}/a.png`, 'https://example.com/a.png', 'not a url']) {
+        const r = await s.api('PATCH', '/api/profiles/me', { image }, { agent: 'pic' });
+        assert.deepEqual([r.status, r.body.code], [400, 'BAD_REQUEST'], image);
+        assert.match(r.body.hint, /imagePath/);
+      }
+      assert.equal(hits, 0, 'the board fetched nothing');
+    } finally { host.close(); }
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    const me = await s.ok('PATCH', '/api/profiles/me', { imageBase64: png }, { agent: 'pic' });
+    assert.match(me.image, /^\/avatars\/pic-\w+\.png$/);
+    assert.equal((await s.ok('PATCH', '/api/profiles/me', { image: null }, { agent: 'pic' })).image, undefined, 'null still clears');
   });
 
   test('leases lock other agents but never the human', async () => {

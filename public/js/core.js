@@ -63,15 +63,20 @@ const TYPE_VAR = { issue: 'var(--issue)', task: 'var(--task)', spike: 'var(--spi
 const FIELD_ICON = { text: 'text', markdown: 'text', number: 'num', boolean: 'toggle', enum: 'list', tags: 'tag', date: 'cal', url: 'link', user: 'user' };
 const LOGO = '<svg viewBox="0 0 32 32"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent-2)"/></linearGradient></defs><rect x="2" y="2" width="28" height="28" rx="9" fill="url(#lg)"/><path d="M9.5 11h11M9.5 16h7M9.5 21h4" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/><path d="M23 17.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1z" fill="#fff"/></svg>';
 
+// A window of days in words: "last day", "last 7 days"; before(): the one it is compared with.
+const lastDays = (d) => (d === 1 ? 'last day' : `last ${d} days`);
+const daysBefore = (d) => (d === 1 ? 'day before' : `${d} days before`);
+
 // Agents (and you) can set colour / glyph / image via PATCH /api/profiles/me; otherwise colour comes from the name.
 function avatar(actor, cls = '') {
   const name = actor?.name || '?';
   const p = state.profiles[name];
   const kind = (p?.kind || actor?.kind) === 'user' ? 'user' : 'agent';
   const color = p?.color || `hsl(${hue(name)} 62% 56%)`;
-  const style = `--av:${esc(color)}${p?.image ? `;background-image:url(&quot;${esc(p.image)}&quot;)` : ''}`;
-  const run = state.standing[name]?.status;
-  return `<span class="avatar ${kind} ${p?.image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}"${run && run !== 'idle' ? ` data-run="${run}"` : ''} style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${p?.image ? '' : p?.glyph ? `<i class="gl">${esc(emojiGlyph(p.glyph))}</i>` : esc(initials(name))}</span>`;
+  const image = p?.image?.startsWith('/avatars/') ? p.image : ''; // an older profile's remote URL is blocked by the page's CSP (INT-468): show the glyph
+  const style = `--av:${esc(color)}${image ? `;background-image:url(&quot;${esc(image)}&quot;)` : ''}`;
+  const run = cls.includes('still') ? null : state.standing[name]?.status; // 'still': holds a permission, says nothing about running now
+  return `<span class="avatar ${kind} ${image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}"${run && run !== 'idle' ? ` data-run="${run}"` : ''} style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${image ? '' : p?.glyph ? `<i class="gl">${esc(emojiGlyph(p.glyph))}</i>` : esc(initials(name))}</span>`;
 }
 // A glyph like 🗡 or ⚔ draws as a flat text symbol unless U+FE0F follows it; add it so it shows as the emoji.
 const emojiGlyph = (g) => (/^\p{Extended_Pictographic}$/u.test(g) && !/\p{Emoji_Presentation}/u.test(g) ? `${g}️` : g);
@@ -99,5 +104,5 @@ const thinkAge = (n) => {
 export {
   tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, rel, fmtLeft,
   TYPES, PRIORITIES, PRIO_VAR, TYPE_VAR, FIELD_ICON, LOGO,
-  avatar, emojiGlyph, nameOf, nameHTML, dotsHTML, minsSince, standingOf, runAgo, thinkAge,
+  avatar, emojiGlyph, nameOf, nameHTML, dotsHTML, minsSince, standingOf, runAgo, thinkAge, lastDays, daysBefore,
 };

@@ -379,18 +379,113 @@ function getCtx(id) {
   return ctx;
 }
 
-// The board's own behaviours, as the Rules page sets them (each is a rule there): on/off and their numbers, with the
-// manifest's values as the defaults.
+/* The board's own behaviours are stored rules (INT-472): seeded once, then edited and deleted like any rule. Each
+   engine runs from the one rule marked with its key (`engine`), with that rule's numbers; the shape only checks that
+   rule still fits, so a rule of the human's in the same shape stays an ordinary rule. The rule sweeps never run an
+   engine's rule themselves. Deleting it switches the behaviour off; reshaped, it loses the mark and is ordinary. */
+const shapeIs = (r, on, dos) => r.when?.on === on && r.then?.length === dos.length && r.then.every((x, i) => x.do === dos[i]);
+const ENGINES = {
+  land: { id: 'board-land', name: 'Merge approved work into main', fits: (r) => shapeIs(r, 'approved', ['land']) && !r.if },
+  idleCheck: { id: 'board-idle-check', name: 'Idle check', fits: (r) => shapeIs(r, 'idle', ['wake']) && !r.if && r.then[0].agent === 'coordinator' && !r.then[0].note },
+  askEscalation: { id: 'board-ask-escalation', name: 'Escalate overdue asks', fits: (r) => shapeIs(r, 'ask_overdue', ['escalate']) && !r.if },
+  stuckWatch: { id: 'board-stuck-watch', name: 'Stuck watch', fits: (r) => shapeIs(r, 'stuck', ['unstick']) && !r.if },
+  staleWork: { id: 'board-stale-work', name: 'Stale work back to pickup', fits: (r, ctx) => {
+    const work = workingColumn(ctx), pick = pickupColumns(ctx)[0];
+    return !!(work && pick) && shapeIs(r, 'in_column', ['move']) && r.when.column === work.id && r.then[0].column === pick.id && (!r.if || r.if === '!claimant');
+  } },
+  idleAlarm: { id: 'board-idle-alarm', name: 'Idle-board alarm', fits: (r) => r.when?.on === 'board_idle' && !r.if && (r.then.every((x) => x.do === 'wake') || shapeIs(r, 'board_idle', ['ask_human'])) },
+  rebalance: { id: 'board-rebalance', name: 'Rebalancing', fits: (r) => shapeIs(r, 'assignee_away', ['reassign']) && !r.if },
+};
+// The words only an engine carries out, and whose they are: a rule may use them only in that engine's shape
+const ENGINE_WORDS = { board_idle: 'idleAlarm', stuck: 'stuckWatch', unstick: 'stuckWatch', escalate: 'askEscalation', assignee_away: 'rebalance', reassign: 'rebalance' };
+// The rule an engine runs from, while it is on (any: also when switched off, for its numbers)
+const engineRule = (ctx, key, any = false) => {
+  const r = (ctx.board.automations?.rules || []).find((x) => x.engine === key);
+  return r && (any || r.enabled) ? r : null;
+};
+// an engine's rule, or a ticket's own (its trigger: sweepTriggers runs those, INT-475)
+const inEngine = (ctx, r) => !!r.engine || !!r.item;
+const idleCheckDefault = () => (Number(M.triggers?.idleMinutes) > 0 ? Math.max(5, Number(M.triggers.idleMinutes)) : 60);
+// What the engines read: on/off and their numbers, from the rules
 function behavioursOf(ctx) {
-  const b = ctx.board.behaviours || {};
-  const idleDefault = Number(M.triggers?.idleMinutes) > 0 ? Math.max(5, Number(M.triggers.idleMinutes)) : 60;
+  const ic = engineRule(ctx, 'idleCheck');
+  const sw = engineRule(ctx, 'staleWork');
   return {
-    landOnApprove: b.landOnApprove !== false,
-    askEscalation: b.askEscalation !== false,
-    stuckWatch: b.stuckWatch !== false,
-    idleCheck: { on: b.idleCheck?.on !== false, minutes: Math.max(5, Number(b.idleCheck?.minutes) || idleDefault) },
-    staleWork: { on: b.staleWork ? b.staleWork.on !== false : (Number(M.staleWorkMinutes) || 0) > 0, minutes: Number(b.staleWork?.minutes) > 0 ? Math.max(5, Number(b.staleWork.minutes)) : Number(M.staleWorkMinutes) || 120 }, // the floor is the Rules page's; the manifest's own value stands as set
+    landOnApprove: !!engineRule(ctx, 'land'),
+    askEscalation: !!engineRule(ctx, 'askEscalation'),
+    stuckWatch: !!engineRule(ctx, 'stuckWatch'),
+    idleCheck: { on: !!ic, minutes: ic?.when.minutes || idleCheckDefault() },
+    staleWork: { on: !!sw, minutes: sw?.when.minutes || Number(M.staleWorkMinutes) || 120 },
   };
+}
+// Once per board: the behaviours' old settings become their rules, on or off as they were, and the settings go
+function seedEngineRules(b) {
+  if (b.automations.engines) return;
+  const ctx = { board: b };
+  const old = b.behaviours || {};
+  const at = new Date().toISOString();
+  const add = (key, enabled, when, then, extra = {}) => {
+    // a rule of the human's in the same shape stays theirs: the engine gets its own, marked
+    const id = b.automations.rules.some((r) => r.id === ENGINES[key].id) ? `${ENGINES[key].id}-${Date.now().toString(36)}` : ENGINES[key].id;
+    b.automations.rules.push({ id, name: extra.name || ENGINES[key].name, engine: key, enabled, when, ...(extra.if ? { if: extra.if } : {}), then, createdAt: at, updatedAt: at });
+  };
+  add('land', old.landOnApprove !== false, { on: 'approved' }, [{ do: 'land' }]);
+  add('idleCheck', old.idleCheck?.on !== false, { on: 'idle', minutes: Math.max(5, Number(old.idleCheck?.minutes) || idleCheckDefault()) }, [{ do: 'wake', agent: 'coordinator' }]);
+  add('askEscalation', old.askEscalation !== false, { on: 'ask_overdue' }, [{ do: 'escalate' }]);
+  add('stuckWatch', old.stuckWatch !== false, { on: 'stuck', minutes: old.stuckMinutes || STUCK.timingsOf(M.stuck).quietMs / 60_000 }, [{ do: 'unstick' }]);
+  const work = workingColumn(ctx), pick = pickupColumns(ctx)[0];
+  if (work && pick) {
+    add('staleWork', old.staleWork ? old.staleWork.on !== false : (Number(M.staleWorkMinutes) || 0) > 0,
+      { on: 'in_column', column: work.id, minutes: Number(old.staleWork?.minutes) > 0 ? Math.max(5, Number(old.staleWork.minutes)) : Number(M.staleWorkMinutes) || 120 },
+      [{ do: 'move', column: pick.id }], { if: '!claimant', name: `Stale work back to ${pick.name}` });
+  }
+  // an alarm the board never set follows agents.json (idleAlarmOf): it gets a rule once it is set here
+  const ia = b.idleAlarm;
+  if (ia) {
+    const wake = [].concat(ia.wake || []);
+    add('idleAlarm', !!ia.on, { on: 'board_idle', minutes: ia.minutes || 20, ...(ia.human === false ? { human: false } : {}) },
+      wake.length ? wake.map((n) => ({ do: 'wake', agent: n, ...(ia.note ? { note: ia.note } : {}) })) : [{ do: 'ask_human', text: IDLE_ALARM_TEXT }]);
+  }
+  add('rebalance', b.rebalance?.on !== false, { on: 'assignee_away' }, [{ do: 'reassign' }]);
+  delete b.behaviours;
+  delete b.idleAlarm;
+  if (b.rebalance) delete b.rebalance.on; // its numbers stay settings
+  b.automations.engines = 1;
+}
+// Once per board (INT-475): the triggers stored on tickets become rules on their ticket, same ids and state. The
+// default idle check goes (the board's Idle check rule covers the card, its last firing kept), a card that removed it
+// is skipped by that rule, and what waited in triggerQueue waits on its rule.
+function migrateTriggers(b) {
+  const items = Object.values(b.items).filter((it) => it.triggers || 'idleCheck' in it);
+  if (!items.length && !b.triggerQueue) return;
+  const ic = b.automations.rules.find((r) => r.engine === 'idleCheck');
+  const to = new Map(); // trigger id → its rule
+  for (const it of items) {
+    for (const t of it.triggers || []) {
+      if (!t?.when?.kind) continue;
+      if (!t.default) { const r = TRIGGERS.migrate(t, it.id); to.set(t.id, r); b.automations.rules.push(r); continue; }
+      if (!ic) continue;
+      to.set(t.id, ic);
+      if (t.firedAt) ic.state = { ...(ic.state || {}), fired: { ...(ic.state?.fired || {}), [it.id]: t.firedAt } };
+    }
+    if (it.idleCheck === false && ic && !(ic.skip || []).includes(it.id)) ic.skip = [...(ic.skip || []), it.id];
+    delete it.triggers;
+    delete it.idleCheck;
+  }
+  for (const e of Array.isArray(b.triggerQueue) ? b.triggerQueue : []) {
+    const r = to.get(e.triggerId);
+    if (r) r.state = { ...(r.state || {}), pending: { ...(r.state?.pending || {}), [e.itemId]: { why: e.why, firedAt: e.firedAt } } };
+  }
+  delete b.triggerQueue;
+}
+const IDLE_ALARM_TEXT = 'The board is idle: tickets wait and no builder is running';
+// An old setting route writes its engine's rule and nothing else (INT-472): that rule, or a new one marked for it
+function setEngineRule(ctx, key, patch) {
+  const cur = engineRule(ctx, key, true);
+  const at = now();
+  if (cur) { Object.assign(cur, patch, { updatedAt: at }); return; }
+  const id = rulesOf(ctx).rules.some((r) => r.id === ENGINES[key].id) ? rid('rule') : ENGINES[key].id;
+  rulesOf(ctx).rules.push({ id, name: ENGINES[key].name, engine: key, ...patch, createdAt: at, updatedAt: at });
 }
 // the card looks among the rules, as card rules ({ name, condition, look, enabled }), in the rules' order
 const looksOf = (b) => (b.automations?.rules || []).filter((r) => r.when?.on === 'fits' && r.then?.[0]?.do === 'look').map((r) => ({ name: r.name, condition: r.if, look: r.then[0].look, enabled: r.enabled !== false }));
@@ -418,7 +513,9 @@ function normalizeBoard(b) {
     delete b.cardRulesSeeded;
   }
   b.digest = Array.isArray(b.digest) ? b.digest : [];
-  b.automations = isObj(b.automations) ? { rules: Array.isArray(b.automations.rules) ? b.automations.rules : [], log: Array.isArray(b.automations.log) ? b.automations.log : [] } : { rules: [], log: [] };
+  b.automations = isObj(b.automations) ? { rules: Array.isArray(b.automations.rules) ? b.automations.rules : [], log: Array.isArray(b.automations.log) ? b.automations.log : [], ...(b.automations.engines ? { engines: b.automations.engines } : {}), ...(b.automations.idleAlarmDeleted ? { idleAlarmDeleted: true } : {}) } : { rules: [], log: [] };
+  seedEngineRules(b);
+  migrateTriggers(b);
   // Card looks are rules (when a ticket fits, then its card looks so): a board's card rules move in once. cardRules
   // stays as their copy for what draws and matches looks (lookFor, is:rule:, the page), rebuilt from the rules.
   if (b.cardRules.length && !b.automations.rules.some((r) => r.when?.on === 'fits')) {
@@ -931,9 +1028,45 @@ function grantsOf(name) {
       if (!APPROVAL_POWERS.has(power)) return ignore(power, { minOks: g.minOks, from: g.from }, '"minOks" and "from" only apply to review.decide and column.gate, the powers that act on a reviewed ticket');
       Object.assign(out, rule);
     }
+    if (PLUGIN_POWER_RE.test(power)) {
+      const a = pluginAction(power);
+      if (!a) return null; // its plugin is off or gone, or no longer declares the action: no power, never a wider one
+      if (g.approve != null && g.approve !== 'human') return ignore(power, { approve: g.approve }, '"approve" is "human" or left out');
+      const stray = Object.keys(g.where || {}).filter((k) => !a.inputs.some((f) => f.key === k));
+      if (stray.length) return ignore(power, g.where, `its "where" names ${stray.join(', ')}, which the action doesn't take`);
+      if (g.approve === 'human') out.approve = 'human';
+    }
     return out;
   }).flatMap((g) => (g?.power === ADMIN_BUNDLE ? adminCovers().map((power) => ({ ...g, power })) : [g]))
-    .filter((g) => g && isPower(g.power));
+    .filter((g) => g && (isPower(g.power) || PLUGIN_POWER_RE.test(g.power)));
+}
+// Plugin actions as powers (INT-473): plugin.<name>.<action>, granted only by the human (agents.json or POST
+// /api/agents; never a role, a bundle, the admin set or admin.permit). It is a power only while the plugin is
+// enabled and declares the action. Its "where" scopes the inputs: { channel: "#deploys" | "#ops-*" | [...] }.
+const PLUGIN_POWER_RE = /^plugin\.([a-z][a-z0-9-]{0,39})\.([A-Za-z][\w-]{0,39})$/;
+function pluginAction(power) {
+  const m = PLUGIN_POWER_RE.exec(power);
+  // grantsOf can run before plugins is set up (at start): no plugin power until it is
+  try { return m ? plugins.actionOf(m[1], m[2]) : null; } catch { return null; }
+}
+// exact, "prefix*", or a list of those; every value of the input must fit (a tags input: each tag), and an input
+// the scope names but the run leaves out is outside it
+const pluginWhereFits = (where, inputs) => Object.entries(where || {}).every(([k, want]) => {
+  const vals = [].concat(inputs[k] ?? []).map(String);
+  return vals.length > 0 && vals.every((v) => [].concat(want).map(String).some((w) => (w.endsWith('*') ? v.startsWith(w.slice(0, -1)) : v === w)));
+});
+// The grant an agent runs a plugin action under, or a fail(). Humans need none.
+function pluginGrant(actor, power, inputs, status = 403) {
+  if (actor.kind === 'user') return null;
+  const mine = grantsOf(actor.name).filter((g) => g.power === power);
+  if (!mine.length) fail(status, `${actor.name} may not run ${power}`, { code: status === 403 ? 'FORBIDDEN' : 'OUT_OF_SCOPE', hint: `Only the human grants it: { "power": "${power}" } in your grants in agents.json. Ask on a card` });
+  const g = mine.find((x) => pluginWhereFits(x.where, inputs));
+  if (!g) {
+    const off = Object.entries(mine[0].where || {}).find(([k]) => !pluginWhereFits({ [k]: mine[0].where[k] }, inputs));
+    fail(status, `This run is outside your ${power} grant${off ? `: ${off[0]} is ${JSON.stringify(inputs[off[0]] ?? null)}, the grant allows ${JSON.stringify(off[1])}` : ''}`, { code: 'OUT_OF_SCOPE', hint: 'Change the input to one the grant covers, or ask the human on a card' });
+  }
+  // an unscoped or direct grant wins over one that waits for the human
+  return mine.filter((x) => pluginWhereFits(x.where, inputs)).find((x) => x.approve !== 'human') || g;
 }
 // { minOks, from } read from a grant, or a string saying why it can't be. minOks is a whole number ≥ 1 or "all";
 // from is a list of reviewer names (left out: every reviewer assigned to the ticket). from alone means "all".
@@ -1004,9 +1137,38 @@ async function withCommits(ctx, id, fn) {
 // move routes look the commits of each ticket up first, as the review routes do. Anyone else: nothing to do.
 const gateOnVerdicts = (actor) => actor.kind === 'agent' && grantsOf(actor.name).some((g) => g.power === 'column.gate' && Object.keys(g.where || {}).some((k) => k.startsWith('reviewers.')));
 function withGateCommits(ctx, ids, actor, fn) {
+  if (actor.kind === 'agent' && grantsOf(actor.name).some((g) => g.power === 'column.gate')) return withGateTouches(ctx, ids, () => withVerdictCommits(ctx, ids, actor, fn));
+  return withVerdictCommits(ctx, ids, actor, fn);
+}
+function withVerdictCommits(ctx, ids, actor, fn) {
   if (!gateOnVerdicts(actor)) return fn();
   const [id, ...rest] = ids.filter((x) => ctx.board.items[String(x).toUpperCase()]);
-  return id ? withCommits(ctx, id, () => withGateCommits(ctx, rest, actor, fn)) : fn();
+  return id ? withCommits(ctx, id, () => withVerdictCommits(ctx, rest, actor, fn)) : fn();
+}
+// The board's own files a ticket's commits touch, read from the branch as it is now (INT-448), for a column.gate move
+// into an approval gate (INT-478): "<board>:<id>" → { files } (null: could not read), for the request that looked.
+const knownTouches = new Map();
+async function withGateTouches(ctx, ids, fn) {
+  const mine = [];
+  for (const x of ids) {
+    const item = ctx.board.items[String(x).toUpperCase()];
+    const author = item && commitsAuthor(item);
+    if (!author || !worktrees || !agentBranch(author)) continue;
+    const t = { files: await worktrees.commitsForAsync(author, item.id, { strict: true }).then((c) => worktrees.boardFilesTouched(c)).catch(() => null) };
+    knownTouches.set(`${ctx.id}:${item.id}`, t);
+    mine.push([`${ctx.id}:${item.id}`, t]);
+  }
+  try { return await fn(); } finally { for (const [k, t] of mine) if (knownTouches.get(k) === t) knownTouches.delete(k); }
+}
+// Inside moveInto: an agent's column.gate move into an approval gate refuses what an agent's approval refuses (lib/reviews.js)
+function gateBoardFiles(ctx, item) {
+  const author = commitsAuthor(item);
+  if (!author || !worktrees || !agentBranch(author)) return; // no branch: nothing it would land
+  // not looked up (a route that didn't ask): unknown, which only the human passes
+  const files = knownTouches.get(`${ctx.id}:${item.id}`)?.files ?? null;
+  if (files && !files.length) return;
+  fail(409, files ? `${item.id}'s commits change the board's own files (${files.join(', ')}): only the human moves it through the gate` : `${item.id}'s commits could not be read, so the board can't tell whether they change its own files: only the human moves it through the gate`,
+    { code: 'BOARD_FILES', hint: files ? 'Leave it for the human' : 'Could not read the commits; leave it for the human', files: files || [] });
 }
 // A reviewer's verdict can stand in for the human only when the board checked who gave it (the reviewer has
 // a token here) and nothing was committed on the ticket since. Commits that aren't known (now, or when the
@@ -1495,6 +1657,7 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null, c
       if (to.flags.humanOnlyIn && (item.questions || []).some((q) => q.kind === 'review')) fail(409, `${item.id} has an open review — decide it instead of moving it`, { code: 'REVIEW_OPEN', hint: `POST /api/boards/${ctx.id}/items/${item.id}/review/decision { "verdict": "approve" | "changes", "comment": "…" } (needs the review.decide grant)` });
       if (to.flags.humanOnlyIn && reviewWithdrawnUndecided(item)) fail(409, `${item.id}'s review was withdrawn and never decided — it doesn't go through the gate on an agent's move`, { code: 'REVIEW_OPEN', hint: 'Request review again, or leave it for the human' });
       gateBy = grantFor(ctx, actor, 'column.gate', item, `move items ${to.flags.humanOnlyIn ? `into "${to.name}"` : `out of "${from.name}"`}`);
+      if (to.flags.humanOnlyIn) gateBoardFiles(ctx, item);
     }
     checkColumnPerm(ctx, actor, [to.id]);
     checkWip(to);
@@ -2220,7 +2383,9 @@ function powerBriefLines(ctx, x, said = {}) {
     'admin.permit': `a blocked command an agent asks you for: add it to the library (${cli('POST', '/api/permissions', 'key=<key> kind=command name=<Name> commands=["node:*"]')}) and turn it on for that agent (${cli('PUT', '/api/agents/<name>/permissions/<key>', 'mode=on')}); grant what it asks unless it is genuinely dangerous (secrets, tokens, deleting data, force-pushing); never your own row, never a board power`,
     'admin.permissions': `${cli('PUT', '/api/agents/<name>/permissions/<key>', 'mode=on')} · POST/PATCH/DELETE /api/permissions — only what you hold yourself, never your own row, never a board power, never a permission you hold; command, tool and folders permissions only narrow (403 NO_ESCALATION says why)`,
   };
-  return [`- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
+  const pm = PLUGIN_POWER_RE.exec(x.power);
+  if (pm) how[x.power] = `${cli('POST', `/api/plugins/${pm[1]}/actions/${pm[2]}/run`, `'{"inputs":{…}}'`)} → the run; its outcome is in the reply, or comes as a plugin.run.* event${x.approve ? '. Each run waits for the human\'s OK first' : ''}`;
+  return [`- **${x.power}** — ${pm ? `run ${pluginAction(x.power)?.label || pm[2]} on the ${pm[1]} plugin` : POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
     ...(Object.hasOwn(said, x.power) ? [`  ${guidanceLine(said[x.power])}`] : [])];
 }
 
@@ -2471,7 +2636,7 @@ function itemView(ctx, item, archived = false, blocksOf = null) {
   const blocks = blocksOf ? [...(blocksOf.get(item.id) || [])] : Object.values(ctx.board.items).filter((x) => x.blockedBy?.includes(item.id)).map((x) => x.id);
   const focus = archived ? [] : focusNames(ctx, item.id);
   const unanswered = archived || item.columnId === doneColumnId(ctx) ? [] : unansweredIn(item); // a finished ticket owes no reply (workFor skips it too)
-  return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived, ...(focus.length ? { focus } : {}), ...(unanswered.length ? { unanswered } : {}) };
+  return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived, ...(archived ? {} : { triggers: triggersOf(ctx, item) }), ...(focus.length ? { focus } : {}), ...(unanswered.length ? { unanswered } : {}) };
 }
 
 function boardView(ctx) {
@@ -2479,7 +2644,8 @@ function boardView(ctx) {
     hash: ctx.hash, seq: currentSeq(), serverTime: now(),
     app: { name: app.name, version: VERSION, build: BUILD, ...grafanaLink() },
     archivedCount: Object.keys(ctx.archive.items).length,
-    board: { ...ctx.board, automations: undefined }, // the Rules page reads them: GET …/rules
+    // the Rules page reads the rules: GET …/rules. Each card carries its triggers, for its 🔔 chip
+    board: { ...ctx.board, items: Object.fromEntries(Object.entries(ctx.board.items).map(([id, it]) => [id, withTriggers(ctx, it)])), automations: undefined },
   };
 }
 
@@ -2525,7 +2691,7 @@ const agentBranch = (name) => { try { return (name && standing?.get(name).worktr
 // seq is read with currentSeq().
 const { recent, currentSeq, parseFilter, matchesFilter, sseClients, waiters, emit, sseSend, longPoll, openStream, subs, saveSubs } = createEvents({
   fs, path, DATA, M, now, arr, boards, reply, HANDLED, presenceDelta, app, VERSION, BUILD, readJson, writeFileAtomic,
-  onEvent: (e) => { standing?.onEvent(e); onRuleEvent(e); } });
+  onEvent: (e) => { standing?.onEvent(e); onRuleEvent(e); }, uiItem: (ctx, it) => withTriggers(ctx, it) });
 
 /* ───────────────────────── profiles (agent/user colour, glyph, image) ───────────────────────── */
 
@@ -2554,7 +2720,8 @@ function updateProfile(name, d, actor) {
   if ('alignment' in d) { if (d.alignment) next.alignment = str(d.alignment, 400); else delete next.alignment; }
   if ('image' in d || 'imageBase64' in d || 'imagePath' in d) {
     if (!d.image && !d.imageBase64 && !d.imagePath) delete next.image;
-    else if (d.image && /^https?:\/\//i.test(d.image)) next.image = str(d.image, 2000);
+    // the board never fetches an address it is given (INT-486): an avatar is a file
+    else if (d.image && !d.imageBase64) fail(400, 'An avatar is a file, not a web address', { code: 'BAD_REQUEST', hint: 'Send imagePath (a file in the project, your worktree or the temp folder) or imageBase64' });
     else {
       let buf;
       let ext = 'png';
@@ -2613,7 +2780,7 @@ const { reviewColumn, REVIEW_PARTS, reviewerPool, authorsOf, addReviewer, remove
   fail, str, rid, now, tx, getItem, itemEvent, trimChange, mentionsIn, M, SYSTEM, boards,
   findColumn, doneColumnId, workingColumn, moveInto, guardWrite, helperOwns, parseNeedsHuman, syncNeeds, openQuestion,
   closeQuestions, writeVerdict, afterCommit, isCoordinator, ticketCommits, agentBranch, grantsOf, grantFor, reviewerRule, assignedOks,
-  openBlockersOf, reviewWithdrawnUndecided, landers, closeAsks, getStanding: () => standing, getWorktrees: () => worktrees });
+  openBlockersOf, reviewWithdrawnUndecided, landers, closeAsks, getStanding: () => standing, getWorktrees: () => worktrees, behavioursOf });
 // Whose memory a route means: "me" is the calling agent; any other name must be an agent the board knows (a
 // standing agent, one that has called the board, or one with a profile or a memory), matched without regard to
 // capitals so "Rocket" is rocket's memory.
@@ -2821,42 +2988,84 @@ async function machineReading() {
     return { leases: (m.ledger?.leases || []).length, busyPercent: Number(m.cpu?.busyPercent ?? NaN) };
   } catch { return null; }
 }
+const liveCard = (ctx, it) => !!it && !it.test && !it.journey?.doneAt && it.columnId !== doneColumnId(ctx);
+// The board's idle check covers every picked-up card that is awake, unless the card skips it (its 🔔 tab removed
+// it) or has an idle trigger of its own
+function idleCovers(ctx, ic, it) {
+  return !!ic && liveCard(ctx, it) && !!it.journey?.pickedUpAt && !ctx.board.columns.find((c) => c.id === it.columnId)?.flags?.sleeping
+    && !(ic.skip || []).includes(it.id) && !rulesOf(ctx).rules.some((r) => r.item === it.id && r.enabled && r.when.on === 'idle');
+}
+// A ticket's triggers as its 🔔 tab reads them (the shape from before INT-475): its own rules, and the board's idle
+// check while it covers the card (default: true; removing it here makes the idle check skip the card)
+function triggersOf(ctx, it) {
+  const own = rulesOf(ctx).rules.filter((r) => r.item === it.id).map((r) => ({ ...TRIGGERS.fromRule(r), text: RULES.describe(r, ctx.board.columns) }));
+  const ic = engineRule(ctx, 'idleCheck');
+  if (!idleCovers(ctx, ic, it)) return own;
+  const firedAt = ic.state?.fired?.[it.id];
+  return [...own, { id: ic.id, when: { kind: 'idle', ms: ic.when.minutes * 60_000 }, priority: 'batch', by: 'intellagent', at: it.journey.pickedUpAt, active: true, default: true, ...(firedAt ? { firedAt } : {}), text: RULES.describe(ic, ctx.board.columns) }];
+}
+function withTriggers(ctx, it) {
+  const triggers = triggersOf(ctx, it);
+  return triggers.length ? { ...it, triggers } : it;
+}
+// Ticket triggers are rules on one ticket (INT-475). Each sweep: the rules of tickets that are done or gone go; each
+// enabled one is checked, and so is the idle check on every card it covers; what fires waits on its rule
+// (state.pending) and is sent as one trigger.fired per agent, at once for "now", after the batch window for "batch".
 async function sweepTriggers(ctx) {
+  const gone = (r) => { const it = r.item && ctx.board.items[r.item]; return !!r.item && (!it || !!it.journey?.doneAt || it.columnId === doneColumnId(ctx)); };
+  const skips = engineRule(ctx, 'idleCheck', true);
+  if (rulesOf(ctx).rules.some(gone) || (skips?.skip || []).some((id) => gone({ item: id }))) tx(ctx, () => {
+    rulesOf(ctx).rules = rulesOf(ctx).rules.filter((r) => !gone(r));
+    if (skips?.skip) skips.skip = skips.skip.filter((id) => !gone({ item: id }));
+  });
   if (M.sandbox) return; // a sandbox runs no agents: nobody to wake
-  const live = (it) => !it.test && !it.journey?.doneAt;
-  const sleeping = new Set(ctx.board.columns.filter((c) => c.flags?.sleeping).map((c) => c.id));
-  // every picked-up card gets the idle check unless someone removed it there (idleCheck: false)
-  const wantIdle = Object.values(ctx.board.items).filter((it) => live(it) && it.journey?.pickedUpAt && !sleeping.has(it.columnId)
-    && it.idleCheck !== false && behavioursOf(ctx).idleCheck.on && !TRIGGERS.activeOn(it).some((t) => t.when.kind === 'idle'));
-  const items = Object.values(ctx.board.items).filter((it) => live(it) && TRIGGERS.activeOn(it).length);
-  if (!items.length && !wantIdle.length && !(ctx.board.triggerQueue || []).length) return;
-  const needsMachine = items.some((it) => TRIGGERS.activeOn(it).some((t) => t.when.kind === 'machine'));
-  const machine = needsMachine ? await machineReading() : null;
+  const own = rulesOf(ctx).rules.filter((r) => r.item && r.enabled);
+  const ic = engineRule(ctx, 'idleCheck');
+  const idle = ic ? Object.values(ctx.board.items).filter((it) => idleCovers(ctx, ic, it)) : [];
+  const pending = () => rulesOf(ctx).rules.filter((r) => Object.keys(r.state?.pending || {}).length);
+  if (!own.length && !idle.length && !pending().length) return;
+  const machine = own.some((r) => r.when.on === 'machine_free') ? await machineReading() : null;
   const nowMs = Date.now();
+  const firedAt = new Date(nowMs).toISOString();
   tx(ctx, (events) => {
-    let queue = ctx.board.triggerQueue || [];
-    // the same floor as a repeating trigger set through the API: each firing costs the coordinator a run
-    const idleMinutes = behavioursOf(ctx).idleCheck.minutes;
-    // version bumped so an open board redraws the card with its bell
-    for (const it of wantIdle) { it.triggers = [...(it.triggers || []).filter((x) => x.active), TRIGGERS.idleDefault({ id: rid('tr'), minutes: idleMinutes, nowIso: now() })]; it.version++; }
-    for (const it of Object.values(ctx.board.items)) {
-      if (!live(it)) continue;
-      for (const t of TRIGGERS.activeOn(it)) {
-        if (t.default && !behavioursOf(ctx).idleCheck.on) continue; // the idle check is switched off on the Rules page
-        if (TRIGGERS.holds(t, it)) continue;
-        const machineFree = machine && Number.isFinite(machine.busyPercent) ? machine.leases === 0 && machine.busyPercent < t.when.busyBelow : null;
-        const r = TRIGGERS.evaluate(t, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt), machineFree });
-        Object.assign(t, r.set);
-        if (!r.fire) continue;
-        t.firedAt = new Date(nowMs).toISOString();
-        queue = TRIGGERS.enqueue(queue, { wake: t.wake || null, itemId: it.id, triggerId: t.id, priority: t.priority, why: r.why, note: t.note || null, firedAt: t.firedAt });
-      }
+    const world = (it, busyBelow) => ({ nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt),
+      machineFree: machine && Number.isFinite(machine.busyPercent) ? machine.leases === 0 && machine.busyPercent < busyBelow : null });
+    const hold = (r, itemId, why) => { r.state = { ...(r.state || {}), pending: { ...(r.state?.pending || {}), [itemId]: { why, firedAt } } }; };
+    for (const r of rulesOf(ctx).rules.filter((x) => x.item && x.enabled)) {
+      const it = ctx.board.items[r.item];
+      if (!liveCard(ctx, it)) continue;
+      const t = TRIGGERS.fromRule(r);
+      const res = TRIGGERS.evaluate(t, world(it, t.when.busyBelow));
+      const { active, ...set } = res.set;
+      if (Object.keys(set).length) r.state = { ...(r.state || {}), ...set };
+      if (active === false) { r.enabled = false; it.version++; } // fired once (at): off, and the card redraws its bell
+      if (!res.fire) continue;
+      r.state = { ...r.state, firedAt };
+      hold(r, it.id, res.why);
     }
-    const { send, keep } = TRIGGERS.due(queue, nowMs, TRIGGER_BATCH_MS);
-    ctx.board.triggerQueue = keep;
+    const live = rulesOf(ctx).rules.find((x) => x.id === ic?.id);
+    if (live) {
+      // the idle check's firings, per card: kept only for the cards it still covers
+      const fired = Object.fromEntries(Object.entries(live.state?.fired || {}).filter(([id]) => idle.some((it) => it.id === id)));
+      for (const it of idle) {
+        if (TRIGGERS.holds(it)) continue;
+        const res = TRIGGERS.evaluate({ when: { kind: 'idle', ms: live.when.minutes * 60_000 }, firedAt: fired[it.id] }, world(it));
+        if (!res.fire) continue;
+        fired[it.id] = firedAt;
+        hold(live, it.id, res.why);
+      }
+      live.state = { ...(live.state || {}), fired };
+    }
+    const queue = pending().flatMap((r) => Object.entries(r.state.pending).map(([itemId, p]) => {
+      const a = r.then[0];
+      // a role word (assignee, last_worker) names the card's agent; none: the coordinator's (null)
+      return { wake: ruleWho(ctx, a.agent === 'coordinator' ? null : a.agent, ctx.board.items[itemId]), itemId, ruleId: r.id, priority: a.batch === false ? 'now' : 'batch', why: p.why, note: a.note || null, firedAt: p.firedAt };
+    }));
+    const { send } = TRIGGERS.due(queue, nowMs, TRIGGER_BATCH_MS);
     for (const [named, list] of Object.entries(send)) {
       const wake = named === 'null' ? coordinatorOf(ctx) : named; // no agent named: the coordinator's
-      if (!wake) { ctx.board.triggerQueue.push(...list); continue; } // nobody to wake yet: kept for when there is
+      if (!wake) continue; // nobody to wake yet: kept for when there is
+      for (const e of list) { const r = rulesOf(ctx).rules.find((x) => x.id === e.ruleId); delete r.state.pending[e.itemId]; }
       const cards = list.filter((e) => ctx.board.items[e.itemId]).map((e) => ({ id: e.itemId, title: ctx.board.items[e.itemId].title, why: e.why, note: e.note, priority: e.priority, owner: ctx.board.items[e.itemId].assignee || null, firedAt: e.firedAt }));
       if (cards.length) events.push({ board: ctx.id, type: 'trigger.fired', actor: SYSTEM, wake, cards, recipients: [wake], addressed: [wake] });
     }
@@ -3277,6 +3486,10 @@ const POLICY = {
   'PUT /api/plugins/:name/connection': { who: 'human', ...humanAsk("set a plugin's connection") },
   'POST /api/plugins/:name/connection/test': { who: 'human', ...humanAsk("test a plugin's connection") },
   'DELETE /api/plugins/:name/connection': { who: 'human', ...humanAsk("clear a plugin's connection") },
+  'POST /api/plugins/:name/actions/:action/run': { who: 'any' }, // a plugin.<name>.<action> grant, checked in the route
+  'POST /api/plugins/runs/:id/approve': { who: 'human', ...humanAsk('OK a plugin run') },
+  'POST /api/plugins/runs/:id/reject': { who: 'human', ...humanAsk('turn a plugin run down') },
+  'POST /api/plugins/runs/:id/cancel': { who: 'self' }, // an agent: its own runs only, checked in lib/plugins.js
   'PUT /api/profiles/me/status': { who: 'self', readOnly: true },
   'PATCH /api/profiles/me': { who: 'self', readOnly: true },
   'POST /api/profiles/:name/memory': { who: 'self', readOnly: true },
@@ -3510,9 +3723,15 @@ route('PUT', '/api/boards/:board/admin', 'Human only: switch board admin for the
 // human sets it on the Agents page; until they do, agents with "idleAlarm": true in agents.json are woken.
 const standingAgents = () => { try { return standing.list().agents; } catch { return []; } };
 function idleAlarmOf(ctx) {
-  const set = ctx.board.idleAlarm;
-  // human: when nobody in `wake` can be woken (failed, paused, or none named), the alarm tells the human instead (INT-294)
-  if (set) return { on: !!set.on, minutes: set.minutes || 20, wake: [].concat(set.wake || []), note: set.note || '', human: set.human !== false, from: 'settings' };
+  // the board's Idle-board alarm rule (INT-472); human: when nobody in `wake` can be woken (failed, paused, or none
+  // named), the alarm tells the human instead (INT-294)
+  const r = engineRule(ctx, 'idleAlarm', true);
+  if (r) {
+    const wakes = r.then.filter((x) => x.do === 'wake');
+    return { on: !!r.enabled, minutes: r.when.minutes, wake: wakes.map((x) => x.agent), note: wakes.find((x) => x.note)?.note || '', human: r.when.human !== false, from: 'settings' };
+  }
+  // its rule deleted: off, never back to agents.json's flags (which would wake them)
+  if (ctx.board.automations?.idleAlarmDeleted) return { on: false, minutes: 20, wake: [], note: '', human: true, from: 'settings' };
   const flagged = standingAgents().filter((a) => a.idleAlarm);
   return { on: flagged.length > 0, minutes: flagged.length ? Math.min(...flagged.map((a) => a.idleAlarm.minutes)) : 20, wake: flagged.map((a) => a.name), note: '', human: true, from: 'agents.json' };
 }
@@ -3561,9 +3780,10 @@ route('PUT', '/api/boards/:board/idle-alarm', 'Human only: set the idle-board al
   }
   if (next.on && !next.wake.length && !next.human) fail(400, 'The alarm needs someone to wake', { code: 'BAD_REQUEST', hint: 'Pass "wake": ["<agent>"], "human": true, or "on": false' });
   tx(ctx, (events) => {
-    // human is stored only once the human sets it: until then the board follows the default (on)
-    const { human, ...rest } = next;
-    ctx.board.idleAlarm = 'human' in body || 'human' in (ctx.board.idleAlarm || {}) ? next : rest;
+    setEngineRule(ctx, 'idleAlarm', {
+      enabled: next.on, when: { on: 'board_idle', minutes: next.minutes, ...(next.human ? {} : { human: false }) },
+      then: next.wake.length ? next.wake.map((n) => ({ do: 'wake', agent: n, ...(next.note ? { note: next.note } : {}) })) : [{ do: 'ask_human', text: IDLE_ALARM_TEXT }],
+    });
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { idleAlarm: { from: { on: cur.on, minutes: cur.minutes, wake: cur.wake, human: cur.human }, to: { on: next.on, minutes: next.minutes, wake: next.wake, human: next.human } } } });
   });
   return idleAlarmView(ctx);
@@ -3588,7 +3808,7 @@ const REBALANCE_LIMITS = { minGap: [2, 50], minWaitMinutes: [0, 1440], maxMoves:
 // A board without the setting is on with the defaults, so older data loads unchanged.
 function rebalanceOf(ctx) {
   const s = ctx.board.rebalance || {};
-  return { on: s.on !== false, ...Object.fromEntries(Object.keys(REBALANCE_LIMITS).map((k) => [k, s[k] ?? REBALANCE_DEFAULTS[k]])) };
+  return { on: !!engineRule(ctx, 'rebalance'), ...Object.fromEntries(Object.keys(REBALANCE_LIMITS).map((k) => [k, s[k] ?? REBALANCE_DEFAULTS[k]])) };
 }
 const rebalanceView = (ctx) => ({ ...rebalanceOf(ctx), recent: (ctx.board.rebalanceLog || []).slice(-20).reverse() });
 // Did the human make this assignment? Tickets assigned before assignedBy existed: the last item.assigned the board
@@ -3684,10 +3904,13 @@ route('PUT', '/api/boards/:board/rebalance', 'Human or admin.rebalancing: switch
     sent[k] = n;
   }
   tx(ctx, (events) => {
+    const { on, ...knobs } = sent;
     const stored = ctx.board.rebalance || {};
-    if (Object.entries(sent).every(([k, v]) => stored[k] === v)) return;
     const cur = rebalanceOf(ctx);
-    ctx.board.rebalance = { ...stored, ...sent };
+    if ((on === undefined || on === cur.on) && Object.entries(knobs).every(([k, v]) => stored[k] === v)) return;
+    // on/off is the Rebalancing rule (INT-472); its numbers stay settings
+    if (on !== undefined && on !== cur.on) setEngineRule(ctx, 'rebalance', { enabled: on, when: { on: 'assignee_away' }, then: [{ do: 'reassign' }] });
+    ctx.board.rebalance = { ...stored, ...knobs };
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rebalance: { from: cur, to: rebalanceOf(ctx) } }, ...delegatedTag(del) });
     adminTrail(ctx, events, actor, del, `Changed automatic rebalancing: ${JSON.stringify(sent)}`);
   });
@@ -4155,7 +4378,7 @@ route('GET', '/api/boards/:board/brief', 'Start here (agents): who you are, what
   const text = briefing(ctx, q.agent || actor.name, `http://${req.headers.host}`, ['cli', 'mcp', 'http'].includes(q.via) ? q.via : 'cli');
   return q.format === 'json' ? { brief: text, work: workFor(ctx, q.agent || actor.name) } : text;
 });
-route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=7|30: done, cycle time, time per column, waiting on the human, answer time', ({ p, q }) =>
+route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=1|7|30: done, cycle time, time per column, waiting on the human, answer time', ({ p, q }) =>
   metrics(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90)));
 route('GET', '/api/boards/:board/requests', 'Requests from the human to agents: ?status=open|done&to=<agent>', ({ p, q }) =>
   (getCtx(p.board).board.requests || []).filter((x) => (!q.status || x.status === q.status) && (!q.to || x.to === q.to)).slice().reverse());
@@ -4316,7 +4539,7 @@ route('POST', '/api/boards/:board/items/:id/asks/:askId/done', 'Answer an ask: {
   const ctx = getCtx(p.board);
   return itemView(ctx, answerAsk(ctx, p.id, p.askId, body, actor));
 });
-route('POST', '/api/boards/:board/items/:id/triggers', 'A trigger on the card (INT-435): it waits on a condition and wakes an agent when it holds. { when: { machine: "exclusive", busyBelow? } | { quietFor: "30m" } | { every: "15m" } | { until: ISO time }, priority: now|batch (default batch), wake?: agent (default the coordinator), note? } → the trigger. A card with an active trigger is waiting on purpose: the stuck watch escalates it to nobody', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/items/:id/triggers', 'A trigger on the card (INT-435): it waits on a condition and wakes an agent when it holds. { when: { machine: "exclusive", busyBelow? } | { quietFor: "30m" } | { idle: "60m" } | { every: "15m" } | { until: ISO time }, priority: now|batch (default batch), wake?: agent (default the coordinator), note? } → the trigger, and under rule the rule it is stored as: a rule on this ticket only (item), at most 5 per ticket, outside the board\'s 50, gone when the ticket is done or archived. A card with an active trigger is waiting on purpose: the stuck watch escalates it to nobody', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const bad = (m) => fail(400, m);
   const when = TRIGGERS.parseWhen(body.when, bad);
@@ -4331,24 +4554,33 @@ route('POST', '/api/boards/:board/items/:id/triggers', 'A trigger on the card (I
   }
   return tx(ctx, () => {
     const it = getItem(ctx, p.id);
-    if (TRIGGERS.activeOn(it).length >= TRIGGERS.MAX_PER_TICKET) fail(409, `${it.id} has ${TRIGGERS.MAX_PER_TICKET} active triggers already`, { code: 'CONFLICT', hint: 'Remove one first: DELETE …/triggers/<id>' });
-    const t = { id: rid('tr'), when, priority, ...(wake ? { wake } : {}), ...(body.note ? { note: str(body.note, 300) } : {}), by: actor.name, at: now(), active: true };
-    it.triggers = [...(it.triggers || []).filter((x) => x.active), t];
-    it.version++;
-    return t;
+    if (!liveCard(ctx, it) && !it.test) fail(409, `${it.id} is done: its triggers went with it`, { code: 'CONFLICT', hint: 'Set a trigger on a ticket that is still open' });
+    // a trigger that fired once (at) and switched off makes room, as before
+    rulesOf(ctx).rules = rulesOf(ctx).rules.filter((r) => !(r.item === it.id && !r.enabled));
+    if (rulesOf(ctx).rules.filter((r) => r.item === it.id).length >= TRIGGERS.MAX_PER_TICKET) fail(409, `${it.id} has ${TRIGGERS.MAX_PER_TICKET} active triggers already`, { code: 'CONFLICT', hint: 'Remove one first: DELETE …/triggers/<id>' });
+    const rule = TRIGGERS.toRule({ id: rid('tr'), itemId: it.id, when, priority, wake, note: body.note ? str(body.note, 300) : null, by: actor.name, nowIso: now() });
+    rulesOf(ctx).rules.push(rule);
+    it.version++; // the card redraws its bell
+    return { ...TRIGGERS.fromRule(rule), text: RULES.describe(rule, ctx.board.columns), rule: { id: rule.id, item: rule.item, when: rule.when, then: rule.then } };
   });
 });
-route('DELETE', '/api/boards/:board/items/:id/triggers/:triggerId', 'Remove a trigger from the card: its condition no longer matters (anyone; any queued firing of it goes too)', ({ p }) => {
+route('DELETE', '/api/boards/:board/items/:id/triggers/:triggerId', 'Remove a trigger (a rule on this ticket) from the card: its condition no longer matters (anyone; any waiting firing of it goes too). The board\'s idle check, removed here, skips this card from then on', ({ p }) => {
   const ctx = getCtx(p.board);
   return tx(ctx, () => {
     const it = getItem(ctx, p.id);
-    const t = (it.triggers || []).find((x) => x.id === p.triggerId);
-    if (!t) fail(404, `No trigger "${p.triggerId}" on ${it.id}`, { hint: `GET /api/boards/${ctx.id}/items/${it.id} lists them under triggers` });
-    it.triggers = it.triggers.filter((x) => x !== t);
-    if (t.default) it.idleCheck = false; // removed on purpose: the sweep doesn't put it back
-    ctx.board.triggerQueue = (ctx.board.triggerQueue || []).filter((e) => e.triggerId !== t.id);
+    const ic = engineRule(ctx, 'idleCheck', true);
+    if (ic && p.triggerId === ic.id) {
+      if (!idleCovers(ctx, ic, it)) fail(404, `The idle check doesn't cover ${it.id}`, { hint: `GET /api/boards/${ctx.id}/items/${it.id} lists its triggers` });
+      ic.skip = [...(ic.skip || []), it.id]; // removed on purpose: the sweep doesn't put it back
+      if (ic.state?.pending) delete ic.state.pending[it.id];
+      it.version++;
+      return { removed: ic.id, skipped: it.id };
+    }
+    const rule = rulesOf(ctx).rules.find((r) => r.id === p.triggerId && r.item === it.id);
+    if (!rule) fail(404, `No trigger "${p.triggerId}" on ${it.id}`, { hint: `GET /api/boards/${ctx.id}/items/${it.id} lists them under triggers` });
+    rulesOf(ctx).rules = rulesOf(ctx).rules.filter((r) => r !== rule);
     it.version++;
-    return { removed: t.id };
+    return { removed: rule.id };
   });
 });
 route('POST', '/api/boards/:board/items/:id/asks/:askId/withdraw', 'Take back an ask you made: { reason } — the asker, the coordinator or the human', ({ p, body, actor }) => {
@@ -4711,7 +4943,7 @@ const ruleFails = (fn) => fn().catch((e) => console.warn(`rule: ${e.message}`));
 function onRuleEvent(e) {
   if (e.actor?.rule || !e.board) return;
   const ctx = boards.get(e.board);
-  const rules = (ctx?.board.automations?.rules || []).filter((r) => r.enabled && RULES.EVENTS[r.when.on] && RULES.eventMatches(r, e));
+  const rules = (ctx?.board.automations?.rules || []).filter((r) => r.enabled && RULES.EVENTS[r.when.on] && RULES.eventMatches(r, e) && !inEngine(ctx, r));
   if (!rules.length) return;
   const itemId = e.itemId || e.run?.item || null;
   setImmediate(() => {
@@ -4725,7 +4957,7 @@ function onRuleEvent(e) {
 // Time rules, once a minute: each ticket fires once per idle stretch or stay in the column; an "every" rule once a
 // period, for each ticket its "if" picks (or once, for no ticket)
 async function sweepRules(ctx) {
-  const rules = (ctx.board.automations?.rules || []).filter((r) => r.enabled && RULES.TIMES[r.when.on]);
+  const rules = (ctx.board.automations?.rules || []).filter((r) => r.enabled && RULES.TIMES[r.when.on] && !inEngine(ctx, r)); // an engine's rule is its engine's to run
   if (!rules.length) return;
   const nowMs = Date.now();
   const done = doneColumnId(ctx);
@@ -4752,105 +4984,86 @@ async function sweepRules(ctx) {
 }
 setInterval(() => { for (const ctx of boards.values()) ruleFails(() => sweepRules(ctx)); }, 60_000).unref();
 
-/* The board's own behaviours, as rules on the Rules page, beside the human's and edited the same way. Each reads its
-   rule from where the behaviour is set (behaviours, the idle alarm, rebalancing, a column's flags) and writes an edit
-   back there while it still fits; an edit that makes it something else switches the behaviour off and saves the
-   rule as an ordinary one. Their engines stay theirs: batching, rounds and the rest are unchanged. */
+/* A column's flags, as rules on the Rules page: one rule each while the flag is set, edited back into the flag while
+   it still fits; switched off or reshaped, the flag goes and it becomes an ordinary rule. (The board's behaviours are
+   stored rules: ENGINES.) */
 function nativeRules(ctx) {
-  const b = behavioursOf(ctx);
-  const ia = idleAlarmOf(ctx);
-  const work = workingColumn(ctx);
-  const pick = pickupColumns(ctx)[0];
-  const set = (patch) => { ctx.board.behaviours = { ...(ctx.board.behaviours || {}), ...patch }; };
-  const shape = (r, on, dos) => r.when.on === on && r.then.length === dos.length && r.then.every((x, i) => x.do === dos[i]);
   const flag = (c, k, v) => { c.flags = { ...c.flags, [k]: v }; };
   const list = [
-    { id: 'board-land', name: 'Merge approved work into main', enabled: b.landOnApprove, when: { on: 'approved' }, then: [{ do: 'land' }],
-      write: (r) => shape(r, 'approved', ['land']) && !r.if && (set({ landOnApprove: r.enabled }), true), off: () => set({ landOnApprove: false }) },
-    { id: 'board-idle-check', name: 'Idle check', enabled: b.idleCheck.on, when: { on: 'idle', minutes: b.idleCheck.minutes }, then: [{ do: 'wake', agent: 'coordinator' }],
-      write: (r) => shape(r, 'idle', ['wake']) && !r.if && r.then[0].agent === 'coordinator' && !r.then[0].note && (set({ idleCheck: { on: r.enabled, minutes: r.when.minutes } }), true),
-      off: () => set({ idleCheck: { on: false, minutes: b.idleCheck.minutes } }) },
-    { id: 'board-ask-escalation', name: 'Escalate overdue asks', enabled: b.askEscalation, when: { on: 'ask_overdue' }, then: [{ do: 'escalate' }],
-      write: (r) => shape(r, 'ask_overdue', ['escalate']) && !r.if && (set({ askEscalation: r.enabled }), true), off: () => set({ askEscalation: false }) },
-    { id: 'board-stuck-watch', name: 'Stuck watch', enabled: b.stuckWatch, when: { on: 'stuck', minutes: stuckTimings(ctx).quietMs / 60_000 }, then: [{ do: 'unstick' }],
-      write: (r) => shape(r, 'stuck', ['unstick']) && !r.if && (set({ stuckWatch: r.enabled, stuckMinutes: r.when.minutes }), true), off: () => set({ stuckWatch: false }) },
-    ...(work && pick ? [{
-      id: 'board-stale-work', name: `Stale work back to ${pick.name}`, enabled: b.staleWork.on, when: { on: 'in_column', column: work.id, minutes: b.staleWork.minutes }, if: '!claimant', then: [{ do: 'move', column: pick.id }],
-      write: (r) => shape(r, 'in_column', ['move']) && r.when.column === work.id && r.then[0].column === pick.id && (!r.if || r.if === '!claimant') && (set({ staleWork: { on: r.enabled, minutes: r.when.minutes } }), true),
-      off: () => set({ staleWork: { on: false, minutes: b.staleWork.minutes } }),
-    }] : []),
-    {
-      id: 'board-idle-alarm', name: 'Idle-board alarm', enabled: ia.on, when: { on: 'board_idle', minutes: ia.minutes },
-      then: ia.wake.length ? ia.wake.map((n) => ({ do: 'wake', agent: n, ...(ia.note ? { note: ia.note } : {}) })) : [{ do: 'ask_human', text: 'The board is idle: tickets wait and no builder is running' }],
-      write: (r) => {
-        const wakes = r.then.every((x) => x.do === 'wake');
-        if (r.when.on !== 'board_idle' || r.if || !(wakes || shape(r, 'board_idle', ['ask_human']))) return false;
-        const names = wakes ? r.then.map((x) => x.agent) : [];
-        const known = new Set(standingAgents().map((x) => x.name));
-        const unknown = names.filter((n) => !known.has(n));
-        if (unknown.length) fail(400, `The idle alarm wakes standing agents: ${unknown.join(', ')} ${unknown.length > 1 ? "aren't" : "isn't"} one`, { code: 'BAD_REQUEST', hint: `Pick from: ${[...known].join(', ') || 'none defined'}` });
-        ctx.board.idleAlarm = { ...(ctx.board.idleAlarm || {}), on: r.enabled, minutes: Math.min(1440, r.when.minutes), wake: names, note: (r.then.find((x) => x.note)?.note || '').slice(0, 1000), ...(wakes ? {} : { human: true }) };
-        return true;
-      },
-      off: () => { const { from, ...cur } = ia; ctx.board.idleAlarm = { ...cur, on: false }; },
-    },
-    { id: 'board-rebalance', name: 'Rebalancing', enabled: rebalanceOf(ctx).on, when: { on: 'assignee_away' }, then: [{ do: 'reassign' }],
-      write: (r) => shape(r, 'assignee_away', ['reassign']) && !r.if && ((ctx.board.rebalance = { ...(ctx.board.rebalance || {}), on: r.enabled }), true),
-      off: () => { ctx.board.rebalance = { ...(ctx.board.rebalance || {}), on: false }; } },
-    // a column's flags: one rule each while the flag is set; switched off, it becomes an ordinary rule (and stays listed)
     ...ctx.board.columns.filter((c) => c.flags.releaseLeaseOnEnter).map((c) => ({
       id: `board-release-${c.id}`, name: `Release the lease in ${c.name}`, enabled: true, when: { on: 'entered', column: c.id }, then: [{ do: 'release_lease' }],
-      write: (r) => r.enabled && shape(r, 'entered', ['release_lease']) && r.when.column === c.id && !r.if, off: () => flag(c, 'releaseLeaseOnEnter', false),
+      write: (r) => r.enabled && shapeIs(r, 'entered', ['release_lease']) && r.when.column === c.id && !r.if, off: () => flag(c, 'releaseLeaseOnEnter', false),
     })),
     ...ctx.board.columns.filter((c) => c.flags.autoArchiveAfterDays).map((c) => ({
       id: `board-archive-${c.id}`, name: `Archive what stays in ${c.name}`, enabled: true, when: { on: 'in_column', column: c.id, minutes: c.flags.autoArchiveAfterDays * 1440 }, if: '!claimant', then: [{ do: 'archive' }],
-      write: (r) => r.enabled && shape(r, 'in_column', ['archive']) && r.when.column === c.id && r.when.minutes % 1440 === 0 && (!r.if || r.if === '!claimant') && (flag(c, 'autoArchiveAfterDays', r.when.minutes / 1440), true),
+      write: (r) => r.enabled && shapeIs(r, 'in_column', ['archive']) && r.when.column === c.id && r.when.minutes % 1440 === 0 && (!r.if || r.if === '!claimant') && (flag(c, 'autoArchiveAfterDays', r.when.minutes / 1440), true),
       off: () => flag(c, 'autoArchiveAfterDays', 0),
     })),
   ];
   return list.map((n) => ({ ...n, native: true }));
 }
 // The stuck watch's timings, with the board's own quiet time when the Rules page set one
-const stuckTimings = (ctx) => (ctx.board.behaviours?.stuckMinutes ? STUCK.timingsOf({ ...(M.stuck || {}), quietMinutes: ctx.board.behaviours.stuckMinutes }) : STUCK_TIMINGS);
+const stuckTimings = (ctx) => { const r = engineRule(ctx, 'stuckWatch'); return r ? STUCK.timingsOf({ ...(M.stuck || {}), quietMinutes: r.when.minutes }) : STUCK_TIMINGS; };
 const nativeView = (ctx, n) => ({ id: n.id, name: n.name, enabled: n.enabled, when: n.when, ...(n.if ? { if: n.if } : {}), then: n.then, native: true, text: RULES.describe(n, ctx.board.columns) });
 // An edit to one of the board's own rules: back to its setting while it fits, else an ordinary rule in its place
 function saveNative(ctx, n, body, actor) {
-  const rule = ruleErr(() => RULES.cleanRule(body, ctx.board.columns, { id: rid('rule'), nowIso: now(), native: true }));
+  const rule = ruleErr(() => RULES.cleanRule(body, ctx.board.columns, { id: rid('rule'), nowIso: now() }));
   let fits = false;
   tx(ctx, (events) => {
     fits = !!n.write(rule);
-    if (!fits) {
-      const own = [rule.when.on, ...rule.then.map((x) => x.do)].find((k) => (RULES.EVENTS[k] || RULES.TIMES[k] || RULES.ACTIONS[k])?.nativeOnly);
-      if (own && rule.enabled) fail(400, `"${(RULES.EVENTS[own] || RULES.TIMES[own] || RULES.ACTIONS[own]).label}" is the board's own: it only works as this rule has it`, { code: 'BAD_REQUEST', hint: 'Keep that part and change the rest, or switch this rule off and build a new one' });
-      n.off();
-    }
+    if (!fits) n.off();
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rules: { changed: n.name } } });
   });
   if (fits) return nativeView(ctx, nativeRules(ctx).find((x) => x.id === n.id) || n);
-  // switched off, or reshaped into something its engine doesn't do: from now on it is an ordinary rule
-  const own = [rule.when.on, ...rule.then.map((x) => x.do)].some((k) => (RULES.EVENTS[k] || RULES.TIMES[k] || RULES.ACTIONS[k])?.nativeOnly);
-  return own ? nativeView(ctx, nativeRules(ctx).find((x) => x.id === n.id) || { ...n, enabled: false }) : saveRule(ctx, { ...body, name: body.name || n.name }, actor);
+  // switched off, or reshaped into something the flag doesn't do: from now on it is an ordinary rule
+  return saveRule(ctx, { ...body, name: body.name || n.name }, actor);
+}
+// A rule that uses an engine's words must be in that engine's shape: only the engine carries them out
+function checkEngineWords(ctx, rule) {
+  const word = [rule.when.on, ...rule.then.map((x) => x.do)].find((k) => ENGINE_WORDS[k]);
+  if (!word || inEngine(ctx, rule)) return;
+  const e = ENGINES[ENGINE_WORDS[word]];
+  const label = (RULES.EVENTS[word] || RULES.TIMES[word] || RULES.ACTIONS[word]).label;
+  fail(400, `"${label}" is carried out by the board's ${e.name} rule, so it works only in that rule's shape`, { code: 'BAD_REQUEST', hint: `Edit or copy the ${e.name} rule and change its numbers: ${RULES.describe(engineRule(ctx, ENGINE_WORDS[word], true) || { when: { on: word }, then: [] }, ctx.board.columns)}` });
 }
 const ruleView = (ctx, r) => ({ ...r, text: RULES.describe(r, ctx.board.columns), state: undefined, fired: (r.state?.recent || []).length ? new Date(Math.max(...r.state.recent)).toISOString() : null });
 const ruleErr = (fn) => { try { return fn(); } catch (e) { if (e instanceof RULES.RuleError) fail(400, e.message, { code: 'BAD_REQUEST', hint: e.hint }); throw e; } };
 function saveRule(ctx, body, actor, prev = null) {
   const rule = ruleErr(() => RULES.cleanRule(body, ctx.board.columns, { id: rid('rule'), prev, nowIso: now() }));
+  // an engine's rule keeps its mark while it fits; a rule in an engine's words takes it only when the engine has none
+  const word = [rule.when.on, ...rule.then.map((x) => x.do)].find((k) => ENGINE_WORDS[k]);
+  const key = prev?.engine || (word && !engineRule(ctx, ENGINE_WORDS[word], true) ? ENGINE_WORDS[word] : null);
+  if (key && ENGINES[key].fits(rule, ctx)) rule.engine = key;
+  checkEngineWords(ctx, rule);
+  if (rule.engine === 'idleAlarm') {
+    const known = new Set(standingAgents().map((x) => x.name));
+    const unknown = rule.then.filter((x) => x.do === 'wake' && !known.has(x.agent)).map((x) => x.agent);
+    if (unknown.length) fail(400, `The idle alarm wakes standing agents: ${unknown.join(', ')} ${unknown.length > 1 ? "aren't" : "isn't"} one`, { code: 'BAD_REQUEST', hint: `Pick from: ${[...known].join(', ') || 'none defined'}` });
+    if (rule.when.minutes > 1440) fail(400, 'The idle alarm waits at most 1440 minutes', { code: 'BAD_REQUEST', hint: 'e.g. 20' });
+  }
   tx(ctx, (events) => {
     const all = rulesOf(ctx).rules;
-    if (!prev && all.length >= RULES.MAX_RULES) fail(409, `A board keeps at most ${RULES.MAX_RULES} rules`, { code: 'CONFLICT', hint: 'Delete one you no longer use' });
+    // the board's own rules and the tickets' triggers count outside the cap: seeding them never fills a board
+    if (!prev && !rule.engine && all.filter((r) => !r.engine && !r.item).length >= RULES.MAX_RULES) fail(409, `A board keeps at most ${RULES.MAX_RULES} rules`, { code: 'CONFLICT', hint: 'Delete one you no longer use' });
     if (rule.when.on === 'fits' && all.some((r) => r.id !== prev?.id && r.when?.on === 'fits' && r.name.toLowerCase() === rule.name.toLowerCase())) fail(409, `There is already a card look called "${rule.name}"`, { code: 'CONFLICT', hint: 'Card looks have their own names: is:rule:<name> finds them' });
+    // the idle check keeps the cards it skips while it stays the idle check
+    if (prev?.skip && rule.engine === 'idleCheck') rule.skip = prev.skip;
     rulesOf(ctx).rules = prev ? all.map((r) => (r.id === prev.id ? rule : r)) : [...all, rule];
+    // the alarm's rule reshaped loses its mark: off, as if deleted, never back to agents.json's flags
+    if (prev?.engine === 'idleAlarm' && !rule.engine) rulesOf(ctx).idleAlarmDeleted = true;
     ctx.board.cardRules = looksOf(ctx.board);
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rules: { [prev ? 'changed' : 'added']: rule.name } } });
   });
   return ruleView(ctx, rule);
 }
-const getRule = (ctx, id) => rulesOf(ctx).rules.find((r) => r.id === id) || fail(404, `No rule "${id}"`, { code: 'NOT_FOUND', hint: `GET /api/boards/${ctx.id}/rules lists them` });
+// a ticket's triggers are its own: …/items/<ID>/triggers changes them, not the Rules routes
+const boardRules = (ctx) => rulesOf(ctx).rules.filter((r) => !r.item);
+const getRule = (ctx, id) => boardRules(ctx).find((r) => r.id === id) || fail(404, `No rule "${id}"`, { code: 'NOT_FOUND', hint: rulesOf(ctx).rules.some((r) => r.id === id) ? 'That is a trigger on a ticket: GET or DELETE /api/boards/<board>/items/<ID>/triggers' : `GET /api/boards/${ctx.id}/rules lists them` });
 
-route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, when, if?, then, text (in words), fired, native? }], vocabulary: { events, times, actions, roles } }. native: one of the board\'s own behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing, a column\'s release-lease and auto-archive), listed and edited as a rule; words marked nativeOnly belong to those alone', ({ p }) => {
+route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, when, if?, then, text (in words), fired, native? }], vocabulary: { events, times, actions, roles } }. The board\'s behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing) are ordinary stored rules (ids board-…, marked engine: <key>): each runs from its marked rule, deleting it switches it off, and reshaped it loses the mark and is ordinary. A rule of yours in the same shape stays yours. The words board_idle, stuck, assignee_away, escalate, unstick and reassign work only in a marked rule, in its shape; a new rule in those words takes the mark only when its behaviour has no rule. native: a column\'s release-lease or auto-archive flag, listed and edited as a rule', ({ p }) => {
   const ctx = getCtx(p.board);
-  const labels = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { label: v.label, ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}), ...(v.nativeOnly ? { nativeOnly: true } : {}) }]));
-  return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...rulesOf(ctx).rules.map((r) => ruleView(ctx, r))], vocabulary: { events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
+  const labels = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { label: v.label, ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}) }]));
+  return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...boardRules(ctx).map((r) => ruleView(ctx, r))], vocabulary: { events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
 });
 route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, when: { on, column?, minutes?, to? }, if?: card-rules condition, then: [{ do, … }], enabled? }. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented, mentioned (to?), unblocked, lease_expired, ask_overdue; or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
 route('PUT', '/api/boards/:board/rules/:id', 'Human: replace a rule (as POST); { enabled: false } with the rest switches it off', ({ p, body, actor }) => {
@@ -4865,6 +5078,7 @@ route('DELETE', '/api/boards/:board/rules/:id', 'Human: delete a rule (its log s
   const rule = getRule(ctx, p.id);
   tx(ctx, (events) => {
     rulesOf(ctx).rules = rulesOf(ctx).rules.filter((r) => r.id !== rule.id);
+    if (rule.engine === 'idleAlarm') rulesOf(ctx).idleAlarmDeleted = true;
     ctx.board.cardRules = looksOf(ctx.board);
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rules: { deleted: rule.name } } });
   });
@@ -5183,7 +5397,10 @@ function cleanGrants(list) {
   if (!Array.isArray(list)) fail(400, '"grants" must be a list');
   return list.map((g) => {
     const power = typeof g === 'string' ? g : g?.power;
-    if (!POWERS[power] && power !== ADMIN_BUNDLE) fail(400, `Unknown power "${power}". Powers: ${[...Object.keys(POWERS), ADMIN_BUNDLE].join(', ')}`);
+    const action = PLUGIN_POWER_RE.test(power) ? pluginAction(power) : null;
+    if (PLUGIN_POWER_RE.test(power) && !action) fail(400, `${power} is not an action of an enabled plugin`, { code: 'BAD_REQUEST', hint: 'Enable the plugin first; GET /api/plugins lists each action\'s power' });
+    if (!POWERS[power] && power !== ADMIN_BUNDLE && !action) fail(400, `Unknown power "${power}". Powers: ${[...Object.keys(POWERS), ADMIN_BUNDLE].join(', ')}, or plugin.<plugin>.<action>`);
+    if (g?.approve != null && (!action || g.approve !== 'human')) fail(400, `"approve" of ${power}: only a plugin action takes it, and only "human"`, { code: 'BAD_REQUEST' });
     // A scope narrows a power, so a malformed one is refused, never dropped: dropping it would turn "only
     // where risk is low" into "everywhere".
     if (typeof g === 'string') return power;
@@ -5194,6 +5411,9 @@ function cleanGrants(list) {
       if (typeof rule === 'string') fail(400, `The rule of ${power}: ${rule}`, { code: 'BAD_REQUEST', hint: 'minOks is a whole number from 1 up to the number of names in "from"; "from" lists reviewer names' });
       if (!APPROVAL_POWERS.has(power)) fail(400, `"minOks" and "from" only apply to review.decide and column.gate, not ${power}`, { code: 'BAD_REQUEST' });
     }
+    if (g?.approve) rule.approve = 'human';
+    const stray = action ? Object.keys(isObj(g?.where) ? g.where : {}).filter((k) => !action.inputs.some((f) => f.key === k)) : [];
+    if (stray.length) fail(400, `The scope of ${power} names ${stray.join(', ')}, which the action doesn't take`, { code: 'BAD_REQUEST', hint: `Inputs: ${action.inputs.map((f) => f.key).join(', ') || '(none)'}` });
     if (g?.where == null) return Object.keys(rule).length ? { power, ...rule } : power;
     if (!isObj(g.where)) fail(400, `The scope ("where") of ${power} must be an object like { "fields.risk": "low" }`, { code: 'BAD_REQUEST' });
     const where = {};
@@ -5648,7 +5868,7 @@ function sillyName() {
 }
 route('GET', '/api/names/suggest', 'A free, friendly agent name (e.g. "plucky-otter")', () => ({ name: sillyName() }));
 
-route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 chars/emoji), label?, description? (markdown: what you were designed to do), role?, alignment? (how you behave), image? (https URL) | imageBase64 | imagePath } — null clears',
+route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 chars/emoji), label?, description? (markdown: what you were designed to do), role?, alignment? (how you behave), imagePath (a file) | imageBase64 } — null clears; image: null clears the avatar too',
   ({ body, actor }) => updateProfile(actor.name, body, actor));
 
 // Agent memory (INT-243). :name is an agent, or "me".
@@ -5736,11 +5956,42 @@ const plugins = createPlugins({
   local: { read: () => readLocal(LOCAL_PATH), update: (fn) => updateLocal(LOCAL_PATH, fn) },
   emit, now, coerce: coerceField,
   protect: [path.dirname(MANIFEST_PATH), DATA], // needs.read never reaches local.json or the board's data
+  runsFile: path.join(DATA, 'plugin-runs.json'),
+  holders: (power) => [...new Set([...(standing ? standing.list().agents.map((a) => a.name) : []), ...Object.keys(M.permissions || {})])]
+    .flatMap((name) => grantsOf(name).filter((g) => g.power === power).map((g) => ({ name, ...(g.where ? { where: g.where } : {}), ...(g.approve ? { approve: g.approve } : {}) }))),
+  // agents.json only: the manifest's grants are the human's own file, and stay dead while no plugin answers to them
+  dropGrants: (name, actor) => (standing ? standing.list().agents : []).filter((a) => arr(a.grants).some((g) => pluginOf(g) === name)).map((a) => {
+    const rest = arr(a.grants).filter((g) => pluginOf(g) !== name);
+    standing.manage(a.name, { grants: rest.length ? rest : null }, { kind: actor.kind, name: actor.name });
+    return a.name;
+  }),
+  // what a plugin gets of a ticket it runs for: its own data, nothing else of the board
+  ticketOf: (board, id) => {
+    const ctx = boards.get(board || M.defaultBoard);
+    const it = ctx && (ctx.board.items[id] || ctx.archive.items[id]);
+    return it ? { id: it.id, title: it.title, fields: it.fields || {}, properties: it.properties || {} } : null;
+  },
 });
+function pluginOf(g) { return PLUGIN_POWER_RE.exec(typeof g === 'string' ? g : String(g?.power || ''))?.[1] || null; }
 const pluginErrors = async (fn) => {
   try { return await fn(); } catch (e) { if (e instanceof PluginError) fail(e.status, e.message, { code: e.code, ...e.extra }); throw e; }
 };
 route('GET', '/api/plugins', 'Integration plugins: { plugins: [{ name, label, state: off|on|changed|crashed|invalid, problems, hash, enabled, asks, connection (secrets masked), actions, events, webhook, crashes, runs }] }', () => pluginErrors(() => ({ plugins: plugins.list() })));
+// Runs of plugin actions (INT-473). Before /api/plugins/:name, which would read "runs" as a plugin's name.
+route('GET', '/api/plugins/runs', 'Runs of plugin actions, newest first: ?plugin= &status=waiting|running|succeeded|failed|timedout|canceled|rejected &top=20 (max 100) → { runs: [{ id, plugin, action, status, inputs, by, item?, approval, result, error, createdAt, startedAt, finishedAt }] }', ({ q }) => pluginErrors(() => ({ runs: plugins.listRuns(q) })));
+route('GET', '/api/plugins/runs/:id', 'One run of a plugin action', ({ p }) => pluginErrors(() => plugins.getRun(p.id)));
+route('POST', '/api/plugins/:name/actions/:action/run', 'Run a plugin action { inputs: { key: value }, item?: "INT-12" } (the plugin gets that ticket\'s own data as ticket: { id, title, fields, properties }, read when it runs) → 201 the run: finished if it was done within 15 s, else running (its outcome comes as a plugin.run.* event), or waiting when your grant says the human OKs each run. An agent needs a plugin.<name>.<action> grant whose "where" fits the inputs (403 FORBIDDEN, 403 OUT_OF_SCOPE). 400 an input wrong, 409 PLUGIN_OFF, 409 NOT_CONNECTED', ({ p, body, actor, q }) => pluginErrors(async () => {
+  const prep = plugins.prepare(p.name, p.action, body.inputs ?? {});
+  const g = pluginGrant(actor, `plugin.${p.name}.${prep.action.id}`, prep.inputs);
+  const ctx = body.item == null ? null : getCtx(q.board || M.defaultBoard);
+  const item = ctx ? getItem(ctx, String(body.item)).id : null;
+  return created(await plugins.startRun(p.name, prep, { by: actor, item, board: ctx?.id, approve: g?.approve === 'human' }));
+}));
+route('POST', '/api/plugins/runs/:id/approve', 'Human only: OK a waiting run → the run (running, or finished within 15 s). The plugin, the inputs and the agent\'s grant are checked again first (409 OUT_OF_SCOPE when the grant no longer covers it, 409 ALREADY_DECIDED)', ({ p, actor }) => pluginErrors(() => plugins.approveRun(p.id, actor, (r, prep) => {
+  if (r.by.kind === 'agent') pluginGrant({ kind: 'agent', name: r.by.name }, `plugin.${r.plugin}.${r.action}`, prep.inputs, 409);
+})));
+route('POST', '/api/plugins/runs/:id/reject', 'Human only: turn a waiting run down { note? } → the run, rejected (409 ALREADY_DECIDED)', ({ p, body, actor }) => pluginErrors(() => plugins.rejectRun(p.id, actor, body.note ? str(body.note, 500) : '')));
+route('POST', '/api/plugins/runs/:id/cancel', 'Cancel a waiting or running run (an agent: only its own) → the run, canceled. A running action may already have acted: its answer is dropped. 409 CONFLICT when it already finished', ({ p, actor }) => pluginErrors(() => plugins.cancelRun(p.id, actor)));
 route('GET', '/api/plugins/:name', 'One plugin (the fields of the list)', ({ p }) => pluginErrors(() => plugins.view(p.name)));
 route('POST', '/api/plugins', 'Human only: add a plugin { path: absolute folder } or { zipBase64, filename } → 201 the plugin, off: nothing runs until it is enabled. 400 PLUGIN_INVALID lists the problems', ({ body, actor }) => pluginErrors(() => created(plugins.add(body, actor))));
 route('POST', '/api/plugins/:name/enable', 'Human only: run a plugin { hash } (the hash you were shown; 409 PLUGIN_CHANGED when its files differ). A later change to its files stops it until enabled again', ({ p, body, actor }) => pluginErrors(() => plugins.enable(p.name, body.hash, actor)));
@@ -5768,6 +6019,8 @@ route('GET', '/files/:board/:file', null, ({ res, p }) => {
 
 const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.css': 'app.css', '/app.js': 'app.js', '/favicon.svg': 'favicon.svg' };
 const STATIC_TYPES = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', svg: 'image/svg+xml' };
+// The page loads only from the board and Google Fonts (INT-468): a theme, a ticket or a plugin can't make the browser call another host.
+const PAGE_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 // index.html gets cache-busting stamps (file mtimes) so edited assets are never served stale.
 const stamp = (f) => Math.round(fs.statSync(path.join(PUBLIC, f)).mtimeMs).toString(36);
 for (const [urlPath, file] of Object.entries(STATIC)) {
@@ -5777,7 +6030,7 @@ for (const [urlPath, file] of Object.entries(STATIC)) {
       .replace('/app.css"', `/app.css?v=${stamp('app.css')}"`)
       .replace('/app.js"', `/app.js?v=${stamp('app.js')}"`)
       .replace('<head>', `<head>\n<meta name="intellagent-build" content="${VERSION}+${BUILD}">`);
-    reply(res, 200, html, { 'Content-Type': STATIC_TYPES.html });
+    reply(res, 200, html, { 'Content-Type': STATIC_TYPES.html, 'Content-Security-Policy': PAGE_CSP });
     return HANDLED;
   });
 }
