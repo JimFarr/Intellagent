@@ -4512,8 +4512,10 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       <tbody>${groups.map(([k, ps]) => `<tr class="pg-grp"><th colspan="${g.agents.length + 1}" scope="colgroup">${esc(PERM_KINDS[k][0])}<span class="cnt">${ps.length}</span></th></tr>`
         + ps.map((p) => { const row = r++; return `<tr><th class="pg-perm${p.enforced ? '' : ' verbal'}" scope="row" title="${esc(`${p.name}|${p.description || p.key}`)}">${esc(p.name)}</th>${g.agents.map((a, c) => cellHtml(a, p, row, c)).join('')}</tr>`; }).join('')).join('')}</tbody></table>`;
     const first = !$('.pg-scroll', body);
+    // with many agents the column grows to the page; with a few it stays the language's 960 px, title and table in one line
+    body.closest('.page-pane')?.classList.toggle('pg-wide', g.agents.length > 5);
     if (first) {
-      body.innerHTML = `<p class="perm-intro">Every standing agent against every permission. Click a cell to change it.</p>
+      body.innerHTML = `<p class="perm-intro">Who may do what. Click a cell to grant or take away.</p>
         ${me.boardHasUserToken === false ? `<div class="aa-lock">${icon('lock', 'sm')}<span>Read only: cells can be changed only on a board with a sign-in token. Run <code>intellagent token</code>, restart the board and sign in with <code>intellagent open</code>.</span></div>` : ''}
         ${g.errors?.length ? `<div class="perm-warn risk perm-errors">${icon('info', 'sm')}<span>Skipped: ${g.errors.map(esc).join(' · ')}</span></div>` : ''}
         <div class="pg-scroll" tabindex="0" role="region" aria-label="Permissions grid, scrolls sideways"></div>

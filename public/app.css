@@ -2989,6 +2989,15 @@ body:has(.drawer.open) #toasts { right: calc(min(440px, 100vw - 20px) + 30px); }
 @media (max-width: 520px) { #toasts, body:has(.drawer.open) #toasts { left: 16px; right: 16px; max-width: none; align-items: stretch; } .toast { max-width: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation-name: toast-fade; } @keyframes toast-fade { from { opacity: 0; } } }
 
+/* Assignments (mockups/assignments-mockup-*): the title, the line under it and the table share one centred column */
+.page-pane:has(.pg-scroll):not(.pg-wide) > :is(.page-head, .page-body) { width: 100%; max-width: 960px; margin-inline: auto; }
+.page-pane:has(.pg-scroll) > .page-head { margin-bottom: 4px; }
+#gridDrawer .drawer-body > .perm-intro { display: block; margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+/* a person or agent heads its column as a chip, a granted cell is a dot */
+.pg thead .pg-agent { font-size: 12px; }
+.pg-cell.m-on .i, .pg-cell.m-rules > .i:first-child { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pg-cell.m-on .i > *, .pg-cell.m-rules > .i:first-child > * { display: none; }
+
 /* Design pass (INT-471): the colour field, radio and slider join the control family */
 .cf { display: flex; align-items: center; gap: 8px; height: 32px; }
 .cf input[type=color] { appearance: none; -webkit-appearance: none; width: 32px; height: 32px; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: none; cursor: pointer; transition: border-color .12s ease-in-out; }
