@@ -1181,6 +1181,8 @@ describe('lean runs', () => {
     // any manifest, a worktree's tracked copy too (it reaches the live one when it lands): written never, read always
     assert.ok(deny.includes('"Edit(**/intellagent.manifest.json)"') && deny.includes('"Write(**/intellagent.manifest.json)"'));
     assert.ok(!deny.includes('Read(**/intellagent.manifest.json)'));
+    // the plugins the board runs (INT-462)
+    assert.ok(deny.includes('"Edit(**/.intellagent/plugins/**)"') && deny.includes('"Write(**/.intellagent/plugins/**)"'));
     if (process.platform === 'win32') {
       assert.ok(deny.includes('"Read(//c/board/local.json)"'), 'absolute paths in the POSIX form Claude Code matches');
       assert.ok(deny.includes('"Edit(//c/board/data/**)"') && deny.includes('"Write(//c/board/data/**)"'));

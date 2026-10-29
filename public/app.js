@@ -3810,7 +3810,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
   const openDeployments = (view = 'connectors') => {
     const [id, title, ic, h, p] = view === 'actions'
       ? ['actionsDrawer', 'Actions', 'play', 'No actions yet', 'Each plugin brings its actions. Agents and rules run the ones you grant them.']
-      : ['deployDrawer', 'Connectors', 'link', 'No connectors yet', 'A connector is a plugin: a folder you add here that connects the board to a service.'];
+      : ['deployDrawer', 'Connectors', 'link', 'No connectors yet', 'A connector is a plugin that connects the board to a service. Until this page lists them (INT-463), plugins are added and enabled through the API: POST /api/plugins, see docs/plugins.md.'];
     openDrawer(id, title, ic).innerHTML = `<div class="ent-empty">${icon(ic)}<h3>${h}</h3><p>${p}</p></div>`;
   };
 
