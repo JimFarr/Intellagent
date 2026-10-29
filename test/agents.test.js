@@ -1419,6 +1419,18 @@ describe('token usage', () => {
     assert.equal(withJsonOutput('claude -p "x" --output-format stream-json'), 'claude -p "x" --output-format stream-json --setting-sources user,project');
     assert.equal(withJsonOutput('node fake.js ok'), 'node fake.js ok');
   });
+  it('reads what a run\'s permissions refused from its result line, by name only (INT-487)', () => {
+    const { denialsOf, lastResult } = require('../lib/agents/stats');
+    const result = { type: 'result', permission_denials: [
+      { tool_name: 'Bash', tool_input: { command: 'API_KEY="s3 cret" git revert abc' } }, // a quoted secret in the line: no command name at all
+      { tool_name: 'Bash', tool_input: { command: 'git revert abc' } }, { tool_name: 'Bash', tool_input: { command: 'git revert def' } },
+      { tool_name: 'Edit', tool_input: { file_path: 'C:/x/agents.json' } }] };
+    assert.deepEqual(denialsOf(result), ['Bash', 'Bash:git', 'Edit']);
+    assert.equal(JSON.stringify(denialsOf(result)).includes('s3cret'), false);
+    assert.deepEqual(denialsOf(lastResult(`--- output ---\n${JSON.stringify(result)}\n`)), ['Bash', 'Bash:git', 'Edit']);
+    for (const none of [null, {}, { permission_denials: [] }, { permission_denials: 'x' }, { permission_denials: [{}] }]) assert.deepEqual(denialsOf(none), []);
+    assert.equal(denialsOf({ permission_denials: Array.from({ length: 9 }, (_, i) => ({ tool_name: `T${i}` })) }).length, 5);
+  });
   it('never lets a run load the person\'s .claude/settings.local.json: its env would override the run\'s own token', () => {
     const { keepAliveCmd } = require('../lib/agents');
     for (const cmd of [withJsonOutput('claude -p "x"'), keepAliveCmd('claude -p "x" --tools "Bash"')]) assert.match(cmd, /--setting-sources user,project(\s|$)/, cmd);
