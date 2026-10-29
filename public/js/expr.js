@@ -110,12 +110,13 @@ export function unsafePattern(src) {
   if (src.length > 120) return 'the pattern is longer than 120 characters';
   if (/\\[1-9k]/.test(src)) return 'a pattern may not refer back to a group (\\1)';
   const stack = [];
-  let inClass = false;
+  let inClass = false, open = 0;
   const quant = (s, i) => s[i] === '*' || s[i] === '+' || (s[i] === '{' && /^\{\d*,\d*\}|^\{\d{2,}\}|^\{[2-9]\}/.test(s.slice(i)));
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (c === '\\') { i++; continue; }
     if (inClass) { if (c === ']') inClass = false; continue; }
+    if ((c === '*' || c === '+' || (c === '{' && /^\{\d+,\}/.test(src.slice(i)))) && ++open > 2) return 'more than two open-ended repeats (* + {n,}) can be slow on a long text (like .*.*.*x)';
     if (c === '[') inClass = true;
     else if (c === '(') stack.push({ q: false, alt: false });
     else if (c === '|' && stack.length) stack[stack.length - 1].alt = true;

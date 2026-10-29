@@ -111,6 +111,13 @@ describe('expression language: slow patterns are refused', () => {
   for (const bad of ['(a+)+$', '(a|a)*b', '(.*)*', '(\\\\w+\\\\s?)*', '(a)\\\\1', 'a'.repeat(130)]) {
     it(bad.slice(0, 20), () => assert.match(err(`T.title.matches("${bad}")`).message, /refused/));
   }
+  it('side-by-side open repeats are refused too (polynomial, not exponential)', () => {
+    for (const bad of ['.*.*.*.*x', 'a*a*a*a*b', 'a+b+c+d', '\\\\d{1,}x*y*']) assert.match(err(`T.title.matches("${bad}")`).message, /open-ended/, bad);
+    const long = { T: { title: 'a'.repeat(5000) } };
+    const t0 = Date.now();
+    assert.equal(val('T.title.matches("^a*a*$")', long), true, 'two repeats on 5000 characters stay quick');
+    assert.ok(Date.now() - t0 < 1000);
+  });
   it('plain patterns pass; the pattern must be written out', () => {
     assert.equal(val('T.title.matches("^(fix|add) [a-z]+$")'), true);
     assert.match(err('T.title.matches(C.text)').message, /in quotes/);
