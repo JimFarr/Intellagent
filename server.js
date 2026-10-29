@@ -1073,9 +1073,38 @@ async function withCommits(ctx, id, fn) {
 // move routes look the commits of each ticket up first, as the review routes do. Anyone else: nothing to do.
 const gateOnVerdicts = (actor) => actor.kind === 'agent' && grantsOf(actor.name).some((g) => g.power === 'column.gate' && Object.keys(g.where || {}).some((k) => k.startsWith('reviewers.')));
 function withGateCommits(ctx, ids, actor, fn) {
+  if (actor.kind === 'agent' && grantsOf(actor.name).some((g) => g.power === 'column.gate')) return withGateTouches(ctx, ids, () => withVerdictCommits(ctx, ids, actor, fn));
+  return withVerdictCommits(ctx, ids, actor, fn);
+}
+function withVerdictCommits(ctx, ids, actor, fn) {
   if (!gateOnVerdicts(actor)) return fn();
   const [id, ...rest] = ids.filter((x) => ctx.board.items[String(x).toUpperCase()]);
-  return id ? withCommits(ctx, id, () => withGateCommits(ctx, rest, actor, fn)) : fn();
+  return id ? withCommits(ctx, id, () => withVerdictCommits(ctx, rest, actor, fn)) : fn();
+}
+// The board's own files a ticket's commits touch, read from the branch as it is now (INT-448), for a column.gate move
+// into an approval gate (INT-478): "<board>:<id>" → { files } (null: could not read), for the request that looked.
+const knownTouches = new Map();
+async function withGateTouches(ctx, ids, fn) {
+  const mine = [];
+  for (const x of ids) {
+    const item = ctx.board.items[String(x).toUpperCase()];
+    const author = item && commitsAuthor(item);
+    if (!author || !worktrees || !agentBranch(author)) continue;
+    const t = { files: await worktrees.commitsForAsync(author, item.id, { strict: true }).then((c) => worktrees.boardFilesTouched(c)).catch(() => null) };
+    knownTouches.set(`${ctx.id}:${item.id}`, t);
+    mine.push([`${ctx.id}:${item.id}`, t]);
+  }
+  try { return await fn(); } finally { for (const [k, t] of mine) if (knownTouches.get(k) === t) knownTouches.delete(k); }
+}
+// Inside moveInto: an agent's column.gate move into an approval gate refuses what an agent's approval refuses (lib/reviews.js)
+function gateBoardFiles(ctx, item) {
+  const author = commitsAuthor(item);
+  if (!author || !worktrees || !agentBranch(author)) return; // no branch: nothing it would land
+  // not looked up (a route that didn't ask): unknown, which only the human passes
+  const files = knownTouches.get(`${ctx.id}:${item.id}`)?.files ?? null;
+  if (files && !files.length) return;
+  fail(409, files ? `${item.id}'s commits change the board's own files (${files.join(', ')}): only the human moves it through the gate` : `${item.id}'s commits could not be read, so the board can't tell whether they change its own files: only the human moves it through the gate`,
+    { code: 'BOARD_FILES', hint: files ? 'Leave it for the human' : 'Could not read the commits; leave it for the human', files: files || [] });
 }
 // A reviewer's verdict can stand in for the human only when the board checked who gave it (the reviewer has
 // a token here) and nothing was committed on the ticket since. Commits that aren't known (now, or when the
@@ -1564,6 +1593,7 @@ function moveInto(ctx, item, colRef, position, actor, events, { gateBy = null, c
       if (to.flags.humanOnlyIn && (item.questions || []).some((q) => q.kind === 'review')) fail(409, `${item.id} has an open review — decide it instead of moving it`, { code: 'REVIEW_OPEN', hint: `POST /api/boards/${ctx.id}/items/${item.id}/review/decision { "verdict": "approve" | "changes", "comment": "…" } (needs the review.decide grant)` });
       if (to.flags.humanOnlyIn && reviewWithdrawnUndecided(item)) fail(409, `${item.id}'s review was withdrawn and never decided — it doesn't go through the gate on an agent's move`, { code: 'REVIEW_OPEN', hint: 'Request review again, or leave it for the human' });
       gateBy = grantFor(ctx, actor, 'column.gate', item, `move items ${to.flags.humanOnlyIn ? `into "${to.name}"` : `out of "${from.name}"`}`);
+      if (to.flags.humanOnlyIn) gateBoardFiles(ctx, item);
     }
     checkColumnPerm(ctx, actor, [to.id]);
     checkWip(to);

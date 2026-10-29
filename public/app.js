@@ -843,11 +843,6 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       state.standing = Object.fromEntries(st.agents.map((a) => [a.name, a]));
       state.usage = st.usage || {};
     } catch { return; }
-    // run-state dots on every avatar already on screen (cards only re-render when they change)
-    for (const av of $$('.avatar[data-name]')) {
-      const run = state.standing[av.dataset.name]?.status;
-      if (run && run !== 'idle') av.dataset.run = run; else delete av.dataset.run;
-    }
     for (const r of $$('.ring[data-claim]')) setRunRing(r);
     renderPresenceButton();
     // a run starting or ending adds / removes "thinking" bubbles in the open threads
