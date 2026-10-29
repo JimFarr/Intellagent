@@ -1,0 +1,24 @@
+{
+  "name": "browser",
+  "label": "Browser",
+  "version": "0.1.0",
+  "icon": "eye",
+  "description": "Gives each agent its own headless Chrome, so it can look at its own build (the sandbox it started with `intellagent sandbox <me> --from <me>`). **start** launches the agent's browser on a port of its own, with a fresh profile, the size and the light or dark theme it asks for, opened at its url, and answers with the DevTools address its browser tool attaches to. **stop** closes it, and a browser nobody has moved for the idle time closes itself. The grant decides who gets a browser; what the agent does in it is bounded by where it opens (scope `url` in the grant, e.g. `http://127.0.0.1:743*` for sandbox ports) and by the blocked origins in the agent's attach config. It launches Chrome, a program outside the plugin's sandbox: that is what `childProcess` is for.",
+  "entry": "index.js",
+  "hosts": ["127.0.0.1"],
+  "connection": [
+    { "key": "chrome", "label": "Chrome", "type": "text", "help": "The Chrome (or Edge) program to launch. Empty: Chrome's usual place on this system" },
+    { "key": "idleMinutes", "label": "Close after (minutes idle)", "type": "number", "min": 1, "max": 240, "help": "A browser whose pages haven't changed for this long closes itself. Empty: 15" }
+  ],
+  "actions": [
+    { "id": "start", "label": "Start my browser", "help": "Launches (or reuses) your headless Chrome, opened at url → { devtools, port, attach }", "timeoutSec": 40,
+      "inputs": [
+        { "key": "url", "label": "Address", "type": "url", "required": true, "help": "Your sandbox build, e.g. http://127.0.0.1:7431" },
+        { "key": "width", "label": "Width", "type": "number", "min": 320, "max": 3840 },
+        { "key": "height", "label": "Height", "type": "number", "min": 320, "max": 2160 },
+        { "key": "theme", "label": "Theme", "type": "enum", "options": ["light", "dark"] }
+      ] },
+    { "id": "stop", "label": "Stop my browser", "help": "Closes your browser", "timeoutSec": 15, "inputs": [] }
+  ],
+  "needs": { "childProcess": true }
+}

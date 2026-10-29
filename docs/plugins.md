@@ -51,7 +51,7 @@ The board sends calls:
 
 ```
 { "id": "…", "type": "test", "connection": { … } }
-{ "id": "…", "type": "run", "action": "comment", "inputs": { "text": "…" }, "ticket": { "id", "title", "fields", "properties" }, "connection": { … } }
+{ "id": "…", "type": "run", "action": "comment", "inputs": { "text": "…" }, "by": { "kind": "agent", "name": "ann" }, "ticket": { "id", "title", "fields", "properties" }, "connection": { … } }
 ```
 
 You answer each call once, with its `id`:
@@ -62,7 +62,7 @@ You answer each call once, with its `id`:
 ```
 
 - **test** is the human's *Test* button: reach the service with the connection and say who it signed in as (`result: { message }`).
-- **run** carries `ticket` when the run is for a ticket: its id, title, fields and properties. It is all you get of the board, so take what you need from it (an issue key in the title, a field).
+- **run** carries `ticket` when the run is for a ticket: its id, title, fields and properties. It is all you get of the board, so take what you need from it (an issue key in the title, a field). `by` says who asked (`kind`: `agent`, `user` or `system`, and a `name`), for a plugin that keeps something per agent.
 - The connection comes **with every call**, never through the environment or a file.
 - Calls can overlap: answer each by its `id`, in any order. A call not answered within the action's `timeoutSec` fails, and the board restarts your process.
 - To raise an event: `{ "type": "event", "event": "issue_closed", "data": { "key": "TR-12", "by": "ann" } }` (an event you declared, data up to 10 KB, at most 60 a minute).
@@ -100,3 +100,7 @@ Give the human the folder (or a .zip of it). On the board: **Integrations › Ad
 `examples/plugins/jira` is a complete plugin: one `plugin.json`, one `index.js`, no dependencies (node's `fetch` makes the calls). It moves a Jira issue to a status, comments on it, assigns it and creates issues, against Jira Data Center or Server, signed in as one service account. It is not installed on any board until the human adds it. A ticket's issue is its `jira` field, else the first key such as `BET-12` in its title (one with the board's own prefix is skipped).
 
 To try it with no Jira at all, start the stand-in, `node test/fake-jira.js 7599` (service account `svc` / `s3cret`, project `BET`), and point `plugin_try` at the folder with that address in the connection. Its tests are in `test/jira-plugin.test.js`.
+
+## The second example: Browser
+
+`plugins/browser` gives each agent its own headless Chrome, which the agent's browser tool then attaches to: `start { url, width?, height?, theme? }` and `stop`. It shows three things the Jira plugin doesn't: `needs: { "childProcess": true }` (it launches Chrome), keeping something per agent with the run's `by`, and cleaning up after itself (what it started is recorded in `data/`, so the next process closes a browser the last one left). Its README has the grants and the attach config; its tests (`test/browser-plugin.test.js`) put `test/fake-chrome.js` in Chrome's place.
