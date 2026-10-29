@@ -115,14 +115,16 @@ describe('rules on a board', () => {
     b.behaviours = { landOnApprove: false, idleCheck: { on: true, minutes: 45 }, stuckWatch: false };
     b.idleAlarm = { on: true, minutes: 30, wake: [], note: '' };
     b.rebalance = { on: false, maxMoves: 3 };
-    b.automations = { rules: [], log: [] };
+    // a rule of the human's in the idle check's shape: it stays his, and the idle check gets its own
+    b.automations = { rules: [{ id: 'rule_mine', name: 'Mine', enabled: true, when: { on: 'idle', minutes: 120 }, then: [{ do: 'wake', agent: 'coordinator' }], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }], log: [] };
     fs.chmodSync(file, 0o666);
     fs.writeFileSync(file, JSON.stringify(b));
     const u = await startServer({ dir });
     try {
       const rules = Object.fromEntries((await u.ok('GET', '/api/boards/main/rules', undefined, USER)).rules.map((r) => [r.id, r]));
       assert.equal(rules['board-land'].enabled, false);
-      assert.deepEqual([rules['board-idle-check'].enabled, rules['board-idle-check'].when.minutes], [true, 45]);
+      assert.deepEqual([rules['board-idle-check'].enabled, rules['board-idle-check'].when.minutes, rules['board-idle-check'].engine], [true, 45, 'idleCheck']);
+      assert.ok(!rules.rule_mine.engine, "the human's own rule in the same shape stays an ordinary rule");
       assert.equal(rules['board-stuck-watch'].enabled, false);
       assert.equal(rules['board-ask-escalation'].enabled, true, 'not set: the default, on');
       assert.deepEqual([rules['board-idle-alarm'].enabled, rules['board-idle-alarm'].then[0].do], [true, 'ask_human']);

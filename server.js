@@ -379,9 +379,10 @@ function getCtx(id) {
   return ctx;
 }
 
-/* The board's own behaviours are stored rules (INT-472): seeded once, then edited, copied and deleted like any rule.
-   Each engine runs from the first enabled rule in its shape, with that rule's numbers, and the rule sweeps never run a
-   rule in an engine's shape themselves, so a copy doesn't do it twice. Deleting the rule switches the behaviour off. */
+/* The board's own behaviours are stored rules (INT-472): seeded once, then edited and deleted like any rule. Each
+   engine runs from the one rule marked with its key (`engine`), with that rule's numbers; the shape only checks that
+   rule still fits, so a rule of the human's in the same shape stays an ordinary rule. The rule sweeps never run an
+   engine's rule themselves. Deleting it switches the behaviour off; reshaped, it loses the mark and is ordinary. */
 const shapeIs = (r, on, dos) => r.when?.on === on && r.then?.length === dos.length && r.then.every((x, i) => x.do === dos[i]);
 const ENGINES = {
   land: { id: 'board-land', name: 'Merge approved work into main', fits: (r) => shapeIs(r, 'approved', ['land']) && !r.if },
@@ -397,12 +398,12 @@ const ENGINES = {
 };
 // The words only an engine carries out, and whose they are: a rule may use them only in that engine's shape
 const ENGINE_WORDS = { board_idle: 'idleAlarm', stuck: 'stuckWatch', unstick: 'stuckWatch', escalate: 'askEscalation', assignee_away: 'rebalance', reassign: 'rebalance' };
-// The rule an engine runs from: the first enabled one in its shape (any: or the first switched off, for its numbers)
+// The rule an engine runs from, while it is on (any: also when switched off, for its numbers)
 const engineRule = (ctx, key, any = false) => {
-  const all = (ctx.board.automations?.rules || []).filter((r) => ENGINES[key].fits(r, ctx));
-  return all.find((r) => r.enabled) || (any ? all[0] : null) || null;
+  const r = (ctx.board.automations?.rules || []).find((x) => x.engine === key);
+  return r && (any || r.enabled) ? r : null;
 };
-const inEngine = (ctx, r) => Object.values(ENGINES).some((e) => e.fits(r, ctx));
+const inEngine = (ctx, r) => !!r.engine;
 const idleCheckDefault = () => (Number(M.triggers?.idleMinutes) > 0 ? Math.max(5, Number(M.triggers.idleMinutes)) : 60);
 // What the engines read: on/off and their numbers, from the rules
 function behavioursOf(ctx) {
@@ -423,9 +424,9 @@ function seedEngineRules(b) {
   const old = b.behaviours || {};
   const at = new Date().toISOString();
   const add = (key, enabled, when, then, extra = {}) => {
-    if (b.automations.rules.some((r) => ENGINES[key].fits(r, ctx))) return; // already a rule in its shape
+    // a rule of the human's in the same shape stays theirs: the engine gets its own, marked
     const id = b.automations.rules.some((r) => r.id === ENGINES[key].id) ? `${ENGINES[key].id}-${Date.now().toString(36)}` : ENGINES[key].id;
-    b.automations.rules.push({ id, name: extra.name || ENGINES[key].name, enabled, when, ...(extra.if ? { if: extra.if } : {}), then, createdAt: at, updatedAt: at });
+    b.automations.rules.push({ id, name: extra.name || ENGINES[key].name, engine: key, enabled, when, ...(extra.if ? { if: extra.if } : {}), then, createdAt: at, updatedAt: at });
   };
   add('land', old.landOnApprove !== false, { on: 'approved' }, [{ do: 'land' }]);
   add('idleCheck', old.idleCheck?.on !== false, { on: 'idle', minutes: Math.max(5, Number(old.idleCheck?.minutes) || idleCheckDefault()) }, [{ do: 'wake', agent: 'coordinator' }]);
@@ -451,13 +452,13 @@ function seedEngineRules(b) {
   b.automations.engines = 1;
 }
 const IDLE_ALARM_TEXT = 'The board is idle: tickets wait and no builder is running';
-// An old setting route writes its engine's rule and nothing else (INT-472): the rule in its shape, or a new one
+// An old setting route writes its engine's rule and nothing else (INT-472): that rule, or a new one marked for it
 function setEngineRule(ctx, key, patch) {
   const cur = engineRule(ctx, key, true);
   const at = now();
   if (cur) { Object.assign(cur, patch, { updatedAt: at }); return; }
   const id = rulesOf(ctx).rules.some((r) => r.id === ENGINES[key].id) ? rid('rule') : ENGINES[key].id;
-  rulesOf(ctx).rules.push({ id, name: ENGINES[key].name, ...patch, createdAt: at, updatedAt: at });
+  rulesOf(ctx).rules.push({ id, name: ENGINES[key].name, engine: key, ...patch, createdAt: at, updatedAt: at });
 }
 // the card looks among the rules, as card rules ({ name, condition, look, enabled }), in the rules' order
 const looksOf = (b) => (b.automations?.rules || []).filter((r) => r.when?.on === 'fits' && r.then?.[0]?.do === 'look').map((r) => ({ name: r.name, condition: r.if, look: r.then[0].look, enabled: r.enabled !== false }));
@@ -485,7 +486,7 @@ function normalizeBoard(b) {
     delete b.cardRulesSeeded;
   }
   b.digest = Array.isArray(b.digest) ? b.digest : [];
-  b.automations = isObj(b.automations) ? { rules: Array.isArray(b.automations.rules) ? b.automations.rules : [], log: Array.isArray(b.automations.log) ? b.automations.log : [], ...(b.automations.engines ? { engines: b.automations.engines } : {}) } : { rules: [], log: [] };
+  b.automations = isObj(b.automations) ? { rules: Array.isArray(b.automations.rules) ? b.automations.rules : [], log: Array.isArray(b.automations.log) ? b.automations.log : [], ...(b.automations.engines ? { engines: b.automations.engines } : {}), ...(b.automations.idleAlarmDeleted ? { idleAlarmDeleted: true } : {}) } : { rules: [], log: [] };
   seedEngineRules(b);
   // Card looks are rules (when a ticket fits, then its card looks so): a board's card rules move in once. cardRules
   // stays as their copy for what draws and matches looks (lookFor, is:rule:, the page), rebuilt from the rules.
@@ -3585,6 +3586,8 @@ function idleAlarmOf(ctx) {
     const wakes = r.then.filter((x) => x.do === 'wake');
     return { on: !!r.enabled, minutes: r.when.minutes, wake: wakes.map((x) => x.agent), note: wakes.find((x) => x.note)?.note || '', human: r.when.human !== false, from: 'settings' };
   }
+  // its rule deleted: off, never back to agents.json's flags (which would wake them)
+  if (ctx.board.automations?.idleAlarmDeleted) return { on: false, minutes: 20, wake: [], note: '', human: true, from: 'settings' };
   const flagged = standingAgents().filter((a) => a.idleAlarm);
   return { on: flagged.length > 0, minutes: flagged.length ? Math.min(...flagged.map((a) => a.idleAlarm.minutes)) : 20, wake: flagged.map((a) => a.name), note: '', human: true, from: 'agents.json' };
 }
@@ -4874,8 +4877,12 @@ const ruleView = (ctx, r) => ({ ...r, text: RULES.describe(r, ctx.board.columns)
 const ruleErr = (fn) => { try { return fn(); } catch (e) { if (e instanceof RULES.RuleError) fail(400, e.message, { code: 'BAD_REQUEST', hint: e.hint }); throw e; } };
 function saveRule(ctx, body, actor, prev = null) {
   const rule = ruleErr(() => RULES.cleanRule(body, ctx.board.columns, { id: rid('rule'), prev, nowIso: now() }));
+  // an engine's rule keeps its mark while it fits; a rule in an engine's words takes it only when the engine has none
+  const word = [rule.when.on, ...rule.then.map((x) => x.do)].find((k) => ENGINE_WORDS[k]);
+  const key = prev?.engine || (word && !engineRule(ctx, ENGINE_WORDS[word], true) ? ENGINE_WORDS[word] : null);
+  if (key && ENGINES[key].fits(rule, ctx)) rule.engine = key;
   checkEngineWords(ctx, rule);
-  if (ENGINES.idleAlarm.fits(rule, ctx)) {
+  if (rule.engine === 'idleAlarm') {
     const known = new Set(standingAgents().map((x) => x.name));
     const unknown = rule.then.filter((x) => x.do === 'wake' && !known.has(x.agent)).map((x) => x.agent);
     if (unknown.length) fail(400, `The idle alarm wakes standing agents: ${unknown.join(', ')} ${unknown.length > 1 ? "aren't" : "isn't"} one`, { code: 'BAD_REQUEST', hint: `Pick from: ${[...known].join(', ') || 'none defined'}` });
@@ -4883,7 +4890,8 @@ function saveRule(ctx, body, actor, prev = null) {
   }
   tx(ctx, (events) => {
     const all = rulesOf(ctx).rules;
-    if (!prev && all.length >= RULES.MAX_RULES) fail(409, `A board keeps at most ${RULES.MAX_RULES} rules`, { code: 'CONFLICT', hint: 'Delete one you no longer use' });
+    // the board's own rules count outside the cap: seeding them never fills a board
+    if (!prev && !rule.engine && all.filter((r) => !r.engine).length >= RULES.MAX_RULES) fail(409, `A board keeps at most ${RULES.MAX_RULES} rules`, { code: 'CONFLICT', hint: 'Delete one you no longer use' });
     if (rule.when.on === 'fits' && all.some((r) => r.id !== prev?.id && r.when?.on === 'fits' && r.name.toLowerCase() === rule.name.toLowerCase())) fail(409, `There is already a card look called "${rule.name}"`, { code: 'CONFLICT', hint: 'Card looks have their own names: is:rule:<name> finds them' });
     rulesOf(ctx).rules = prev ? all.map((r) => (r.id === prev.id ? rule : r)) : [...all, rule];
     ctx.board.cardRules = looksOf(ctx.board);
@@ -4893,7 +4901,7 @@ function saveRule(ctx, body, actor, prev = null) {
 }
 const getRule = (ctx, id) => rulesOf(ctx).rules.find((r) => r.id === id) || fail(404, `No rule "${id}"`, { code: 'NOT_FOUND', hint: `GET /api/boards/${ctx.id}/rules lists them` });
 
-route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, when, if?, then, text (in words), fired, native? }], vocabulary: { events, times, actions, roles } }. The board\'s behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing) are ordinary stored rules (ids board-…): each runs from the first enabled rule in its shape, and deleting it switches it off. The words board_idle, stuck, assignee_away, escalate, unstick and reassign work only in those rules\' shapes. native: a column\'s release-lease or auto-archive flag, listed and edited as a rule', ({ p }) => {
+route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, when, if?, then, text (in words), fired, native? }], vocabulary: { events, times, actions, roles } }. The board\'s behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing) are ordinary stored rules (ids board-…, marked engine: <key>): each runs from its marked rule, deleting it switches it off, and reshaped it loses the mark and is ordinary. A rule of yours in the same shape stays yours. The words board_idle, stuck, assignee_away, escalate, unstick and reassign work only in a marked rule, in its shape; a new rule in those words takes the mark only when its behaviour has no rule. native: a column\'s release-lease or auto-archive flag, listed and edited as a rule', ({ p }) => {
   const ctx = getCtx(p.board);
   const labels = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { label: v.label, ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}) }]));
   return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...rulesOf(ctx).rules.map((r) => ruleView(ctx, r))], vocabulary: { events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
@@ -4911,6 +4919,7 @@ route('DELETE', '/api/boards/:board/rules/:id', 'Human: delete a rule (its log s
   const rule = getRule(ctx, p.id);
   tx(ctx, (events) => {
     rulesOf(ctx).rules = rulesOf(ctx).rules.filter((r) => r.id !== rule.id);
+    if (rule.engine === 'idleAlarm') rulesOf(ctx).idleAlarmDeleted = true;
     ctx.board.cardRules = looksOf(ctx.board);
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rules: { deleted: rule.name } } });
   });

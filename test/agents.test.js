@@ -549,6 +549,11 @@ describe('standing agents pick up work already on the board', () => {
       assert.equal(set.note, 'Nudge the assignees first; ask Gamora for anything unassigned.');
       const off = await s.ok('PUT', `${B}/idle-alarm`, { on: false }, USER);
       assert.deepEqual([off.on, off.wake], [false, ['lead']], 'switching off keeps who it wakes');
+      // INT-472: its rule deleted, the alarm is off; agents.json's flag on lander doesn't switch it back on
+      await s.ok('PUT', `${B}/idle-alarm`, { on: true }, USER);
+      await s.ok('DELETE', `${B}/rules/board-idle-alarm`, undefined, USER);
+      const gone = await s.ok('GET', `${B}/idle-alarm`);
+      assert.deepEqual([gone.on, gone.wake], [false, []]);
     } finally { await s.stop(); }
   });
 
