@@ -120,7 +120,7 @@ export function createPlugins({ api, toast, openDrawer, rel, nameOf, isOpen, ope
       ['Secrets it keeps', a.secrets], ['Hosts it talks to', a.hosts], ['Actions it offers', a.actions], ['Events it raises', a.events],
       ['Extra access', Object.entries(a.needs || {}).filter(([, v]) => (Array.isArray(v) ? v.length : v)).map(([k, v]) => (Array.isArray(v) ? `${k}: ${v.join(', ')}` : k))],
       ['A web hook at', a.webhook ? [a.webhook] : []],
-    ].map(([l, v]) => `<div class="dp-ask"><b>${l}</b><span>${v?.length ? v.map((x) => `<code>${esc(x)}</code>`).join(' ') : 'none'}</span></div>`).join('');
+    ].map(([l, v]) => `<div class="dp-ask"><b>${l}</b><span>${v?.length ? v.map((x) => `<code>${esc(x)}</code>`).join(' ') : '<span class="muted">none</span>'}</span></div>`).join('');
     const fields = p.connection.fields || [];
     const on = p.state === 'on';
     pane.innerHTML = `<div class="dp-form">
