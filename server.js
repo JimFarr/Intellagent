@@ -5658,13 +5658,29 @@ route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 ch
 async function imageFromUrl(url) {
   const bad = (msg) => fail(400, `Could not use the image at ${url}: ${msg}`, { code: 'BAD_REQUEST', hint: 'Send the file instead: imagePath or imageBase64' });
   let r;
-  try { r = await fetch(url, { signal: AbortSignal.timeout(10000) }); } catch (e) { bad(e.message); }
-  if (!r.ok) bad(`HTTP ${r.status}`);
-  const type = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-  if (!/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(type)) bad(`it is ${type || 'of no type'}, not png, jpg, gif, webp or svg`);
-  // shortcut: a body with no Content-Length is read whole before updateProfile's 2 MB check; stream with a cap if that matters
-  if (Number(r.headers.get('content-length')) > 2 * 1024 * 1024) fail(413, 'Avatar exceeds 2 MB', { code: 'TOO_LARGE', hint: 'Use a smaller image' });
-  return `data:${type};base64,${Buffer.from(await r.arrayBuffer()).toString('base64')}`;
+  const MAX = 2 * 1024 * 1024;
+  const big = () => fail(413, 'Avatar exceeds 2 MB', { code: 'TOO_LARGE', hint: 'Use a smaller image' });
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new Error('timed out after 10 s')), 10000);
+  try {
+    // no redirects: the board fetches only the address it was given
+    try { r = await fetch(url, { signal: ctl.signal, redirect: 'error' }); } catch (e) { bad(e.cause?.message || e.message); }
+    if (!r.ok) bad(`HTTP ${r.status}`);
+    const type = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(type)) bad(`it is ${type || 'of no type'}, not png, jpg, gif, webp or svg`);
+    if (Number(r.headers.get('content-length')) > MAX) big();
+    // read with a cap: a body with no (or a false) Content-Length never fills memory
+    const chunks = [];
+    let size = 0;
+    try {
+      for await (const c of r.body) {
+        size += c.length;
+        if (size > MAX) { ctl.abort(); big(); }
+        chunks.push(c);
+      }
+    } catch (e) { if (e.status) throw e; bad(e.message); }
+    return `data:${type};base64,${Buffer.concat(chunks).toString('base64')}`;
+  } finally { clearTimeout(timer); }
 }
 
 // Agent memory (INT-243). :name is an agent, or "me".

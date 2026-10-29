@@ -160,6 +160,9 @@ describe('board API', () => {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
     const host = http.createServer((req, res) => {
       if (req.url === '/a.png') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(png); }
+      // chunked, so no Content-Length: 3 MB in 64 KB pieces
+      if (req.url === '/big.png') { res.writeHead(200, { 'Content-Type': 'image/png' }); for (let i = 0; i < 48; i++) res.write(Buffer.alloc(65536)); return res.end(); }
+      if (req.url === '/moved') { res.writeHead(302, { Location: '/a.png' }); return res.end(); }
       res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<p>not an image</p>');
     });
     await new Promise((r) => host.listen(0, '127.0.0.1', r));
@@ -173,6 +176,11 @@ describe('board API', () => {
       assert.equal(page2.body.code, 'BAD_REQUEST');
       assert.match(page2.body.hint, /imagePath or imageBase64/);
       assert.equal((await s.api('PATCH', '/api/profiles/me', { image: 'not a url' }, { agent: 'pic' })).status, 400);
+      // read with a cap even with no Content-Length, and no redirects (Kraglin's review)
+      const big = await s.api('PATCH', '/api/profiles/me', { image: `${at}/big.png` }, { agent: 'pic' });
+      assert.deepEqual([big.status, big.body.code], [413, 'TOO_LARGE']);
+      const moved = await s.api('PATCH', '/api/profiles/me', { image: `${at}/moved` }, { agent: 'pic' });
+      assert.deepEqual([moved.status, moved.body.code], [400, 'BAD_REQUEST']);
     } finally { host.close(); }
   });
 
