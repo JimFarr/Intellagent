@@ -149,6 +149,41 @@ describe('board API', () => {
     assert.equal((await att(path.join(s.dir, 'agents.json'), USER)).status, 201, 'the human still can');
   });
 
+  test('the page loads only from the board and Google Fonts; an avatar by URL is kept by the board (INT-468)', async () => {
+    const page = await fetch(`${s.base}/`);
+    const csp = page.headers.get('content-security-policy');
+    assert.match(csp, /script-src 'self';/);
+    assert.match(csp, /img-src 'self' data: blob:;/, 'no remote images');
+    assert.match(csp, /connect-src 'self';/);
+    assert.match(csp, /frame-ancestors 'none'/);
+
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+    const host = http.createServer((req, res) => {
+      if (req.url === '/a.png') { res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(png); }
+      // chunked, so no Content-Length: 3 MB in 64 KB pieces
+      if (req.url === '/big.png') { res.writeHead(200, { 'Content-Type': 'image/png' }); for (let i = 0; i < 48; i++) res.write(Buffer.alloc(65536)); return res.end(); }
+      if (req.url === '/moved') { res.writeHead(302, { Location: '/a.png' }); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<p>not an image</p>');
+    });
+    await new Promise((r) => host.listen(0, '127.0.0.1', r));
+    const at = `http://127.0.0.1:${host.address().port}`;
+    try {
+      const me = await s.ok('PATCH', '/api/profiles/me', { image: `${at}/a.png` }, { agent: 'pic' });
+      assert.match(me.image, /^\/avatars\/pic-\w+\.png$/, 'stored, not hotlinked');
+      assert.deepEqual(Buffer.from(await (await fetch(`${s.base}${me.image}`)).arrayBuffer()), png);
+      const page2 = await s.api('PATCH', '/api/profiles/me', { image: `${at}/page` }, { agent: 'pic' });
+      assert.equal(page2.status, 400);
+      assert.equal(page2.body.code, 'BAD_REQUEST');
+      assert.match(page2.body.hint, /imagePath or imageBase64/);
+      assert.equal((await s.api('PATCH', '/api/profiles/me', { image: 'not a url' }, { agent: 'pic' })).status, 400);
+      // read with a cap even with no Content-Length, and no redirects (Kraglin's review)
+      const big = await s.api('PATCH', '/api/profiles/me', { image: `${at}/big.png` }, { agent: 'pic' });
+      assert.deepEqual([big.status, big.body.code], [413, 'TOO_LARGE']);
+      const moved = await s.api('PATCH', '/api/profiles/me', { image: `${at}/moved` }, { agent: 'pic' });
+      assert.deepEqual([moved.status, moved.body.code], [400, 'BAD_REQUEST']);
+    } finally { host.close(); }
+  });
+
   test('leases lock other agents but never the human', async () => {
     const it = await mk({});
     await s.ok('POST', `${B}/items/${it.id}/lease`, { minutes: 10, status: 'reading' }, { agent: 'a1' });

@@ -2623,7 +2623,7 @@ function updateProfile(name, d, actor) {
   if ('alignment' in d) { if (d.alignment) next.alignment = str(d.alignment, 400); else delete next.alignment; }
   if ('image' in d || 'imageBase64' in d || 'imagePath' in d) {
     if (!d.image && !d.imageBase64 && !d.imagePath) delete next.image;
-    else if (d.image && /^https?:\/\//i.test(d.image)) next.image = str(d.image, 2000);
+    else if (d.image && !d.imageBase64) fail(400, '"image" must be an http(s) URL', { code: 'BAD_REQUEST', hint: 'Or send imagePath or imageBase64' });
     else {
       let buf;
       let ext = 'png';
@@ -5705,8 +5705,40 @@ function sillyName() {
 }
 route('GET', '/api/names/suggest', 'A free, friendly agent name (e.g. "plucky-otter")', () => ({ name: sillyName() }));
 
-route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 chars/emoji), label?, description? (markdown: what you were designed to do), role?, alignment? (how you behave), image? (https URL) | imageBase64 | imagePath } — null clears',
-  ({ body, actor }) => updateProfile(actor.name, body, actor));
+route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 chars/emoji), label?, description? (markdown: what you were designed to do), role?, alignment? (how you behave), image? (http(s) URL: fetched once, the board keeps a copy) | imageBase64 | imagePath } — null clears',
+  async ({ body, actor }) => {
+    if (body?.image && /^https?:\/\//i.test(body.image)) body = { ...body, image: undefined, imageBase64: await imageFromUrl(body.image) };
+    return updateProfile(actor.name, body, actor);
+  });
+
+// The page loads images from the board only (INT-468), so an avatar given by URL is fetched once and kept in /avatars.
+async function imageFromUrl(url) {
+  const bad = (msg) => fail(400, `Could not use the image at ${url}: ${msg}`, { code: 'BAD_REQUEST', hint: 'Send the file instead: imagePath or imageBase64' });
+  let r;
+  const MAX = 2 * 1024 * 1024;
+  const big = () => fail(413, 'Avatar exceeds 2 MB', { code: 'TOO_LARGE', hint: 'Use a smaller image' });
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new Error('timed out after 10 s')), 10000);
+  try {
+    // no redirects: the board fetches only the address it was given
+    try { r = await fetch(url, { signal: ctl.signal, redirect: 'error' }); } catch (e) { bad(e.cause?.message || e.message); }
+    if (!r.ok) bad(`HTTP ${r.status}`);
+    const type = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(type)) bad(`it is ${type || 'of no type'}, not png, jpg, gif, webp or svg`);
+    if (Number(r.headers.get('content-length')) > MAX) big();
+    // read with a cap: a body with no (or a false) Content-Length never fills memory
+    const chunks = [];
+    let size = 0;
+    try {
+      for await (const c of r.body) {
+        size += c.length;
+        if (size > MAX) { ctl.abort(); big(); }
+        chunks.push(c);
+      }
+    } catch (e) { if (e.status) throw e; bad(e.message); }
+    return `data:${type};base64,${Buffer.concat(chunks).toString('base64')}`;
+  } finally { clearTimeout(timer); }
+}
 
 // Agent memory (INT-243). :name is an agent, or "me".
 route('GET', '/api/profiles/:name/memory', 'An agent\'s memory ("me": yours): { name, on, cap, used, entries: [{ id, text, source: learned|human, from?, at, by, pinned?, history?, suggestedBy? }], suggestions: [{ id, text, why, from?, by, at }] (pending: not memory until accepted) }', ({ p, actor }) =>
@@ -5825,6 +5857,8 @@ route('GET', '/files/:board/:file', null, ({ res, p }) => {
 
 const STATIC = { '/': 'index.html', '/index.html': 'index.html', '/app.css': 'app.css', '/app.js': 'app.js', '/favicon.svg': 'favicon.svg' };
 const STATIC_TYPES = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', svg: 'image/svg+xml' };
+// The page loads only from the board and Google Fonts (INT-468): a theme, a ticket or a plugin can't make the browser call another host.
+const PAGE_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 // index.html gets cache-busting stamps (file mtimes) so edited assets are never served stale.
 const stamp = (f) => Math.round(fs.statSync(path.join(PUBLIC, f)).mtimeMs).toString(36);
 for (const [urlPath, file] of Object.entries(STATIC)) {
@@ -5834,7 +5868,7 @@ for (const [urlPath, file] of Object.entries(STATIC)) {
       .replace('/app.css"', `/app.css?v=${stamp('app.css')}"`)
       .replace('/app.js"', `/app.js?v=${stamp('app.js')}"`)
       .replace('<head>', `<head>\n<meta name="intellagent-build" content="${VERSION}+${BUILD}">`);
-    reply(res, 200, html, { 'Content-Type': STATIC_TYPES.html });
+    reply(res, 200, html, { 'Content-Type': STATIC_TYPES.html, 'Content-Security-Policy': PAGE_CSP });
     return HANDLED;
   });
 }
