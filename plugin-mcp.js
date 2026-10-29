@@ -81,7 +81,7 @@ process.stdin.on('data', (d) => {
 
 // Runs the plugin as the board does (lib/plugins.js start(): keep the flags in step), sends one call and collects
 // what comes back until its reply, or the timeout.
-function tryPlugin({ path: dir, type = 'test', action, inputs = {}, connection = {}, ticket = null, timeoutSec = 30 }) {
+function tryPlugin({ path: dir, type = 'test', action, inputs = {}, connection = {}, ticket = null, webhook = null, timeoutSec = 30 }) {
   const { root, def, problems } = load(dir);
   if (problems.length) throw new Error(`plugin.json has problems (run plugin_check):\n- ${problems.join('\n- ')}`);
   if (type === 'run' && !def.actions.some((a) => a.id === action)) throw new Error(`no action "${action}" in plugin.json (it has ${def.actions.map((a) => a.id).join(', ') || 'none'})`);
@@ -114,7 +114,8 @@ function tryPlugin({ path: dir, type = 'test', action, inputs = {}, connection =
     proc.stderr.on('data', (d) => { stderr += d; });
     proc.on('exit', (code) => finish({ ok: false, error: `the plugin exited (code ${code}) before answering` }));
     proc.stdin.on('error', () => {});
-    proc.stdin.write(`${JSON.stringify({ id, type, connection, ...(type === 'run' ? { action, inputs, ...(ticket ? { ticket } : {}) } : {}) })}\n`);
+    const extra = type === 'run' ? { action, inputs, ...(ticket ? { ticket } : {}) } : type === 'webhook' ? { webhook: { headers: webhook?.headers || {}, body: webhook?.body ?? '' } } : {};
+    proc.stdin.write(`${JSON.stringify({ id, type, connection, ...extra })}\n`);
   });
 }
 
@@ -141,8 +142,8 @@ const TOOLS = [
       if (syntax.status !== 0) problems.push(`${def.entry}: ${(syntax.stderr || '').trim().split('\n').slice(0, 4).join(' ')}`);
       return JSON.stringify({ ok: !problems.length, problems, plugin: { name: def.name, label: def.label, actions: def.actions.map((x) => ({ id: x.id, inputs: x.inputs.map((i) => i.key) })), events: def.events.map((e) => e.id), connection: def.connection.map((c) => `${c.key}${c.secret ? ' (secret)' : ''}`), hosts: def.hosts, needs: def.needs } }, null, 2);
     }],
-  ['plugin_try', 'Run a plugin as the board does (sandboxed, no environment) and send it one call: "test" (the connection) or "run" (an action). Nothing is installed.',
-    { path: S('string', 'The plugin folder (absolute)'), type: S('string', 'test | run'), action: S('string', 'run: the action id'), inputs: S('object', 'run: the action inputs'),
+  ['plugin_try', 'Run a plugin as the board does (sandboxed, no environment) and send it one call: "test" (the connection), "run" (an action) or "webhook" (a request to /hooks/<name>). Nothing is installed.',
+    { path: S('string', 'The plugin folder (absolute)'), type: S('string', 'test | run | webhook'), webhook: S('object', 'webhook: the request, { headers: { name: value } (lower-case names), body: "the raw body as text" }'), action: S('string', 'run: the action id'), inputs: S('object', 'run: the action inputs'),
       connection: S('object', 'The connection values the human would enter'), ticket: S('object', 'run: the ticket it is for, { id, title, fields, properties }'), timeoutSec: S('number', 'Seconds to wait (default 30)') },
     ['path'], async (a) => JSON.stringify(await tryPlugin(a), null, 2)],
 ];

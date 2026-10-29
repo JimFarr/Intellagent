@@ -3261,6 +3261,24 @@ function readBody(req) {
   });
 }
 
+// A webhook's body as it came (its signature is over these bytes), as text: at most HOOK_MAX
+const HOOK_MAX = 256 * 1024;
+function readRaw(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    const take = (c) => {
+      size += c.length;
+      // the caller hears 413 (destroying the socket would lose the reply); what is left is read and dropped
+      if (size > HOOK_MAX) { req.off('data', take); req.resume(); reject(new HttpError(413, `Body too large (${HOOK_MAX / 1024} KB max)`)); return; }
+      chunks.push(c);
+    };
+    req.on('data', take);
+    req.on('end', () => resolve({ raw: Buffer.concat(chunks).toString('utf8') }));
+    req.on('error', reject);
+  });
+}
+
 // Tokens come in headers only: a token in the URL ends up in logs and browser history.
 function tokenOf(req) {
   const h = req.headers.authorization;
@@ -3495,6 +3513,8 @@ const POLICY = {
   'POST /api/plugins/runs/:id/approve': { who: 'human', ...humanAsk('OK a plugin run') },
   'POST /api/plugins/runs/:id/reject': { who: 'human', ...humanAsk('turn a plugin run down') },
   'POST /api/plugins/runs/:id/cancel': { who: 'self' }, // an agent: its own runs only, checked in lib/plugins.js
+  // unauthenticated on purpose (outside /api): the plugin checks the request, and the board acts only on its event
+  'POST /hooks/:name': { who: 'any' },
   'PUT /api/profiles/me/status': { who: 'self', readOnly: true },
   'PATCH /api/profiles/me': { who: 'self', readOnly: true },
   'POST /api/profiles/:name/memory': { who: 'self', readOnly: true },
@@ -4930,6 +4950,14 @@ async function ruleAction(ctx, rule, a, item, why, raw = null) {
       if (!r.landed?.length) fail(409, `${id} didn't merge into ${a.branch}: ${r.reason || 'no commits'}${r.hint ? ` (${r.hint})` : ''}`);
       return { branch: a.branch, merged: r.landed, ...(r.created ? { created: true } : {}), ...(r.pushed ? { pushed: true } : {}), ...(r.pushError ? { pushError: r.pushError } : {}) };
     }
+    case 'run': {
+      // the board runs it, under the rule's name, with no agent grant: board rules are the human's (POLICY). A
+      // ticket's own trigger rule may be an agent's, so a run from one waits for the human's OK.
+      const inputs = Object.fromEntries(Object.entries(a.inputs || {}).map(([k, v]) => [k, RULES.fillValue(v, item, ev)]));
+      const r = await pluginErrors(async () => plugins.startRun(a.plugin, plugins.prepare(a.plugin, a.action, inputs), { by: { kind: 'system', name: `rule: ${rule.name}` }, item: id || null, board: ctx.id, approve: !!rule.item }));
+      if (['failed', 'timedout'].includes(r.status)) fail(409, `${a.plugin}'s ${a.action} ${r.status}: ${r.error}`);
+      return { run: r.id, status: r.status };
+    }
     case 'land': {
       if (!worktrees) fail(409, 'this board has no worktrees, so nothing lands');
       if (item.review?.verdict !== 'approve') fail(409, `${id} isn't approved: only approved work lands`);
@@ -4988,11 +5016,17 @@ const whyOf = (ctx, rule) => RULES.describeWhen(rule, ctx.board.columns);
 const ruleFails = (fn) => fn().catch((e) => console.warn(`rule: ${e.message}`));
 // Every event, after it is saved: the event rules it sets off. Not the rules' own (actor.rule): no chains.
 function onRuleEvent(e) {
-  if (e.actor?.rule || !e.board) return;
-  const ctx = boards.get(e.board);
+  if (e.actor?.rule) return;
+  // a plugin's event is no board's: every board's rules hear it (INT-474)
+  if (e.type === 'plugin.event' && !e.board) { for (const ctx of boards.values()) ruleEventOn(ctx, e); return; }
+  if (e.board) ruleEventOn(boards.get(e.board), e);
+}
+function ruleEventOn(ctx, e) {
   const rules = (ctx?.board.automations?.rules || []).filter((r) => r.enabled && RULES.EVENTS[r.when.on] && RULES.eventMatches(r, e) && !inEngine(ctx, r));
   if (!rules.length) return;
-  const itemId = e.itemId || e.run?.item || null;
+  // a plugin's event is for a ticket when its data names one on this board (data.ticket: "INT-12")
+  const named = e.type === 'plugin.event' && typeof e.data?.ticket === 'string' ? Object.keys(ctx.board.items).find((k) => k.toLowerCase() === e.data.ticket.toLowerCase()) : null;
+  const itemId = e.itemId || e.run?.item || named || null;
   setImmediate(() => {
     for (const rule of rules) ruleFails(async () => {
       const item = itemId ? ctx.board.items[itemId] : null;
@@ -5131,6 +5165,15 @@ function checkEngineWords(ctx, rule) {
     ? `Edit or copy the ${e.name} rule and change its numbers: ${RULES.describe(own, ctx.board.columns)}`
     : `This board has no ${e.name} rule: switch the behaviour on (its setting writes the rule), then edit or copy it` });
 }
+// A rule's plugin, event and action must be ones a plugin here declares (it may be off: it runs once enabled)
+function checkPluginWords(rule) {
+  const uses = [...(rule.when.on === 'plugin_event' ? [[rule.when.plugin, 'events', rule.when.event]] : []), ...rule.then.filter((a) => a.do === 'run').map((a) => [a.plugin, 'actions', a.action])];
+  for (const [name, kind, id] of uses) {
+    let v;
+    try { v = plugins.view(name); } catch (e) { if (e instanceof PluginError) fail(400, `No plugin "${name}" on this board`, { code: 'BAD_REQUEST', hint: 'GET /api/plugins lists them' }); throw e; }
+    if (!v.problems.length && !v[kind].some((x) => x.id === id)) fail(400, `${name} has no ${kind === 'events' ? 'event' : 'action'} "${id}"`, { code: 'BAD_REQUEST', hint: `${kind === 'events' ? 'Events' : 'Actions'}: ${v[kind].map((x) => x.id).join(', ') || '(none)'}` });
+  }
+}
 const ruleView = (ctx, r) => ({ ...r, text: RULES.describe(r, ctx.board.columns), state: undefined, fired: (r.state?.recent || []).length ? new Date(Math.max(...r.state.recent)).toISOString() : null });
 // at / end: where an "if" that doesn't read went wrong, for the page to mark
 const ruleErr = (fn) => { try { return fn(); } catch (e) { if (e instanceof RULES.RuleError) fail(400, e.message, { code: 'BAD_REQUEST', hint: e.hint, ...(e.at != null ? { at: e.at, end: e.end } : {}) }); throw e; } };
@@ -5144,6 +5187,7 @@ function saveRule(ctx, body, actor, prev = null) {
   checkEngineWords(ctx, rule);
   // a filter-language "if" sent by an older caller is kept in the expression language when it says the same (INT-480)
   rule = RULES.upgrade(rule, RULES.ticketDesc(ctx.board.columns, ctx.board.schema.fields));
+  checkPluginWords(rule);
   if (rule.engine === 'idleAlarm') {
     const known = new Set(standingAgents().map((x) => x.name));
     const unknown = rule.then.filter((x) => x.do === 'wake' && !known.has(x.agent)).map((x) => x.agent);
@@ -5188,7 +5232,7 @@ route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabl
   const subjects = Object.fromEntries(Object.entries(RULES.SUBJECTS).map(([k, s]) => [k, { label: s.label, ...(s.event ? { event: s.event } : {}), names: Object.fromEntries(s.roles.map((r) => [r, RULES.DEFAULT_NAMES[r]])), parts: Object.fromEntries(s.roles.map((r) => [r, r === 'ticket' ? tdesc : RULES.COMMENT_DESC])) }]));
   return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...boardRules(ctx).map((r) => ruleView(ctx, r))], vocabulary: { subjects, events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
 });
-route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, for?: ticket|comment, names?: { ticket: "T", comment: "C" }, when: { on, column?, minutes?, to? }, lang?: "expr", if?: an expression over the names (e.g. C.text.contains("?") && T.priority == "High"; without lang, the card-rules filter language, kept as the expression that says the same where there is one), then: [{ do, … }], enabled?, confirm? }. An "if" that does not read answers 400 with at/end. A time rule (idle, in_column, every with an if) with tickets due as it is saved answers 409 CONFIRM_REQUIRED { count, items } unless confirm: <count>; confirmed, its first sweep acts on them all outside the hourly cap; enabled: false never asks. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented (a comment rule\'s trigger; may be left out), unblocked, lease_expired, ask_overdue, agent_stalled (why?: failed|limited|paused|refused|waiting, agent?; no ticket, so only wake, and the woken agent gets the stall with its evidence); or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
+route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, for?: ticket|comment, names?: { ticket: "T", comment: "C" }, when: { on, column?, minutes?, to? }, lang?: "expr", if?: an expression over the names (e.g. C.text.contains("?") && T.priority == "High"; without lang, the card-rules filter language, kept as the expression that says the same where there is one), then: [{ do, … }], enabled?, confirm? }. An "if" that does not read answers 400 with at/end. A time rule (idle, in_column, every with an if) with tickets due as it is saved answers 409 CONFIRM_REQUIRED { count, items } unless confirm: <count>; confirmed, its first sweep acts on them all outside the hourly cap; enabled: false never asks. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented (a comment rule\'s trigger; may be left out), unblocked, lease_expired, ask_overdue, agent_stalled (why?: failed|limited|paused|refused|waiting, agent?; no ticket, so only wake, and the woken agent gets the stall with its evidence), plugin_event (plugin, event: one a plugin declares; for the ticket in its data.ticket); or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land, run { plugin, action, inputs } (a plugin action, run by the board). Text may hold {id} and {title}, and {event.<field>} from a plugin event', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
 route('PUT', '/api/boards/:board/rules/:id', 'Human: replace a rule (as POST); { enabled: false } with the rest switches it off', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const n = nativeRules(ctx).find((x) => x.id === p.id);
@@ -6109,6 +6153,12 @@ route('POST', '/api/plugins/runs/:id/approve', 'Human only: OK a waiting run →
 })));
 route('POST', '/api/plugins/runs/:id/reject', 'Human only: turn a waiting run down { note? } → the run, rejected (409 ALREADY_DECIDED)', ({ p, body, actor }) => pluginErrors(() => plugins.rejectRun(p.id, actor, body.note ? str(body.note, 500) : '')));
 route('POST', '/api/plugins/runs/:id/cancel', 'Cancel a waiting or running run (an agent: only its own) → the run, canceled. A running action may already have acted: its answer is dropped. 409 CONFLICT when it already finished', ({ p, actor }) => pluginErrors(() => plugins.cancelRun(p.id, actor)));
+// The service's headers, but cookies (a browser's, never the service's) and the hop-by-hop ones
+const HOOK_DROP = new Set(['cookie', 'connection', 'keep-alive', 'transfer-encoding', 'upgrade']);
+route('POST', '/hooks/:name', 'A plugin\'s webhook, for the service it connects (no token: the plugin checks the request itself, e.g. a signature from a secret in its connection). Body as sent, up to 256 KB → 202 { accepted, event }: the event the plugin made of it, or null. 404 when no enabled plugin of that name declares a webhook, 401 when the plugin refused it, 429 past its event limit', ({ req, p, body }) => pluginErrors(async () => {
+  const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !HOOK_DROP.has(k)));
+  return new Reply(202, await plugins.webhook(p.name, { headers, body: body.raw }));
+}));
 route('GET', '/api/plugins/:name', 'One plugin (the fields of the list)', ({ p }) => pluginErrors(() => plugins.view(p.name)));
 route('POST', '/api/plugins', 'Human only: add a plugin { path: absolute folder } or { zipBase64, filename } → 201 the plugin, off: nothing runs until it is enabled. 400 PLUGIN_INVALID lists the problems', ({ body, actor }) => pluginErrors(() => created(plugins.add(body, actor))));
 route('POST', '/api/plugins/:name/enable', 'Human only: run a plugin { hash } (the hash you were shown; 409 PLUGIN_CHANGED when its files differ). A later change to its files stops it until enabled again', ({ p, body, actor }) => pluginErrors(() => plugins.enable(p.name, body.hash, actor)));
@@ -6238,7 +6288,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (!m) fail(404, `No route for ${req.method} ${u.pathname}`, { code: 'NOT_FOUND', hint: 'Routes: GET /api. From the CLI, call operations by name instead: intellagent help <word> (e.g. intellagent help search), then intellagent do <operation> key=value' });
     const q = Object.fromEntries(u.searchParams);
-    const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? await readBody(req) : {};
+    const body = !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? {} : m.r.pattern === '/hooks/:name' ? await readRaw(req) : await readBody(req);
     const actor = actorOf(req, q);
     checkAuth(req, q, actor, u.pathname, m.r.policy);
     if (actor.kind === 'agent' && req.method !== 'GET') probationGate(req.method, u.pathname, body, actor);

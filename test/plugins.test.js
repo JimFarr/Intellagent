@@ -311,6 +311,72 @@ test('plugin actions as powers: only the human grants them, the grant scopes the
   } finally { await s.stop(); }
 });
 
+// A plugin with a webhook: the x-sig header must be its token; the body is { ticket } (raises ping) or "hello" (nothing)
+const HOOK_MAIN = `
+const send = (m) => process.stdout.write(JSON.stringify(m) + '\\n');
+let buf = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (d) => {
+  buf += d;
+  let i;
+  while ((i = buf.indexOf('\\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); handle(JSON.parse(line)); }
+});
+function handle(m) {
+  if (m.type === 'run') return send({ id: m.id, ok: true, result: { message: 'posted ' + m.inputs.channel, ticket: m.ticket && m.ticket.id } });
+  if (m.type !== 'webhook') return send({ id: m.id, ok: true, result: { message: 'ok' } });
+  const h = m.webhook;
+  if (h.headers['x-sig'] !== m.connection.token) return send({ id: m.id, ok: false, error: 'bad signature' });
+  if (h.body === 'hello') return send({ id: m.id, ok: true, result: null });
+  if (h.body === 'liar') return send({ id: m.id, ok: true, result: { event: 'undeclared' } });
+  send({ id: m.id, ok: true, result: { event: 'ping', data: { ...JSON.parse(h.body), cookie: h.headers.cookie || null } } });
+}
+`;
+test('plugins in rules and webhooks: a plugin event sets a rule off, a rule runs an action as the board, a webhook is checked by its plugin (INT-474)', async () => {
+  const s = await startServer();
+  const hook = (body, headers = {}) => fetch(`${s.base}/hooks/fake`, { method: 'POST', headers: { 'content-type': 'text/plain', ...headers }, body }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  try {
+    const added = await s.ok('POST', '/api/plugins', { path: pluginFolder(FAKE_JSON, HOOK_MAIN) }, USER);
+    // off: the open route says nothing about what is installed
+    assert.strictEqual((await hook('hello', { 'x-sig': 'abcdefghijkl1234' })).status, 404);
+    await s.ok('POST', '/api/plugins/fake/enable', { hash: added.hash }, USER);
+    await s.ok('PUT', '/api/plugins/fake/connection', { values: { token: 'abcdefghijkl1234' } }, USER);
+
+    // the rule names what the plugin declares, and only the human writes one
+    const rule = { name: 'Ping posts', when: { on: 'plugin_event', plugin: 'fake', event: 'ping' }, then: [{ do: 'run', plugin: 'fake', action: 'post', inputs: { channel: '#{event.room}' } }, { do: 'comment', text: 'pinged by {event.room}' }] };
+    assert.strictEqual((await s.api('POST', '/api/boards/main/rules', rule)).body.code, 'HUMAN_ONLY');
+    assert.match((await s.api('POST', '/api/boards/main/rules', { ...rule, when: { ...rule.when, event: 'pong' } }, USER)).body.error, /no event "pong"/);
+    assert.match((await s.api('POST', '/api/boards/main/rules', { ...rule, then: [{ do: 'run', plugin: 'ghost', action: 'post' }] }, USER)).body.error, /No plugin "ghost"/);
+    const saved = await s.ok('POST', '/api/boards/main/rules', rule, USER);
+    assert.strictEqual(saved.text, "If fake raises ping → run fake's post, comment on it");
+    const card = await s.ok('POST', '/api/boards/main/items', { title: 'Hooked' }, USER);
+
+    // the plugin checks the request; the board acts only on the event it returns
+    assert.deepStrictEqual(await hook('{}', { 'x-sig': 'wrong' }), { status: 401, body: { error: 'bad signature', code: 'UNAUTHORIZED', status: 401 } });
+    assert.deepStrictEqual((await hook('hello', { 'x-sig': 'abcdefghijkl1234' })).body, { accepted: true, event: null });
+    assert.strictEqual((await hook('liar', { 'x-sig': 'abcdefghijkl1234' })).status, 502);
+    assert.strictEqual((await hook('x'.repeat(300 * 1024), { 'x-sig': 'abcdefghijkl1234' })).status, 413);
+    const got = await hook(JSON.stringify({ room: 'ops', ticket: card.id.toLowerCase() }), { 'x-sig': 'abcdefghijkl1234', cookie: 'session=human' });
+    assert.deepStrictEqual(got, { status: 202, body: { accepted: true, event: 'ping' } });
+
+    // the rule fired for the ticket the event named: the run is the board's, under the rule's name, with no grant
+    const log = await until(async () => (await s.ok('GET', '/api/boards/main/rules/log')).find((l) => l.rule === saved.id));
+    assert.strictEqual(log.item, card.id);
+    assert.deepStrictEqual(log.results.map((r) => [r.do, r.ok, r.status || null]), [['run', true, 'succeeded'], ['comment', true, null]]);
+    const run = await s.ok('GET', `/api/plugins/runs/${log.results[0].run}`);
+    assert.deepStrictEqual([run.by, run.inputs, run.item, run.result.ticket], [{ kind: 'system', name: 'rule: Ping posts' }, { channel: '#ops' }, card.id, card.id]);
+    const item = await s.ok('GET', `/api/boards/main/items/${card.id}`);
+    assert.strictEqual(item.comments.at(-1).body, 'pinged by ops');
+    const ev = (await s.ok('GET', '/api/events?since=0&types=plugin.event')).events.at(-1);
+    assert.strictEqual(ev.data.cookie, null, 'cookies never reach the plugin');
+    assert.ok((await s.ok('GET', '/api/plugins/fake')).webhook.lastAt);
+
+    // changed files: the webhook goes quiet (404), the same as no plugin
+    fs.appendFileSync(path.join(s.dir, 'plugins', 'fake', 'index.js'), '\n// changed');
+    assert.strictEqual((await hook('hello', { 'x-sig': 'abcdefghijkl1234' })).status, 404);
+    assert.strictEqual((await fetch(`${s.base}/hooks/nobody`, { method: 'POST', body: 'x' })).status, 404);
+  } finally { await s.stop(); }
+});
+
 test('plugins: added from a zip; a zip that leaves its folder is refused', async () => {
   const s = await startServer();
   try {

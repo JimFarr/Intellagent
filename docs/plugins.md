@@ -40,6 +40,7 @@ The loop: `plugin_new` → write the actions in `index.js` → `plugin_check` �
 - **connection**: what the human fills in once. Field types are `text markdown number boolean enum tags date url` (`enum` and `tags` take `options`). Mark passwords and tokens `"secret": true`: the board never shows them again (only their last four characters) and never puts them in a file you can read.
 - **actions**: what agents and rules can run. Each `id` becomes a permission, `plugin.<name>.<id>`, that only the human grants, and may narrow (`where` on input values) or make wait for their OK. `inputs` use the same field types. `timeoutSec` is 1 to 300 (default 30).
 - **events**: what your plugin can tell the board happened; rules can start from them. Name the `fields` the event's data carries.
+- **webhook**: `true` if the service should call the board: the board then takes requests at `/hooks/<name>` and hands each one to your plugin (see *Webhooks*).
 - **hosts**: the hosts you call. The human sees the list before enabling the plugin. It is shown, not enforced, so list every one honestly.
 - **needs**: only if you must: `{ "childProcess": true }` to start programs, `{ "read": ["C:/abs/folder"] }` to read outside your folder. The human sees these too, and the board's own folders are never allowed.
 
@@ -65,7 +66,29 @@ You answer each call once, with its `id`:
 - **run** carries `ticket` when the run is for a ticket: its id, title, fields and properties. It is all you get of the board, so take what you need from it (an issue key in the title, a field). `by` says who asked (`kind`: `agent`, `user` or `system`, and a `name`), for a plugin that keeps something per agent.
 - The connection comes **with every call**, never through the environment or a file.
 - Calls can overlap: answer each by its `id`, in any order. A call not answered within the action's `timeoutSec` fails, and the board restarts your process.
-- To raise an event: `{ "type": "event", "event": "issue_closed", "data": { "key": "TR-12", "by": "ann" } }` (an event you declared, data up to 10 KB, at most 60 a minute).
+- To raise an event: `{ "type": "event", "event": "issue_closed", "data": { "key": "TR-12", "by": "ann" } }` (an event you declared, data up to 10 KB, at most 60 a minute). Put a board ticket's id in `data.ticket` (`"INT-12"`) when the event is about one: a rule then acts on that ticket.
+
+## Rules: what the human does with your events and actions
+
+The human writes rules on the board's Rules page; your plugin shows up in them twice.
+
+- **A trigger:** `{ "on": "plugin_event", "plugin": "tracker", "event": "issue_closed" }`. The rule fires on every board for each event you raise, for the ticket named in `data.ticket` if there is one (else for no ticket). Its texts can quote the data: `{event.key}`, `{event.by}`.
+- **An action:** `{ "do": "run", "plugin": "tracker", "action": "comment", "inputs": { "text": "{id} is done" } }`. The board runs it under the rule's name, with no agent's grant: board rules are the human's own. The run is in **Integrations › Runs** like any other.
+- A rule's own changes never set off other rules, and a rule that fires more than 30 times an hour is held back. Your events are capped at 60 a minute. So an event your action causes can set off a rule again, but it cannot run away.
+
+## Webhooks
+
+With `"webhook": true` the board answers `POST /hooks/<name>` for the service you connect. The route has **no token**: anyone who can reach the board can call it, so your plugin decides what is genuine. You get one call per request:
+
+```
+{ "id": "…", "type": "webhook", "webhook": { "headers": { "x-signature": "…", … }, "body": "the raw body, as text" }, "connection": { … } }
+```
+
+- Check it: most services sign the body with a secret; keep that secret in a `"secret": true` connection field and compare the signature over `body` exactly as it came (that is why it is text, not parsed).
+- Answer `{ "id", "ok": true, "result": { "event": "issue_closed", "data": { … } } }` to raise one of your events, `"result": null` to accept it and do nothing (a ping), or `{ "ok": false, "error": "bad signature" }` to refuse it (the caller gets 401).
+- The board acts **only on the event you return**: never on the body. The event goes through the same checks as one on the channel (declared, the pin, 60 a minute); past that limit the caller gets 429 before your plugin is asked.
+- Bodies are at most 256 KB. Cookies are never passed on. A plugin that is off, changed or has no webhook answers 404, the same as no plugin at all.
+- The board must be reachable from the service: it listens on 127.0.0.1, so the human puts a proxy or tunnel in front of it and adds its name to `allowedHosts`.
 
 ## The sandbox
 
@@ -88,6 +111,8 @@ plugin_try { "path": "C:/work/tracker", "type": "run", "action": "comment", "inp
              "ticket": { "id": "INT-12", "title": "TR-12 fix the odds feed", "fields": {}, "properties": {} },
              "connection": { … } }
 ```
+
+A webhook: `plugin_try { "path": "…", "type": "webhook", "webhook": { "headers": { "x-signature": "…" }, "body": "{\"issue\":\"TR-12\"}" }, "connection": { … } }`.
 
 It answers `{ ok, result | error, events, stderr, sandboxed }`. `sandboxed` says whether it ran under the permission model: on a node older than 23.5 it runs without it, and the board would refuse to run it at all. Use a test account or a stand-in server for the connection, never a person's own password.
 
