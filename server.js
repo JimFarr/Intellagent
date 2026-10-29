@@ -4378,7 +4378,7 @@ route('GET', '/api/boards/:board/brief', 'Start here (agents): who you are, what
   const text = briefing(ctx, q.agent || actor.name, `http://${req.headers.host}`, ['cli', 'mcp', 'http'].includes(q.via) ? q.via : 'cli');
   return q.format === 'json' ? { brief: text, work: workFor(ctx, q.agent || actor.name) } : text;
 });
-route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=7|30: done, cycle time, time per column, waiting on the human, answer time', ({ p, q }) =>
+route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=1|7|30: done, cycle time, time per column, waiting on the human, answer time', ({ p, q }) =>
   metrics(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90)));
 route('GET', '/api/boards/:board/requests', 'Requests from the human to agents: ?status=open|done&to=<agent>', ({ p, q }) =>
   (getCtx(p.board).board.requests || []).filter((x) => (!q.status || x.status === q.status) && (!q.to || x.to === q.to)).slice().reverse());

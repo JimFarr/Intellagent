@@ -2765,8 +2765,8 @@ input[type="checkbox"].ck { border-radius: 4px; }
 .ent.agent-row > .ent-lead { position: relative; }
 .ent.agent-row > .ent-lead > .status-dot { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border: 2px solid var(--surface); margin: 0; }
 .ent.agent-row .ent-col.extra { width: 88px; }
-/* at least the usual width so the rows line up, wider for longer text ("waiting · 2 waiting") instead of spilling over the column beside it */
-.ent-col.pill { min-width: 92px; display: flex; justify-content: flex-end; }
+/* at least the usual width so the rows line up, wider for longer text ("waiting · 2 waiting") instead of spilling over the column beside it; the title shrinks, nothing is covered */
+.ent-col.pill { min-width: 92px; display: flex; justify-content: flex-end; flex: none; }
 .ent-col.pill .status-pill { margin: 0; }
 .ent-side .ent-acts .btn { margin: 0; }
 .ent-list .ent-sub .link { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--muted) 45%, transparent); cursor: pointer; }
