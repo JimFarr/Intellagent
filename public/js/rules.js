@@ -226,7 +226,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     };
     // yours first, then the ones the board came with (edited the same way); a row opens its editor
     const mine = S.data.rules.filter((r) => !r.native), built = S.data.rules.filter((r) => r.native);
-    const box = (name, rows) => `<div class="ent-list"><div class="ent-lh">${name} <span class="cnt">${rows.length}</span><span class="grow"></span><span class="ent-col when">Last fired</span><span style="width:38px"></span></div>${rows.map(row).join('')}</div>`;
+    const box = (name, rows) => `<div class="ent-list one-line"><div class="ent-lh">${name} <span class="cnt">${rows.length}</span><span class="grow"></span><span class="ent-col when">Last fired</span><span style="width:38px"></span></div>${rows.map(row).join('')}</div>`;
     pane.innerHTML = `<div class="ent-bar"><button class="btn sm primary" data-new>${icon('plus', 'sm')}New rule</button></div>
       ${mine.length ? box('Your rules', mine) : `<div class="ent-empty">${icon('zap')}<h3>No rules of yours yet</h3><p>For example: <i>if a ticket idles for 2 h, wake the coordinator</i>.</p></div>`}
       ${built.length ? box('Built in', built) : ''}`;
@@ -524,7 +524,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     const said = (x) => (!x.ok ? `${x.do.replace('_', ' ')} failed: ${x.error}` : x.woke ? `woke ${nameOf(x.woke)}` : x.column ? `moved to ${colName(x.column)}` : 'assignee' in x ? (x.assignee ? `assigned ${nameOf(x.assignee)}` : 'unassigned') : x.landing ? `merging: ${x.landing}`
       : x.branch ? `merged into ${x.branch}${x.created ? ' (new)' : ''}${x.pushed ? ', pushed' : x.pushError ? `, not pushed: ${x.pushError}` : ''}`
       : 'found' in x ? (x.found === false ? 'found nothing to extract' : `extracted "${x.found}"`) : x.do.replace('_', ' '));
-    pane.innerHTML = S.log.length ? `<div class="ent-list"><div class="ent-lh">What the rules did <span class="cnt">${S.log.length}</span></div>${S.log.map((l) => {
+    pane.innerHTML = S.log.length ? `<div class="ent-list one-line"><div class="ent-lh">What the rules did <span class="cnt">${S.log.length}</span></div>${S.log.map((l) => {
       const bad = (l.results || []).filter((x) => !x.ok).length;
       const [tone, ic] = l.held ? ['warn', 'clock'] : bad ? ['danger', 'x'] : ['ok', 'check'];
       const did = l.held ? esc(l.held) : (l.results || []).map((x) => esc(said(x))).join(' · ');
