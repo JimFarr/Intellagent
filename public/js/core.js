@@ -71,8 +71,7 @@ function avatar(actor, cls = '') {
   const color = p?.color || `hsl(${hue(name)} 62% 56%)`;
   const image = p?.image?.startsWith('/avatars/') ? p.image : ''; // an older profile's remote URL is blocked by the page's CSP (INT-468): show the glyph
   const style = `--av:${esc(color)}${image ? `;background-image:url(&quot;${esc(image)}&quot;)` : ''}`;
-  const run = state.standing[name]?.status;
-  return `<span class="avatar ${kind} ${image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}"${run && run !== 'idle' ? ` data-run="${run}"` : ''} style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${image ? '' : p?.glyph ? `<i class="gl">${esc(emojiGlyph(p.glyph))}</i>` : esc(initials(name))}</span>`;
+  return `<span class="avatar ${kind} ${image ? 'img' : ''} ${p?.glyph ? 'glyph' : ''} ${cls}" data-name="${esc(name)}" style="${style}" title="${esc(p?.label || name)}|${kind === 'agent' ? 'Agent' : 'Person'}${p?.label ? ` · ${esc(name)}` : ''} — click for profile">${image ? '' : p?.glyph ? `<i class="gl">${esc(emojiGlyph(p.glyph))}</i>` : esc(initials(name))}</span>`;
 }
 // A glyph like 🗡 or ⚔ draws as a flat text symbol unless U+FE0F follows it; add it so it shows as the emoji.
 const emojiGlyph = (g) => (/^\p{Extended_Pictographic}$/u.test(g) && !/\p{Emoji_Presentation}/u.test(g) ? `${g}️` : g);
