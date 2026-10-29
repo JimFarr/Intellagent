@@ -10,6 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { startServer, until, USER } = require('./helpers');
+const HUMAN = USER;
 const { validate, unzip } = require('../lib/plugins');
 
 // The fake plugin answers "test" with what it could and couldn't do from inside its sandbox.
@@ -28,6 +29,7 @@ process.stdin.on('data', (d) => {
   while ((i = buf.indexOf('\\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); handle(JSON.parse(line)); }
 });
 function handle(m) {
+  if (m.type === 'run') return send(m.inputs.channel.endsWith('fail') ? { id: m.id, ok: false, error: 'no such channel' } : { id: m.id, ok: true, result: { message: 'posted to ' + m.inputs.channel, item: m.item } });
   const token = m.connection.token;
   if (token === 'crash') process.exit(3);
   if (token === 'event') { send({ type: 'event', event: 'ping', data: { n: 1 } }); send({ type: 'event', event: 'undeclared', data: {} }); }
@@ -207,6 +209,103 @@ test('plugins: the human adds, pins and connects one; it runs sandboxed and gets
     assert.strictEqual(JSON.parse(fs.readFileSync(local, 'utf8')).plugins?.fake, undefined);
     const types = (await s.ok('GET', '/api/events?since=0&types=plugin.*')).events.map((e) => e.type);
     for (const want of ['plugin.added', 'plugin.enabled', 'plugin.connection', 'plugin.disabled', 'plugin.removed']) assert.ok(types.includes(want), want);
+  } finally { await s.stop(); }
+});
+
+test('plugin actions as powers: only the human grants them, the grant scopes the inputs, runs wait for the human when it says so (INT-473)', async () => {
+  const USER = { ...HUMAN, token: 'u-473' }; // grants are set only by a human the board can tell is one
+  const s = await startServer({ manifest: { auth: { userToken: 'u-473' } }, agents: { agents: {
+    ann: { enabled: false, grants: [{ power: 'plugin.fake.post', where: { channel: ['#deploys', '#ops-*'] } }] },
+    bob: { enabled: false, grants: [{ power: 'plugin.fake.post', approve: 'human' }] },
+    cal: { enabled: false, grants: [{ power: 'plugin.fake.post', where: { nope: 'x' } }, 'plugin.fake.ghost'] }, // both ignored
+  } } });
+  const ANN = { agent: 'ann' }, BOB = { agent: 'bob' };
+  const run = (inputs, as, extra = {}) => s.api('POST', '/api/plugins/fake/actions/post/run', { inputs, ...extra }, as);
+  const runEvents = async (id) => (await s.ok('GET', '/api/events?since=0&types=plugin.run.*')).events.filter((e) => e.runId === id);
+  try {
+    const added = await s.ok('POST', '/api/plugins', { path: pluginFolder() }, USER);
+    // off: the grant is no power yet
+    assert.deepStrictEqual(added.actions[0].holders, []);
+    assert.strictEqual((await run({ channel: '#deploys' }, ANN)).body.code, 'PLUGIN_OFF');
+    assert.strictEqual((await s.api('POST', '/api/agents', { name: 'ann', grants: ['plugin.fake.post'] }, USER)).body.code, 'BAD_REQUEST');
+    await s.ok('POST', '/api/plugins/fake/enable', { hash: added.hash }, USER);
+    assert.strictEqual((await run({ channel: '#deploys' }, ANN)).body.code, 'NOT_CONNECTED');
+    await s.ok('PUT', '/api/plugins/fake/connection', { values: { token: 'abcdefghijkl1234' } }, USER);
+
+    // on: who holds it; a grant scoped on an input the action doesn't take is dropped, never widened
+    assert.deepStrictEqual((await s.ok('GET', '/api/plugins/fake')).actions[0].holders, [
+      { name: 'ann', where: { channel: ['#deploys', '#ops-*'] } }, { name: 'bob', approve: 'human' }]);
+    assert.strictEqual((await run({ channel: '#deploys' }, { agent: 'cal' })).body.code, 'FORBIDDEN');
+    assert.strictEqual((await run({ channel: '#deploys' }, { agent: 'tester' })).body.code, 'FORBIDDEN');
+
+    // inputs are checked against the declared types first, then the grant's scope
+    assert.strictEqual((await run({}, { agent: 'tester' })).status, 400);
+    assert.strictEqual((await run({ channel: '#deploys', nope: 1 }, ANN)).status, 400);
+    const out = await run({ channel: '#random' }, ANN);
+    assert.strictEqual(out.status, 403);
+    assert.strictEqual(out.body.code, 'OUT_OF_SCOPE');
+    assert.match(out.body.error, /channel is "#random"/);
+
+    // in scope: it runs, and the outcome is in the reply, so it wakes nobody
+    const card = await s.ok('POST', '/api/boards/main/items', { title: 'Deploy' }, USER);
+    const ok = await run({ channel: '#ops-alerts' }, ANN, { item: card.id.toLowerCase() });
+    assert.strictEqual(ok.status, 201, JSON.stringify(ok.body));
+    assert.strictEqual(ok.body.status, 'succeeded');
+    assert.deepStrictEqual(ok.body.result, { message: 'posted to #ops-alerts', item: card.id });
+    const evs = await runEvents(ok.body.id);
+    assert.deepStrictEqual(evs.map((e) => e.type), ['plugin.run.started', 'plugin.run.succeeded']);
+    assert.ok(evs.every((e) => e.recipients.join() === 'ann' && !e.addressed));
+    const failed = (await run({ channel: '#ops-fail' }, ANN)).body;
+    assert.strictEqual(failed.status, 'failed');
+    assert.strictEqual(failed.error, 'no such channel');
+    // the human needs no grant
+    assert.strictEqual((await run({ channel: '#anything' }, USER)).body.status, 'succeeded');
+
+    // approve: "human": the run waits; only the human decides; the outcome wakes the agent
+    const w = (await run({ channel: '#x' }, BOB)).body;
+    assert.strictEqual(w.status, 'waiting');
+    assert.deepStrictEqual((await s.ok('GET', '/api/plugins/fake')).runs, { waiting: 1, running: 0 });
+    assert.deepStrictEqual((await s.ok('GET', '/api/plugins/runs?status=waiting')).runs.map((r) => r.id), [w.id]);
+    assert.strictEqual((await s.api('POST', `/api/plugins/runs/${w.id}/approve`, {}, BOB)).body.code, 'HUMAN_ONLY');
+    const approved = await s.ok('POST', `/api/plugins/runs/${w.id}/approve`, {}, USER);
+    assert.strictEqual(approved.status, 'succeeded');
+    assert.strictEqual(approved.approval.verdict, 'approved');
+    assert.deepStrictEqual((await runEvents(w.id)).map((e) => [e.type, e.addressed?.join() || null]),
+      [['plugin.run.waiting', null], ['plugin.run.started', null], ['plugin.run.succeeded', 'bob']]);
+    assert.strictEqual((await s.api('POST', `/api/plugins/runs/${w.id}/approve`, {}, USER)).body.code, 'ALREADY_DECIDED');
+
+    const r2 = (await run({ channel: '#y' }, BOB)).body;
+    const rejected = await s.ok('POST', `/api/plugins/runs/${r2.id}/reject`, { note: 'not today' }, USER);
+    assert.deepStrictEqual([rejected.status, rejected.approval.note], ['rejected', 'not today']);
+    assert.strictEqual((await runEvents(r2.id)).at(-1).addressed.join(), 'bob');
+
+    const r3 = (await run({ channel: '#z' }, BOB)).body;
+    assert.strictEqual((await s.api('POST', `/api/plugins/runs/${r3.id}/cancel`, {}, ANN)).body.code, 'FORBIDDEN');
+    assert.strictEqual((await s.ok('POST', `/api/plugins/runs/${r3.id}/cancel`, {}, BOB)).status, 'canceled');
+    assert.ok(!(await runEvents(r3.id)).at(-1).addressed, 'canceling its own run wakes nobody');
+    assert.strictEqual((await s.api('POST', `/api/plugins/runs/${r3.id}/cancel`, {}, BOB)).body.code, 'CONFLICT');
+
+    // the grant is checked again when the human approves: narrowed since, the run is outside it
+    const r4 = (await run({ channel: '#x' }, BOB)).body;
+    for (const bad of [[{ power: 'plugin.fake.post', where: { nope: 'x' } }], ['plugin.fake.ghost'], [{ power: 'plugin.fake.post', approve: 'robot' }], [{ power: 'review.decide', approve: 'human' }]]) {
+      assert.strictEqual((await s.api('POST', '/api/agents', { name: 'bob', grants: bad }, USER)).status, 400, JSON.stringify(bad));
+    }
+    await s.ok('POST', '/api/agents', { name: 'bob', grants: [{ power: 'plugin.fake.post', where: { channel: '#only' }, approve: 'human' }] }, USER);
+    const late = await s.api('POST', `/api/plugins/runs/${r4.id}/approve`, {}, USER);
+    assert.deepStrictEqual([late.status, late.body.code], [409, 'OUT_OF_SCOPE']);
+
+    // the agent reads it in its brief, with the call to make
+    const brief = String((await s.api('GET', '/api/boards/main/brief?agent=ann', undefined, ANN)).body);
+    assert.match(brief, /\*\*plugin\.fake\.post\*\* — run post on the fake plugin \(only where \{"channel":\["#deploys","#ops-\*"\]\}\): intellagent api POST \/api\/plugins\/fake\/actions\/post\/run/);
+
+    // never in the library, a role or a bundle
+    assert.strictEqual((await s.api('POST', '/api/permissions', { key: 'plugin.fake.post', kind: 'command', name: 'x', commands: ['node:*'] }, USER)).status, 400);
+
+    // removed: its grants go from agents.json, and its open runs are canceled
+    const gone = await s.ok('DELETE', '/api/plugins/fake', undefined, USER);
+    assert.deepStrictEqual([gone.grantsDropped.sort(), gone.runsCanceled], [['ann', 'bob', 'cal'], 1]);
+    assert.strictEqual((await s.ok('GET', `/api/plugins/runs/${r4.id}`)).status, 'canceled');
+    assert.deepStrictEqual((await s.ok('GET', '/api/agents/ann', undefined, USER)).grants || [], []);
   } finally { await s.stop(); }
 });
 
