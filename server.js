@@ -403,7 +403,8 @@ const engineRule = (ctx, key, any = false) => {
   const r = (ctx.board.automations?.rules || []).find((x) => x.engine === key);
   return r && (any || r.enabled) ? r : null;
 };
-const inEngine = (ctx, r) => !!r.engine;
+// an engine's rule, or a ticket's own (its trigger: sweepTriggers runs those, INT-475)
+const inEngine = (ctx, r) => !!r.engine || !!r.item;
 const idleCheckDefault = () => (Number(M.triggers?.idleMinutes) > 0 ? Math.max(5, Number(M.triggers.idleMinutes)) : 60);
 // What the engines read: on/off and their numbers, from the rules
 function behavioursOf(ctx) {
@@ -451,6 +452,32 @@ function seedEngineRules(b) {
   if (b.rebalance) delete b.rebalance.on; // its numbers stay settings
   b.automations.engines = 1;
 }
+// Once per board (INT-475): the triggers stored on tickets become rules on their ticket, same ids and state. The
+// default idle check goes (the board's Idle check rule covers the card, its last firing kept), a card that removed it
+// is skipped by that rule, and what waited in triggerQueue waits on its rule.
+function migrateTriggers(b) {
+  const items = Object.values(b.items).filter((it) => it.triggers || 'idleCheck' in it);
+  if (!items.length && !b.triggerQueue) return;
+  const ic = b.automations.rules.find((r) => r.engine === 'idleCheck');
+  const to = new Map(); // trigger id → its rule
+  for (const it of items) {
+    for (const t of it.triggers || []) {
+      if (!t?.when?.kind) continue;
+      if (!t.default) { const r = TRIGGERS.migrate(t, it.id); to.set(t.id, r); b.automations.rules.push(r); continue; }
+      if (!ic) continue;
+      to.set(t.id, ic);
+      if (t.firedAt) ic.state = { ...(ic.state || {}), fired: { ...(ic.state?.fired || {}), [it.id]: t.firedAt } };
+    }
+    if (it.idleCheck === false && ic && !(ic.skip || []).includes(it.id)) ic.skip = [...(ic.skip || []), it.id];
+    delete it.triggers;
+    delete it.idleCheck;
+  }
+  for (const e of Array.isArray(b.triggerQueue) ? b.triggerQueue : []) {
+    const r = to.get(e.triggerId);
+    if (r) r.state = { ...(r.state || {}), pending: { ...(r.state?.pending || {}), [e.itemId]: { why: e.why, firedAt: e.firedAt } } };
+  }
+  delete b.triggerQueue;
+}
 const IDLE_ALARM_TEXT = 'The board is idle: tickets wait and no builder is running';
 // An old setting route writes its engine's rule and nothing else (INT-472): that rule, or a new one marked for it
 function setEngineRule(ctx, key, patch) {
@@ -488,6 +515,7 @@ function normalizeBoard(b) {
   b.digest = Array.isArray(b.digest) ? b.digest : [];
   b.automations = isObj(b.automations) ? { rules: Array.isArray(b.automations.rules) ? b.automations.rules : [], log: Array.isArray(b.automations.log) ? b.automations.log : [], ...(b.automations.engines ? { engines: b.automations.engines } : {}), ...(b.automations.idleAlarmDeleted ? { idleAlarmDeleted: true } : {}) } : { rules: [], log: [] };
   seedEngineRules(b);
+  migrateTriggers(b);
   // Card looks are rules (when a ticket fits, then its card looks so): a board's card rules move in once. cardRules
   // stays as their copy for what draws and matches looks (lookFor, is:rule:, the page), rebuilt from the rules.
   if (b.cardRules.length && !b.automations.rules.some((r) => r.when?.on === 'fits')) {
@@ -2570,7 +2598,7 @@ function itemView(ctx, item, archived = false, blocksOf = null) {
   const blocks = blocksOf ? [...(blocksOf.get(item.id) || [])] : Object.values(ctx.board.items).filter((x) => x.blockedBy?.includes(item.id)).map((x) => x.id);
   const focus = archived ? [] : focusNames(ctx, item.id);
   const unanswered = archived || item.columnId === doneColumnId(ctx) ? [] : unansweredIn(item); // a finished ticket owes no reply (workFor skips it too)
-  return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived, ...(focus.length ? { focus } : {}), ...(unanswered.length ? { unanswered } : {}) };
+  return { ...item, board: ctx.id, column: col?.name ?? null, lease: activeLease(item), blocks, archived, ...(archived ? {} : { triggers: triggersOf(ctx, item) }), ...(focus.length ? { focus } : {}), ...(unanswered.length ? { unanswered } : {}) };
 }
 
 function boardView(ctx) {
@@ -2578,7 +2606,8 @@ function boardView(ctx) {
     hash: ctx.hash, seq: currentSeq(), serverTime: now(),
     app: { name: app.name, version: VERSION, build: BUILD, ...grafanaLink() },
     archivedCount: Object.keys(ctx.archive.items).length,
-    board: { ...ctx.board, automations: undefined }, // the Rules page reads them: GET …/rules
+    // the Rules page reads the rules: GET …/rules. Each card carries its triggers, for its 🔔 chip
+    board: { ...ctx.board, items: Object.fromEntries(Object.entries(ctx.board.items).map(([id, it]) => [id, withTriggers(ctx, it)])), automations: undefined },
   };
 }
 
@@ -2624,7 +2653,7 @@ const agentBranch = (name) => { try { return (name && standing?.get(name).worktr
 // seq is read with currentSeq().
 const { recent, currentSeq, parseFilter, matchesFilter, sseClients, waiters, emit, sseSend, longPoll, openStream, subs, saveSubs } = createEvents({
   fs, path, DATA, M, now, arr, boards, reply, HANDLED, presenceDelta, app, VERSION, BUILD, readJson, writeFileAtomic,
-  onEvent: (e) => { standing?.onEvent(e); onRuleEvent(e); } });
+  onEvent: (e) => { standing?.onEvent(e); onRuleEvent(e); }, uiItem: (ctx, it) => withTriggers(ctx, it) });
 
 /* ───────────────────────── profiles (agent/user colour, glyph, image) ───────────────────────── */
 
@@ -2921,42 +2950,84 @@ async function machineReading() {
     return { leases: (m.ledger?.leases || []).length, busyPercent: Number(m.cpu?.busyPercent ?? NaN) };
   } catch { return null; }
 }
+const liveCard = (ctx, it) => !!it && !it.test && !it.journey?.doneAt && it.columnId !== doneColumnId(ctx);
+// The board's idle check covers every picked-up card that is awake, unless the card skips it (its 🔔 tab removed
+// it) or has an idle trigger of its own
+function idleCovers(ctx, ic, it) {
+  return !!ic && liveCard(ctx, it) && !!it.journey?.pickedUpAt && !ctx.board.columns.find((c) => c.id === it.columnId)?.flags?.sleeping
+    && !(ic.skip || []).includes(it.id) && !rulesOf(ctx).rules.some((r) => r.item === it.id && r.enabled && r.when.on === 'idle');
+}
+// A ticket's triggers as its 🔔 tab reads them (the shape from before INT-475): its own rules, and the board's idle
+// check while it covers the card (default: true; removing it here makes the idle check skip the card)
+function triggersOf(ctx, it) {
+  const own = rulesOf(ctx).rules.filter((r) => r.item === it.id).map((r) => ({ ...TRIGGERS.fromRule(r), text: RULES.describe(r, ctx.board.columns) }));
+  const ic = engineRule(ctx, 'idleCheck');
+  if (!idleCovers(ctx, ic, it)) return own;
+  const firedAt = ic.state?.fired?.[it.id];
+  return [...own, { id: ic.id, when: { kind: 'idle', ms: ic.when.minutes * 60_000 }, priority: 'batch', by: 'intellagent', at: it.journey.pickedUpAt, active: true, default: true, ...(firedAt ? { firedAt } : {}), text: RULES.describe(ic, ctx.board.columns) }];
+}
+function withTriggers(ctx, it) {
+  const triggers = triggersOf(ctx, it);
+  return triggers.length ? { ...it, triggers } : it;
+}
+// Ticket triggers are rules on one ticket (INT-475). Each sweep: the rules of tickets that are done or gone go; each
+// enabled one is checked, and so is the idle check on every card it covers; what fires waits on its rule
+// (state.pending) and is sent as one trigger.fired per agent, at once for "now", after the batch window for "batch".
 async function sweepTriggers(ctx) {
+  const gone = (r) => { const it = r.item && ctx.board.items[r.item]; return !!r.item && (!it || !!it.journey?.doneAt || it.columnId === doneColumnId(ctx)); };
+  const skips = engineRule(ctx, 'idleCheck', true);
+  if (rulesOf(ctx).rules.some(gone) || (skips?.skip || []).some((id) => gone({ item: id }))) tx(ctx, () => {
+    rulesOf(ctx).rules = rulesOf(ctx).rules.filter((r) => !gone(r));
+    if (skips?.skip) skips.skip = skips.skip.filter((id) => !gone({ item: id }));
+  });
   if (M.sandbox) return; // a sandbox runs no agents: nobody to wake
-  const live = (it) => !it.test && !it.journey?.doneAt;
-  const sleeping = new Set(ctx.board.columns.filter((c) => c.flags?.sleeping).map((c) => c.id));
-  // every picked-up card gets the idle check unless someone removed it there (idleCheck: false)
-  const wantIdle = Object.values(ctx.board.items).filter((it) => live(it) && it.journey?.pickedUpAt && !sleeping.has(it.columnId)
-    && it.idleCheck !== false && behavioursOf(ctx).idleCheck.on && !TRIGGERS.activeOn(it).some((t) => t.when.kind === 'idle'));
-  const items = Object.values(ctx.board.items).filter((it) => live(it) && TRIGGERS.activeOn(it).length);
-  if (!items.length && !wantIdle.length && !(ctx.board.triggerQueue || []).length) return;
-  const needsMachine = items.some((it) => TRIGGERS.activeOn(it).some((t) => t.when.kind === 'machine'));
-  const machine = needsMachine ? await machineReading() : null;
+  const own = rulesOf(ctx).rules.filter((r) => r.item && r.enabled);
+  const ic = engineRule(ctx, 'idleCheck');
+  const idle = ic ? Object.values(ctx.board.items).filter((it) => idleCovers(ctx, ic, it)) : [];
+  const pending = () => rulesOf(ctx).rules.filter((r) => Object.keys(r.state?.pending || {}).length);
+  if (!own.length && !idle.length && !pending().length) return;
+  const machine = own.some((r) => r.when.on === 'machine_free') ? await machineReading() : null;
   const nowMs = Date.now();
+  const firedAt = new Date(nowMs).toISOString();
   tx(ctx, (events) => {
-    let queue = ctx.board.triggerQueue || [];
-    // the same floor as a repeating trigger set through the API: each firing costs the coordinator a run
-    const idleMinutes = behavioursOf(ctx).idleCheck.minutes;
-    // version bumped so an open board redraws the card with its bell
-    for (const it of wantIdle) { it.triggers = [...(it.triggers || []).filter((x) => x.active), TRIGGERS.idleDefault({ id: rid('tr'), minutes: idleMinutes, nowIso: now() })]; it.version++; }
-    for (const it of Object.values(ctx.board.items)) {
-      if (!live(it)) continue;
-      for (const t of TRIGGERS.activeOn(it)) {
-        if (t.default && !behavioursOf(ctx).idleCheck.on) continue; // the idle check is switched off on the Rules page
-        if (TRIGGERS.holds(t, it)) continue;
-        const machineFree = machine && Number.isFinite(machine.busyPercent) ? machine.leases === 0 && machine.busyPercent < t.when.busyBelow : null;
-        const r = TRIGGERS.evaluate(t, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt), machineFree });
-        Object.assign(t, r.set);
-        if (!r.fire) continue;
-        t.firedAt = new Date(nowMs).toISOString();
-        queue = TRIGGERS.enqueue(queue, { wake: t.wake || null, itemId: it.id, triggerId: t.id, priority: t.priority, why: r.why, note: t.note || null, firedAt: t.firedAt });
-      }
+    const world = (it, busyBelow) => ({ nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt),
+      machineFree: machine && Number.isFinite(machine.busyPercent) ? machine.leases === 0 && machine.busyPercent < busyBelow : null });
+    const hold = (r, itemId, why) => { r.state = { ...(r.state || {}), pending: { ...(r.state?.pending || {}), [itemId]: { why, firedAt } } }; };
+    for (const r of rulesOf(ctx).rules.filter((x) => x.item && x.enabled)) {
+      const it = ctx.board.items[r.item];
+      if (!liveCard(ctx, it)) continue;
+      const t = TRIGGERS.fromRule(r);
+      const res = TRIGGERS.evaluate(t, world(it, t.when.busyBelow));
+      const { active, ...set } = res.set;
+      if (Object.keys(set).length) r.state = { ...(r.state || {}), ...set };
+      if (active === false) { r.enabled = false; it.version++; } // fired once (at): off, and the card redraws its bell
+      if (!res.fire) continue;
+      r.state = { ...r.state, firedAt };
+      hold(r, it.id, res.why);
     }
-    const { send, keep } = TRIGGERS.due(queue, nowMs, TRIGGER_BATCH_MS);
-    ctx.board.triggerQueue = keep;
+    const live = rulesOf(ctx).rules.find((x) => x.id === ic?.id);
+    if (live) {
+      // the idle check's firings, per card: kept only for the cards it still covers
+      const fired = Object.fromEntries(Object.entries(live.state?.fired || {}).filter(([id]) => idle.some((it) => it.id === id)));
+      for (const it of idle) {
+        if (TRIGGERS.holds(it)) continue;
+        const res = TRIGGERS.evaluate({ when: { kind: 'idle', ms: live.when.minutes * 60_000 }, firedAt: fired[it.id] }, world(it));
+        if (!res.fire) continue;
+        fired[it.id] = firedAt;
+        hold(live, it.id, res.why);
+      }
+      live.state = { ...(live.state || {}), fired };
+    }
+    const queue = pending().flatMap((r) => Object.entries(r.state.pending).map(([itemId, p]) => {
+      const a = r.then[0];
+      // a role word (assignee, last_worker) names the card's agent; none: the coordinator's (null)
+      return { wake: ruleWho(ctx, a.agent === 'coordinator' ? null : a.agent, ctx.board.items[itemId]), itemId, ruleId: r.id, priority: a.batch === false ? 'now' : 'batch', why: p.why, note: a.note || null, firedAt: p.firedAt };
+    }));
+    const { send } = TRIGGERS.due(queue, nowMs, TRIGGER_BATCH_MS);
     for (const [named, list] of Object.entries(send)) {
       const wake = named === 'null' ? coordinatorOf(ctx) : named; // no agent named: the coordinator's
-      if (!wake) { ctx.board.triggerQueue.push(...list); continue; } // nobody to wake yet: kept for when there is
+      if (!wake) continue; // nobody to wake yet: kept for when there is
+      for (const e of list) { const r = rulesOf(ctx).rules.find((x) => x.id === e.ruleId); delete r.state.pending[e.itemId]; }
       const cards = list.filter((e) => ctx.board.items[e.itemId]).map((e) => ({ id: e.itemId, title: ctx.board.items[e.itemId].title, why: e.why, note: e.note, priority: e.priority, owner: ctx.board.items[e.itemId].assignee || null, firedAt: e.firedAt }));
       if (cards.length) events.push({ board: ctx.id, type: 'trigger.fired', actor: SYSTEM, wake, cards, recipients: [wake], addressed: [wake] });
     }
@@ -4426,7 +4497,7 @@ route('POST', '/api/boards/:board/items/:id/asks/:askId/done', 'Answer an ask: {
   const ctx = getCtx(p.board);
   return itemView(ctx, answerAsk(ctx, p.id, p.askId, body, actor));
 });
-route('POST', '/api/boards/:board/items/:id/triggers', 'A trigger on the card (INT-435): it waits on a condition and wakes an agent when it holds. { when: { machine: "exclusive", busyBelow? } | { quietFor: "30m" } | { every: "15m" } | { until: ISO time }, priority: now|batch (default batch), wake?: agent (default the coordinator), note? } → the trigger. A card with an active trigger is waiting on purpose: the stuck watch escalates it to nobody', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/items/:id/triggers', 'A trigger on the card (INT-435): it waits on a condition and wakes an agent when it holds. { when: { machine: "exclusive", busyBelow? } | { quietFor: "30m" } | { idle: "60m" } | { every: "15m" } | { until: ISO time }, priority: now|batch (default batch), wake?: agent (default the coordinator), note? } → the trigger, and under rule the rule it is stored as: a rule on this ticket only (item), at most 5 per ticket, outside the board\'s 50, gone when the ticket is done or archived. A card with an active trigger is waiting on purpose: the stuck watch escalates it to nobody', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const bad = (m) => fail(400, m);
   const when = TRIGGERS.parseWhen(body.when, bad);
@@ -4441,24 +4512,33 @@ route('POST', '/api/boards/:board/items/:id/triggers', 'A trigger on the card (I
   }
   return tx(ctx, () => {
     const it = getItem(ctx, p.id);
-    if (TRIGGERS.activeOn(it).length >= TRIGGERS.MAX_PER_TICKET) fail(409, `${it.id} has ${TRIGGERS.MAX_PER_TICKET} active triggers already`, { code: 'CONFLICT', hint: 'Remove one first: DELETE …/triggers/<id>' });
-    const t = { id: rid('tr'), when, priority, ...(wake ? { wake } : {}), ...(body.note ? { note: str(body.note, 300) } : {}), by: actor.name, at: now(), active: true };
-    it.triggers = [...(it.triggers || []).filter((x) => x.active), t];
-    it.version++;
-    return t;
+    if (!liveCard(ctx, it) && !it.test) fail(409, `${it.id} is done: its triggers went with it`, { code: 'CONFLICT', hint: 'Set a trigger on a ticket that is still open' });
+    // a trigger that fired once (at) and switched off makes room, as before
+    rulesOf(ctx).rules = rulesOf(ctx).rules.filter((r) => !(r.item === it.id && !r.enabled));
+    if (rulesOf(ctx).rules.filter((r) => r.item === it.id).length >= TRIGGERS.MAX_PER_TICKET) fail(409, `${it.id} has ${TRIGGERS.MAX_PER_TICKET} active triggers already`, { code: 'CONFLICT', hint: 'Remove one first: DELETE …/triggers/<id>' });
+    const rule = TRIGGERS.toRule({ id: rid('tr'), itemId: it.id, when, priority, wake, note: body.note ? str(body.note, 300) : null, by: actor.name, nowIso: now() });
+    rulesOf(ctx).rules.push(rule);
+    it.version++; // the card redraws its bell
+    return { ...TRIGGERS.fromRule(rule), text: RULES.describe(rule, ctx.board.columns), rule: { id: rule.id, item: rule.item, when: rule.when, then: rule.then } };
   });
 });
-route('DELETE', '/api/boards/:board/items/:id/triggers/:triggerId', 'Remove a trigger from the card: its condition no longer matters (anyone; any queued firing of it goes too)', ({ p }) => {
+route('DELETE', '/api/boards/:board/items/:id/triggers/:triggerId', 'Remove a trigger (a rule on this ticket) from the card: its condition no longer matters (anyone; any waiting firing of it goes too). The board\'s idle check, removed here, skips this card from then on', ({ p }) => {
   const ctx = getCtx(p.board);
   return tx(ctx, () => {
     const it = getItem(ctx, p.id);
-    const t = (it.triggers || []).find((x) => x.id === p.triggerId);
-    if (!t) fail(404, `No trigger "${p.triggerId}" on ${it.id}`, { hint: `GET /api/boards/${ctx.id}/items/${it.id} lists them under triggers` });
-    it.triggers = it.triggers.filter((x) => x !== t);
-    if (t.default) it.idleCheck = false; // removed on purpose: the sweep doesn't put it back
-    ctx.board.triggerQueue = (ctx.board.triggerQueue || []).filter((e) => e.triggerId !== t.id);
+    const ic = engineRule(ctx, 'idleCheck', true);
+    if (ic && p.triggerId === ic.id) {
+      if (!idleCovers(ctx, ic, it)) fail(404, `The idle check doesn't cover ${it.id}`, { hint: `GET /api/boards/${ctx.id}/items/${it.id} lists its triggers` });
+      ic.skip = [...(ic.skip || []), it.id]; // removed on purpose: the sweep doesn't put it back
+      if (ic.state?.pending) delete ic.state.pending[it.id];
+      it.version++;
+      return { removed: ic.id, skipped: it.id };
+    }
+    const rule = rulesOf(ctx).rules.find((r) => r.id === p.triggerId && r.item === it.id);
+    if (!rule) fail(404, `No trigger "${p.triggerId}" on ${it.id}`, { hint: `GET /api/boards/${ctx.id}/items/${it.id} lists them under triggers` });
+    rulesOf(ctx).rules = rulesOf(ctx).rules.filter((r) => r !== rule);
     it.version++;
-    return { removed: t.id };
+    return { removed: rule.id };
   });
 });
 route('POST', '/api/boards/:board/items/:id/asks/:askId/withdraw', 'Take back an ask you made: { reason } — the asker, the coordinator or the human', ({ p, body, actor }) => {
@@ -4921,9 +5001,11 @@ function saveRule(ctx, body, actor, prev = null) {
   }
   tx(ctx, (events) => {
     const all = rulesOf(ctx).rules;
-    // the board's own rules count outside the cap: seeding them never fills a board
-    if (!prev && !rule.engine && all.filter((r) => !r.engine).length >= RULES.MAX_RULES) fail(409, `A board keeps at most ${RULES.MAX_RULES} rules`, { code: 'CONFLICT', hint: 'Delete one you no longer use' });
+    // the board's own rules and the tickets' triggers count outside the cap: seeding them never fills a board
+    if (!prev && !rule.engine && all.filter((r) => !r.engine && !r.item).length >= RULES.MAX_RULES) fail(409, `A board keeps at most ${RULES.MAX_RULES} rules`, { code: 'CONFLICT', hint: 'Delete one you no longer use' });
     if (rule.when.on === 'fits' && all.some((r) => r.id !== prev?.id && r.when?.on === 'fits' && r.name.toLowerCase() === rule.name.toLowerCase())) fail(409, `There is already a card look called "${rule.name}"`, { code: 'CONFLICT', hint: 'Card looks have their own names: is:rule:<name> finds them' });
+    // the idle check keeps the cards it skips while it stays the idle check
+    if (prev?.skip && rule.engine === 'idleCheck') rule.skip = prev.skip;
     rulesOf(ctx).rules = prev ? all.map((r) => (r.id === prev.id ? rule : r)) : [...all, rule];
     // the alarm's rule reshaped loses its mark: off, as if deleted, never back to agents.json's flags
     if (prev?.engine === 'idleAlarm' && !rule.engine) rulesOf(ctx).idleAlarmDeleted = true;
@@ -4932,12 +5014,14 @@ function saveRule(ctx, body, actor, prev = null) {
   });
   return ruleView(ctx, rule);
 }
-const getRule = (ctx, id) => rulesOf(ctx).rules.find((r) => r.id === id) || fail(404, `No rule "${id}"`, { code: 'NOT_FOUND', hint: `GET /api/boards/${ctx.id}/rules lists them` });
+// a ticket's triggers are its own: …/items/<ID>/triggers changes them, not the Rules routes
+const boardRules = (ctx) => rulesOf(ctx).rules.filter((r) => !r.item);
+const getRule = (ctx, id) => boardRules(ctx).find((r) => r.id === id) || fail(404, `No rule "${id}"`, { code: 'NOT_FOUND', hint: rulesOf(ctx).rules.some((r) => r.id === id) ? 'That is a trigger on a ticket: GET or DELETE /api/boards/<board>/items/<ID>/triggers' : `GET /api/boards/${ctx.id}/rules lists them` });
 
 route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, when, if?, then, text (in words), fired, native? }], vocabulary: { events, times, actions, roles } }. The board\'s behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing) are ordinary stored rules (ids board-…, marked engine: <key>): each runs from its marked rule, deleting it switches it off, and reshaped it loses the mark and is ordinary. A rule of yours in the same shape stays yours. The words board_idle, stuck, assignee_away, escalate, unstick and reassign work only in a marked rule, in its shape; a new rule in those words takes the mark only when its behaviour has no rule. native: a column\'s release-lease or auto-archive flag, listed and edited as a rule', ({ p }) => {
   const ctx = getCtx(p.board);
   const labels = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { label: v.label, ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}) }]));
-  return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...rulesOf(ctx).rules.map((r) => ruleView(ctx, r))], vocabulary: { events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
+  return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...boardRules(ctx).map((r) => ruleView(ctx, r))], vocabulary: { events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
 });
 route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, when: { on, column?, minutes?, to? }, if?: card-rules condition, then: [{ do, … }], enabled? }. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented, mentioned (to?), unblocked, lease_expired, ask_overdue; or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
 route('PUT', '/api/boards/:board/rules/:id', 'Human: replace a rule (as POST); { enabled: false } with the rest switches it off', ({ p, body, actor }) => {
