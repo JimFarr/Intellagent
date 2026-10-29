@@ -2997,6 +2997,8 @@ body:has(.drawer.open) #toasts { right: calc(min(440px, 100vw - 20px) + 30px); }
 .pg thead .pg-agent { font-size: 12px; }
 .pg-cell.m-on .i, .pg-cell.m-rules > .i:first-child { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .pg-cell.m-on .i > *, .pg-cell.m-rules > .i:first-child > * { display: none; }
+/* a permission not granted is an empty ring */
+.pg-cell.m-off::after { content: ""; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid color-mix(in oklab, var(--muted) 55%, transparent); background: none; box-sizing: border-box; }
 
 /* Design pass (INT-471): the colour field, radio and slider join the control family */
 .cf { display: flex; align-items: center; gap: 8px; height: 32px; }
