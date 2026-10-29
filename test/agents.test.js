@@ -1181,6 +1181,8 @@ describe('lean runs', () => {
     // any manifest, a worktree's tracked copy too (it reaches the live one when it lands): written never, read always
     assert.ok(deny.includes('"Edit(**/intellagent.manifest.json)"') && deny.includes('"Write(**/intellagent.manifest.json)"'));
     assert.ok(!deny.includes('Read(**/intellagent.manifest.json)'));
+    // the plugins the board runs (INT-462)
+    assert.ok(deny.includes('"Edit(**/.intellagent/plugins/**)"') && deny.includes('"Write(**/.intellagent/plugins/**)"'));
     if (process.platform === 'win32') {
       assert.ok(deny.includes('"Read(//c/board/local.json)"'), 'absolute paths in the POSIX form Claude Code matches');
       assert.ok(deny.includes('"Edit(//c/board/data/**)"') && deny.includes('"Write(//c/board/data/**)"'));
@@ -2513,12 +2515,14 @@ describe('a run gets its own token (INT-248)', () => {
       const said = async () => (await s.ok('GET', `${B}/items/${it.id}`, undefined, USER)).comments.map((c) => `${c.author.name}: ${c.body}`);
       // the comment only lands if the token in its env is adapter's own (the board requires one)
       await until(async () => (await said()).some((c) => c.startsWith('adapter: token from env')), 8000, 'the adapter posted with its env token');
+      // a run token the board minted (32 chars), not the issued one: local.json keeps only its hash (INT-467)
       const own = JSON.parse(fs.readFileSync(path.join(s.dir, 'local.json'), 'utf8')).agentTokens.adapter;
-      assert.ok((await said()).includes(`adapter: token from env (${own.length} chars)`));
+      assert.match(own, /^sha256:[0-9a-f]{64}$/);
+      assert.ok((await said()).includes('adapter: token from env (32 chars)'));
     } finally { await s.stop(); }
   });
 
-  it('a rotated token starts a fresh keep-alive session; an unchanged one keeps it', async () => {
+  it('rotating the agent\'s issued token keeps its keep-alive session: runs carry the board\'s run token (INT-467)', async () => {
     const s = await startServer({ agents: { defaults: fast, agents: { keeper: { run: run('stream'), keepAlive: 'stream-json', throttleMinutes: 0 } } } });
     const localFile = path.join(s.dir, 'local.json');
     const setToken = (t) => {
@@ -2540,10 +2544,9 @@ describe('a run gets its own token (INT-248)', () => {
       setToken('b'.repeat(24)); // what `intellagent token --agent keeper --rotate` does to local.json
       await wake(3);
       const [t1, t2, t3] = await turns(it.id);
-      assert.equal(pidOf(t1), pidOf(t2), 'same token: the second wake is a turn in the same session');
-      assert.match(t3, /turn 1 in/, 'rotated: a fresh session');
-      assert.notEqual(pidOf(t3), pidOf(t1));
-      assert.ok(t3.endsWith('(full)'), `the fresh session gets the full prompt: ${t3}`);
+      assert.equal(pidOf(t1), pidOf(t2), 'the second wake is a turn in the same session');
+      assert.equal(pidOf(t3), pidOf(t1), 'rotated: still the same session, its run token unchanged');
+      assert.ok(!t3.endsWith('(full)'), `a warm turn: ${t3}`);
     } finally { await s.stop(); }
   });
 });
