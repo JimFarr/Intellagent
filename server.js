@@ -171,7 +171,7 @@ const normGates = (v) => arr(v).filter((g) => isObj(g) && GATE_KINDS.includes(g.
 const TEMPLATES = require('./lib/templates');
 // presets (shipped, and added to this board) are board templates too: GET /api/templates, manifest.template, POST /api/boards
 Object.assign(TEMPLATES, require('./lib/presets').templates(path.dirname(MANIFEST_PATH)));
-const { allowedHosts, hostProblem, jsonProblem } = require('./lib/local-only');
+const { allowedHosts, hostProblem, jsonProblem, publicUrlProblem } = require('./lib/local-only');
 
 /* ── schema: typed custom fields + configurable built-ins ── */
 const FIELD_TYPES = ['text', 'markdown', 'number', 'boolean', 'enum', 'tags', 'date', 'url', 'user'];
@@ -5714,6 +5714,9 @@ route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 ch
 // The page loads images from the board only (INT-468), so an avatar given by URL is fetched once and kept in /avatars.
 async function imageFromUrl(url) {
   const bad = (msg) => fail(400, `Could not use the image at ${url}: ${msg}`, { code: 'BAD_REQUEST', hint: 'Send the file instead: imagePath or imageBase64' });
+  // the test suite's stand-in image server listens on 127.0.0.1: only its own env lets a local address through
+  const problem = process.env.INTELLAGENT_TEST_LOCAL_FETCH === '1' ? null : await publicUrlProblem(url);
+  if (problem) bad(problem);
   let r;
   const MAX = 2 * 1024 * 1024;
   const big = () => fail(413, 'Avatar exceeds 2 MB', { code: 'TOO_LARGE', hint: 'Use a smaller image' });
