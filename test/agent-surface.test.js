@@ -693,6 +693,26 @@ describe('sandbox boards', () => {
     } finally { await s.stop(); }
   });
 
+  it('a sandbox acting as an agent leaves agent/<name> free: it makes no worktree and no branch (INT-492)', async () => {
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-wt-'));
+    const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 'test@example.com');
+    git(dir, 'config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'data/\n.worktrees/\nintellagent.manifest.json\nagents.json\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'init');
+    const s = await startServer({ dir, manifest: { sandbox: true }, agents: { agents: { dev: { run: 'node -e 0', worktree: true } } } });
+    try {
+      await s.ok('POST', '/api/boards/main/items', { title: 'work', column: 'Ready', assignee: 'dev' }, USER);
+      await until(async () => (await s.ok('GET', '/api/agents')).agents.find((a) => a.name === 'dev' && a.status === 'paused'));
+      await new Promise((r) => setTimeout(r, 1000));
+      assert.equal(git(dir, 'branch', '--list', 'agent/*'), '', 'no agent branch was made');
+      assert.ok(!fs.existsSync(path.join(dir, '.worktrees', 'dev')), 'no worktree was made');
+    } finally { await s.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it('intellagent sandbox starts a board of its own from a snapshot, keeps it across restarts, and stops it', async () => {
     const s = await startServer({ agents: { agents: {} } });
     try {
