@@ -1397,12 +1397,17 @@ describe('token usage', () => {
   });
 
   it('asks one-shot claude runs for JSON output and leaves everything else alone', () => {
-    assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --output-format stream-json --verbose');
+    assert.equal(withJsonOutput('claude -p "x"'), 'claude -p "x" --setting-sources user,project --output-format stream-json --verbose');
     // the usage read takes the last result line of a stream (INT-458)
     const stream = [{ type: 'system' }, { type: 'assistant', message: { content: [] } }, { type: 'result', usage: { input_tokens: 5, output_tokens: 2 } }].map((m) => JSON.stringify(m)).join('\n');
     assert.deepEqual(parseUsage(`--- output ---\n${stream}\n`), { input: 5, output: 2, cacheRead: 0, cacheCreated: 0 });
-    assert.equal(withJsonOutput('claude -p "x" --output-format stream-json'), 'claude -p "x" --output-format stream-json');
+    assert.equal(withJsonOutput('claude -p "x" --output-format stream-json'), 'claude -p "x" --output-format stream-json --setting-sources user,project');
     assert.equal(withJsonOutput('node fake.js ok'), 'node fake.js ok');
+  });
+  it('never lets a run load the person\'s .claude/settings.local.json: its env would override the run\'s own token', () => {
+    const { keepAliveCmd } = require('../lib/agents');
+    for (const cmd of [withJsonOutput('claude -p "x"'), keepAliveCmd('claude -p "x" --tools "Bash"')]) assert.match(cmd, /--setting-sources user,project(\s|$)/, cmd);
+    assert.equal(withJsonOutput('claude -p "x" --setting-sources user --output-format json'), 'claude -p "x" --setting-sources user --output-format json', 'a run that names its sources keeps them');
   });
 
   it('records usage per run and per day, keeps it over a restart, and has none for runs that report none', async () => {
@@ -2448,6 +2453,11 @@ describe('watching a run (INT-457)', () => {
       const c = await s.ok('GET', `/api/agents/dev/log?from=${a.next}&run=${runs[0].run}`, undefined, USER);
       assert.deepEqual([c.log, c.skipped, c.next], ['', 600_001, a.next + 600_001]);
       assert.equal((await s.ok('GET', `/api/agents/dev/log?from=${c.next}&run=${runs[0].run}`, undefined, USER)).log, '{"type":"after"}\n');
+      // a long line still being written (no newline yet) is waited for, not skipped
+      const end = fs.statSync(file).size;
+      fs.appendFileSync(file, 'y'.repeat(600_000));
+      const w = await s.ok('GET', `/api/agents/dev/log?from=${end}&run=${runs[0].run}`, undefined, USER);
+      assert.deepEqual([w.log, w.next, w.skipped], ['', end, undefined]);
       // a run name is a log file name, never a path
       assert.equal((await s.api('GET', '/api/agents/dev/log?run=..%2Fx.log', undefined, USER)).status, 400);
       // the human's only: a log holds file contents and command output

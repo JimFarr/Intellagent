@@ -5251,7 +5251,7 @@ route('GET', '/api/agents/:name/runs', 'Human only: the agent\'s latest runs, ne
   try { files = fs.readdirSync(dir).filter((f) => RUN_LOG_RE.test(f)).sort().reverse(); } catch { /* no runs yet */ }
   return { runs: files.slice(0, clamp(Number(q.limit) || 10, 1, 50)).map((f) => ({ run: f, startedAt: f.replace(/\.log$/, '').replace(/T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/, 'T$1:$2:$3.$4Z'), size: fs.statSync(path.join(dir, f)).size, live: f === live })) };
 });
-route('GET', '/api/agents/:name/log', 'Human only: a run\'s log, the latest unless ?run=<a name from …/runs>. Without ?from, its tail (?bytes=20000); with ?from=<byte>, whole lines written since, to follow a live run → { log, from, next, size, running, run }', ({ p, q, actor }) => {
+route('GET', '/api/agents/:name/log', 'Human only: a run\'s log, the latest unless ?run=<a name from …/runs>. Without ?from, its tail (?bytes=20000); with ?from=<byte>, whole lines written since, to follow a live run → { log, from, next, size, running, run, skipped? } (skipped: the bytes of a finished line longer than the 500 KB window, left out so the reader moves on)', ({ p, q, actor }) => {
   humanConfig(actor, "read an agent's run logs");
   const a = standing.get(p.name);
   let f = a.lastRun?.log;
