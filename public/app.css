@@ -2904,7 +2904,8 @@ input[type="checkbox"].ck { border-radius: 4px; }
 @media (min-width: 861px) {
   .page { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 0; }
   .page-wrap { flex: 1; min-height: 0; align-items: stretch; }
-  .page-wrap > .page-nav { position: static; max-height: none; min-height: 0; overflow: hidden auto; padding-bottom: 24px; }
+  /* the menu runs the page's full height, so its divider does too, short of the bottom by the same gap as the content */
+  .page-wrap > .page-nav { position: static; align-self: stretch; max-height: none; min-height: 0; overflow: hidden auto; margin-bottom: 24px; }
   /* it scrolls with the wheel, trackpad and keys, but draws no bar: a bar would run along the cards' edges */
   .page-pane { min-height: 0; overflow: hidden auto; padding-bottom: 40px; scrollbar-width: none; }
   .page-pane::-webkit-scrollbar { display: none; }
