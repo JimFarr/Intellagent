@@ -94,3 +94,9 @@ It answers `{ ok, result | error, events, stderr, sandboxed }`. `sandboxed` says
 ## Handing it over
 
 Give the human the folder (or a .zip of it). On the board: **Integrations › Add plugin** shows what it asks for (secrets, hosts, actions, events, needs) before anything runs; then **Enable**, the **connection** form and **Test**; then each action is granted per agent in **Agents › Assignments**. The `examples/plugins/jira` folder is a complete plugin to copy from.
+
+## The example to copy: Jira
+
+`examples/plugins/jira` is a complete plugin: one `plugin.json`, one `index.js`, no dependencies (node's `fetch` makes the calls). It moves a Jira issue to a status, comments on it, assigns it and creates issues, against Jira Data Center or Server, signed in as one service account. It is not installed on any board until the human adds it. A ticket's issue is its `jira` field, else the first key such as `BET-12` in its title (one with the board's own prefix is skipped).
+
+To try it with no Jira at all, start the stand-in, `node test/fake-jira.js 7599` (service account `svc` / `s3cret`, project `BET`), and point `plugin_try` at the folder with that address in the connection. Its tests are in `test/jira-plugin.test.js`.
