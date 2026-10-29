@@ -18,9 +18,9 @@ const { baseUrl, tokenFor, defaultAgent } = require('./lib/locate');
 const request = require('./lib/request');
 
 const BASE = baseUrl();
-// Nothing issues a token for "git", so on a board that requires agent tokens the hook speaks as the project's
-// default agent, which has one. "git" stays the name where a token for it exists or none is needed.
-const AGENT = tokenFor('git') ? 'git' : (defaultAgent() || 'git');
+// A token comes from INTELLAGENT_TOKEN only (INT-467), so with one the hook speaks as the agent it belongs to
+// (a standing run's, or the project's default agent); without one it is "git", for boards that need no token.
+const AGENT = tokenFor() ? (process.env.INTELLAGENT_AGENT || defaultAgent() || 'git') : 'git';
 const PR_FIELD = process.env.INTELLAGENT_PR_FIELD || 'pr';
 const CI_FIELD = process.env.INTELLAGENT_CI_FIELD || 'ci';
 

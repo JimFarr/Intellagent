@@ -22,7 +22,7 @@ const PUBLIC = path.join(ROOT, 'public');
 
 const MANIFEST_PATH = path.resolve(process.env.INTELLAGENT_MANIFEST || path.join(ROOT, 'intellagent.manifest.json'));
 const LOCAL_PATH = path.join(path.dirname(MANIFEST_PATH), 'local.json');
-const { readLocal, updateLocal, foreignCode } = require('./lib/locate');
+const { readLocal, updateLocal, foreignCode, hashToken, isHashed } = require('./lib/locate');
 const cardrules = require('./lib/cardrules');
 const { createThemes, ThemeError } = require('./lib/themes');
 const jsonfile = require('./lib/jsonfile');
@@ -62,6 +62,12 @@ function loadManifest() {
   // exists but can't be read stops the board: starting without the user token would let anyone act as the human.
   let local;
   try { local = readLocal(LOCAL_PATH); } catch (e) { console.error(`Intellagent will not start: ${e.message}`); process.exit(1); }
+  // agent tokens are kept only as hashes (INT-467): one written in the clear by an older board is hashed now
+  if (Object.values(local.agentTokens || {}).some((v) => !isHashed(v))) {
+    try {
+      local = updateLocal(LOCAL_PATH, (l) => { for (const [k, v] of Object.entries(l.agentTokens || {})) if (!isHashed(v)) l.agentTokens[k] = hashToken(v); });
+    } catch (e) { console.error(`Intellagent will not start: agent tokens in ${LOCAL_PATH} could not be hashed (${e.message})`); process.exit(1); }
+  }
   if (local.userToken) merged.auth.userToken = local.userToken;
   if (local.agentTokens) merged.auth.agentTokens = { ...(merged.auth.agentTokens || {}), ...local.agentTokens };
   merged.dataDir = path.resolve(path.dirname(MANIFEST_PATH), merged.dataDir);
@@ -3066,10 +3072,13 @@ function useStreamTicket(ticket) {
   streamTickets.delete(ticket);
   return exp > Date.now();
 }
-const tokenEq = (a, b) => typeof a === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const tokenEq = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+// a stored agent token is a hash (local.json); a manifest may still hold one in the clear
+const tokenMatches = (tok, stored) => typeof tok === 'string' && tokenEq(isHashed(stored) ? hashToken(tok) : tok, stored);
 
-// Agent tokens in local.json (git-ignored), read fresh; and issue one for a standing agent on a board that
-// requires them, so agents the human adds keep working.
+// Agent tokens in local.json (git-ignored, hashes only), read fresh; and issue one for a standing agent on a
+// board that requires them, so agents the human adds keep working. Nobody sees that token: the agent's runs
+// call the board with a run token (runTokenOf), and the human issues a usable one with intellagent token --agent.
 function readLocalAgentTokens() {
   try { return readLocal(LOCAL_PATH).agentTokens || {}; } catch { return {}; }
 }
@@ -3077,8 +3086,17 @@ function issueAgentToken(name) {
   if (!M.auth.requireAgentTokens || !name || M.auth.agentTokens?.[name] || readLocalAgentTokens()[name]) return;
   // never write over a local.json that can't be read: it may hold the user token
   let local;
-  try { local = updateLocal(LOCAL_PATH, (l) => { l.agentTokens = { ...(l.agentTokens || {}), [name]: crypto.randomBytes(18).toString('base64url') }; }); } catch (e) { console.error(`No token issued for ${name}: ${e.message}`); return; }
+  try { local = updateLocal(LOCAL_PATH, (l) => { l.agentTokens = { ...(l.agentTokens || {}), [name]: hashToken(crypto.randomBytes(18).toString('base64url')) }; }); } catch (e) { console.error(`No token issued for ${name}: ${e.message}`); return; }
   M.auth.agentTokens = { ...(M.auth.agentTokens || {}), [name]: local.agentTokens[name] };
+}
+// A standing agent's runs carry a token the board mints for it, kept in memory and in the run's environment
+// only (INT-467). One per agent for the life of the board, so a keep-alive session stays warm; stopping the
+// board stops every run, so none outlives it. Handed out only to an agent that has a token on the board.
+const runTokens = new Map();
+function runTokenOf(name) {
+  const key = name.toLowerCase();
+  if (!runTokens.has(key)) runTokens.set(key, crypto.randomBytes(24).toString('base64url'));
+  return runTokens.get(key);
 }
 
 // Optional auth from the manifest. Off by default; docs and app name stay public so agents can discover it.
@@ -3099,15 +3117,19 @@ function checkAuth(req, q, actor, pathname, policy) {
   }
   // names match without regard to case, as grants and probation do: "Gatekeeper" must send gatekeeper's token (INT-418)
   const tokenFor = (tokens) => Object.entries(tokens || {}).find(([k]) => k.toLowerCase() === actor.name.toLowerCase())?.[1];
-  // local.json is read on every call: a token issued or rotated since the board started (intellagent token
-  // --agent [--rotate]) counts at once, and the old one stops working
+  // local.json first, read fresh: a token issued or rotated since the board started (intellagent token --agent)
+  // counts at once, and the one it replaced stops (INT-467: a lost token can't be read back, only rotated)
   const fresh = tokenFor(readLocalAgentTokens());
-  if (fresh && fresh !== tokenFor(A.agentTokens)) A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh };
+  if (fresh && tokenFor(A.agentTokens) !== fresh) A.agentTokens = { ...(A.agentTokens || {}), [actor.name]: fresh };
   const need = fresh || tokenFor(A.agentTokens);
-  const tokenHint = `Send the token the human issued with: intellagent token --agent ${actor.name} (the CLI and MCP tools send it by themselves; elsewhere set INTELLAGENT_TOKEN)`;
-  if (need) { if (!tokenEq(tok, need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); }
+  // what to put where (INT-467): the board keeps only hashes, so a lost token is rotated, never read back
+  const where = 'where the agent runs (a Claude Code session: env.INTELLAGENT_TOKEN in the project\'s .claude/settings.local.json, git-ignored)';
+  const tokenHint = `Send this agent's token in INTELLAGENT_TOKEN (a standing run has its own). Lost it? The human runs: intellagent token --agent ${actor.name} --rotate, and puts the printed token in INTELLAGENT_TOKEN ${where}`;
+  // its standing runs' token, or the one the human issued (kept as a hash)
+  const ok = (stored) => tokenEq(tok, runTokens.get(actor.name.toLowerCase())) || tokenMatches(tok, stored);
+  if (need) { if (!ok(need)) fail(401, `Agent "${actor.name}" must send its token (Authorization: Bearer …)`, { auth: 'agent', code: 'UNAUTHORIZED', hint: tokenHint }); }
   else if (A.requireAgentTokens) {
-    fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name} (the CLI and MCP tools then send it by themselves)` });
+    fail(401, `Agent "${actor.name}" has no token on this board`, { auth: 'agent', code: 'UNAUTHORIZED', hint: `The human issues one: intellagent token --agent ${actor.name}, and puts the printed token in INTELLAGENT_TOKEN ${where}` });
   }
   const p = permsFor(actor.name);
   // the route policy says what a read-only agent may still do (INT-144): talk, never change; with a token or without
@@ -4236,8 +4258,7 @@ route('POST', '/api/boards/:board/items/:id/attention', 'Ask the human: { reason
   const { item, questionId } = askHuman(ctx, p.id, body.reason, actor, body.form ?? null);
   return { ...itemView(ctx, item), questionId };
 });
-route('GET', '/api/boards/:board/stuck', 'The stuck watch (INT-394): tickets picked up and not done that have been quiet, with since, reason (waiting_on_human, no_owner, owner_down, owner_quiet, held_quiet), owner, whether the board is sure, its round, and whether the human was asked', ({ p }) => {
-  const ctx = getCtx(p.board);
+const stuckOf = (ctx) => {
   const nowMs = Date.now();
   const stuck = Object.entries(ctx.board.stuck || {}).map(([id, e]) => {
     const it = ctx.board.items[id];
@@ -4246,6 +4267,29 @@ route('GET', '/api/boards/:board/stuck', 'The stuck watch (INT-394): tickets pic
   }).sort((a, b) => b.minutes - a.minutes);
   const T = STUCK_TIMINGS;
   return { stuck, rules: { quietMinutes: T.quietMs / 60_000, sureAfterMinutes: T.confirmMs / 60_000, roundMinutes: T.roundMs / 60_000, rounds: T.rounds } };
+};
+route('GET', '/api/boards/:board/stuck', 'The stuck watch (INT-394): tickets picked up and not done that have been quiet, with since, reason (waiting_on_human, no_owner, owner_down, owner_quiet, held_quiet), owner, whether the board is sure, its round, and whether the human was asked', ({ p }) => stuckOf(getCtx(p.board)));
+route('GET', '/api/boards/:board/report', 'A team report in one read (INT-441): ?since=<ISO time> (default 24 hours ago; 400 BAD_REQUEST when not a time; earlier than 90 days is clamped and the clamped time echoed). { since, days (metrics and agents count whole days, so they can reach back before since: this is the window they cover), digest { entries (count since then), latest (newest 5, summaries cut to 300; the rest at …/digest) }, metrics { done, cycleHours, waiting { open, reviews, oldestHours, oldestId } }, stuck [tickets], failedLandings [{ id, title, reason }], agents { runs, cost, unpriced, tokens }, mainBranch { runningCommit, mainCommit, behind } }. Read-only; the stuck, metrics, digest and analytics routes hold the detail', async ({ p, q }) => {
+  const ctx = getCtx(p.board);
+  const parsed = q.since == null ? Date.now() - 86_400_000 : Date.parse(q.since);
+  if (!Number.isFinite(parsed)) fail(400, `"${String(q.since).slice(0, 40)}" is not a time`, { code: 'BAD_REQUEST', hint: 'Pass ?since=2026-10-28T09:00:00Z, or leave it out for the last 24 hours' });
+  const sinceMs = Math.max(parsed, Date.now() - 90 * 86_400_000); // 90 days is the longest window metrics keep
+  const days = clamp(Math.ceil((Date.now() - sinceMs) / 86_400_000), 1, 90);
+  const m = metrics(ctx, days);
+  const entries = digest.read(ctx, days).flatMap((d) => d.entries).filter((e) => Date.parse(e.ts) >= sinceMs).sort((a, b) => b.ts.localeCompare(a.ts));
+  await codeState.refresh();
+  const { runningCommit, mainCommit, behind } = codeState.snapshot();
+  const { runs, cost, unpriced, tokens } = analytics({ days, agent: null, waiting: [] }).totals;
+  return {
+    since: new Date(sinceMs).toISOString(),
+    days,
+    digest: { entries: entries.length, latest: entries.slice(0, 5).map((e) => ({ id: e.id, ts: e.ts, by: e.author?.name, summary: String(e.summary).slice(0, 300) })) },
+    metrics: { done: m.done, cycleHours: m.cycleHours, waiting: m.waiting },
+    stuck: stuckOf(ctx).stuck,
+    failedLandings: liveItems(ctx).filter((it) => it.landing?.state === 'failed').map((it) => ({ id: it.id, title: it.title, reason: it.landing.reason ?? null })),
+    agents: { runs, cost, unpriced, tokens },
+    mainBranch: { runningCommit, mainCommit, behind },
+  };
 });
 route('POST', '/api/boards/:board/items/:id/asks', 'Ask another agent for something, as an obligation instead of an @mention (INT-391): { to, kind: answer|decide|review|fix|assign_reviewer|unblock|other, what, options?, dueMinutes? (default 60) } → { ask }. A work item for its owner; closes itself when done (review: its verdict; fix: its next review request; assign_reviewer: a reviewer assigned) or with …/asks/<askId>/done; escalates once when overdue', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
@@ -5925,8 +5969,8 @@ standing = require('./lib/agents').createAgents({
       try { if (standing.probationOf(n) && !standing.probationOf(n).returned) askForIntroduction(n, { kind: 'system', name: 'intellagent' }); } catch (e) { console.error(`introduction request for ${n}: ${e.message}`); }
     }
   },
-  // the run's own token (INTELLAGENT_TOKEN), read fresh so a rotated one reaches the next run; never the user token
-  tokenOf: (name) => readLocalAgentTokens()[name] || M.auth.agentTokens?.[name] || null,
+  // the run's own token (INTELLAGENT_TOKEN): a run token while the agent has a token here; never the user token
+  tokenOf: (name) => (readLocalAgentTokens()[name] || M.auth.agentTokens?.[name] ? runTokenOf(name) : null),
   onRunEnd: (name) => {
     for (const ctx of boards.values()) {
       if (Object.values(ctx.board.items).some((it) => activeLease(it)?.claimant === name)) finishSession(ctx, {}, { kind: 'agent', name });

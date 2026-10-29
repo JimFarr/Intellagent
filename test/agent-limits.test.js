@@ -107,7 +107,8 @@ describe('the CLI keeps an agent to its own files and token', () => {
       const mf = path.join(dir, 'intellagent.manifest.json');
       await run('bin/intellagent.js', ['--manifest', mf, '--url', url, '--as', 'reviewer', 'api', 'GET', '/api/x'], { cwd: os.tmpdir(), env });
       await run('bin/intellagent.js', ['--manifest', mf, '--url', url, 'api', 'GET', '/api/x'], { cwd: os.tmpdir(), env });
-      assert.deepEqual(seen, ['Bearer B-RUN', 'Bearer B-LOCAL'], 'as reviewer: its own token (refused); as itself: its token for that board');
+      // INT-467: local.json keeps only hashes, so the run's own token is the only one the CLI can send
+      assert.deepEqual(seen, ['Bearer B-RUN', 'Bearer B-RUN'], 'as reviewer: its own token (refused); never one read from local.json');
     } finally { stub.close(); }
   });
 
