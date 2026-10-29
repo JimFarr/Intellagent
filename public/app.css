@@ -2928,3 +2928,4 @@ input[type="checkbox"].ck { border-radius: 4px; }
   .thread-beside .m-thread .md, .thread-beside .m-thread .cmt-body { max-width: 68ch; }
 }
 @media (max-width: 999px) { .thread-seg { display: none; } }
+@media (min-width: 1000px) { .thread-beside:not(.creating) .m-frame { grid-template-columns: minmax(0, 1fr) 280px; } .thread-beside:not(.creating) .m-frame.has-rail { grid-template-columns: 230px minmax(0, 1fr) 280px; } }
