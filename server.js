@@ -5965,6 +5965,12 @@ const plugins = createPlugins({
     standing.manage(a.name, { grants: rest.length ? rest : null }, { kind: actor.kind, name: actor.name });
     return a.name;
   }),
+  // what a plugin gets of a ticket it runs for: its own data, nothing else of the board
+  ticketOf: (board, id) => {
+    const ctx = boards.get(board || M.defaultBoard);
+    const it = ctx && (ctx.board.items[id] || ctx.archive.items[id]);
+    return it ? { id: it.id, title: it.title, fields: it.fields || {}, properties: it.properties || {} } : null;
+  },
 });
 function pluginOf(g) { return PLUGIN_POWER_RE.exec(typeof g === 'string' ? g : String(g?.power || ''))?.[1] || null; }
 const pluginErrors = async (fn) => {
@@ -5974,11 +5980,12 @@ route('GET', '/api/plugins', 'Integration plugins: { plugins: [{ name, label, st
 // Runs of plugin actions (INT-473). Before /api/plugins/:name, which would read "runs" as a plugin's name.
 route('GET', '/api/plugins/runs', 'Runs of plugin actions, newest first: ?plugin= &status=waiting|running|succeeded|failed|timedout|canceled|rejected &top=20 (max 100) → { runs: [{ id, plugin, action, status, inputs, by, item?, approval, result, error, createdAt, startedAt, finishedAt }] }', ({ q }) => pluginErrors(() => ({ runs: plugins.listRuns(q) })));
 route('GET', '/api/plugins/runs/:id', 'One run of a plugin action', ({ p }) => pluginErrors(() => plugins.getRun(p.id)));
-route('POST', '/api/plugins/:name/actions/:action/run', 'Run a plugin action { inputs: { key: value }, item?: "INT-12" } → 201 the run: finished if it was done within 15 s, else running (its outcome comes as a plugin.run.* event), or waiting when your grant says the human OKs each run. An agent needs a plugin.<name>.<action> grant whose "where" fits the inputs (403 FORBIDDEN, 403 OUT_OF_SCOPE). 400 an input wrong, 409 PLUGIN_OFF, 409 NOT_CONNECTED', ({ p, body, actor, q }) => pluginErrors(async () => {
+route('POST', '/api/plugins/:name/actions/:action/run', 'Run a plugin action { inputs: { key: value }, item?: "INT-12" } (the plugin gets that ticket\'s own data as ticket: { id, title, fields, properties }, read when it runs) → 201 the run: finished if it was done within 15 s, else running (its outcome comes as a plugin.run.* event), or waiting when your grant says the human OKs each run. An agent needs a plugin.<name>.<action> grant whose "where" fits the inputs (403 FORBIDDEN, 403 OUT_OF_SCOPE). 400 an input wrong, 409 PLUGIN_OFF, 409 NOT_CONNECTED', ({ p, body, actor, q }) => pluginErrors(async () => {
   const prep = plugins.prepare(p.name, p.action, body.inputs ?? {});
   const g = pluginGrant(actor, `plugin.${p.name}.${prep.action.id}`, prep.inputs);
-  const item = body.item == null ? null : getItem(getCtx(q.board || M.defaultBoard), String(body.item)).id;
-  return created(await plugins.startRun(p.name, prep, { by: actor, item, approve: g?.approve === 'human' }));
+  const ctx = body.item == null ? null : getCtx(q.board || M.defaultBoard);
+  const item = ctx ? getItem(ctx, String(body.item)).id : null;
+  return created(await plugins.startRun(p.name, prep, { by: actor, item, board: ctx?.id, approve: g?.approve === 'human' }));
 }));
 route('POST', '/api/plugins/runs/:id/approve', 'Human only: OK a waiting run → the run (running, or finished within 15 s). The plugin, the inputs and the agent\'s grant are checked again first (409 OUT_OF_SCOPE when the grant no longer covers it, 409 ALREADY_DECIDED)', ({ p, actor }) => pluginErrors(() => plugins.approveRun(p.id, actor, (r, prep) => {
   if (r.by.kind === 'agent') pluginGrant({ kind: 'agent', name: r.by.name }, `plugin.${r.plugin}.${r.action}`, prep.inputs, 409);

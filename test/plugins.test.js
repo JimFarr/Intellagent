@@ -29,7 +29,7 @@ process.stdin.on('data', (d) => {
   while ((i = buf.indexOf('\\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); handle(JSON.parse(line)); }
 });
 function handle(m) {
-  if (m.type === 'run') return send(m.inputs.channel.endsWith('fail') ? { id: m.id, ok: false, error: 'no such channel' } : { id: m.id, ok: true, result: { message: 'posted to ' + m.inputs.channel, item: m.item } });
+  if (m.type === 'run') return send(m.inputs.channel.endsWith('fail') ? { id: m.id, ok: false, error: 'no such channel' } : { id: m.id, ok: true, result: { message: 'posted to ' + m.inputs.channel, ticket: m.ticket, item: m.item } });
   const token = m.connection.token;
   if (token === 'crash') process.exit(3);
   if (token === 'event') { send({ type: 'event', event: 'ping', data: { n: 1 } }); send({ type: 'event', event: 'undeclared', data: {} }); }
@@ -247,11 +247,13 @@ test('plugin actions as powers: only the human grants them, the grant scopes the
     assert.match(out.body.error, /channel is "#random"/);
 
     // in scope: it runs, and the outcome is in the reply, so it wakes nobody
-    const card = await s.ok('POST', '/api/boards/main/items', { title: 'Deploy' }, USER);
+    const card = await s.ok('POST', '/api/boards/main/items', { title: 'Deploy', description: 'not for the plugin', properties: { pr: 7 } }, USER);
     const ok = await run({ channel: '#ops-alerts' }, ANN, { item: card.id.toLowerCase() });
     assert.strictEqual(ok.status, 201, JSON.stringify(ok.body));
     assert.strictEqual(ok.body.status, 'succeeded');
-    assert.deepStrictEqual(ok.body.result, { message: 'posted to #ops-alerts', item: card.id });
+    // the plugin has no board address or token: it gets the ticket's own data (INT-464's contract), no bare id
+    assert.deepStrictEqual(ok.body.result, { message: 'posted to #ops-alerts', ticket: { id: card.id, title: 'Deploy', fields: {}, properties: { pr: 7 } } });
+    assert.strictEqual(ok.body.item, card.id, 'the run still names its ticket');
     const evs = await runEvents(ok.body.id);
     assert.deepStrictEqual(evs.map((e) => e.type), ['plugin.run.started', 'plugin.run.succeeded']);
     assert.ok(evs.every((e) => e.recipients.join() === 'ann' && !e.addressed));
