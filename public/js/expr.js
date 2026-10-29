@@ -116,7 +116,7 @@ export function unsafePattern(src) {
     const c = src[i];
     if (c === '\\') { i++; continue; }
     if (inClass) { if (c === ']') inClass = false; continue; }
-    if ((c === '*' || c === '+' || (c === '{' && /^\{\d+,\}/.test(src.slice(i)))) && ++open > 2) return 'more than two open-ended repeats (* + {n,}) can be slow on a long text (like .*.*.*x)';
+    if ((c === '*' || c === '+' || (c === '{' && /^\{\d*,(?:\d{2,})?\}/.test(src.slice(i)))) && ++open > 2) return 'more than two wide repeats (* + {n,} or {n,10} and up) can be slow on a long text (like .*.*.*x)';
     if (c === '[') inClass = true;
     else if (c === '(') stack.push({ q: false, alt: false });
     else if (c === '|' && stack.length) stack[stack.length - 1].alt = true;
