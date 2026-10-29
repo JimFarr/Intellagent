@@ -2453,6 +2453,11 @@ describe('watching a run (INT-457)', () => {
       const c = await s.ok('GET', `/api/agents/dev/log?from=${a.next}&run=${runs[0].run}`, undefined, USER);
       assert.deepEqual([c.log, c.skipped, c.next], ['', 600_001, a.next + 600_001]);
       assert.equal((await s.ok('GET', `/api/agents/dev/log?from=${c.next}&run=${runs[0].run}`, undefined, USER)).log, '{"type":"after"}\n');
+      // a long line still being written (no newline yet) is waited for, not skipped
+      const end = fs.statSync(file).size;
+      fs.appendFileSync(file, 'y'.repeat(600_000));
+      const w = await s.ok('GET', `/api/agents/dev/log?from=${end}&run=${runs[0].run}`, undefined, USER);
+      assert.deepEqual([w.log, w.next, w.skipped], ['', end, undefined]);
       // a run name is a log file name, never a path
       assert.equal((await s.api('GET', '/api/agents/dev/log?run=..%2Fx.log', undefined, USER)).status, 400);
       // the human's only: a log holds file contents and command output
