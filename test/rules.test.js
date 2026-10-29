@@ -89,7 +89,7 @@ describe('rules on a board', () => {
     const bad = await s.api('POST', '/api/boards/main/rules', { name: 'x', when: { on: 'board_idle', minutes: 30 }, then: [{ do: 'comment', text: 'idle' }] }, USER);
     assert.equal(bad.status, 400);
     assert.equal(bad.body.code, 'BAD_REQUEST');
-    assert.match(bad.body.hint, /Idle-board alarm/);
+    assert.match(bad.body.hint, /no Idle-board alarm rule: switch the behaviour on/, 'no alarm rule here: the hint says so, never "undefined min"');
     const keep = await s.api('PUT', '/api/boards/main/rules/board-stuck-watch', { name: 'Stuck watch', when: { on: 'idle', minutes: 60 }, then: [{ do: 'unstick' }] }, USER);
     assert.equal(keep.status, 400, 'unstick only works as the stuck watch has it');
     // the idle alarm, in its shape, is anyone's rule now; its agents must be standing ones
