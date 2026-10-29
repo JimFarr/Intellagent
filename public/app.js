@@ -5010,6 +5010,20 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     t.onmouseleave = t.onfocusout = t._arm;
   }
 
+  // The colour field (INT-471, docs/design.md): the native picker is the value, the hex box and the theme dots write to it.
+  // shortcut: no saturation square, the native picker opens from the swatch; upgrade when a popover is wanted.
+  const setColour = (cf, hex) => { const c = $('input[type="color"]', cf); c.value = hex; $('.cf-hex', cf).value = c.value; c.dispatchEvent(new Event('input', { bubbles: true })); };
+  document.addEventListener('input', (e) => {
+    const cf = e.target.closest?.('.cf'); if (!cf) return;
+    if (e.target.type === 'color') $('.cf-hex', cf).value = e.target.value;
+    else if (/^#[0-9a-f]{6}$/i.test(e.target.value)) { $('input[type="color"]', cf).value = e.target.value; e.target.classList.remove('bad'); } else e.target.classList.add('bad');
+  });
+  document.addEventListener('click', (e) => {
+    const d = e.target.closest?.('.cf-dot'); if (!d) return;
+    const rgb = getComputedStyle(d).backgroundColor.match(/\d+/g).slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('');
+    setColour(d.closest('.cf'), `#${rgb}`);
+  });
+
   /* ═════════════════════════ token prompt ═════════════════════════ */
 
   let tokenPrompt = null;
@@ -5479,7 +5493,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         ${pane('identity', `<label class="spec-label" for="pe-label-${id}">Title</label><input class="inp" id="pe-label-${id}" data-id="label" maxlength="60" value="${esc(prof.label || '')}">
           <div class="pe-row">
             <div><label class="spec-label" for="pe-glyph-${id}">Glyph</label><input class="inp" id="pe-glyph-${id}" data-id="glyph" maxlength="8" value="${esc(prof.glyph || '')}"></div>
-            <div><label class="spec-label" for="pe-color-${id}">Colour</label><input class="inp pe-color" id="pe-color-${id}" data-id="color" type="color" value="${hex}"></div>
+            <div><label class="spec-label" for="pe-color-${id}">Colour</label><div class="cf"><input class="pe-color" id="pe-color-${id}" data-id="color" type="color" value="${hex}" aria-label="Pick a colour"><input class="inp cf-hex" value="${hex}" maxlength="7" spellcheck="false" aria-label="Colour as hex"><span class="cf-pal">${['accent', 'ok', 'warn', 'danger'].map((t) => `<button type="button" class="cf-dot" data-cf="${t}" style="background:var(--${t})" title="Use the ${t} colour" aria-label="${t}"></button>`).join('')}</span></div></div>
             <div><label class="spec-label" for="pe-model-${id}">Model tier</label><input class="inp" id="pe-model-${id}" data-id="model" list="pe-models-${id}" maxlength="64" value="${esc(a.model || '')}"><datalist id="pe-models-${id}"><option value="haiku"><option value="sonnet"><option value="opus"></datalist></div>
           </div>
           <label class="spec-label" for="pe-desc-${id}">Description <span class="muted">— what the receptionist routes by</span></label><textarea class="inp" id="pe-desc-${id}" data-id="description" rows="3" maxlength="2000">${esc(prof.description || a.description || '')}</textarea>`)}
