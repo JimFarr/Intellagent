@@ -2854,7 +2854,8 @@ input[type="checkbox"].ck { border-radius: 4px; }
 .ent.agent-row > .ent-body > .ent-title { flex: none; }
 .ent.agent-row > .ent-body > .ent-sub { flex: 1; min-width: 0; }
 /* Assignments: one column as wide as the design language's 960 px, the agent columns share what the names leave */
-.pg-scroll { width: 100%; max-width: 960px; }
+/* centred: as wide as its columns need, at least 960 px, never wider than the page (then it scrolls sideways) */
+.pg-scroll { width: max-content; min-width: min(100%, 960px); max-width: 100%; margin-inline: auto; }
 .pg { width: 100%; }
 .pg .pg-perm-h, .pg tbody .pg-perm { min-width: 280px; }
 
@@ -2891,10 +2892,8 @@ input[type="checkbox"].ck { border-radius: 4px; }
 .pe-note .btn.ghost { height: auto; padding: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .pg thead th.pg-agent { background: color-mix(in oklab, var(--text) 3%, var(--surface)); }
 /* a sensible width with few agents: at least 760px, agent columns 160px; more agents widen it up to the page */
-.pg-scroll { min-width: 0; }
-.pg { width: 100%; }
-.pg thead .pg-agent { width: 160px; min-width: 160px; }
-.pg thead .pg-agent > span { max-width: 112px; }
+.pg thead .pg-agent { width: 120px; min-width: 120px; }
+.pg thead .pg-agent > span { max-width: 84px; }
 /* paired fields line up at the top: help text under one never pushes its neighbour's input down */
 .dp-form label:not(.aa-check), .dp-grid > * { align-content: start; align-self: start; }
 
