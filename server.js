@@ -5735,6 +5735,7 @@ const plugins = createPlugins({
   dir: path.join(path.dirname(MANIFEST_PATH), 'plugins'),
   local: { read: () => readLocal(LOCAL_PATH), update: (fn) => updateLocal(LOCAL_PATH, fn) },
   emit, now, coerce: coerceField,
+  protect: [path.dirname(MANIFEST_PATH), DATA], // needs.read never reaches local.json or the board's data
 });
 const pluginErrors = async (fn) => {
   try { return await fn(); } catch (e) { if (e instanceof PluginError) fail(e.status, e.message, { code: e.code, ...e.extra }); throw e; }

@@ -33,6 +33,7 @@ function handle(m) {
   if (token === 'event') { send({ type: 'event', event: 'ping', data: { n: 1 } }); send({ type: 'event', event: 'undeclared', data: {} }); }
   const probe = {
     readLocal: tryIt(() => fs.readFileSync(m.connection.probe, 'utf8')),
+    readSibling: tryIt(() => fs.readFileSync(path.join(__dirname, '..', 'fake-2', 'x.txt'), 'utf8')),
     writeData: tryIt(() => fs.writeFileSync(path.join(__dirname, 'data', 'x.txt'), 'x')),
     writeOwn: tryIt(() => fs.writeFileSync(path.join(__dirname, 'index.js'), 'x')),
     spawn: tryIt(() => require('node:child_process').execFileSync(process.execPath, ['-e', '1'])),
@@ -85,6 +86,14 @@ test('plugin.json: strict, with every problem named', () => {
   for (const want of ['colour: unknown key', 'must match its folder', 'entry:', 'actions[0].inputs[0].type: "blob"', 'actions: "a" appears twice']) {
     assert.ok(problems.some((p) => p.includes(want)), `${want} in ${JSON.stringify(problems)}`);
   }
+  // needs.read never opens a whole drive, the board's folder, or anything holding it
+  const board = path.join(dir, 'board');
+  const read = (r) => validate({ ...FAKE_JSON, needs: { read: [r] } }, 'fake', dir, [board]).problems;
+  assert.ok(read(path.parse(dir).root).some((p) => p.includes('whole drive')));
+  assert.ok(read(board).some((p) => p.includes("board's own")));
+  assert.ok(read(path.join(board, 'data')).some((p) => p.includes("board's own")));
+  assert.ok(read(dir).some((p) => p.includes("board's own")));
+  assert.deepStrictEqual(read(path.join(dir, 'elsewhere')), []);
 });
 
 test('unzip: unwraps one top folder, refuses paths that leave it', () => {
@@ -92,6 +101,8 @@ test('unzip: unwraps one top folder, refuses paths that leave it', () => {
   assert.deepStrictEqual(files.map((f) => f.name).sort(), ['lib/a.js', 'plugin.json']);
   assert.throws(() => unzip(zip({ '../evil.js': 'x' })), /outside the plugin folder/);
   assert.throws(() => unzip(zip({ 'C:/evil.js': 'x' })), /outside the plugin folder/);
+  assert.throws(() => unzip(zip({ 'index.js:hidden': 'x' })), /outside the plugin folder/);
+  assert.throws(() => unzip(zip({ 'p/plugin.json': '{}', 'p/data/x.js': 'x' })), /can't ship a data\/ folder/);
   assert.throws(() => unzip(Buffer.from('not a zip at all, not even close')), /no zip directory/);
 });
 
@@ -132,6 +143,9 @@ test('plugins: the human adds, pins and connects one; it runs sandboxed and gets
     assert.strictEqual(on.state, 'on');
     assert.strictEqual(on.enabled.by, 'James');
 
+    // nothing saved yet: the board answers "not connected" itself
+    assert.deepStrictEqual(await s.ok('POST', '/api/plugins/fake/connection/test', {}, USER), { ok: false, message: 'Not connected: token not set' });
+
     // the connection: secrets kept in local.json, never read back
     assert.strictEqual((await s.api('PUT', '/api/plugins/fake/connection', { values: { probe: local } }, USER)).body.code, 'BAD_REQUEST'); // token is required
     assert.strictEqual((await s.api('PUT', '/api/plugins/fake/connection', { values: { nope: 1 } }, USER)).status, 400);
@@ -144,11 +158,14 @@ test('plugins: the human adds, pins and connects one; it runs sandboxed and gets
     await s.ok('PUT', '/api/plugins/fake/connection', { values: { probe: local } }, USER);
     assert.strictEqual(JSON.parse(fs.readFileSync(local, 'utf8')).plugins.fake.connection.token, 'abcdefghijkl1234');
 
-    // inside the sandbox: its own folder only, no programs, no board environment
+    // inside the sandbox: its own folder only (not a sibling sharing its prefix), no programs, no board environment
+    fs.mkdirSync(path.join(s.dir, 'plugins', 'fake-2'));
+    fs.writeFileSync(path.join(s.dir, 'plugins', 'fake-2', 'x.txt'), 'sibling');
     const t = await s.ok('POST', '/api/plugins/fake/connection/test', {}, USER);
     assert.strictEqual(t.ok, true, JSON.stringify(t));
     const probe = JSON.parse(t.message);
     assert.strictEqual(probe.readLocal, 'ERR_ACCESS_DENIED', 'local.json must be out of reach');
+    assert.strictEqual(probe.readSibling, 'ERR_ACCESS_DENIED', 'plugins/fake must not open plugins/fake-2');
     assert.strictEqual(probe.writeData, 'ok');
     assert.strictEqual(probe.writeOwn, 'ERR_ACCESS_DENIED');
     assert.strictEqual(probe.spawn, 'ERR_ACCESS_DENIED');
