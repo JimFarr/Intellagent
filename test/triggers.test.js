@@ -40,30 +40,39 @@ describe('trigger rules', () => {
     assert.equal(at(NOW + 61 * MIN, NOW - 61 * MIN), true, 'still quiet an interval later: again');
   });
   it('batches per agent: "now" sends the agent\'s list at once, "batch" waits for its oldest to age', () => {
-    let q = [];
-    q = T.enqueue(q, { wake: null, itemId: 'A', triggerId: 'a', priority: 'batch', firedAt: new Date(NOW).toISOString() });
-    q = T.enqueue(q, { wake: null, itemId: 'A', triggerId: 'a', priority: 'batch', firedAt: new Date(NOW).toISOString() });
-    assert.equal(q.length, 1, 'the same trigger queued twice is one entry');
+    let q = [{ wake: null, itemId: 'A', ruleId: 'a', priority: 'batch', firedAt: new Date(NOW).toISOString() }];
     assert.deepEqual(Object.keys(T.due(q, NOW + 5 * MIN, 15 * MIN).send), []);
     assert.deepEqual(T.due(q, NOW + 16 * MIN, 15 * MIN).send.null.map((e) => e.itemId), ['A']);
-    q = T.enqueue(q, { wake: null, itemId: 'B', triggerId: 'b', priority: 'now', firedAt: new Date(NOW).toISOString() });
+    q = [...q, { wake: null, itemId: 'B', ruleId: 'b', priority: 'now', firedAt: new Date(NOW).toISOString() }];
     const r = T.due(q, NOW + MIN, 15 * MIN);
     assert.deepEqual([r.send.null.map((e) => e.itemId), r.keep], [['A', 'B'], []], 'a "now" takes the waiting ones with it');
   });
-  it('the idle check holds while the card waits on the human; a trigger set on purpose never does', () => {
-    const idle = T.idleDefault({ id: 'd', minutes: 60, nowIso: 'x' });
-    const mine = trig({ every: '15m' });
-    const review = { questions: [{ kind: 'review', raisedBy: 'groot' }] };
-    assert.deepEqual([T.holds(idle, review), T.holds(mine, review)], [true, false]);
-    assert.equal(T.holds(idle, { questions: [{ raisedBy: 'intellagent' }] }), false, 'the board\'s own question is not the human\'s wait');
-    assert.equal(T.holds(idle, { questions: [] }), false);
+  it('a trigger is a rule on its ticket, and reads back as the trigger it was set as (INT-475)', () => {
+    for (const [when, on] of [[{ machine: 'exclusive', busyBelow: 20 }, { on: 'machine_free', busyBelow: 20 }], [{ quietFor: '30m' }, { on: 'quiet_for', minutes: 30 }],
+      [{ idle: '1h' }, { on: 'idle', minutes: 60 }], [{ every: '15m' }, { on: 'every', minutes: 15 }], [{ until: '2026-10-24T09:00:00Z' }, { on: 'at', at: '2026-10-24T09:00:00.000Z' }]]) {
+      const parsed = T.parseWhen(when, bad);
+      const r = T.toRule({ id: 'tr1', itemId: 'T-1', when: parsed, priority: 'now', wake: 'nebula', note: 'go', by: 'groot', nowIso: 'x' });
+      assert.deepEqual([r.item, r.when, r.then], ['T-1', on, [{ do: 'wake', agent: 'nebula', batch: false, note: 'go' }]]);
+      assert.deepEqual(T.fromRule(r), { id: 'tr1', when: parsed, priority: 'now', wake: 'nebula', note: 'go', by: 'groot', at: 'x', active: true });
+    }
+    const old = { ...trig({ quietFor: '30m' }), by: 'groot', quietFrom: 'q', firedAt: 'f' };
+    const m = T.migrate(old, 'T-1');
+    assert.deepEqual([m.id, m.enabled, m.state, m.then[0].agent, m.then[0].batch], ['tr1', true, { firedAt: 'f', quietFrom: 'q' }, 'coordinator', true]);
   });
-  it('the stuck watch steps aside for a card waiting on a trigger, not for the default idle check', () => {
-    const it0 = { id: 'T-1', journey: { pickedUpAt: new Date(NOW - 300 * MIN).toISOString(), lastProgressAt: new Date(NOW - 90 * MIN).toISOString() }, comments: [], questions: [], asks: [] };
-    const who = { owners: [], running: () => false, status: () => 'idle', sleeping: () => false };
-    const idle = T.idleDefault({ id: 'd', minutes: 60, nowIso: 'x' });
-    assert.deepEqual(STUCK.assess({ ...it0, triggers: [idle] }, NOW, who), { reason: 'no_owner' });
-    assert.deepEqual(STUCK.assess({ ...it0, triggers: [idle, trig({ machine: 'exclusive' })] }, NOW, who), { reason: 'waiting_on_trigger' });
+  it('the idle check holds while the card waits on the human, not on the board\'s own question', () => {
+    assert.equal(T.holds({ questions: [{ kind: 'review', raisedBy: 'groot' }] }), true);
+    assert.equal(T.holds({ questions: [{ raisedBy: 'intellagent' }] }), false, 'the board\'s own question is not the human\'s wait');
+    assert.equal(T.holds({ questions: [] }), false);
+  });
+  it('the stuck watch steps aside for a card waiting on a trigger, not for the board\'s idle check', () => {
+    const it0 = { id: 'T-1', columnId: 'c', journey: { pickedUpAt: new Date(NOW - 300 * MIN).toISOString(), lastProgressAt: new Date(NOW - 90 * MIN).toISOString() }, comments: [], questions: [], asks: [] };
+    const board = (rules) => ({ columns: [], items: { 'T-1': it0 }, automations: { rules } });
+    const who = { works: {}, running: () => false, status: () => 'idle' };
+    const idleCheck = { id: 'board-idle-check', engine: 'idleCheck', enabled: true, when: { on: 'idle', minutes: 60 }, then: [{ do: 'wake', agent: 'coordinator' }] };
+    assert.equal(STUCK.sweepBoard(board([idleCheck]), NOW, who).next['T-1'].reason, 'no_owner');
+    const mine = T.toRule({ id: 'tr1', itemId: 'T-1', when: T.parseWhen({ machine: 'exclusive' }, bad), priority: 'now', by: 'groot', nowIso: 'x' });
+    assert.equal(STUCK.sweepBoard(board([idleCheck, mine]), NOW, who).next['T-1'].reason, 'waiting_on_trigger');
+    assert.equal(STUCK.sweepBoard(board([idleCheck, { ...mine, enabled: false }]), NOW, who).next['T-1'].reason, 'no_owner', 'one that fired and switched off waits on nothing');
     assert.equal(STUCK.forCoordinator({ since: new Date(NOW - 999 * MIN).toISOString(), reason: 'waiting_on_trigger' }, NOW), false);
   });
 });
@@ -109,11 +118,84 @@ describe('triggers on a real board', () => {
       const t = await s.ok('POST', `${B}/items`, { title: 'the export', column: 'Ready' }, USER);
       await s.ok('POST', `${B}/items/${t.id}/start`, { status: 'reading' }, as('groot'));
       const idle = await waitFor(async () => (await s.ok('GET', `${B}/items/${t.id}`)).triggers?.find((x) => x.default));
-      assert.deepEqual([idle.when.kind, idle.priority, idle.active], ['idle', 'batch', true]);
+      assert.deepEqual([idle.id, idle.when.kind, idle.priority, idle.active], ['board-idle-check', 'idle', 'batch', true], 'the board\'s Idle check rule, covering the card');
+      assert.ok((await s.ok('GET', B)).board.items[t.id].triggers.some((x) => x.default), 'the board view carries it, for the card\'s bell');
       await s.ok('DELETE', `${B}/items/${t.id}/triggers/${idle.id}`, null, as('groot'));
       await new Promise((r) => setTimeout(r, 2500));
       const it = await s.ok('GET', `${B}/items/${t.id}`);
-      assert.deepEqual([it.idleCheck, (it.triggers || []).length], [false, 0]);
+      assert.deepEqual((it.triggers || []).length, 0);
+      const rule = (await s.ok('GET', `${B}/rules`, undefined, USER)).rules.find((r) => r.id === 'board-idle-check');
+      assert.deepEqual([rule.enabled, rule.skip], [true, [t.id]], 'the Idle check rule skips the card; it stays on for the rest');
     } finally { await s.stop(); }
+  });
+
+  it('a ticket keeps at most 5, outside the board\'s rules, and they go when it is done (INT-475)', async () => {
+    const s = await startServer({ agents: TEAM, manifest: { triggers: { sweepSeconds: 1 } } });
+    try {
+      const t = await s.ok('POST', `${B}/items`, { title: 'the export', column: 'Ready' }, USER);
+      const set = [];
+      for (let i = 0; i < 5; i++) set.push(await s.ok('POST', `${B}/items/${t.id}/triggers`, { when: { every: `${10 + i}m` } }, as('groot')));
+      assert.deepEqual([set[0].rule.item, set[0].rule.when, set[0].text], [t.id, { on: 'every', minutes: 10 }, 'If every 10 min → wake coordinator'], 'the reply names the rule it wrote');
+      const sixth = await s.api('POST', `${B}/items/${t.id}/triggers`, { when: { every: '1h' } }, as('groot'));
+      assert.deepEqual([sixth.status, sixth.body.code], [409, 'CONFLICT']);
+      const rules = (await s.ok('GET', `${B}/rules`, undefined, USER)).rules;
+      assert.ok(!rules.some((r) => r.item), 'not on the Rules page: they are the ticket\'s');
+      assert.equal((await s.api('PUT', `${B}/rules/${set[0].id}`, { name: 'x', when: { on: 'every', minutes: 15 }, then: [{ do: 'wake', agent: 'gamora' }] }, USER)).status, 404, 'nor changed through it');
+      await s.ok('DELETE', `${B}/items/${t.id}/triggers/${set[0].id}`, null, as('groot'));
+      assert.equal((await s.ok('GET', `${B}/items/${t.id}`)).triggers.length, 4);
+      await s.ok('POST', `${B}/items/${t.id}/move`, { column: 'Done' }, USER);
+      assert.ok(await waitFor(async () => (await s.ok('GET', `${B}/items/${t.id}`)).triggers.length === 0), 'done: its triggers went with it');
+    } finally { await s.stop(); }
+  });
+
+  it('a board with triggers on its tickets loads with the same triggers, as rules (INT-475)', async () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-trig-'));
+    const s = await startServer({ dir, agents: TEAM });
+    const a = await s.ok('POST', `${B}/items`, { title: 'timing run', column: 'Ready' }, USER);
+    const b = await s.ok('POST', `${B}/items`, { title: 'the export', column: 'Ready' }, USER);
+    await s.ok('POST', `${B}/items/${b.id}/start`, { status: 'reading' }, as('groot'));
+    await s.stop({ keep: true });
+    const file = path.join(dir, 'data', 'boards', 'main', 'board.json');
+    const board = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const at = '2026-10-20T10:00:00.000Z';
+    board.items[a.id].triggers = [
+      { id: 'tr_m', when: { kind: 'machine', busyBelow: 15 }, priority: 'now', wake: 'nebula', note: 'run it', by: 'groot', at, active: true, wasTrue: false },
+      { id: 'tr_u', when: { kind: 'until', at }, priority: 'batch', by: 'groot', at, active: false, firedAt: at },
+      { id: 'tr_d', when: { kind: 'idle', ms: 3_600_000 }, priority: 'batch', by: 'intellagent', at, active: true, default: true, firedAt: at }];
+    board.items[b.id].idleCheck = false;
+    board.triggerQueue = [{ wake: 'nebula', itemId: a.id, triggerId: 'tr_m', priority: 'now', why: 'the machine is free for a timing run', note: 'run it', firedAt: at },
+      { wake: null, itemId: a.id, triggerId: 'tr_d', priority: 'batch', why: 'idle for 61 min', note: null, firedAt: at }];
+    fs.chmodSync(file, 0o666);
+    fs.writeFileSync(file, JSON.stringify(board));
+    const u = await startServer({ dir, agents: TEAM });
+    try {
+      const ts = (await u.ok('GET', `${B}/items/${a.id}`)).triggers;
+      const by = Object.fromEntries(ts.map((t) => [t.id, t]));
+      assert.deepEqual(Object.keys(by).sort(), ['tr_m', 'tr_u'], 'its own two, same ids; the default idle check is the board\'s rule now');
+      assert.deepEqual([by.tr_m.when, by.tr_m.priority, by.tr_m.wake, by.tr_m.note, by.tr_m.active, by.tr_m.wasTrue], [{ kind: 'machine', busyBelow: 15 }, 'now', 'nebula', 'run it', true, false]);
+      assert.deepEqual([by.tr_u.active, by.tr_u.firedAt], [false, at]);
+      await u.ok('POST', `${B}/items`, { title: 'saves the board', column: 'Ready' }, USER);
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.ok(!saved.triggerQueue && !saved.items[a.id].triggers && !('idleCheck' in saved.items[b.id]), 'the old fields are gone once saved');
+      const rules = Object.fromEntries(saved.automations.rules.map((r) => [r.id, r]));
+      assert.deepEqual(rules.tr_m.state.pending, { [a.id]: { why: 'the machine is free for a timing run', firedAt: at } }, 'what waited to be sent waits on its rule');
+      assert.deepEqual([rules['board-idle-check'].skip, rules['board-idle-check'].state.pending[a.id].why, rules['board-idle-check'].state.fired[a.id]], [[b.id], 'idle for 61 min', at]);
+      await u.stop({ keep: true });
+    } catch (e) { await u.stop(); throw e; }
+    // and the sweep sends them: the trigger's to the agent it names, the idle check's to the coordinator
+    const w = await startServer({ dir, agents: TEAM, manifest: { triggers: { sweepSeconds: 1, batchMinutes: 0.02 } } });
+    try {
+      await w.ok('PATCH', B, { coordinator: 'gamora' }, USER);
+      const got = await waitFor(async () => {
+        const evs = (await w.ok('GET', '/api/events?types=trigger.fired')).events;
+        return evs.some((e) => e.wake === 'gamora') && evs.some((e) => e.wake === 'nebula') && evs;
+      });
+      assert.ok(got, 'both sent');
+      assert.deepEqual(got.filter((e) => e.wake === 'gamora').flatMap((e) => e.cards.map((c) => [c.id, c.why])), [[a.id, 'idle for 61 min']]);
+      assert.deepEqual(got.filter((e) => e.wake === 'nebula').flatMap((e) => e.cards.map((c) => [c.id, c.note, c.priority])), [[a.id, 'run it', 'now']]);
+    } finally { await w.stop(); }
   });
 });
