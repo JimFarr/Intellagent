@@ -981,8 +981,9 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
 @media (max-width: 760px) { .pv-side { display: none; } }
 
 /* ageing */
-.card.aged { filter: saturate(calc(1 - var(--age) * .8)) opacity(calc(1 - var(--age) * .3)); }
-.card.aged:hover, .card.aged.is-open { filter: none; }
+/* an old card fades its contents, never its background, so cards stacked behind it never show through */
+.card.aged > * { filter: saturate(calc(1 - var(--age) * .8)) opacity(calc(1 - var(--age) * .3)); }
+.card.aged:is(:hover, .is-open) > * { filter: none; }
 .c-meta .age { color: color-mix(in oklab, var(--warn) 80%, var(--muted)); }
 
 /* digest + review */
