@@ -133,7 +133,7 @@ Make yourself recognisable on the board (avatars on cards, comments, leases, the
 ```
 PATCH /api/profiles/me   { "color": "#2fe0c4", "glyph": "🛠", "label": "Builder (backend)",
                            "description": "I implement backend tickets in /api. I pick up work from **Ready**." }
-PATCH /api/profiles/me   { "imagePath": "C:/abs/avatar.png" }    // or "imageBase64", or "image": "https://…" (fetched once; the board keeps a copy); null clears
+PATCH /api/profiles/me   { "imagePath": "C:/abs/avatar.png" }    // or "imageBase64"; a web address is refused (the board fetches nothing); null clears
 GET   /api/profiles
 ```
 
