@@ -4894,6 +4894,8 @@ function saveRule(ctx, body, actor, prev = null) {
     if (!prev && !rule.engine && all.filter((r) => !r.engine).length >= RULES.MAX_RULES) fail(409, `A board keeps at most ${RULES.MAX_RULES} rules`, { code: 'CONFLICT', hint: 'Delete one you no longer use' });
     if (rule.when.on === 'fits' && all.some((r) => r.id !== prev?.id && r.when?.on === 'fits' && r.name.toLowerCase() === rule.name.toLowerCase())) fail(409, `There is already a card look called "${rule.name}"`, { code: 'CONFLICT', hint: 'Card looks have their own names: is:rule:<name> finds them' });
     rulesOf(ctx).rules = prev ? all.map((r) => (r.id === prev.id ? rule : r)) : [...all, rule];
+    // the alarm's rule reshaped loses its mark: off, as if deleted, never back to agents.json's flags
+    if (prev?.engine === 'idleAlarm' && !rule.engine) rulesOf(ctx).idleAlarmDeleted = true;
     ctx.board.cardRules = looksOf(ctx.board);
     events.push({ board: ctx.id, type: 'board.updated', actor, changes: { rules: { [prev ? 'changed' : 'added']: rule.name } } });
   });
