@@ -47,6 +47,14 @@ describe('a review whose commits change the board\'s own files (INT-448)', () =>
       assert.doesNotMatch(fine.comments.at(-1).body, /board's own files/);
       // refused for another reason (no reviewer) is fine here: what matters is that it isn't BOARD_FILES
       assert.notEqual((await decide(fine.id)).body.code, 'BOARD_FILES');
+      // a commit made after the review request is read at approval time, and the name is matched in any case
+      fs.mkdirSync(path.join(wt, 'Agent-Context'), { recursive: true });
+      fs.writeFileSync(path.join(wt, 'Agent-Context', 'late.md'), 'x\n');
+      git(wt, 'add', '-f', '.');
+      git(wt, 'commit', '-q', '-m', `late (${fine.id})`);
+      const late = await decide(fine.id);
+      assert.equal(late.body.code, 'BOARD_FILES', JSON.stringify(late.body));
+      assert.deepEqual(late.body.files.map((f) => f.toLowerCase()), ['agent-context/late.md']); // a case-insensitive disk may keep the older spelling
     } finally { await s.stop(); }
   });
 });

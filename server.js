@@ -4078,7 +4078,7 @@ route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call
   const learned = NOTES.parseLearned(body.learned);
   if (learned.bad?.length) warnings.push(`Not kept as area notes (write each as "area: what to know", the area a file or folder): ${learned.bad.map((x) => `"${x.slice(0, 80)}"`).join('; ')}`);
   if (actor.kind === 'agent' && !learned.notes.length && !learned.none) warnings.push('Nothing learned: leave what the next agent working here should know in "learned", one line per note: "area: lesson" (the area a file or folder, e.g. "lib/alerts/work.js: the TAG table decides when work is new again"). Or "none" if there was nothing. The review stays as it is: leave each note with POST /api/notes { area, text, from: "<ticket id>" } (MCP: add_note), no need to request review again.');
-  if (commits?.length) commits.touches = await worktrees.boardFilesTouched(commits).catch(() => []);
+  if (commits?.length) commits.touches = await worktrees.boardFilesTouched(commits).catch(() => null); // null: could not read
   const item = itemView(ctx, requestReview(ctx, p.id, body, actor, commits));
   if (learned.notes.length) {
     const r = notes.addAll(learned.notes, before.id, actor);
@@ -4209,9 +4209,14 @@ route('POST', '/api/boards/:board/items/:id/land', 'Human, or an agent with work
 // A change that may approve a ticket (a decision, or the human moving it into an approval gate) answers once
 // its landing is done, so the reply and the card show the outcome, as before landing went async.
 const afterLanding = async (ctx, item) => { await landingOf(ctx, item.id); return itemView(ctx, ctx.board.items[item.id] || item); };
-route('POST', '/api/boards/:board/items/:id/review/decision', 'Human: decide a review { verdict: "approve"|"changes", comment?, column? }', ({ p, body, actor }) => {
+route('POST', '/api/boards/:board/items/:id/review/decision', 'Human: decide a review { verdict: "approve"|"changes", comment?, column? }', async ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
-  return withCommits(ctx, p.id, () => afterLanding(ctx, decideReview(ctx, p.id, body, actor)));
+  // A delegated approval reads the branch as it is now, not as it was at the review request (INT-448): null = unreadable.
+  const item = getItem(ctx, p.id);
+  const author = commitsAuthor(item);
+  const fresh = actor.kind === 'user' || !author || !worktrees || !agentBranch(author) ? undefined
+    : await worktrees.commitsForAsync(author, item.id, { strict: true }).then((c) => worktrees.boardFilesTouched(c)).catch(() => null);
+  return withCommits(ctx, p.id, () => afterLanding(ctx, decideReview(ctx, p.id, body, actor, fresh)));
 });
 route('POST', '/api/boards/:board/finish', 'End your session: release all your leases (and the board hold), optionally post the digest { summary?, items? }', ({ p, body, actor }) =>
   finishSession(getCtx(p.board), body, actor));
