@@ -1028,9 +1028,45 @@ function grantsOf(name) {
       if (!APPROVAL_POWERS.has(power)) return ignore(power, { minOks: g.minOks, from: g.from }, '"minOks" and "from" only apply to review.decide and column.gate, the powers that act on a reviewed ticket');
       Object.assign(out, rule);
     }
+    if (PLUGIN_POWER_RE.test(power)) {
+      const a = pluginAction(power);
+      if (!a) return null; // its plugin is off or gone, or no longer declares the action: no power, never a wider one
+      if (g.approve != null && g.approve !== 'human') return ignore(power, { approve: g.approve }, '"approve" is "human" or left out');
+      const stray = Object.keys(g.where || {}).filter((k) => !a.inputs.some((f) => f.key === k));
+      if (stray.length) return ignore(power, g.where, `its "where" names ${stray.join(', ')}, which the action doesn't take`);
+      if (g.approve === 'human') out.approve = 'human';
+    }
     return out;
   }).flatMap((g) => (g?.power === ADMIN_BUNDLE ? adminCovers().map((power) => ({ ...g, power })) : [g]))
-    .filter((g) => g && isPower(g.power));
+    .filter((g) => g && (isPower(g.power) || PLUGIN_POWER_RE.test(g.power)));
+}
+// Plugin actions as powers (INT-473): plugin.<name>.<action>, granted only by the human (agents.json or POST
+// /api/agents; never a role, a bundle, the admin set or admin.permit). It is a power only while the plugin is
+// enabled and declares the action. Its "where" scopes the inputs: { channel: "#deploys" | "#ops-*" | [...] }.
+const PLUGIN_POWER_RE = /^plugin\.([a-z][a-z0-9-]{0,39})\.([A-Za-z][\w-]{0,39})$/;
+function pluginAction(power) {
+  const m = PLUGIN_POWER_RE.exec(power);
+  // grantsOf can run before plugins is set up (at start): no plugin power until it is
+  try { return m ? plugins.actionOf(m[1], m[2]) : null; } catch { return null; }
+}
+// exact, "prefix*", or a list of those; every value of the input must fit (a tags input: each tag), and an input
+// the scope names but the run leaves out is outside it
+const pluginWhereFits = (where, inputs) => Object.entries(where || {}).every(([k, want]) => {
+  const vals = [].concat(inputs[k] ?? []).map(String);
+  return vals.length > 0 && vals.every((v) => [].concat(want).map(String).some((w) => (w.endsWith('*') ? v.startsWith(w.slice(0, -1)) : v === w)));
+});
+// The grant an agent runs a plugin action under, or a fail(). Humans need none.
+function pluginGrant(actor, power, inputs, status = 403) {
+  if (actor.kind === 'user') return null;
+  const mine = grantsOf(actor.name).filter((g) => g.power === power);
+  if (!mine.length) fail(status, `${actor.name} may not run ${power}`, { code: status === 403 ? 'FORBIDDEN' : 'OUT_OF_SCOPE', hint: `Only the human grants it: { "power": "${power}" } in your grants in agents.json. Ask on a card` });
+  const g = mine.find((x) => pluginWhereFits(x.where, inputs));
+  if (!g) {
+    const off = Object.entries(mine[0].where || {}).find(([k]) => !pluginWhereFits({ [k]: mine[0].where[k] }, inputs));
+    fail(status, `This run is outside your ${power} grant${off ? `: ${off[0]} is ${JSON.stringify(inputs[off[0]] ?? null)}, the grant allows ${JSON.stringify(off[1])}` : ''}`, { code: 'OUT_OF_SCOPE', hint: 'Change the input to one the grant covers, or ask the human on a card' });
+  }
+  // an unscoped or direct grant wins over one that waits for the human
+  return mine.filter((x) => pluginWhereFits(x.where, inputs)).find((x) => x.approve !== 'human') || g;
 }
 // { minOks, from } read from a grant, or a string saying why it can't be. minOks is a whole number ≥ 1 or "all";
 // from is a list of reviewer names (left out: every reviewer assigned to the ticket). from alone means "all".
@@ -2347,7 +2383,9 @@ function powerBriefLines(ctx, x, said = {}) {
     'admin.permit': `a blocked command an agent asks you for: add it to the library (${cli('POST', '/api/permissions', 'key=<key> kind=command name=<Name> commands=["node:*"]')}) and turn it on for that agent (${cli('PUT', '/api/agents/<name>/permissions/<key>', 'mode=on')}); grant what it asks unless it is genuinely dangerous (secrets, tokens, deleting data, force-pushing); never your own row, never a board power`,
     'admin.permissions': `${cli('PUT', '/api/agents/<name>/permissions/<key>', 'mode=on')} · POST/PATCH/DELETE /api/permissions — only what you hold yourself, never your own row, never a board power, never a permission you hold; command, tool and folders permissions only narrow (403 NO_ESCALATION says why)`,
   };
-  return [`- **${x.power}** — ${POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
+  const pm = PLUGIN_POWER_RE.exec(x.power);
+  if (pm) how[x.power] = `${cli('POST', `/api/plugins/${pm[1]}/actions/${pm[2]}/run`, `'{"inputs":{…}}'`)} → the run; its outcome is in the reply, or comes as a plugin.run.* event${x.approve ? '. Each run waits for the human\'s OK first' : ''}`;
+  return [`- **${x.power}** — ${pm ? `run ${pluginAction(x.power)?.label || pm[2]} on the ${pm[1]} plugin` : POWERS[x.power]}${x.where ? ` (only where ${JSON.stringify(x.where)})` : ''}${x.minOks ? ` (only with ${okRuleText(x)}: OKS_MISSING until then)` : ''}: ${how[x.power]}`,
     ...(Object.hasOwn(said, x.power) ? [`  ${guidanceLine(said[x.power])}`] : [])];
 }
 
@@ -3448,6 +3486,10 @@ const POLICY = {
   'PUT /api/plugins/:name/connection': { who: 'human', ...humanAsk("set a plugin's connection") },
   'POST /api/plugins/:name/connection/test': { who: 'human', ...humanAsk("test a plugin's connection") },
   'DELETE /api/plugins/:name/connection': { who: 'human', ...humanAsk("clear a plugin's connection") },
+  'POST /api/plugins/:name/actions/:action/run': { who: 'any' }, // a plugin.<name>.<action> grant, checked in the route
+  'POST /api/plugins/runs/:id/approve': { who: 'human', ...humanAsk('OK a plugin run') },
+  'POST /api/plugins/runs/:id/reject': { who: 'human', ...humanAsk('turn a plugin run down') },
+  'POST /api/plugins/runs/:id/cancel': { who: 'self' }, // an agent: its own runs only, checked in lib/plugins.js
   'PUT /api/profiles/me/status': { who: 'self', readOnly: true },
   'PATCH /api/profiles/me': { who: 'self', readOnly: true },
   'POST /api/profiles/:name/memory': { who: 'self', readOnly: true },
@@ -4336,7 +4378,7 @@ route('GET', '/api/boards/:board/brief', 'Start here (agents): who you are, what
   const text = briefing(ctx, q.agent || actor.name, `http://${req.headers.host}`, ['cli', 'mcp', 'http'].includes(q.via) ? q.via : 'cli');
   return q.format === 'json' ? { brief: text, work: workFor(ctx, q.agent || actor.name) } : text;
 });
-route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=7|30: done, cycle time, time per column, waiting on the human, answer time', ({ p, q }) =>
+route('GET', '/api/boards/:board/metrics', 'Flow metrics over ?days=1|7|30: done, cycle time, time per column, waiting on the human, answer time', ({ p, q }) =>
   metrics(getCtx(p.board), clamp(Number(q.days) || 7, 1, 90)));
 route('GET', '/api/boards/:board/requests', 'Requests from the human to agents: ?status=open|done&to=<agent>', ({ p, q }) =>
   (getCtx(p.board).board.requests || []).filter((x) => (!q.status || x.status === q.status) && (!q.to || x.to === q.to)).slice().reverse());
@@ -5355,7 +5397,10 @@ function cleanGrants(list) {
   if (!Array.isArray(list)) fail(400, '"grants" must be a list');
   return list.map((g) => {
     const power = typeof g === 'string' ? g : g?.power;
-    if (!POWERS[power] && power !== ADMIN_BUNDLE) fail(400, `Unknown power "${power}". Powers: ${[...Object.keys(POWERS), ADMIN_BUNDLE].join(', ')}`);
+    const action = PLUGIN_POWER_RE.test(power) ? pluginAction(power) : null;
+    if (PLUGIN_POWER_RE.test(power) && !action) fail(400, `${power} is not an action of an enabled plugin`, { code: 'BAD_REQUEST', hint: 'Enable the plugin first; GET /api/plugins lists each action\'s power' });
+    if (!POWERS[power] && power !== ADMIN_BUNDLE && !action) fail(400, `Unknown power "${power}". Powers: ${[...Object.keys(POWERS), ADMIN_BUNDLE].join(', ')}, or plugin.<plugin>.<action>`);
+    if (g?.approve != null && (!action || g.approve !== 'human')) fail(400, `"approve" of ${power}: only a plugin action takes it, and only "human"`, { code: 'BAD_REQUEST' });
     // A scope narrows a power, so a malformed one is refused, never dropped: dropping it would turn "only
     // where risk is low" into "everywhere".
     if (typeof g === 'string') return power;
@@ -5366,6 +5411,9 @@ function cleanGrants(list) {
       if (typeof rule === 'string') fail(400, `The rule of ${power}: ${rule}`, { code: 'BAD_REQUEST', hint: 'minOks is a whole number from 1 up to the number of names in "from"; "from" lists reviewer names' });
       if (!APPROVAL_POWERS.has(power)) fail(400, `"minOks" and "from" only apply to review.decide and column.gate, not ${power}`, { code: 'BAD_REQUEST' });
     }
+    if (g?.approve) rule.approve = 'human';
+    const stray = action ? Object.keys(isObj(g?.where) ? g.where : {}).filter((k) => !action.inputs.some((f) => f.key === k)) : [];
+    if (stray.length) fail(400, `The scope of ${power} names ${stray.join(', ')}, which the action doesn't take`, { code: 'BAD_REQUEST', hint: `Inputs: ${action.inputs.map((f) => f.key).join(', ') || '(none)'}` });
     if (g?.where == null) return Object.keys(rule).length ? { power, ...rule } : power;
     if (!isObj(g.where)) fail(400, `The scope ("where") of ${power} must be an object like { "fields.risk": "low" }`, { code: 'BAD_REQUEST' });
     const where = {};
@@ -5908,11 +5956,42 @@ const plugins = createPlugins({
   local: { read: () => readLocal(LOCAL_PATH), update: (fn) => updateLocal(LOCAL_PATH, fn) },
   emit, now, coerce: coerceField,
   protect: [path.dirname(MANIFEST_PATH), DATA], // needs.read never reaches local.json or the board's data
+  runsFile: path.join(DATA, 'plugin-runs.json'),
+  holders: (power) => [...new Set([...(standing ? standing.list().agents.map((a) => a.name) : []), ...Object.keys(M.permissions || {})])]
+    .flatMap((name) => grantsOf(name).filter((g) => g.power === power).map((g) => ({ name, ...(g.where ? { where: g.where } : {}), ...(g.approve ? { approve: g.approve } : {}) }))),
+  // agents.json only: the manifest's grants are the human's own file, and stay dead while no plugin answers to them
+  dropGrants: (name, actor) => (standing ? standing.list().agents : []).filter((a) => arr(a.grants).some((g) => pluginOf(g) === name)).map((a) => {
+    const rest = arr(a.grants).filter((g) => pluginOf(g) !== name);
+    standing.manage(a.name, { grants: rest.length ? rest : null }, { kind: actor.kind, name: actor.name });
+    return a.name;
+  }),
+  // what a plugin gets of a ticket it runs for: its own data, nothing else of the board
+  ticketOf: (board, id) => {
+    const ctx = boards.get(board || M.defaultBoard);
+    const it = ctx && (ctx.board.items[id] || ctx.archive.items[id]);
+    return it ? { id: it.id, title: it.title, fields: it.fields || {}, properties: it.properties || {} } : null;
+  },
 });
+function pluginOf(g) { return PLUGIN_POWER_RE.exec(typeof g === 'string' ? g : String(g?.power || ''))?.[1] || null; }
 const pluginErrors = async (fn) => {
   try { return await fn(); } catch (e) { if (e instanceof PluginError) fail(e.status, e.message, { code: e.code, ...e.extra }); throw e; }
 };
 route('GET', '/api/plugins', 'Integration plugins: { plugins: [{ name, label, state: off|on|changed|crashed|invalid, problems, hash, enabled, asks, connection (secrets masked), actions, events, webhook, crashes, runs }] }', () => pluginErrors(() => ({ plugins: plugins.list() })));
+// Runs of plugin actions (INT-473). Before /api/plugins/:name, which would read "runs" as a plugin's name.
+route('GET', '/api/plugins/runs', 'Runs of plugin actions, newest first: ?plugin= &status=waiting|running|succeeded|failed|timedout|canceled|rejected &top=20 (max 100) → { runs: [{ id, plugin, action, status, inputs, by, item?, approval, result, error, createdAt, startedAt, finishedAt }] }', ({ q }) => pluginErrors(() => ({ runs: plugins.listRuns(q) })));
+route('GET', '/api/plugins/runs/:id', 'One run of a plugin action', ({ p }) => pluginErrors(() => plugins.getRun(p.id)));
+route('POST', '/api/plugins/:name/actions/:action/run', 'Run a plugin action { inputs: { key: value }, item?: "INT-12" } (the plugin gets that ticket\'s own data as ticket: { id, title, fields, properties }, read when it runs) → 201 the run: finished if it was done within 15 s, else running (its outcome comes as a plugin.run.* event), or waiting when your grant says the human OKs each run. An agent needs a plugin.<name>.<action> grant whose "where" fits the inputs (403 FORBIDDEN, 403 OUT_OF_SCOPE). 400 an input wrong, 409 PLUGIN_OFF, 409 NOT_CONNECTED', ({ p, body, actor, q }) => pluginErrors(async () => {
+  const prep = plugins.prepare(p.name, p.action, body.inputs ?? {});
+  const g = pluginGrant(actor, `plugin.${p.name}.${prep.action.id}`, prep.inputs);
+  const ctx = body.item == null ? null : getCtx(q.board || M.defaultBoard);
+  const item = ctx ? getItem(ctx, String(body.item)).id : null;
+  return created(await plugins.startRun(p.name, prep, { by: actor, item, board: ctx?.id, approve: g?.approve === 'human' }));
+}));
+route('POST', '/api/plugins/runs/:id/approve', 'Human only: OK a waiting run → the run (running, or finished within 15 s). The plugin, the inputs and the agent\'s grant are checked again first (409 OUT_OF_SCOPE when the grant no longer covers it, 409 ALREADY_DECIDED)', ({ p, actor }) => pluginErrors(() => plugins.approveRun(p.id, actor, (r, prep) => {
+  if (r.by.kind === 'agent') pluginGrant({ kind: 'agent', name: r.by.name }, `plugin.${r.plugin}.${r.action}`, prep.inputs, 409);
+})));
+route('POST', '/api/plugins/runs/:id/reject', 'Human only: turn a waiting run down { note? } → the run, rejected (409 ALREADY_DECIDED)', ({ p, body, actor }) => pluginErrors(() => plugins.rejectRun(p.id, actor, body.note ? str(body.note, 500) : '')));
+route('POST', '/api/plugins/runs/:id/cancel', 'Cancel a waiting or running run (an agent: only its own) → the run, canceled. A running action may already have acted: its answer is dropped. 409 CONFLICT when it already finished', ({ p, actor }) => pluginErrors(() => plugins.cancelRun(p.id, actor)));
 route('GET', '/api/plugins/:name', 'One plugin (the fields of the list)', ({ p }) => pluginErrors(() => plugins.view(p.name)));
 route('POST', '/api/plugins', 'Human only: add a plugin { path: absolute folder } or { zipBase64, filename } → 201 the plugin, off: nothing runs until it is enabled. 400 PLUGIN_INVALID lists the problems', ({ body, actor }) => pluginErrors(() => created(plugins.add(body, actor))));
 route('POST', '/api/plugins/:name/enable', 'Human only: run a plugin { hash } (the hash you were shown; 409 PLUGIN_CHANGED when its files differ). A later change to its files stops it until enabled again', ({ p, body, actor }) => pluginErrors(() => plugins.enable(p.name, body.hash, actor)));
