@@ -722,6 +722,23 @@ describe('sandbox boards', () => {
     } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
   });
 
+  it('a sandbox seeded from the board brings the agents along, with what the pages draw and no run, env, command or token (INT-489)', async () => {
+    const agents = { agents: { dev: { role: 'builder', model: 'sonnet', label: 'Dev', glyph: '⚔️', color: '#5876a8', description: 'builds', perms: ['read'], reviewer: true, areas: ['lib/'],
+      run: ['claude', '--secret-run'], env: { API_KEY: 'sk-secret' }, inheritEnv: ['HOME'], mcp: { x: { command: 'evil' } }, commands: ['rm'], token: 'tok-secret', cwd: 'C:/private' } } };
+    const s = await startServer({ agents });
+    try {
+      await s.ok('POST', '/api/boards/main/items', { title: 'one', column: 'Ready' }, USER);
+      const r = cli(['sandbox', 'tester', '--seed', 'board', '--json'], { cwd: s.dir });
+      assert.equal(r.code, 0, r.err);
+      const text = fs.readFileSync(path.join(r.json.dir, 'agents.json'), 'utf8');
+      const copy = JSON.parse(text).agents.dev;
+      assert.deepEqual(copy, { role: 'builder', model: 'sonnet', label: 'Dev', glyph: '⚔️', color: '#5876a8', description: 'builds', perms: ['read'], reviewer: true, areas: ['lib/'] });
+      for (const secret of ['secret', 'sk-', 'evil', 'HOME', 'private']) assert.ok(!text.includes(secret), `${secret} reached the sandbox`);
+      assert.ok(!fs.readdirSync(r.json.dir).some((f) => f === 'agent-state.json' || f === 'agents.state.json'), 'no run state copied');
+      assert.ok((await get(`${r.json.url}/api/profiles`)).profiles?.some?.((p) => p.name === 'dev') || JSON.stringify(await get(`${r.json.url}/api/agents`)).includes('"dev"'));
+    } finally { cli(['sandbox', 'stop', '--all'], { cwd: s.dir }); await s.stop(); }
+  });
+
   it('stop frees the port of a sandbox whose server.pid is missing or names another process; restarting works too (INT-350)', async () => {
     const s = await startServer({ agents: { agents: {} } });
     try {
