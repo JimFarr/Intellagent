@@ -171,7 +171,7 @@ const normGates = (v) => arr(v).filter((g) => isObj(g) && GATE_KINDS.includes(g.
 const TEMPLATES = require('./lib/templates');
 // presets (shipped, and added to this board) are board templates too: GET /api/templates, manifest.template, POST /api/boards
 Object.assign(TEMPLATES, require('./lib/presets').templates(path.dirname(MANIFEST_PATH)));
-const { allowedHosts, hostProblem, jsonProblem, publicUrlProblem } = require('./lib/local-only');
+const { allowedHosts, hostProblem, jsonProblem } = require('./lib/local-only');
 
 /* ── schema: typed custom fields + configurable built-ins ── */
 const FIELD_TYPES = ['text', 'markdown', 'number', 'boolean', 'enum', 'tags', 'date', 'url', 'user'];
@@ -2653,7 +2653,8 @@ function updateProfile(name, d, actor) {
   if ('alignment' in d) { if (d.alignment) next.alignment = str(d.alignment, 400); else delete next.alignment; }
   if ('image' in d || 'imageBase64' in d || 'imagePath' in d) {
     if (!d.image && !d.imageBase64 && !d.imagePath) delete next.image;
-    else if (d.image && !d.imageBase64) fail(400, '"image" must be an http(s) URL', { code: 'BAD_REQUEST', hint: 'Or send imagePath or imageBase64' });
+    // the board never fetches an address it is given (INT-486): an avatar is a file
+    else if (d.image && !d.imageBase64) fail(400, 'An avatar is a file, not a web address', { code: 'BAD_REQUEST', hint: 'Send imagePath (a file in the project, your worktree or the temp folder) or imageBase64' });
     else {
       let buf;
       let ext = 'png';
@@ -5735,43 +5736,8 @@ function sillyName() {
 }
 route('GET', '/api/names/suggest', 'A free, friendly agent name (e.g. "plucky-otter")', () => ({ name: sillyName() }));
 
-route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 chars/emoji), label?, description? (markdown: what you were designed to do), role?, alignment? (how you behave), image? (http(s) URL: fetched once, the board keeps a copy) | imageBase64 | imagePath } — null clears',
-  async ({ body, actor }) => {
-    if (body?.image && /^https?:\/\//i.test(body.image)) body = { ...body, image: undefined, imageBase64: await imageFromUrl(body.image) };
-    return updateProfile(actor.name, body, actor);
-  });
-
-// The page loads images from the board only (INT-468), so an avatar given by URL is fetched once and kept in /avatars.
-async function imageFromUrl(url) {
-  const bad = (msg) => fail(400, `Could not use the image at ${url}: ${msg}`, { code: 'BAD_REQUEST', hint: 'Send the file instead: imagePath or imageBase64' });
-  // the test suite's stand-in image server listens on 127.0.0.1: only its own env lets a local address through
-  const problem = process.env.INTELLAGENT_TEST_LOCAL_FETCH === '1' ? null : await publicUrlProblem(url);
-  if (problem) bad(problem);
-  let r;
-  const MAX = 2 * 1024 * 1024;
-  const big = () => fail(413, 'Avatar exceeds 2 MB', { code: 'TOO_LARGE', hint: 'Use a smaller image' });
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(new Error('timed out after 10 s')), 10000);
-  try {
-    // no redirects: the board fetches only the address it was given
-    try { r = await fetch(url, { signal: ctl.signal, redirect: 'error' }); } catch (e) { bad(e.cause?.message || e.message); }
-    if (!r.ok) bad(`HTTP ${r.status}`);
-    const type = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (!/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(type)) bad(`it is ${type || 'of no type'}, not png, jpg, gif, webp or svg`);
-    if (Number(r.headers.get('content-length')) > MAX) big();
-    // read with a cap: a body with no (or a false) Content-Length never fills memory
-    const chunks = [];
-    let size = 0;
-    try {
-      for await (const c of r.body) {
-        size += c.length;
-        if (size > MAX) { ctl.abort(); big(); }
-        chunks.push(c);
-      }
-    } catch (e) { if (e.status) throw e; bad(e.message); }
-    return `data:${type};base64,${Buffer.concat(chunks).toString('base64')}`;
-  } finally { clearTimeout(timer); }
-}
+route('PATCH', '/api/profiles/me', 'Set your profile: { color?, glyph? (1–2 chars/emoji), label?, description? (markdown: what you were designed to do), role?, alignment? (how you behave), imagePath (a file) | imageBase64 } — null clears; image: null clears the avatar too',
+  ({ body, actor }) => updateProfile(actor.name, body, actor));
 
 // Agent memory (INT-243). :name is an agent, or "me".
 route('GET', '/api/profiles/:name/memory', 'An agent\'s memory ("me": yours): { name, on, cap, used, entries: [{ id, text, source: learned|human, from?, at, by, pinned?, history?, suggestedBy? }], suggestions: [{ id, text, why, from?, by, at }] (pending: not memory until accepted) }', ({ p, actor }) =>
