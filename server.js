@@ -4078,6 +4078,7 @@ route('POST', '/api/boards/:board/items/:id/review', 'Request review in one call
   const learned = NOTES.parseLearned(body.learned);
   if (learned.bad?.length) warnings.push(`Not kept as area notes (write each as "area: what to know", the area a file or folder): ${learned.bad.map((x) => `"${x.slice(0, 80)}"`).join('; ')}`);
   if (actor.kind === 'agent' && !learned.notes.length && !learned.none) warnings.push('Nothing learned: leave what the next agent working here should know in "learned", one line per note: "area: lesson" (the area a file or folder, e.g. "lib/alerts/work.js: the TAG table decides when work is new again"). Or "none" if there was nothing. The review stays as it is: leave each note with POST /api/notes { area, text, from: "<ticket id>" } (MCP: add_note), no need to request review again.');
+  if (commits?.length) commits.touches = await worktrees.boardFilesTouched(commits).catch(() => []);
   const item = itemView(ctx, requestReview(ctx, p.id, body, actor, commits));
   if (learned.notes.length) {
     const r = notes.addAll(learned.notes, before.id, actor);
