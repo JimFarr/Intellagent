@@ -88,8 +88,9 @@ With `"webhook": true` the board answers `POST /hooks/<name>` for the service yo
 
 - Check it: most services sign the body with a secret; keep that secret in a `"secret": true` connection field and compare the signature over `body` exactly as it came (that is why it is text, not parsed).
 - Answer `{ "id", "ok": true, "result": { "event": "issue_closed", "data": { … }, "item"?: "INT-12" } }` to raise one of your events, `"result": null` to accept it and do nothing (a ping), or `{ "ok": false, "error": "bad signature" }` to refuse it (the caller gets 401).
-- The board acts **only on the event you return**: never on the body. The event goes through the same checks as one on the channel (declared, the pin, 60 a minute); past that limit the caller gets 429 before your plugin is asked.
-- Bodies are at most 256 KB. Cookies are never passed on. A plugin that is off, changed or has no webhook answers 404, the same as no plugin at all.
+- The board acts **only on the event you return**: never on the body. The event goes through the same checks as one on the channel (declared, the pin, 60 a minute).
+- **Every request counts**, the ones you refuse included: at most 60 a minute reach your plugin, and past that the caller gets 429 before your plugin is asked. So a stranger hammering the address costs you at most one call a second.
+- Bodies are at most 256 KB, and reach you as UTF-8 text: a binary body comes through changed, so sign and check text bodies only. Cookies are never passed on. A plugin that is off, changed or has no webhook answers 404, the same as no plugin at all.
 - The board must be reachable from the service: it listens on 127.0.0.1, so the human puts a proxy or tunnel in front of it and adds its name to `allowedHosts`.
 
 ## The sandbox

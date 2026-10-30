@@ -386,6 +386,13 @@ test('plugins in rules and webhooks: a plugin event sets a rule off, a rule runs
     assert.deepStrictEqual([none.item, none.results.map((r) => r.ok)], [null, [true, false]]);
     assert.match(none.results[1].error, /no ticket/);
 
+    // refused requests count too: past 60 a minute the caller gets 429 before the plugin is asked, a good one included
+    const codes = [];
+    for (let i = 0; i < 60; i++) codes.push((await hook('{}', { 'x-sig': 'wrong' })).status);
+    const first = codes.indexOf(429);
+    assert.ok(first > 0 && codes.slice(0, first).every((c) => c === 401) && codes.slice(first).every((c) => c === 429), codes.join());
+    assert.strictEqual((await hook('hello', { 'x-sig': 'abcdefghijkl1234' })).status, 429);
+
     // changed files: the webhook goes quiet (404), the same as no plugin
     fs.appendFileSync(path.join(s.dir, 'plugins', 'fake', 'index.js'), '\n// changed');
     assert.strictEqual((await hook('hello', { 'x-sig': 'abcdefghijkl1234' })).status, 404);
