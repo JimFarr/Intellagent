@@ -347,6 +347,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       $$('[data-do] option', acts).forEach((o) => { const d = v.actions[o.value]; if (d) o.textContent = actLabel(d.label); });
       stallOnly = !!v.events[st.when.on]?.agent; // it has no ticket: no If, no ticket actions
       $('[data-if-step]', f).hidden = stallOnly;
+      $('[data-for-step]', f).hidden = stallOnly || !st.expr;
       whenEl.innerHTML = `${triggerHTML()}<div class="rb-hint">${stallOnly ? 'Acts on no ticket: it fires once each time an agent stalls.' : 'The rule looks at each ticket when this becomes true.'}</div>`;
     };
     const drawSummary = () => changed();
@@ -433,7 +434,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     const VAR = /^[A-Za-z][A-Za-z0-9_]{0,19}$/;
     function drawFor() {
       const box = $('[data-for]', f);
-      $('[data-for-step]', f).hidden = !st.expr;
+      $('[data-for-step]', f).hidden = stallOnly || !st.expr;
       if (!st.expr) return;
       const roles = Object.keys(subjects[st.for].names);
       box.innerHTML = `<select class="inp" data-subject aria-label="What the rule is for">${Object.entries(subjects).map(([k, x]) => option(k, x.label, k === st.for)).join('')}</select>
