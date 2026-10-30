@@ -614,10 +614,19 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       const body = read();
       if (st.expr && st.asText && !check()) { xin().focus(); toast('The If doesn’t read yet: the red message says where', { kind: 'error' }); return; }
       if (body.if === null) { toast('Finish the conditions first (a highlighted row needs a value), or remove them', { kind: 'error' }); return; }
+      const send = (b) => (r ? api('PUT', `${base()}/${encodeURIComponent(r.id)}`, b) : api('POST', base(), b));
       try {
-        if (r) await api('PUT', `${base()}/${encodeURIComponent(r.id)}`, body); else await api('POST', base(), body);
+        let sent = body;
+        try { await send(sent); } catch (err) {
+          if (err.data?.code !== 'CONFIRM_REQUIRED') throw err;
+          // saved on, it would act on tickets at once (INT-508): say how many and ask
+          const choice = await confirmAct(err.data);
+          if (!choice) return;
+          sent = choice === 'off' ? { ...body, enabled: false } : { ...body, confirm: err.data.count };
+          await send(sent);
+        }
         S.view = null; await load(); render();
-        toast(r ? 'Rule saved' : 'Rule added: it acts from now on', { kind: 'ok', icon: 'zap' });
+        toast(sent.enabled !== body.enabled ? 'Rule saved switched off: nothing happens until you switch it on' : r ? 'Rule saved' : 'Rule added: it acts from now on', { kind: 'ok', icon: 'zap' });
       } catch (err) { fail(err); }
     };
 
@@ -752,10 +761,28 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       : `<div class="ent-empty">${icon('activity')}<h3>Nothing yet</h3><p>Each time a rule fires, it shows here with what each action did.</p></div>`;
   }
 
+  // The board asked before saving a rule that acts on tickets now: how many, the first few, three ways out.
+  // Resolves 'act', 'off' or null (Cancel, Esc). Focus starts on Cancel, as the gate confirm does.
+  function confirmAct({ count, items = [] }) {
+    const root = el(`<div class="scrim gate-scrim"><div class="gate-dlg" role="alertdialog" aria-modal="true" aria-labelledby="ca-t">
+      <div class="gate-confirm ca"><div id="ca-t"><b>Saving this rule acts on ${count} ticket${count === 1 ? '' : 's'} now</b>
+        <ul class="ca-list">${items.slice(0, 5).map((i) => `<li><code class="ent-code">${esc(i.id)}</code> ${esc(i.title)}</li>`).join('')}${count > 5 ? `<li class="muted">and ${count - 5} more: Cancel to see them all in the preview</li>` : ''}</ul>
+        <div class="gc-sub">Save it switched off to start it later: it then runs under the hourly cap.</div></div>
+        <div class="gc-btns"><button class="btn ghost sm" data-ca="">Cancel</button><button class="btn sm" data-ca="off">Save switched off</button><button class="btn primary sm" data-ca="act">Save and act on ${count}</button></div></div></div></div>`);
+    document.body.append(root);
+    return new Promise((resolve) => {
+      const done = (v) => { root.remove(); resolve(v); };
+      root.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); } }, true);
+      $$('[data-ca]', root).forEach((b) => { b.onclick = () => done(b.dataset.ca || null); });
+      requestAnimationFrame(() => $('[data-ca=""]', root).focus());
+    });
+  }
+
   // Live: the log grows as rules fire; editors are never redrawn under the human's hands
   let pending = null;
   function onEvent(ev) {
-    if (!isOpen() || S.view || !(ev.type === 'rule.ran' || (ev.type === 'board.updated' && ev.changes?.rules))) return;
+    if (ev.type === 'rule.held') toast(`${ev.name} is held at ${ev.fired} an hour: ${ev.waiting} still waiting`, { icon: 'clock', action: 'See what it did', onAction: () => open('log'), timeout: 12000 });
+    if (!isOpen() || S.view || !(ev.type === 'rule.ran' || ev.type === 'rule.held' || (ev.type === 'board.updated' && ev.changes?.rules))) return;
     clearTimeout(pending);
     pending = setTimeout(() => load().then(render, () => {}), 300);
   }
