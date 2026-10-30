@@ -234,7 +234,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     const box = (name, rows) => `<div class="ent-list one-line"><div class="ent-lh">${name} <span class="cnt">${rows.length}</span><span class="grow"></span><span class="ent-col when">Last fired</span><span style="width:38px"></span></div>${rows.map(row).join('')}</div>`;
     pane.innerHTML = `<div class="ent-bar"><button class="btn sm primary" data-new>${icon('plus', 'sm')}New rule</button></div>
       ${mine.length ? box('Your rules', mine) : `<div class="ent-empty">${icon('zap')}<h3>No rules of yours yet</h3><p>For example: <i>if a ticket idles for 2 h, wake the coordinator</i>.</p></div>`}
-      ${built.length ? box('Built in', built) : ''}`;
+      ${built.length ? box('From column settings', built) : ''}`;
     pane.onclick = async (e) => {
       if (e.target.closest('[data-new]')) { S.view = (p) => editor(p, null); render(); return; }
       const card = e.target.closest('[data-rule]');
