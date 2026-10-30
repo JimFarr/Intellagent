@@ -2326,9 +2326,9 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
 .rb-on { display: inline-flex; align-items: center; gap: 8px; font: 500 12.5px var(--font); color: var(--muted); }
 .rb-grid { display: grid; gap: 16px; align-items: start; }
 .rb-flow { list-style: none; margin: 0; padding: 0 0 0 48px; display: grid; gap: 16px; position: relative; min-width: 0; }
-.rb-flow::before { content: ''; position: absolute; left: 19px; top: 20px; bottom: 20px; width: 2px; border-radius: 2px; background: var(--border); }
+.rb-step:not(:last-child)::before { content: ''; position: absolute; left: -29px; top: 28px; height: calc(100% + 16px); width: 2px; border-radius: 2px; background: var(--border); }
 .rb-step { position: relative; min-width: 0; }
-.rb-dot { position: absolute; left: -48px; top: 10px; width: 40px; height: 22px; display: grid; place-items: center; border-radius: 99px;
+.rb-dot { position: absolute; left: -48px; top: 17px; width: 40px; height: 22px; display: grid; place-items: center; border-radius: 99px;
   font: 600 11.5px/1 var(--font); color: var(--accent); background: var(--surface); border: var(--bw) solid color-mix(in oklab, var(--accent) 45%, var(--border)); }
 .rb-card { display: grid; gap: 10px; padding: 12px; min-width: 0; background: var(--surface); border: var(--bw) solid var(--border); border-radius: var(--r-card); }
 .rb-card > [data-if] { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
@@ -2359,6 +2359,26 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
   color: var(--muted); font: 500 12px var(--font); transition: color .15s, border-color .15s, background .15s; }
 .rb .rb-add:hover { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 55%, var(--border)); background: color-mix(in oklab, var(--accent) 6%, transparent); }
 .rb-hint { padding-left: 64px; font: 12px/1.45 var(--font); color: var(--muted); }
+/* For / If / Then (INT-496): the subject and its names, the expression box with its suggestions */
+.rb-for { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rb-for > .inp { width: auto; max-width: 100%; height: 32px; }
+.rb-nm { width: 84px; font-family: var(--mono); }
+.rb-for .rb-hint, .rb-x .rb-hint, .rb-x + .rb-adds { padding-left: 0; }
+.rb-for [data-nmmsg] { color: var(--danger); }
+.rb-nm[aria-invalid="true"] { border-color: var(--danger); }
+.rb-x { display: grid; gap: 6px; position: relative; } /* the list opens below the message, never over it */
+.rb-xin { width: 100%; height: 34px; }
+.rb-xin.ok { border-color: color-mix(in oklab, var(--ok) 70%, var(--border)); }
+.rb-xin.bad { border-color: var(--danger); }
+.rb-xmsg { justify-self: start; max-width: 100%; padding: 0; border: 0; background: none; font: 12.5px/1.45 var(--font); color: var(--danger); text-align: left; cursor: pointer; }
+.rb-xmsg:hover { text-decoration: underline; }
+.rb-xmsg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.rb-sug { position: absolute; top: calc(100% + 4px); z-index: 5; list-style: none; margin: 0; padding: 4px; min-width: 220px; max-width: min(420px, 100%); max-height: 232px; overflow: auto;
+  background: var(--surface); border: var(--bw) solid var(--border); border-radius: var(--r-ctl); box-shadow: 0 8px 24px color-mix(in oklab, var(--text) 18%, transparent); }
+.rb-sug li { display: flex; align-items: baseline; gap: 10px; padding: 5px 8px; border-radius: 6px; font: 12.5px var(--font); cursor: pointer; }
+.rb-sug li b { font: 600 12.5px var(--mono); color: var(--text); }
+.rb-sug li span { margin-left: auto; color: var(--muted); font-size: 11.5px; text-align: right; }
+.rb-sug li[aria-selected="true"] { background: color-mix(in oklab, var(--accent) 16%, transparent); }
 .rb-acts { display: grid; gap: 8px; }
 .rb-act { display: grid; grid-template-columns: 22px 28px minmax(0, 1fr) 28px; gap: 8px; align-items: start; padding: 10px;
   border: var(--bw) solid var(--border); border-radius: var(--r-card); background: color-mix(in oklab, var(--text) 2%, var(--surface)); }
