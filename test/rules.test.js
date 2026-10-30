@@ -239,3 +239,51 @@ describe('rules on a board', () => {
     await s.ok('DELETE', `/api/boards/main/rules/${r.id}`, undefined, USER);
   });
 });
+
+describe('a rule that would act on tickets as it is saved asks first; a held rule is told (INT-508)', () => {
+  it('asks with the count, saves on confirm, acts on all of them past the cap; off or switched on later never asks, and a hold raises rule.held and a digest line', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-confirm-'));
+    const file = path.join(dir, 'data', 'boards', 'main', 'board.json');
+    let s = await startServer({ dir });
+    const ids = { ready: [], backlog: [] };
+    for (const col of Object.keys(ids)) for (let i = 0; i < 35; i++) ids[col].push((await s.ok('POST', '/api/boards/main/items', { title: `${col} ${i}`, column: col }, USER)).id);
+    await s.stop({ keep: true });
+    // every ticket has sat in its column for two days
+    const b = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const it of Object.values(b.items)) it.enteredColumnAt = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    fs.chmodSync(file, 0o666);
+    fs.writeFileSync(file, JSON.stringify(b));
+    s = await startServer({ dir, manifest: { ruleSweepSeconds: 1 } });
+    try {
+      const logFor = (id) => s.ok('GET', `/api/boards/main/rules/log?rule=${id}&limit=200`, undefined, USER);
+      const archive = { name: 'Archive old Ready', when: { on: 'in_column', column: 'Ready', minutes: 60 }, then: [{ do: 'archive' }] };
+      const ask = await s.api('POST', '/api/boards/main/rules', archive, USER);
+      assert.deepEqual([ask.status, ask.body.code, ask.body.count, ask.body.items.length], [409, 'CONFIRM_REQUIRED', 35, 20]);
+      assert.match(ask.body.hint, /confirm: 35/);
+      assert.equal((await s.api('POST', '/api/boards/main/rules', { ...archive, confirm: 34 }, USER)).body.code, 'CONFIRM_REQUIRED', 'a stale count asks again');
+      // an event rule never asks; a rule saved off never asks and acts on nothing
+      const ev = await s.ok('POST', '/api/boards/main/rules', { name: 'On entry', when: { on: 'entered', column: 'Ready' }, then: [{ do: 'comment', text: 'hi' }] }, USER);
+      await s.ok('DELETE', `/api/boards/main/rules/${ev.id}`, undefined, USER);
+
+      const saved = await s.ok('POST', '/api/boards/main/rules', { ...archive, confirm: 35 }, USER);
+      const note = await until(async () => (await logFor(saved.id)).find((l) => l.note), 15_000, 'the first sweep');
+      assert.equal(note.note, 'first sweep: 35, confirmed by James');
+      assert.equal((await logFor(saved.id)).filter((l) => l.results.some((x) => x.do === 'archive' && x.ok)).length, 35, 'all 35, past the cap of 30');
+      assert.ok(!(await logFor(saved.id)).some((l) => l.held));
+
+      // saved off: no question; switched on later (same when): no question, and the cap holds
+      const old = { name: 'Nudge old work', when: { on: 'in_column', column: 'Backlog', minutes: 60 }, then: [{ do: 'comment', text: 'still here?' }] };
+      const off = await s.ok('POST', '/api/boards/main/rules', { ...old, enabled: false }, USER);
+      await new Promise((r) => setTimeout(r, 1500));
+      assert.equal((await logFor(off.id)).length, 0, 'off: acts on nothing');
+      await s.ok('PUT', `/api/boards/main/rules/${off.id}`, { ...old, enabled: true }, USER);
+      const held = await until(async () => (await logFor(off.id)).find((l) => l.held), 15_000, 'the hold');
+      assert.ok(held);
+      assert.equal((await logFor(off.id)).filter((l) => l.results?.length).length, 30);
+      const told = (await s.ok('GET', '/api/events?since=0&types=rule.held&limit=50', undefined, USER)).events;
+      assert.deepEqual(told.map((e) => [e.rule, e.name, e.fired, e.waiting]), [[off.id, 'Nudge old work', 30, 5]], 'once per hold');
+      const digest = await s.ok('GET', '/api/boards/main/digest?days=1', undefined, USER);
+      assert.ok(JSON.stringify(digest).includes('Nudge old work was held at 30 an hour: 5 waiting'));
+    } finally { await s.stop(); }
+  });
+});

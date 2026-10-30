@@ -3174,7 +3174,7 @@ const SCHEMA = {
     seq: 'integer cursor', ts: 'ISO', board: 'string', hash: 'board hash after the change',
     type: ['item.created', 'item.updated', 'item.moved', 'item.reordered', 'item.archived', 'item.restored', 'comment.added',
       'item.assigned', 'item.unblocked', 'lease.claimed', 'lease.renewed', 'lease.released', 'lease.revoked', 'lease.warning', 'lease.expired', 'lease.status',
-      'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'trigger.fired', 'rule.fired', 'rule.ran', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
+      'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'trigger.fired', 'rule.fired', 'rule.ran', 'rule.held', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
       'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.stalled', 'agent.managed', 'agent.role_changed', 'admin.reverted', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
@@ -4947,13 +4947,19 @@ async function ruleAction(ctx, rule, a, item, why, raw = null) {
 async function fireRule(ctx, rule, itemId, why, mark = () => {}, ev = null) {
   const nowMs = Date.now();
   const stored = () => rulesOf(ctx).rules.find((r) => r.id === rule.id);
-  if (RULES.throttled(rule, nowMs)) {
+  // a first sweep the human confirmed (INT-508) is outside the cap, and doesn't count against it afterwards
+  const first = !!rule.state?.firstSweep;
+  if (!first && RULES.throttled(rule, nowMs)) {
     // said once an hour, so a runaway rule doesn't fill the log either
     if (nowMs - Date.parse(rule.state?.heldAt || 0) < 3_600_000) return;
-    tx(ctx, () => {
+    const waiting = sweepsBoard(rule) ? dueNow(ctx, rule).length : null;
+    tx(ctx, (events) => {
       const r = stored(); if (!r) return;
       r.state = { ...(r.state || {}), heldAt: new Date(nowMs).toISOString() };
       rulesOf(ctx).log = [...rulesOf(ctx).log, { at: now(), rule: r.id, name: r.name, item: itemId, why, held: `fired ${RULES.MAX_PER_HOUR} times in the last hour: held back until it calms down` }].slice(-RULES.LOG_KEEP);
+      // told, not only logged: the page toasts rule.held, and the day's digest keeps a line
+      events.push({ board: ctx.id, type: 'rule.held', actor: ruleActor(r), rule: r.id, name: r.name, fired: RULES.MAX_PER_HOUR, waiting, recipients: [] });
+      digest.add(ctx, events, ruleActor(r), `${r.name} was held at ${RULES.MAX_PER_HOUR} an hour${waiting ? `: ${waiting} waiting` : ''}`, []);
     });
     return;
   }
@@ -4968,7 +4974,7 @@ async function fireRule(ctx, rule, itemId, why, mark = () => {}, ev = null) {
   const actor = ruleActor(rule);
   tx(ctx, (events) => {
     const r = stored();
-    if (r) { RULES.noteFired(r, nowMs); mark(r); }
+    if (r) { if (!first) RULES.noteFired(r, nowMs); mark(r); }
     rulesOf(ctx).log = [...rulesOf(ctx).log, { at: now(), rule: rule.id, name: rule.name, item: itemId, why, results }].slice(-RULES.LOG_KEEP);
     // on the ticket's history (wakes nobody)
     const item = itemId && (ctx.board.items[itemId] || ctx.archive.items[itemId]);
@@ -5018,7 +5024,36 @@ function onStallEvent(e) { if (['agent.status', 'agent.failed', 'agent.run.finis
 setInterval(stallFails, 60_000).unref();
 // Time rules, once a minute: each ticket fires once per idle stretch or stay in the column; an "every" rule once a
 // period, for each ticket its "if" picks (or once, for no ticket)
+// A time rule whose next sweep acts on what is already on the board (INT-508): idle, in_column, and every with an if
+const sweepsBoard = (r) => ['idle', 'in_column'].includes(r.when.on) || (r.when.on === 'every' && !!r.if);
+// The tickets that sweep would act on: due now and not yet acted on in this stretch
+function dueNow(ctx, rule, blocksOf = blocksIndex(ctx)) {
+  if (rule.when.on === 'every') return rule.if ? liveItems(ctx).filter((it) => ruleHolds(ctx, rule, it, blocksOf)) : [];
+  const nowMs = Date.now(), done = doneColumnId(ctx);
+  return liveItems(ctx).filter((it) => {
+    if (rule.when.on === 'idle' && it.columnId === done) return false;
+    const key = RULES.timeDue(rule, it, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt) });
+    return !!key && rule.state?.seen?.[it.id] !== key && ruleHolds(ctx, rule, it, blocksOf);
+  });
+}
+// A confirmed first sweep is done: said once in the log, and the cap applies from here
+function endFirstSweep(ctx, rule, fired) {
+  const f = rule.state?.firstSweep;
+  if (!f) return;
+  tx(ctx, () => {
+    const r = rulesOf(ctx).rules.find((x) => x.id === rule.id);
+    if (r?.state) delete r.state.firstSweep;
+    rulesOf(ctx).log = [...rulesOf(ctx).log, { at: now(), rule: rule.id, name: rule.name, item: null, why: 'saved', results: [], note: `first sweep: ${fired}, confirmed by ${f.by}` }].slice(-RULES.LOG_KEEP);
+  });
+}
+// one sweep a board at a time: a long one (a confirmed first sweep) must not meet the next and fire twice
+const sweeping = new Set();
 async function sweepRules(ctx) {
+  if (sweeping.has(ctx.id)) return;
+  sweeping.add(ctx.id);
+  try { await sweepRulesOnce(ctx); } finally { sweeping.delete(ctx.id); }
+}
+async function sweepRulesOnce(ctx) {
   const rules = (ctx.board.automations?.rules || []).filter((r) => r.enabled && RULES.TIMES[r.when.on] && !inEngine(ctx, r)); // an engine's rule is its engine's to run
   if (!rules.length) return;
   const nowMs = Date.now();
@@ -5028,11 +5063,14 @@ async function sweepRules(ctx) {
     if (rule.when.on === 'every') {
       if (!RULES.everyDue(rule, nowMs)) continue;
       const stamp = (r) => { r.state = { ...(r.state || {}), lastEvery: new Date(nowMs).toISOString() }; };
-      const targets = rule.if ? liveItems(ctx).filter((it) => ruleHolds(ctx, rule, it, blocksOf)).slice(0, 50).map((it) => it.id) : [null];
-      if (!targets.length) { tx(ctx, () => { const r = rulesOf(ctx).rules.find((x) => x.id === rule.id); if (r) stamp(r); }); continue; }
+      // a confirmed first sweep takes them all; after it, 50 a period
+      const targets = rule.if ? liveItems(ctx).filter((it) => ruleHolds(ctx, rule, it, blocksOf)).slice(0, rule.state?.firstSweep ? Infinity : 50).map((it) => it.id) : [null];
+      if (!targets.length) { tx(ctx, () => { const r = rulesOf(ctx).rules.find((x) => x.id === rule.id); if (r) stamp(r); }); endFirstSweep(ctx, rule, 0); continue; }
       for (const id of targets) await fireRule(ctx, rule, id, `every ${rule.when.minutes} min`, stamp);
+      endFirstSweep(ctx, rule, targets.length);
       continue;
     }
+    let fired = 0;
     for (const it of liveItems(ctx)) {
       if (rule.when.on === 'idle' && it.columnId === done) continue;
       const key = RULES.timeDue(rule, it, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt) });
@@ -5041,10 +5079,12 @@ async function sweepRules(ctx) {
         const live = new Set(Object.keys(ctx.board.items));
         r.state = { ...(r.state || {}), seen: { ...Object.fromEntries(Object.entries(r.state?.seen || {}).filter(([k]) => live.has(k))), [it.id]: key } };
       });
+      fired++;
     }
+    endFirstSweep(ctx, rule, fired);
   }
 }
-setInterval(() => { for (const ctx of boards.values()) ruleFails(() => sweepRules(ctx)); }, 60_000).unref();
+setInterval(() => { for (const ctx of boards.values()) ruleFails(() => sweepRules(ctx)); }, Math.max(1, Number(M.ruleSweepSeconds) || 60) * 1000).unref();
 
 /* A column's flags, as rules on the Rules page: one rule each while the flag is set, edited back into the flag while
    it still fits; switched off or reshaped, the flag goes and it becomes an ordinary rule. (The board's behaviours are
@@ -5110,6 +5150,17 @@ function saveRule(ctx, body, actor, prev = null) {
     if (unknown.length) fail(400, `The idle alarm wakes standing agents: ${unknown.join(', ')} ${unknown.length > 1 ? "aren't" : "isn't"} one`, { code: 'BAD_REQUEST', hint: `Pick from: ${[...known].join(', ') || 'none defined'}` });
     if (rule.when.minutes > 1440) fail(400, 'The idle alarm waits at most 1440 minutes', { code: 'BAD_REQUEST', hint: 'e.g. 20' });
   }
+  // A time rule that would act on tickets the moment it is saved asks first (INT-508). confirm: <that count> saves it,
+  // and its first sweep acts on them all outside the hourly cap. Saved off, or switched on later, it never asks.
+  const reshaped = !prev || ['for', 'when', 'if'].some((k) => JSON.stringify(rule[k] ?? null) !== JSON.stringify(prev[k] ?? null));
+  if (rule.enabled && reshaped && !rule.engine && sweepsBoard(rule)) {
+    const due = dueNow(ctx, rule);
+    if (due.length && Number(body.confirm) !== due.length) {
+      fail(409, `Saved on, this rule would act on ${due.length} ticket${due.length > 1 ? 's' : ''} at once`, { code: 'CONFIRM_REQUIRED',
+        hint: `Send confirm: ${due.length} to save it and act on all of them in its first sweep, or enabled: false to save it switched off`, count: due.length, items: due.slice(0, 20).map((it) => ({ id: it.id, title: it.title })) });
+    }
+    if (due.length) rule.state = { ...(rule.state || {}), firstSweep: { count: due.length, by: actor.name, at: now() } };
+  }
   tx(ctx, (events) => {
     const all = rulesOf(ctx).rules;
     // the board's own rules and the tickets' triggers count outside the cap: seeding them never fills a board
@@ -5137,7 +5188,7 @@ route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabl
   const subjects = Object.fromEntries(Object.entries(RULES.SUBJECTS).map(([k, s]) => [k, { label: s.label, ...(s.event ? { event: s.event } : {}), names: Object.fromEntries(s.roles.map((r) => [r, RULES.DEFAULT_NAMES[r]])), parts: Object.fromEntries(s.roles.map((r) => [r, r === 'ticket' ? tdesc : RULES.COMMENT_DESC])) }]));
   return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...boardRules(ctx).map((r) => ruleView(ctx, r))], vocabulary: { subjects, events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
 });
-route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, for?: ticket|comment, names?: { ticket: "T", comment: "C" }, when: { on, column?, minutes?, to? }, lang?: "expr", if?: an expression over the names (e.g. C.text.contains("?") && T.priority == "High"; without lang, the card-rules filter language, kept as the expression that says the same where there is one), then: [{ do, … }], enabled? }. An "if" that does not read answers 400 with at/end. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented (a comment rule\'s trigger; may be left out), unblocked, lease_expired, ask_overdue, agent_stalled (why?: failed|limited|paused|waiting, agent?; no ticket, so only wake, and the woken agent gets the stall with its evidence); or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
+route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, for?: ticket|comment, names?: { ticket: "T", comment: "C" }, when: { on, column?, minutes?, to? }, lang?: "expr", if?: an expression over the names (e.g. C.text.contains("?") && T.priority == "High"; without lang, the card-rules filter language, kept as the expression that says the same where there is one), then: [{ do, … }], enabled?, confirm? }. An "if" that does not read answers 400 with at/end. A time rule (idle, in_column, every with an if) with tickets due as it is saved answers 409 CONFIRM_REQUIRED { count, items } unless confirm: <count>; confirmed, its first sweep acts on them all outside the hourly cap; enabled: false never asks. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented (a comment rule\'s trigger; may be left out), unblocked, lease_expired, ask_overdue, agent_stalled (why?: failed|limited|paused|waiting, agent?; no ticket, so only wake, and the woken agent gets the stall with its evidence); or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
 route('PUT', '/api/boards/:board/rules/:id', 'Human: replace a rule (as POST); { enabled: false } with the rest switches it off', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const n = nativeRules(ctx).find((x) => x.id === p.id);
@@ -5161,15 +5212,9 @@ route('POST', '/api/boards/:board/rules/preview', 'Before saving: which tickets 
   const rule = ruleErr(() => RULES.cleanRule(body.rule ?? body, ctx.board.columns, { id: 'preview', nowIso: now(), ...ruleOpts(ctx) }));
   const text = RULES.describe(rule, ctx.board.columns);
   if (rule.when.on === 'every' && !rule.if) return { mode: 'board', count: 0, items: [], text };
-  const nowMs = Date.now();
   const blocksOf = blocksIndex(ctx);
   const timed = rule.when.on === 'idle' || rule.when.on === 'in_column';
-  const hits = liveItems(ctx).filter((it) => {
-    if (rule.when.on === 'idle' && it.columnId === doneColumnId(ctx)) return false;
-    if (timed && !RULES.timeDue(rule, it, { nowMs, lastActivityMs: STUCK.lastActivity(it) || Date.parse(it.updatedAt || it.createdAt) })) return false;
-    if ((rule.when.on === 'left') && it.columnId !== rule.when.column) return false;
-    return ruleHolds(ctx, rule, it, blocksOf);
-  });
+  const hits = timed ? dueNow(ctx, rule, blocksOf) : liveItems(ctx).filter((it) => (rule.when.on !== 'left' || it.columnId === rule.when.column) && ruleHolds(ctx, rule, it, blocksOf));
   return { mode: timed ? 'due' : 'match', count: hits.length, items: hits.slice(0, 20).map((it) => ({ id: it.id, title: it.title })), text };
 });
 route('GET', '/api/boards/:board/rules/log', 'What the rules did, newest first: ?rule=<id>&item=<id>&limit (default 50) → [{ at, rule, name, item, why, results: [{ do, ok, error?, … }] | held }]', ({ p, q }) => {

@@ -706,7 +706,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     pane.innerHTML = S.log.length ? `<div class="ent-list one-line"><div class="ent-lh">What the rules did <span class="cnt">${S.log.length}</span></div>${S.log.map((l) => {
       const bad = (l.results || []).filter((x) => !x.ok).length;
       const [tone, ic] = l.held ? ['warn', 'clock'] : bad ? ['danger', 'x'] : ['ok', 'check'];
-      const did = l.held ? esc(l.held) : (l.results || []).map((x) => esc(said(x))).join(' · ');
+      const did = l.held ? esc(l.held) : l.note ? esc(l.note) : (l.results || []).map((x) => esc(said(x))).join(' · ');
       return `<article class="ent">
         <span class="ent-lead ent-tile" data-tone="${tone}">${icon(ic)}</span>
         <div class="ent-body"><h3 class="ent-title"><span class="ent-name">${esc(l.name)}</span>${l.item ? ` <code class="ent-code">${esc(l.item)}</code>` : ''}</h3><div class="ent-sub">${did}</div></div>
