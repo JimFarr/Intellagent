@@ -278,7 +278,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       <div class="rb-grid"><ol class="rb-flow">
         <li class="rb-step" data-for-step${st.expr ? '' : ' hidden'}><span class="rb-dot">For</span><div class="rb-card"><div class="rb-for" data-for></div></div></li>
         <li class="rb-step"><span class="rb-dot">When</span><div class="rb-card"><div data-when></div></div></li>
-        <li class="rb-step"><span class="rb-dot">If</span><div class="rb-card"><div data-if></div></div></li>
+        <li class="rb-step" data-if-step><span class="rb-dot">If</span><div class="rb-card"><div data-if></div></div></li>
         <li class="rb-step"><span class="rb-dot">Then</span><div class="rb-card"><div class="rb-acts" data-acts></div>
           <button type="button" class="rb-add" data-add-act>${icon('plus', 'sm')}Add an action</button></div></li>
       </ol>
@@ -305,7 +305,13 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         ${st.when.on === 'in_column' ? '<span class="rb-word">for</span>' : ''}
         ${v.times[st.when.on] ? `<span class="rb-unit"><input class="inp" type="number" data-wn min="1" step="1" value="${mins / UNITS[unit]}" aria-label="How long"><select class="inp" data-wu aria-label="Unit">${Object.keys(UNITS).map((u) => option(u, u, u === unit)).join('')}</select></span>` : ''}
         ${st.when.on === 'plugin_event' ? pluginEventHTML() : ''}
+        ${d.agent ? stallHTML(d) : ''}
         ${st.when.on === 'assigned' || st.when.on === 'mentioned' ? `<span class="rb-unit"><span>${st.when.on === 'assigned' ? 'to' : 'who'}</span><input class="inp" data-w="to" list="rl-people" placeholder="anyone" value="${esc(st.when.to || '')}" spellcheck="false"></span>` : ''}</div>`;
+    }
+    // an agent stalls: why (any or one) and which agent (any or a standing one); left out means any
+    function stallHTML(d) {
+      return `<select class="inp" data-w="why" aria-label="Why it stalls">${option('', 'for any reason', !st.when.why)}${d.whys.map((x) => option(x, x, x === st.when.why)).join('')}</select>
+        <select class="inp" data-w="agent" aria-label="Which agent">${option('', 'any agent', !st.when.agent)}${S.agents.map((n) => option(n, n, n === st.when.agent)).join('')}</select>`;
     }
     // a plugin and one of the events it declares
     function pluginEventHTML() {
@@ -339,7 +345,9 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     const drawWhen = () => {
       alias = st.names?.ticket || 'T';
       $$('[data-do] option', acts).forEach((o) => { const d = v.actions[o.value]; if (d) o.textContent = actLabel(d.label); });
-      whenEl.innerHTML = `${triggerHTML()}<div class="rb-hint">The rule looks at each ticket when this becomes true.</div>`;
+      stallOnly = !!v.events[st.when.on]?.agent; // it has no ticket: no If, no ticket actions
+      $('[data-if-step]', f).hidden = stallOnly;
+      whenEl.innerHTML = `${triggerHTML()}<div class="rb-hint">${stallOnly ? 'Acts on no ticket: it fires once each time an agent stalls.' : 'The rule looks at each ticket when this becomes true.'}</div>`;
     };
     const drawSummary = () => changed();
     function drawIf() {
@@ -506,7 +514,15 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
           if (isLook !== hasLook) { acts.innerHTML = ''; acts.append(el(actionRow(isLook ? { do: 'look', look: { outline: 'accent' } } : { do: 'wake', agent: 'coordinator' }))); renumber(); }
           $('[data-add-act]', f).hidden = isLook;
           st.unit = null;
-          drawWhen(); drawIf();
+          delete st.when.why; delete st.when.agent;
+          drawWhen();
+          // a rule with no ticket keeps no condition and none of the ticket actions
+          if (stallOnly) {
+            Object.assign(st, { ifOpen: false, text: '', cond: { mode: 'all', items: [] } });
+            for (const row of $$('.rb-act', acts)) if (v.actions[$('[data-do]', row).value]?.ticket) row.replaceWith(el(actionRow({ do: 'wake', agent: 'coordinator' })));
+            renumber();
+          }
+          drawIf();
         }
         if (w === 'column') drawSummary();
         changed();
@@ -572,6 +588,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       if (!st.asText) { const c = fromText(st.text); if (c) st.cond = c; else st.asText = true; }
       drawWhen(); drawIf(); changed();
     });
+    stallOnly = !!v.events[st.when.on]?.agent; // before the first action row is drawn
     for (const a of r?.then || [{ do: 'wake', agent: 'coordinator' }]) acts.append(el(actionRow(a)));
     const renumber = () => $$('.rb-act', acts).forEach((x, i) => { $('.rb-n', x).textContent = i + 1; });
     renumber();
@@ -661,6 +678,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       const d = v.events[when.on] || v.times[when.on] || {};
       if (d.column) when.column = st.when.column;
       if (v.times[when.on]) when.minutes = Number(st.when.minutes) || 60;
+      if (d.agent) Object.assign(when, st.when.why ? { why: st.when.why } : {}, st.when.agent ? { agent: st.when.agent } : {});
       if (when.on === 'plugin_event') Object.assign(when, { plugin: st.when.plugin || '', event: st.when.event || '' });
       if ((when.on === 'assigned' || when.on === 'mentioned') && st.when.to?.trim()) when.to = st.when.to.trim();
       return { name: f.elements.name.value.trim(), enabled: st.enabled, ...(st.expr ? { for: st.for, names: st.names, lang: 'expr' } : {}), when, if: cond === null ? null : cond || undefined, then };
@@ -678,8 +696,8 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         const p = await api('POST', `${base()}/preview`, { rule: { ...body, name: body.name || 'preview' } });
         const items = p.items.map((x) => `<li><code>${esc(x.id)}</code><span>${esc(x.title)}</span></li>`).join('');
         $('[data-sum]', f).innerHTML = sentence(p.text, st.expr);
-        out.innerHTML = `<div class="rb-count"><b>${p.mode === 'board' ? '—' : p.count}</b><span>${p.mode === 'board' ? 'Acts on no ticket: it wakes once each time' : p.mode === 'due' ? `ticket${p.count === 1 ? '' : 's'} it would fire for right now` : `ticket${p.count === 1 ? '' : 's'} on the board fit the conditions now`}</span></div>
-          ${items ? `<ul class="rb-items">${items}</ul>` : ''}`;
+        out.innerHTML = `<div class="rb-count"><b>${p.mode === 'board' || stallOnly ? '—' : p.count}</b><span>${p.mode === 'board' || stallOnly ? 'Acts on no ticket: it wakes once each time' : p.mode === 'due' ? `ticket${p.count === 1 ? '' : 's'} it would fire for right now` : `ticket${p.count === 1 ? '' : 's'} on the board fit the conditions now`}</span></div>
+          ${items && !stallOnly ? `<ul class="rb-items">${items}</ul>` : ''}`;
         out.classList.remove('bad');
       } catch (e) { out.innerHTML = `<p>${esc(e.message)}</p>${e.data?.hint ? `<p class="rb-wait">${esc(e.data.hint)}</p>` : ''}`; out.classList.add('bad'); }
     }
@@ -694,6 +712,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
   // an action in the rule's own name for its ticket: "archive T"
   let alias = 'T';
   const actLabel = (label) => label.replace(/\bthe ticket\b/g, alias).replace(/\bit\b/g, alias);
+  let stallOnly = false; // the rule being edited is about an agent, not a ticket
   function actionRow(a) {
     const v = S.data.vocabulary;
     const id = `rl${++uid}`;
@@ -740,7 +759,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         <select class="inp" name="shape" aria-label="mark">${option('', 'no mark', !l.mark)}${v.shapes.map((x) => option(x, `${x} mark`, x === l.mark?.shape)).join('')}</select>${tone('markTone', l.mark?.tone, 'mark colour')}`;
     }
     return `<div class="rb-act"><span class="rb-n"></span><span class="rb-aic">${icon(ACTION_ICON[a.do] || 'zap', 'sm')}</span>
-      <div class="rb-afields"><select class="inp" data-do aria-label="Action">${Object.entries(v.actions).filter(([k, d]) => (!d.nativeOnly || k === a.do) && (k === 'look') === (a.do === 'look')).map(([k, d]) => option(k, actLabel(d.label), k === a.do)).join('')}</select>${rest}</div>
+      <div class="rb-afields"><select class="inp" data-do aria-label="Action">${Object.entries(v.actions).filter(([k, d]) => (!d.nativeOnly || k === a.do) && !(stallOnly && d.ticket) && (k === 'look') === (a.do === 'look')).map(([k, d]) => option(k, actLabel(d.label), k === a.do)).join('')}</select>${rest}</div>
       <button type="button" class="icon-x" data-act-del title="Remove" aria-label="Remove this action">${icon('x', 'sm')}</button></div>`;
   }
   /* ─── the log ─── */
