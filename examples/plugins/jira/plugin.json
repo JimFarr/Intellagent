@@ -1,0 +1,28 @@
+{
+  "name": "jira",
+  "label": "Jira",
+  "version": "1.0.0",
+  "description": "Moves, comments on, assigns and creates Jira issues (REST API 2, Jira Data Center or Server; basic auth as one service account). A ticket's issue is its `jira` field, else a key like BET-12 in its title. An example for plugin authors: nothing installs it for you.",
+  "icon": "jira",
+  "connection": [
+    { "key": "url", "label": "Address", "type": "url", "required": true, "help": "https://jira.example.com" },
+    { "key": "username", "label": "Username", "type": "text", "required": true },
+    { "key": "password", "label": "Password or token", "type": "text", "secret": true, "required": true }
+  ],
+  "actions": [
+    { "id": "move", "label": "Move issue to status", "inputs": [
+      { "key": "status", "label": "Status", "type": "text", "required": true, "help": "A status name, such as Done" },
+      { "key": "issue", "label": "Issue key", "type": "text", "help": "Left out: the ticket's own issue" } ] },
+    { "id": "comment", "label": "Comment on issue", "inputs": [
+      { "key": "text", "label": "Text", "type": "text", "required": true, "help": "{id} and {title} name the ticket" },
+      { "key": "issue", "label": "Issue key", "type": "text" } ] },
+    { "id": "assign", "label": "Assign issue", "inputs": [
+      { "key": "assignee", "label": "Jira user", "type": "text", "help": "Empty unassigns" },
+      { "key": "issue", "label": "Issue key", "type": "text" } ] },
+    { "id": "create", "label": "Create issue", "inputs": [
+      { "key": "project", "label": "Project key", "type": "text", "required": true },
+      { "key": "issueType", "label": "Issue type", "type": "text", "help": "Default Task" },
+      { "key": "summary", "label": "Summary", "type": "text", "help": "Default {title}" },
+      { "key": "text", "label": "Description", "type": "text" } ] }
+  ]
+}
