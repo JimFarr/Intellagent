@@ -62,6 +62,9 @@ describe('rules: subjects and names (lib/rules.js)', () => {
     assert.deepEqual([t.for, t.names], ['ticket', { ticket: 'T' }]);
     const c = clean({ name: 'y', for: 'comment', names: { comment: 'msg', ticket: 'card' }, lang: 'expr', if: 'msg.text.contains("?") && card.priority == "High"', then: [{ do: 'wake', agent: 'coordinator' }] });
     assert.deepEqual([c.for, c.when, c.names, c.lang], ['comment', { on: 'commented' }, { comment: 'msg', ticket: 'card' }, 'expr']);
+    // a new rule that says what it is for needs no lang (INT-505); lang: filter still picks the older words
+    assert.equal(clean({ name: 'z', for: 'ticket', when: { on: 'created' }, if: 'T.priority == "High"', then: [{ do: 'archive' }] }).lang, 'expr');
+    assert.equal(clean({ name: 'z', for: 'ticket', when: { on: 'created' }, lang: 'filter', if: 'priority:High', then: [{ do: 'archive' }] }).lang, undefined);
   });
   it('refuses what does not fit, saying where', () => {
     for (const [bad, msg] of [
@@ -83,6 +86,7 @@ describe('rules: subjects and names (lib/rules.js)', () => {
     const old = { id: 'a', name: 'a', enabled: true, when: { on: 'mentioned', to: 'drax' }, if: 'priority:High', then: [{ do: 'wake', agent: 'drax' }] };
     const up = RULES.upgrade(old, T);
     assert.deepEqual({ for: up.for, names: up.names, when: up.when, lang: up.lang, if: up.if }, { for: 'comment', names: { comment: 'C', ticket: 'T' }, when: { on: 'commented' }, lang: 'expr', if: '(T.priority == "High") && (C.mentions.contains("drax"))' });
+    assert.deepEqual(up.was, { when: { on: 'mentioned', to: 'drax' }, if: 'priority:High' }, 'the words it replaced stay beside it');
     assert.equal(RULES.upgrade(up, T), up, 'once');
     for (const keep of [
       { ...old, when: { on: 'fits' } },
@@ -144,6 +148,10 @@ describe('rules: FOR / IF / THEN on the board (INT-480)', () => {
     try {
       const up = (await t2.ok('GET', '/api/boards/main/rules', undefined, USER)).rules.find((x) => x.name === 'Mentions');
       assert.deepEqual([up.for, up.when.on, up.lang, up.if], ['comment', 'commented', 'expr', '(T.priority == "High") && (C.mentions.contains("drax"))']);
+      assert.deepEqual(up.was, { when: { on: 'mentioned', to: 'drax' }, if: 'priority:High' });
+      // an edit (the on/off switch) keeps the original words
+      const off = await t2.ok('PUT', `/api/boards/main/rules/${up.id}`, { name: up.name, enabled: false, when: up.when, if: up.if, then: up.then }, USER);
+      assert.deepEqual(off.was, up.was);
     } finally { await t2.stop(); }
   });
 });
