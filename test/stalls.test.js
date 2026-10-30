@@ -55,7 +55,7 @@ describe('agent stalls (INT-483)', () => {
     const failed = agent({ status: 'failed', failures: 3, lastRun: { startedAt: 'a', endedAt: 'b', code: 1, error: 'boom', log: 'x.log' } });
     let r = check([failed], () => work, {}, T0);
     assert.equal(r.stalls.length, 1);
-    assert.deepEqual(r.stalls[0], { agent: 'drax', why: 'failed', since: new Date(T0).toISOString(), minutes: 0,
+    assert.deepEqual(r.stalls[0], { agent: 'drax', why: 'failed', since: new Date(T0).toISOString(), minutes: 0, stalledNow: 1, of: 1,
       evidence: { status: 'failed', queued: 0, failures: 3, lastRun: { startedAt: 'a', endedAt: 'b', code: 1, error: 'boom' }, waiting: [{ board: 'main', action: 'start', id: 'INT-1', title: 'One' }] } });
     r = check([failed], none, r.ledger, T0 + 30 * MIN);
     assert.equal(r.stalls.length, 0, 'still failed: not raised again');
@@ -102,9 +102,25 @@ describe('agent stalls (INT-483)', () => {
   });
 
   it('the manifest tunes the minutes; anything else keeps the default', () => {
-    assert.deepEqual(timingsOf({ waitMinutes: 5, limitedMinutes: 'x' }), { waitMs: 5 * MIN, limitedMs: TIMINGS.limitedMs, pausedMs: TIMINGS.pausedMs });
+    assert.deepEqual(timingsOf({ waitMinutes: 5, limitedMinutes: 'x' }), { waitMs: 5 * MIN, limitedMs: TIMINGS.limitedMs, pausedMs: TIMINGS.pausedMs, longMs: TIMINGS.longMs });
     assert.equal(timingsOf({ pausedMinutes: 0.01 }).pausedMs, 600);
+    assert.equal(timingsOf({ longMinutes: 90 }).longMs, 90 * MIN);
     assert.deepEqual(timingsOf(null), TIMINGS);
+  });
+
+  it('a stall still standing at an hour is raised once more, long; each raise counts the agents stalled now (INT-512)', () => {
+    const failed = agent({ status: 'failed' });
+    let r = check([failed], none, {}, T0);
+    assert.equal(r.stalls[0].long, undefined);
+    r = check([failed], none, r.ledger, T0 + 59 * MIN);
+    assert.equal(r.stalls.length, 0);
+    r = check([failed], none, r.ledger, T0 + 60 * MIN);
+    assert.deepEqual(r.stalls.map((s) => [s.why, s.minutes, s.long]), [['failed', 60, true]]);
+    assert.equal(check([failed], none, r.ledger, T0 + 120 * MIN).stalls.length, 0, 'twice at most');
+    // three agents, two stalled (one not yet past its hold), one disabled
+    const all = [agent({ name: 'a', status: 'failed' }), agent({ name: 'b', status: 'queued', queued: 1 }), agent({ name: 'c', enabled: false }), agent({ name: 'd' })];
+    const s = check(all, none, {}, T0).stalls;
+    assert.deepEqual(s.map((x) => [x.agent, x.stalledNow, x.of]), [['a', 1, 3]], 'b is only waiting so far; c is disabled');
   });
 });
 
@@ -168,5 +184,54 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
     await s.ok('POST', `${B}/items`, { title: 'for sentry', column: 'Ready', assignee: 'sentry' }, USER);
     const stall = await until(async () => (await events('agent.stalled')).find((e) => e.agent === 'sentry'), 15000, 'sentry stalled');
     assert.deepEqual([stall.why, stall.evidence.refusals], ['refused', { FORBIDDEN: 1 }], 'only the permission it lacked, sent with its own token');
+  });
+});
+
+describe('a stall nobody else can act on goes to the human (INT-512)', () => {
+  const FAKE = path.join(__dirname, 'fake-agent.js');
+  const run = (...a) => `node "${FAKE}" ${a.join(' ')}`;
+  const B = '/api/boards/main';
+  let s;
+  before(async () => {
+    s = await startServer({ manifest: { stalls: { pausedMinutes: 0.01 } }, agents: { defaults: { settleSeconds: 0.2, retrySeconds: 0.2, throttleMinutes: 0 }, agents: {
+      boss: { run: run('ok'), role: 'coordinator' }, drax: { run: run('ok') }, groot: { run: run('ok') }, spare: { run: run('ok') },
+    } } });
+  });
+  after(async () => { await s.stop(); });
+  const events = async (type) => (await s.ok('GET', `/api/events?types=${type}`)).events;
+  // any agent's status change runs the check: once to start the stall's clock, once more past its hold
+  const kick = async () => { await s.ok('POST', '/api/agents/spare/pause', {}, USER); await s.ok('POST', '/api/agents/spare/resume', {}, USER); };
+  const pastHold = async () => { await kick(); await new Promise((r) => setTimeout(r, 800)); await kick(); };
+
+  it('the coordinator stalls: the human is told once, the stall rule does not wake it about itself, and the notice goes when it is back', async () => {
+    await s.ok('POST', '/api/agents/boss/pause', {}, USER);
+    await s.ok('POST', `${B}/items`, { title: 'for boss', column: 'Ready', assignee: 'boss' }, USER);
+    await pastHold();
+    const told = await until(async () => (await events('agent.stall_notice')).find((e) => e.agent === 'boss'), 5000, 'the human told');
+    assert.deepEqual([told.because, told.why, told.rule, told.recipients], ['coordinator', 'paused', 'board-stall-human', []]);
+    const ran = await until(async () => (await events('rule.ran')).find((e) => e.rule.id === 'board-stall-wake'), 5000, 'the stall rule ran');
+    assert.deepEqual([ran.results[0].ok, ran.results[0].skipped], [true, 'boss is the agent that stalls']);
+    assert.equal((await events('rule.fired')).filter((e) => e.stall?.agent === 'boss').length, 0, 'nobody woken about its own stall');
+    assert.deepEqual((await s.ok('GET', `${B}/idle-alarm`)).stalls.map((x) => [x.agent, x.because]), [['boss', 'coordinator']]);
+    await kick();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal((await events('agent.stall_notice')).length, 1, 'once');
+    await s.ok('POST', '/api/agents/boss/resume', {}, USER);
+    await until(async () => (await s.ok('GET', `${B}/idle-alarm`)).stalls.length === 0, 5000, 'the notice goes');
+  });
+
+  it('one builder stalling is the coordinator\'s to handle; most of them at once go to the human', async () => {
+    await s.ok('POST', '/api/agents/drax/pause', {}, USER);
+    await s.ok('POST', `${B}/items`, { title: 'for drax', column: 'Ready', assignee: 'drax' }, USER);
+    await pastHold();
+    await until(async () => (await events('agent.stalled')).find((e) => e.agent === 'drax'), 5000, 'drax stalled');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal((await events('agent.stall_notice')).filter((e) => e.agent === 'drax').length, 0, '1 of 4: not the human\'s');
+    for (const n of ['groot', 'boss']) await s.ok('POST', `/api/agents/${n}/pause`, {}, USER);
+    await s.ok('POST', `${B}/items`, { title: 'for groot', column: 'Ready', assignee: 'groot' }, USER);
+    await pastHold();
+    const told = await until(async () => (await events('agent.stall_notice')).find((e) => e.agent === 'groot'), 5000, 'groot told');
+    assert.equal(told.because, 'most');
+    assert.ok(told.stalledNow * 2 > told.of, `${told.stalledNow} of ${told.of}`);
   });
 });

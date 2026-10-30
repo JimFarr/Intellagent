@@ -397,9 +397,10 @@ const ENGINES = {
   } },
   idleAlarm: { id: 'board-idle-alarm', name: 'Idle-board alarm', fits: (r) => r.when?.on === 'board_idle' && !r.if && (r.then.every((x) => x.do === 'wake') || shapeIs(r, 'board_idle', ['ask_human'])) },
   rebalance: { id: 'board-rebalance', name: 'Rebalancing', fits: (r) => shapeIs(r, 'assignee_away', ['reassign']) && !r.if },
+  stallHuman: { id: 'board-stall-human', name: 'Tell the human when nobody can act on a stall', fits: (r) => shapeIs(r, 'agent_stalled', ['tell_human']) && !r.if && !r.when.why && !r.when.agent },
 };
 // The words only an engine carries out, and whose they are: a rule may use them only in that engine's shape
-const ENGINE_WORDS = { board_idle: 'idleAlarm', stuck: 'stuckWatch', unstick: 'stuckWatch', escalate: 'askEscalation', assignee_away: 'rebalance', reassign: 'rebalance' };
+const ENGINE_WORDS = { board_idle: 'idleAlarm', stuck: 'stuckWatch', unstick: 'stuckWatch', escalate: 'askEscalation', assignee_away: 'rebalance', reassign: 'rebalance', tell_human: 'stallHuman' };
 // The rule an engine runs from, while it is on (any: also when switched off, for its numbers)
 const engineRule = (ctx, key, any = false) => {
   const r = (ctx.board.automations?.rules || []).find((x) => x.engine === key);
@@ -462,26 +463,32 @@ function seedEngineRules(b) {
 // Once per board (INT-488; engines 2): an agent stalls → wake whoever the idle-board alarm wakes, by name, or the
 // coordinator when the alarm wakes nobody (INT-516); an ordinary rule the human edits or deletes. A board whose human
 // already has a stall rule keeps only theirs.
+// Once per board (INT-512; engines 4): the board's own rule that tells the human of a stall nobody else can act on
+// (stallsForHuman), switched on; deleted, it stays deleted.
 function seedAgentRules(b) {
-  if (b.automations.engines >= 3 || !standing) return false;
+  if (b.automations.engines >= 4 || !standing) return false;
   const at = new Date().toISOString();
-  if (!engineRule({ board: b }, 'idleAlarm', true) && !b.automations.idleAlarmDeleted) {
+  if (!(b.automations.engines >= 3) && !engineRule({ board: b }, 'idleAlarm', true) && !b.automations.idleAlarmDeleted) {
     const flagged = standingAgents().filter((a) => a.idleAlarm);
     const id = b.automations.rules.some((r) => r.id === ENGINES.idleAlarm.id) ? `${ENGINES.idleAlarm.id}-${Date.now().toString(36)}` : ENGINES.idleAlarm.id;
     b.automations.rules.push({ id, name: ENGINES.idleAlarm.name, engine: 'idleAlarm', enabled: flagged.length > 0,
       when: { on: 'board_idle', minutes: flagged.length ? Math.min(...flagged.map((a) => a.idleAlarm.minutes)) : 20 },
       then: flagged.length ? flagged.map((a) => ({ do: 'wake', agent: a.name })) : [{ do: 'ask_human', text: IDLE_ALARM_TEXT }], createdAt: at, updatedAt: at });
   }
-  if (!(b.automations.engines >= 2) && !b.automations.rules.some((r) => r.when?.on === 'agent_stalled')) {
+  if (!(b.automations.engines >= 2) && !b.automations.rules.some((r) => r.when?.on === 'agent_stalled' && !r.engine)) {
     const ia = idleAlarmOf({ board: b });
     const wake = ia.on && ia.wake.length ? ia.wake : ['coordinator'];
     b.automations.rules.push({ id: 'board-stall-wake', name: 'Wake the coordinator when an agent stalls', enabled: true, when: { on: 'agent_stalled' }, then: wake.map((agent) => ({ do: 'wake', agent })), createdAt: at, updatedAt: at });
   }
-  b.automations.engines = 3;
+  if (!engineRule({ board: b }, 'stallHuman', true)) {
+    const id = b.automations.rules.some((r) => r.id === ENGINES.stallHuman.id) ? `${ENGINES.stallHuman.id}-${Date.now().toString(36)}` : ENGINES.stallHuman.id;
+    b.automations.rules.push({ id, name: ENGINES.stallHuman.name, engine: 'stallHuman', enabled: true, when: { on: 'agent_stalled' }, then: [{ do: 'tell_human' }], createdAt: at, updatedAt: at });
+  }
+  b.automations.engines = 4;
   return true;
 }
 function seedAgentRulesAll() {
-  for (const ctx of boards.values()) if (!(ctx.board.automations.engines >= 3)) tx(ctx, () => seedAgentRules(ctx.board));
+  for (const ctx of boards.values()) if (!(ctx.board.automations.engines >= 4)) tx(ctx, () => seedAgentRules(ctx.board));
   const flagged = standingAgents().filter((a) => a.idleAlarm).map((a) => a.name);
   if (flagged.length) console.warn(`idleAlarm in agents.json is retired and ignored (${flagged.join(', ')}): the Idle-board alarm is a rule on each board (Rules page, or PUT /api/boards/<board>/idle-alarm)`);
 }
@@ -3209,7 +3216,7 @@ const SCHEMA = {
       'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'trigger.fired', 'rule.fired', 'rule.ran', 'rule.held', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
-      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.stalled', 'agent.managed', 'agent.role_changed', 'admin.reverted', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
+      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.stalled', 'agent.stall_notice', 'agent.managed', 'agent.role_changed', 'admin.reverted', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
       'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated', 'agent.base_updated', 'item.typing',
       'plugin.added', 'plugin.enabled', 'plugin.disabled', 'plugin.removed', 'plugin.connection', 'plugin.crashed', 'plugin.event'],
@@ -3802,8 +3809,8 @@ function idleNotice(ctx) {
   if ((last.down || []).length && !down.length) return null;
   return { ...last, down };
 }
-const idleAlarmView = (ctx) => ({ ...idleAlarmOf(ctx), agents: standingAgents().map((a) => a.name), notice: idleNotice(ctx), recent: (ctx.board.idleLog || []).slice(-10).reverse() });
-route('GET', '/api/boards/:board/idle-alarm', 'The idle-board alarm: { on, minutes, wake, note, human } (who is woken when tickets wait but no builder has run for that long; human: tell the human when none of them can be), the human notice while it stands, and its last alarms', ({ p }) => idleAlarmView(getCtx(p.board)));
+const idleAlarmView = (ctx) => ({ ...idleAlarmOf(ctx), agents: standingAgents().map((a) => a.name), notice: idleNotice(ctx), stalls: stallNotices(ctx), recent: (ctx.board.idleLog || []).slice(-10).reverse() });
+route('GET', '/api/boards/:board/idle-alarm', 'The idle-board alarm: { on, minutes, wake, note, human } (who is woken when tickets wait but no builder has run for that long; human: tell the human when none of them can be), the human notice while it stands, and its last alarms. stalls: the stalls told to the human that still stand, [{ agent, why, since, minutes, because: coordinator|most|long, stalledNow, of, evidence, at }] (the board\'s rule board-stall-human)', ({ p }) => idleAlarmView(getCtx(p.board)));
 route('PUT', '/api/boards/:board/idle-alarm', 'Human only: set the idle-board alarm { on?, minutes? (5-1440), wake? (standing agents), note? (what they should do, up to 1000 characters), human? (tell the human when nobody in wake can be woken; default true) }', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const cur = idleAlarmOf(ctx);
@@ -4943,9 +4950,11 @@ async function ruleAction(ctx, rule, a, item, why, raw = null) {
   switch (a.do) {
     case 'wake': {
       const name = ruleWho(ctx, a.agent, item);
-      if (!name) fail(409, `there is no ${a.agent.replace('_', ' ')}${item ? ` for ${item.id}` : ''}`);
       // a stall that set it off goes along: whose, why and the evidence are what the woken agent acts on (INT-483)
       const stall = ev?.type === 'agent.stalled' ? { agent: ev.agent, why: ev.why, since: ev.since, minutes: ev.minutes, evidence: ev.evidence } : null;
+      // an agent can't act on its own stall: the coordinator's goes to the human (board-stall-human, INT-512)
+      if (stall && (sameName(stall.agent, name || '') || (a.agent === 'coordinator' && isCoordinator(ctx, stall.agent)))) return { woke: null, skipped: `${stall.agent} is the agent that stalls` };
+      if (!name) fail(409, `there is no ${a.agent.replace('_', ' ')}${item ? ` for ${item.id}` : ''}`);
       tx(ctx, (events) => events.push({ board: ctx.id, type: 'rule.fired', actor, rule: actor.rule, why, ...(item ? { itemId: id, columnId: item.columnId, title: item.title } : {}), ...(stall ? { stall } : {}), ...(a.note ? { note: fill(a.note) } : {}), recipients: [name], addressed: [name] }));
       return { woke: name };
     }
@@ -5106,7 +5115,35 @@ function checkStalls() {
       tx(ctx, (events) => events.push({ board: ctx.id, type: 'agent.stalled', actor: SYSTEM, ...s, evidence: { ...s.evidence, waiting: s.evidence.waiting.filter((w) => w.board === ctx.id) }, recipients: [] }));
     }
   }
+  if (r.stalls.length) for (const ctx of boards.values()) stallsForHuman(ctx, r.stalls);
 }
+// The board's own rule "Tell the human when nobody can act on a stall" (INT-512; engine stallHuman): a stall goes to
+// the human, once, when the stalled agent is the coordinator, more than half the enabled agents are stalled, or it is
+// the second raise, at an hour. It is kept in the board's stallLog (the last 100) and shows with the idle alarm's
+// notice (GET …/idle-alarm, stalls) while the agent is still in that stall.
+function stallsForHuman(ctx, stalls) {
+  const rule = engineRule(ctx, 'stallHuman');
+  if (!rule) return;
+  const told = ctx.board.stallLog || [];
+  const fresh = stalls
+    // isCoordinator, not coordinatorOf: that one picks an enabled agent, and a paused coordinator isn't
+    .map((s) => ({ s, because: isCoordinator(ctx, s.agent) ? 'coordinator' : s.stalledNow * 2 > s.of ? 'most' : s.long ? 'long' : null }))
+    .filter(({ s, because }) => because && !told.some((t) => t.agent === s.agent && t.since === s.since));
+  if (!fresh.length) return;
+  tx(ctx, (events) => {
+    for (const { s, because } of fresh) {
+      const rec = { at: now(), agent: s.agent, why: s.why, since: s.since, minutes: s.minutes, because, stalledNow: s.stalledNow, of: s.of, evidence: { ...s.evidence, waiting: s.evidence.waiting.filter((w) => w.board === ctx.id) } };
+      ctx.board.stallLog = [...(ctx.board.stallLog || []), rec].slice(-100);
+      rulesOf(ctx).log = [...rulesOf(ctx).log, { at: rec.at, rule: rule.id, name: rule.name, why: `${s.agent} stalls (${s.why})`, results: [{ do: 'tell_human', ok: true, because }] }].slice(-RULES.LOG_KEEP);
+      events.push({ board: ctx.id, type: 'agent.stall_notice', actor: ruleActor(rule), rule: rule.id, ...rec, recipients: [] });
+    }
+  });
+}
+// The stalls told to the human that still stand: the agent is in the same stall (the ledger's since)
+const stallNotices = (ctx) => (ctx.board.stallLog || []).filter((t) => {
+  const l = stallLedger[t.agent];
+  return l?.fired && new Date(l.since).toISOString() === t.since;
+});
 const stallFails = () => { try { checkStalls(); } catch (e) { console.warn(`stalls: ${e.message}`); } };
 // a function, not a const: the event hook (createEvents' onEvent) can call it before this line has run
 function onStallEvent(e) { if (['agent.status', 'agent.failed', 'agent.run.finished', 'agent.usage_limited'].includes(e.type)) setImmediate(() => stallFails()); }
@@ -5279,7 +5316,7 @@ function saveRule(ctx, body, actor, prev = null) {
 const boardRules = (ctx) => rulesOf(ctx).rules.filter((r) => !r.item);
 const getRule = (ctx, id) => boardRules(ctx).find((r) => r.id === id) || fail(404, `No rule "${id}"`, { code: 'NOT_FOUND', hint: rulesOf(ctx).rules.some((r) => r.id === id) ? 'That is a trigger on a ticket: GET or DELETE /api/boards/<board>/items/<ID>/triggers' : `GET /api/boards/${ctx.id}/rules lists them` });
 
-route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, for, names, when, lang?, if?, then, text (in words), fired, native? }], vocabulary: { subjects: { ticket|comment: { label, names, parts: expression-language descriptors of each part, for suggestions } }, events (each with its subject), times, actions, roles } }. The board\'s behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing) are ordinary stored rules (ids board-…, marked engine: <key>): each runs from its marked rule, deleting it switches it off, and reshaped it loses the mark and is ordinary. A rule of yours in the same shape stays yours. The words board_idle, stuck, assignee_away, escalate, unstick and reassign work only in a marked rule, in its shape; a new rule in those words takes the mark only when its behaviour has no rule. native: a column\'s release-lease or auto-archive flag, listed and edited as a rule', ({ p }) => {
+route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, for, names, when, lang?, if?, then, text (in words), fired, native? }], vocabulary: { subjects: { ticket|comment: { label, names, parts: expression-language descriptors of each part, for suggestions } }, events (each with its subject), times, actions, roles } }. The board\'s behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing, telling the human of a stall) are ordinary stored rules (ids board-…, marked engine: <key>): each runs from its marked rule, deleting it switches it off, and reshaped it loses the mark and is ordinary. A rule of yours in the same shape stays yours. The words board_idle, stuck, assignee_away, escalate, unstick, reassign and tell_human work only in a marked rule, in its shape; a new rule in those words takes the mark only when its behaviour has no rule. native: a column\'s release-lease or auto-archive flag, listed and edited as a rule', ({ p }) => {
   const ctx = getCtx(p.board);
   const labels = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => !v.legacy).map(([k, v]) => [k, { label: v.label, subject: v.subject || 'ticket', ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}), ...(v.agentOnly ? { agent: true, whys: STALLS.WHYS } : {}) }]));
   // each subject: its parts with their default names, and the expr.js descriptor of each part (the page's suggestions)
