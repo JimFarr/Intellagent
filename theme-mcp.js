@@ -87,7 +87,8 @@ const TOOLS = [
     mode: { type: 'string', enum: ['light', 'dark'], description: 'Default: the starting theme\'s' },
     palette: { type: 'object', description: 'Colours to set, without the dashes: { "bg": "#101418", "accent": "#5fb3ff" }' },
     style: { type: 'object', description: 'Look options merged over the starting theme\'s (themes/README.md, style:)' },
-  }, ['dir', 'name'], ({ dir, name, from, mode, palette, style }) => {
+    overwrite: { type: 'boolean', description: 'Replace a file of the same name (default: refuse)' },
+  }, ['dir', 'name'], ({ dir, name, from, mode, palette, style, overwrite }) => {
     if (mode && mode !== 'light' && mode !== 'dark') throw new Error('mode is light or dark');
     const b = base(from);
     const vars = { ...b.vars };
@@ -100,6 +101,7 @@ const TOOLS = [
     const c = check(text); // a file the board would refuse is never written
     fs.mkdirSync(path.resolve(dir), { recursive: true });
     const file = path.join(path.resolve(dir), `${c.id}.css`);
+    if (fs.existsSync(file) && !overwrite) throw new Error(`${file} exists: edit it and theme_check, or pass overwrite: true`);
     fs.writeFileSync(file, text);
     return report(file, c);
   }],
