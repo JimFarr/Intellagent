@@ -181,7 +181,7 @@ test('plugins: the human adds, pins and connects one; it runs sandboxed and gets
     await s.ok('POST', '/api/plugins/fake/connection/test', { values: { token: 'event' } }, USER);
     const ev = await until(async () => (await s.ok('GET', '/api/events?since=0&types=plugin.event')).events.find((e) => e.plugin === 'fake'), 5000, 'plugin.event');
     assert.strictEqual(ev.event, 'ping');
-    assert.deepStrictEqual(ev.data, { n: 1 });
+    assert.deepStrictEqual(ev.data, { n: '1' }); // a bare field name is a text field
     assert.deepStrictEqual(ev.recipients, []);
     assert.strictEqual((await s.ok('GET', '/api/events?since=0&types=plugin.event')).events.length, 1);
     assert.strictEqual(JSON.parse(fs.readFileSync(local, 'utf8')).plugins.fake.connection.token, 'abcdefghijkl1234');
@@ -328,14 +328,18 @@ function handle(m) {
   if (h.headers['x-sig'] !== m.connection.token) return send({ id: m.id, ok: false, error: 'bad signature' });
   if (h.body === 'hello') return send({ id: m.id, ok: true, result: null });
   if (h.body === 'liar') return send({ id: m.id, ok: true, result: { event: 'undeclared' } });
-  send({ id: m.id, ok: true, result: { event: 'ping', data: { ...JSON.parse(h.body), cookie: h.headers.cookie || null } } });
+  const b = JSON.parse(h.body);
+  send({ id: m.id, ok: true, result: { event: 'ping', data: { ...b, cookie: h.headers.cookie ? 'yes' : 'no' }, item: b.item } });
 }
 `;
 test('plugins in rules and webhooks: a plugin event sets a rule off, a rule runs an action as the board, a webhook is checked by its plugin (INT-474)', async () => {
   const s = await startServer();
   const hook = (body, headers = {}) => fetch(`${s.base}/hooks/fake`, { method: 'POST', headers: { 'content-type': 'text/plain', ...headers }, body }).then(async (r) => ({ status: r.status, body: await r.json() }));
   try {
-    const added = await s.ok('POST', '/api/plugins', { path: pluginFolder(FAKE_JSON, HOOK_MAIN) }, USER);
+    // typed fields (a bare name is text), and the ticket found by its jira property
+    const json = { ...FAKE_JSON, events: [{ id: 'ping', fields: [{ key: 'room' }, { key: 'n', type: 'number' }, 'cookie', 'key'], ticket: { field: 'key', matches: 'properties.jira' } }] };
+    assert.ok(validate({ ...json, events: [{ id: 'ping', fields: ['a'], ticket: { field: 'b', matches: 'title' } }] }, 'fake', pluginFolder()).problems.some((p) => p.includes('ticket.field')));
+    const added = await s.ok('POST', '/api/plugins', { path: pluginFolder(json, HOOK_MAIN) }, USER);
     // off: the open route says nothing about what is installed
     assert.strictEqual((await hook('hello', { 'x-sig': 'abcdefghijkl1234' })).status, 404);
     await s.ok('POST', '/api/plugins/fake/enable', { hash: added.hash }, USER);
@@ -355,20 +359,32 @@ test('plugins in rules and webhooks: a plugin event sets a rule off, a rule runs
     assert.deepStrictEqual((await hook('hello', { 'x-sig': 'abcdefghijkl1234' })).body, { accepted: true, event: null });
     assert.strictEqual((await hook('liar', { 'x-sig': 'abcdefghijkl1234' })).status, 502);
     assert.strictEqual((await hook('x'.repeat(300 * 1024), { 'x-sig': 'abcdefghijkl1234' })).status, 413);
-    const got = await hook(JSON.stringify({ room: 'ops', ticket: card.id.toLowerCase() }), { 'x-sig': 'abcdefghijkl1234', cookie: 'session=human' });
+    const got = await hook(JSON.stringify({ room: 'ops', n: 'many', extra: 'x', item: card.id.toLowerCase() }), { 'x-sig': 'abcdefghijkl1234', cookie: 'session=human' });
     assert.deepStrictEqual(got, { status: 202, body: { accepted: true, event: 'ping' } });
+    const logOf = (n) => until(async () => (await s.ok('GET', '/api/boards/main/rules/log')).filter((l) => l.rule === saved.id).reverse()[n]);
 
     // the rule fired for the ticket the event named: the run is the board's, under the rule's name, with no grant
-    const log = await until(async () => (await s.ok('GET', '/api/boards/main/rules/log')).find((l) => l.rule === saved.id));
+    const log = await logOf(0);
     assert.strictEqual(log.item, card.id);
     assert.deepStrictEqual(log.results.map((r) => [r.do, r.ok, r.status || null]), [['run', true, 'succeeded'], ['comment', true, null]]);
     const run = await s.ok('GET', `/api/plugins/runs/${log.results[0].run}`);
     assert.deepStrictEqual([run.by, run.inputs, run.item, run.result.ticket], [{ kind: 'system', name: 'rule: Ping posts' }, { channel: '#ops' }, card.id, card.id]);
     const item = await s.ok('GET', `/api/boards/main/items/${card.id}`);
     assert.strictEqual(item.comments.at(-1).body, 'pinged by ops');
+    // only declared fields that fit their types; cookies never reach the plugin
     const ev = (await s.ok('GET', '/api/events?since=0&types=plugin.event')).events.at(-1);
-    assert.strictEqual(ev.data.cookie, null, 'cookies never reach the plugin');
+    assert.deepStrictEqual([ev.data, ev.item], [{ room: 'ops', cookie: 'no' }, card.id.toLowerCase()]);
     assert.ok((await s.ok('GET', '/api/plugins/fake')).webhook.lastAt);
+
+    // the ticket by its linked field: the one whose jira property equals the event's key
+    const linked = await s.ok('POST', '/api/boards/main/items', { title: 'Linked', properties: { jira: 'BET-7' } }, USER);
+    await hook(JSON.stringify({ room: 'dev', key: 'bet-7' }), { 'x-sig': 'abcdefghijkl1234' });
+    assert.strictEqual((await logOf(1)).item, linked.id);
+    // no ticket: the run still goes, the ticket action fails and the log says why
+    await hook(JSON.stringify({ room: 'nowhere', key: 'BET-404' }), { 'x-sig': 'abcdefghijkl1234' });
+    const none = await logOf(2);
+    assert.deepStrictEqual([none.item, none.results.map((r) => r.ok)], [null, [true, false]]);
+    assert.match(none.results[1].error, /no ticket/);
 
     // changed files: the webhook goes quiet (404), the same as no plugin
     fs.appendFileSync(path.join(s.dir, 'plugins', 'fake', 'index.js'), '\n// changed');

@@ -5021,12 +5021,19 @@ function onRuleEvent(e) {
   if (e.type === 'plugin.event' && !e.board) { for (const ctx of boards.values()) ruleEventOn(ctx, e); return; }
   if (e.board) ruleEventOn(boards.get(e.board), e);
 }
+// A plugin event's ticket on this board: the id the plugin sent (item), or the ticket whose field or property equals
+// the event's linked field (match: { path: "fields.jira", value }). None: ticket actions fail, and the log says why.
+function pluginEventTicket(ctx, e) {
+  if (e.item) return Object.keys(ctx.board.items).find((k) => k.toLowerCase() === e.item.toLowerCase()) || null;
+  if (!e.match) return null;
+  const [head, ...rest] = e.match.path.split('.');
+  const want = e.match.value.toLowerCase();
+  return liveItems(ctx).find((it) => String(it[head]?.[rest.join('.')] ?? '').toLowerCase() === want)?.id || null;
+}
 function ruleEventOn(ctx, e) {
   const rules = (ctx?.board.automations?.rules || []).filter((r) => r.enabled && RULES.EVENTS[r.when.on] && RULES.eventMatches(r, e) && !inEngine(ctx, r));
   if (!rules.length) return;
-  // a plugin's event is for a ticket when its data names one on this board (data.ticket: "INT-12")
-  const named = e.type === 'plugin.event' && typeof e.data?.ticket === 'string' ? Object.keys(ctx.board.items).find((k) => k.toLowerCase() === e.data.ticket.toLowerCase()) : null;
-  const itemId = e.itemId || e.run?.item || named || null;
+  const itemId = e.itemId || e.run?.item || (e.type === 'plugin.event' ? pluginEventTicket(ctx, e) : null) || null;
   setImmediate(() => {
     for (const rule of rules) ruleFails(async () => {
       const item = itemId ? ctx.board.items[itemId] : null;
@@ -5232,7 +5239,7 @@ route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabl
   const subjects = Object.fromEntries(Object.entries(RULES.SUBJECTS).map(([k, s]) => [k, { label: s.label, ...(s.event ? { event: s.event } : {}), names: Object.fromEntries(s.roles.map((r) => [r, RULES.DEFAULT_NAMES[r]])), parts: Object.fromEntries(s.roles.map((r) => [r, r === 'ticket' ? tdesc : RULES.COMMENT_DESC])) }]));
   return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...boardRules(ctx).map((r) => ruleView(ctx, r))], vocabulary: { subjects, events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
 });
-route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, for?: ticket|comment, names?: { ticket: "T", comment: "C" }, when: { on, column?, minutes?, to? }, lang?: "expr", if?: an expression over the names (e.g. C.text.contains("?") && T.priority == "High"; without lang, the card-rules filter language, kept as the expression that says the same where there is one), then: [{ do, … }], enabled?, confirm? }. An "if" that does not read answers 400 with at/end. A time rule (idle, in_column, every with an if) with tickets due as it is saved answers 409 CONFIRM_REQUIRED { count, items } unless confirm: <count>; confirmed, its first sweep acts on them all outside the hourly cap; enabled: false never asks. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented (a comment rule\'s trigger; may be left out), unblocked, lease_expired, ask_overdue, agent_stalled (why?: failed|limited|paused|refused|waiting, agent?; no ticket, so only wake, and the woken agent gets the stall with its evidence), plugin_event (plugin, event: one a plugin declares; for the ticket in its data.ticket); or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land, run { plugin, action, inputs } (a plugin action, run by the board). Text may hold {id} and {title}, and {event.<field>} from a plugin event', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
+route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, for?: ticket|comment, names?: { ticket: "T", comment: "C" }, when: { on, column?, minutes?, to? }, lang?: "expr", if?: an expression over the names (e.g. C.text.contains("?") && T.priority == "High"; without lang, the card-rules filter language, kept as the expression that says the same where there is one), then: [{ do, … }], enabled?, confirm? }. An "if" that does not read answers 400 with at/end. A time rule (idle, in_column, every with an if) with tickets due as it is saved answers 409 CONFIRM_REQUIRED { count, items } unless confirm: <count>; confirmed, its first sweep acts on them all outside the hourly cap; enabled: false never asks. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented (a comment rule\'s trigger; may be left out), unblocked, lease_expired, ask_overdue, agent_stalled (why?: failed|limited|paused|refused|waiting, agent?; no ticket, so only wake, and the woken agent gets the stall with its evidence), plugin_event (plugin, event: one a plugin declares; for the ticket of the event: the item it sent, or its ticket link); or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land, run { plugin, action, inputs } (a plugin action, run by the board). Text may hold {id} and {title}, and {event.<field>} from a plugin event', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
 route('PUT', '/api/boards/:board/rules/:id', 'Human: replace a rule (as POST); { enabled: false } with the rest switches it off', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const n = nativeRules(ctx).find((x) => x.id === p.id);
