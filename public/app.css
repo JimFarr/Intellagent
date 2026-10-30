@@ -988,9 +988,16 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
 
 /* digest + review */
 .digest-compose { margin-bottom: 16px; }
-.dg-day { margin-bottom: 18px; }
-.dg-entry { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 10px 0; animation: drop-in .3s var(--spring) backwards; }
-.dg-entry + .dg-entry { border-top: 1px solid color-mix(in oklab, var(--border) 55%, transparent); }
+/* digest: one panel per day, hairlines between entries, time at the right (INT-471, digest mockup) */
+.dg-day { margin-bottom: 24px; }
+.dg-day .section-head { margin-bottom: 8px; }
+.dg-day .section-head .rule { display: none; }
+.dg-list { border: var(--bw) solid var(--border); border-radius: var(--r-m); background: var(--surface); overflow: hidden; }
+.dg-entry { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 12px; padding: 12px 16px; animation: drop-in .3s var(--spring) backwards; }
+.dg-entry .avatar.lg { width: 24px; height: 24px; font-size: 10px; }
+.dg-entry + .dg-entry { border-top: var(--bw) solid var(--card-line); }
+.dg-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.dg-entry .md { max-width: 68ch; }
 .m-ask.is-review { background: linear-gradient(135deg, color-mix(in oklab, var(--accent) 14%, var(--surface)), color-mix(in oklab, var(--ok) 10%, var(--surface))); border-color: color-mix(in oklab, var(--accent) 40%, transparent); }
 .review-chip { margin-left: auto; background: color-mix(in oklab, var(--accent) 18%, transparent); color: var(--accent); font-weight: 600; }
 
