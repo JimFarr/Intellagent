@@ -441,7 +441,7 @@ function seedEngineRules(b) {
       { on: 'in_column', column: work.id, minutes: Number(old.staleWork?.minutes) > 0 ? Math.max(5, Number(old.staleWork.minutes)) : Number(M.staleWorkMinutes) || 120 },
       [{ do: 'move', column: pick.id }], { if: '!claimant', name: `Stale work back to ${pick.name}` });
   }
-  // an alarm the board never set follows agents.json (idleAlarmOf): it gets a rule once it is set here
+  // an alarm the board set before INT-472; one it never set is seeded from agents.json by seedAgentRules
   const ia = b.idleAlarm;
   if (ia) {
     const wake = [].concat(ia.wake || []);
@@ -454,22 +454,37 @@ function seedEngineRules(b) {
   if (b.rebalance) delete b.rebalance.on; // its numbers stay settings
   b.automations.engines = 1;
 }
+// The rules seeded from the standing agents. At boot boards load before them, so these wait: seedAgentRulesAll runs
+// them again once they are up.
+// Once per board (INT-511; engines 3): an Idle-board alarm the board never set becomes its rule, from agents.json's
+// idleAlarm flags (a wake per flagged agent, after the smallest idleAlarmMinutes), switched off when none is flagged.
+// A deleted one stays deleted. From then on the rule is the alarm and the flags are ignored.
 // Once per board (INT-488; engines 2): an agent stalls → wake whoever the idle-board alarm wakes, by name, or the
 // coordinator when the alarm wakes nobody (INT-516); an ordinary rule the human edits or deletes. A board whose human
-// already has a stall rule keeps only theirs. At boot boards load before the standing agents (whose idleAlarm flags
-// the alarm may follow), so it waits for them: seedStallRules runs it again once they are up.
-function seedStallRule(b) {
-  if (b.automations.engines >= 2 || !standing) return false;
-  if (!b.automations.rules.some((r) => r.when?.on === 'agent_stalled')) {
-    const at = new Date().toISOString();
+// already has a stall rule keeps only theirs.
+function seedAgentRules(b) {
+  if (b.automations.engines >= 3 || !standing) return false;
+  const at = new Date().toISOString();
+  if (!engineRule({ board: b }, 'idleAlarm', true) && !b.automations.idleAlarmDeleted) {
+    const flagged = standingAgents().filter((a) => a.idleAlarm);
+    const id = b.automations.rules.some((r) => r.id === ENGINES.idleAlarm.id) ? `${ENGINES.idleAlarm.id}-${Date.now().toString(36)}` : ENGINES.idleAlarm.id;
+    b.automations.rules.push({ id, name: ENGINES.idleAlarm.name, engine: 'idleAlarm', enabled: flagged.length > 0,
+      when: { on: 'board_idle', minutes: flagged.length ? Math.min(...flagged.map((a) => a.idleAlarm.minutes)) : 20 },
+      then: flagged.length ? flagged.map((a) => ({ do: 'wake', agent: a.name })) : [{ do: 'ask_human', text: IDLE_ALARM_TEXT }], createdAt: at, updatedAt: at });
+  }
+  if (!(b.automations.engines >= 2) && !b.automations.rules.some((r) => r.when?.on === 'agent_stalled')) {
     const ia = idleAlarmOf({ board: b });
     const wake = ia.on && ia.wake.length ? ia.wake : ['coordinator'];
     b.automations.rules.push({ id: 'board-stall-wake', name: 'Wake the coordinator when an agent stalls', enabled: true, when: { on: 'agent_stalled' }, then: wake.map((agent) => ({ do: 'wake', agent })), createdAt: at, updatedAt: at });
   }
-  b.automations.engines = 2;
+  b.automations.engines = 3;
   return true;
 }
-const seedStallRules = () => { for (const ctx of boards.values()) if (!(ctx.board.automations.engines >= 2)) tx(ctx, () => seedStallRule(ctx.board)); };
+function seedAgentRulesAll() {
+  for (const ctx of boards.values()) if (!(ctx.board.automations.engines >= 3)) tx(ctx, () => seedAgentRules(ctx.board));
+  const flagged = standingAgents().filter((a) => a.idleAlarm).map((a) => a.name);
+  if (flagged.length) console.warn(`idleAlarm in agents.json is retired and ignored (${flagged.join(', ')}): the Idle-board alarm is a rule on each board (Rules page, or PUT /api/boards/<board>/idle-alarm)`);
+}
 // Once per board (INT-475): the triggers stored on tickets become rules on their ticket, same ids and state. The
 // default idle check goes (the board's Idle check rule covers the card, its last firing kept), a card that removed it
 // is skipped by that rule, and what waited in triggerQueue waits on its rule.
@@ -533,7 +548,7 @@ function normalizeBoard(b) {
   b.digest = Array.isArray(b.digest) ? b.digest : [];
   b.automations = isObj(b.automations) ? { rules: Array.isArray(b.automations.rules) ? b.automations.rules : [], log: Array.isArray(b.automations.log) ? b.automations.log : [], ...(b.automations.engines ? { engines: b.automations.engines } : {}), ...(b.automations.idleAlarmDeleted ? { idleAlarmDeleted: true } : {}) } : { rules: [], log: [] };
   seedEngineRules(b);
-  seedStallRule(b);
+  seedAgentRules(b);
   migrateTriggers(b);
   // Card looks are rules (when a ticket fits, then its card looks so): a board's card rules move in once. cardRules
   // stays as their copy for what draws and matches looks (lookFor, is:rule:, the page), rebuilt from the rules.
@@ -3761,8 +3776,8 @@ route('PUT', '/api/boards/:board/admin', 'Human only: switch board admin for the
 });
 
 // The idle-board alarm (INT-265): when tickets wait to be started but no builder has run for `minutes`, the
-// agents in `wake` get one board.idle event with the human's `note` (lib/agents/scheduler.js checkIdle). The
-// human sets it on the Agents page; until they do, agents with "idleAlarm": true in agents.json are woken.
+// agents in `wake` get one board.idle event with the human's `note` (lib/agents/scheduler.js checkIdle). It is the
+// board's Idle-board alarm rule (seedAgentRules), set on the Rules page, the Agents page or PUT …/idle-alarm.
 const standingAgents = () => { try { return standing.list().agents; } catch { return []; } };
 function idleAlarmOf(ctx) {
   // the board's Idle-board alarm rule (INT-472); human: when nobody in `wake` can be woken (failed, paused, or none
@@ -3772,10 +3787,8 @@ function idleAlarmOf(ctx) {
     const wakes = r.then.filter((x) => x.do === 'wake');
     return { on: !!r.enabled, minutes: r.when.minutes, wake: wakes.map((x) => x.agent), note: wakes.find((x) => x.note)?.note || '', human: r.when.human !== false, from: 'settings' };
   }
-  // its rule deleted: off, never back to agents.json's flags (which would wake them)
-  if (ctx.board.automations?.idleAlarmDeleted) return { on: false, minutes: 20, wake: [], note: '', human: true, from: 'settings' };
-  const flagged = standingAgents().filter((a) => a.idleAlarm);
-  return { on: flagged.length > 0, minutes: flagged.length ? Math.min(...flagged.map((a) => a.idleAlarm.minutes)) : 20, wake: flagged.map((a) => a.name), note: '', human: true, from: 'agents.json' };
+  // no rule (deleted, reshaped, or not seeded yet): off; agents.json's idleAlarm flags never drive it (INT-511)
+  return { on: false, minutes: 20, wake: [], note: '', human: true, from: 'settings' };
 }
 // The alarm that went to the human, while it still stands: no builder has run since, and an agent it found down is
 // still down (or it named nobody). The UI shows it with Resume buttons; it goes by itself once someone is back.
@@ -6480,7 +6493,7 @@ standing = require('./lib/agents').createAgents({
 });
 
 try { for (const a of standing.list().agents) issueAgentToken(a.name); } catch (e) { console.warn(`agent tokens: ${e.message}`); }
-try { seedStallRules(); } catch (e) { console.warn(`stall rule: ${e.message}`); }
+try { seedAgentRulesAll(); } catch (e) { console.warn(`idle alarm and stall rules: ${e.message}`); }
 
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE') console.error(`Port ${M.port} is in use. Set "port" in ${MANIFEST_PATH} or INTELLAGENT_PORT.`);

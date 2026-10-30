@@ -121,7 +121,7 @@ describe('presets: init --preset', () => {
   it('a preset with a team says init installs no agents, and that --agents is ignored (INT-304)', () => {
     const r = cli(['init', '--preset', 'software-team', '--agents', 'coordinator=zed', '--yes', '--no-start', '--no-open', '--no-mcp', '--no-claude'], { cwd: tmp('init-team') });
     assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /--agents is ignored by init: no agents installed yet.*agents add.*idleAlarm and supervise.*by hand/);
+    assert.match(r.out, /--agents is ignored by init: no agents installed yet.*agents add.*supervise in agents\.json by hand.*Idle-board alarm rule/);
   });
 
   it('writes the preset into the new board folder and lists its powers before it writes anything', () => {

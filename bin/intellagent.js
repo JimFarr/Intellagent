@@ -158,7 +158,7 @@ async function init() {
   if (agentToken) console.log(`    ${agent}'s token (shown once; the board keeps only its hash): set INTELLAGENT_TOKEN=${agentToken} where your agent runs`);
 
   if (preset?.team?.slots) {
-    console.log(`    ${f.agents ? '--agents is ignored by init: ' : ''}no agents installed yet. The slots (${Object.keys(preset.team.slots).join(', ')}) are places, not people: once the board runs, add each agent you want with "intellagent agents add <name> --role <role>"; set idleAlarm and supervise in agents.json by hand.`);
+    console.log(`    ${f.agents ? '--agents is ignored by init: ' : ''}no agents installed yet. The slots (${Object.keys(preset.team.slots).join(', ')}) are places, not people: once the board runs, add each agent you want with "intellagent agents add <name> --role <role>"; set supervise in agents.json by hand, and who the idle alarm wakes in the board's Idle-board alarm rule (Rules page).`);
   }
   if (!f['no-mcp']) {
     const mcpPath = path.join(dir, '.mcp.json');

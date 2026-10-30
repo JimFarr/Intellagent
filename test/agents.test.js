@@ -521,7 +521,7 @@ describe('standing agents pick up work already on the board', () => {
     } finally { await s.stop(); }
   });
 
-  it('the idle-board alarm is a board setting: the human picks who it wakes and a note for them; agents.json flags are the fallback', async () => {
+  it('the idle-board alarm is a board setting: the human picks who it wakes and a note for them; agents.json flags only seed it', async () => {
     const s = await startServer({ agents: { defaults: fast, agents: {
       worker: { run: run('ok'), worktree: true, enabled: false },
       lander: { run: run('ok'), idleAlarm: true, idleAlarmMinutes: 30, enabled: false },
@@ -529,7 +529,7 @@ describe('standing agents pick up work already on the board', () => {
     } } });
     try {
       const before = await s.ok('GET', `${B}/idle-alarm`);
-      assert.deepEqual([before.on, before.minutes, before.wake, before.from], [true, 30, ['lander'], 'agents.json'], 'until the human sets it, agents.json decides');
+      assert.deepEqual([before.on, before.minutes, before.wake, before.from], [true, 30, ['lander'], 'settings'], 'its rule, seeded from agents.json (INT-511)');
       assert.deepEqual(before.agents.sort(), ['lander', 'lead', 'worker']);
       assert.equal((await s.api('PUT', `${B}/idle-alarm`, { on: false }, { agent: 'lead' })).status, 403, 'human only');
       for (const bad of [{ minutes: 2 }, { minutes: 20.5 }, { wake: ['nobody'] }, { on: true, wake: [], human: false }, { note: 'x'.repeat(1001) }, { on: 'yes' }, { human: 'yes' }]) {

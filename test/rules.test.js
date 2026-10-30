@@ -65,7 +65,7 @@ describe('rules on a board', () => {
       assert.ok(own[id], id);
       assert.ok(!own[id].native, `${id} is an ordinary rule`);
     }
-    assert.ok(!own['board-idle-alarm'], 'an alarm the board never set follows agents.json, with no rule');
+    assert.deepEqual([own['board-idle-alarm'].enabled, own['board-idle-alarm'].engine, own['board-idle-alarm'].then[0].do], [false, 'idleAlarm', 'ask_human'], 'no agent flagged in agents.json: the alarm rule is seeded switched off (INT-511)');
     assert.deepEqual(own['board-idle-check'].when, { on: 'idle', minutes: 60 });
     assert.match(own['board-idle-check'].text, /^For a ticket T, when T idles for 1 hour, wake coordinator\./);
     // an agent stalls → wake the coordinator: an ordinary rule, no engine (INT-488)
@@ -90,11 +90,12 @@ describe('rules on a board', () => {
     const bad = await s.api('POST', '/api/boards/main/rules', { name: 'x', when: { on: 'board_idle', minutes: 30 }, then: [{ do: 'comment', text: 'idle' }] }, USER);
     assert.equal(bad.status, 400);
     assert.equal(bad.body.code, 'BAD_REQUEST');
-    assert.match(bad.body.hint, /no Idle-board alarm rule: switch the behaviour on/, 'no alarm rule here: the hint says so, never "undefined min"');
+    assert.match(bad.body.hint, /Edit or copy the Idle-board alarm rule.*20 minutes/, 'the hint names the board\'s alarm rule (seeded, INT-511)');
+    assert.doesNotMatch(bad.body.hint, /undefined/);
     const keep = await s.api('PUT', '/api/boards/main/rules/board-stuck-watch', { name: 'Stuck watch', when: { on: 'idle', minutes: 60 }, then: [{ do: 'unstick' }] }, USER);
     assert.equal(keep.status, 400, 'unstick only works as the stuck watch has it');
-    // the idle alarm, in its shape, is anyone's rule now; its agents must be standing ones
-    const alarm = await s.api('POST', '/api/boards/main/rules', { name: 'Alarm', when: { on: 'board_idle', minutes: 30 }, then: [{ do: 'wake', agent: 'nobody' }] }, USER);
+    // the idle alarm's rule (seeded on every board, INT-511) wakes standing agents only
+    const alarm = await s.api('PUT', '/api/boards/main/rules/board-idle-alarm', { name: 'Alarm', when: { on: 'board_idle', minutes: 30 }, then: [{ do: 'wake', agent: 'nobody' }] }, USER);
     assert.equal(alarm.status, 400);
     assert.match(alarm.body.error, /standing agents/);
     // deleted, the behaviour is off; the old setting route writes the rule back
@@ -166,6 +167,34 @@ describe('rules on a board', () => {
     try {
       const stall = (await t.ok('GET', '/api/boards/main/rules', undefined, USER)).rules.find((r) => r.id === 'board-stall-wake');
       assert.deepEqual(stall.then, [{ do: 'wake', agent: 'lander' }], 'the idle alarm wakes lander, so the stall rule does');
+    } finally { await t.stop(); }
+  });
+
+  it('a board that never set the idle alarm gets its rule once, from agents.json\'s flags; deleted, it stays deleted, and the flags drive nothing (INT-511)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-alarm-'));
+    const file = path.join(dir, 'data', 'boards', 'main', 'board.json');
+    const rewrite = (fn) => { const b = JSON.parse(fs.readFileSync(file, 'utf8')); fn(b); fs.chmodSync(file, 0o666); fs.writeFileSync(file, JSON.stringify(b)); };
+    const run = [process.execPath, '-e', ''];
+    const agents = { agents: { lander: { run, idleAlarm: true, idleAlarmMinutes: 30, enabled: false }, lead: { run, idleAlarm: true, idleAlarmMinutes: 15, enabled: false }, worker: { run, enabled: false } } };
+    const alarm = async (t) => (await t.ok('GET', '/api/boards/main/rules', undefined, USER)).rules.filter((r) => r.engine === 'idleAlarm');
+    let t = await startServer({ dir, agents });
+    await t.stop({ keep: true });
+    // as a board from before INT-511: seeded up to the stall rule, no alarm rule
+    rewrite((b) => { b.automations.engines = 2; b.automations.rules = b.automations.rules.filter((r) => r.engine !== 'idleAlarm'); });
+    t = await startServer({ dir, agents });
+    try {
+      const [r] = await alarm(t);
+      assert.deepEqual([r.id, r.enabled, r.when, r.then], ['board-idle-alarm', true, { on: 'board_idle', minutes: 15 }, [{ do: 'wake', agent: 'lander' }, { do: 'wake', agent: 'lead' }]], 'a wake per flagged agent, after the smallest minutes');
+      // the rule decides now: edited, it wakes whom it names, flags or not
+      await t.ok('PUT', '/api/boards/main/rules/board-idle-alarm', { name: r.name, enabled: true, when: r.when, then: [{ do: 'wake', agent: 'worker' }] }, USER);
+      assert.deepEqual((await t.ok('GET', '/api/boards/main/idle-alarm')).wake, ['worker']);
+      await t.ok('DELETE', '/api/boards/main/rules/board-idle-alarm', undefined, USER);
+    } finally { await t.stop({ keep: true }); }
+    t = await startServer({ dir, agents });
+    try {
+      assert.deepEqual(await alarm(t), [], 'deleted stays deleted');
+      const ia = await t.ok('GET', '/api/boards/main/idle-alarm');
+      assert.deepEqual([ia.on, ia.wake], [false, []], 'and the flags do not switch it back on');
     } finally { await t.stop(); }
   });
 
