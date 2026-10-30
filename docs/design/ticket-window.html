@@ -1,0 +1,97 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ticket window (INT-493 mockup)</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--surface:#fff;--text:#1b1f27;--muted:#5d6676;--border:#d5d9e0;--accent:#2a7f6f;--on-accent:#fff;--r-s:6px;--r-m:10px;--r-l:16px}
+[data-t=dark]{color-scheme:dark;--bg:#12151b;--panel:#171b22;--surface:#1c212a;--text:#e8ebf0;--muted:#9aa3b2;--border:#2e3541;--accent:#79d0b8;--on-accent:#0c1a16}
+*{box-sizing:border-box}
+body{--field:color-mix(in oklab,var(--bg) 35%,var(--surface));--hover:color-mix(in oklab,var(--text) 6%,transparent);--line:color-mix(in oklab,var(--text) 8%,transparent);margin:0;height:100vh;background:var(--bg);color:var(--text);font:13px/20px system-ui,sans-serif;display:grid;place-items:center;overflow:hidden}
+.scrim{position:fixed;inset:0;background:color-mix(in oklab,var(--bg) 55%,transparent)}
+.win{position:relative;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--r-l);box-shadow:0 24px 60px -20px rgb(0 0 0/.35);overflow:hidden;width:min(var(--w),calc(100vw - 32px));height:min(880px,calc(100vh - 48px))}
+.beside{--w:1560px}.below{--w:1100px}
+.head{display:flex;align-items:center;gap:8px;padding:12px 16px 12px 24px;color:var(--muted);font:500 12px/16px ui-monospace,Consolas,monospace;flex:none}
+.head .sp{flex:1}.head .id{padding:2px 6px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:var(--r-s);height:32px;overflow:hidden;font:500 12px/16px system-ui}
+.seg span{display:flex;align-items:center;gap:6px;padding:0 12px;border-left:1px solid var(--border);color:var(--muted)}.seg span:first-child{border:0}
+.seg .on{background:var(--surface);color:var(--text);box-shadow:inset 0 -2px var(--accent)}
+.seg svg{width:16px;height:16px}
+.x{width:32px;height:32px;display:grid;place-items:center;border-radius:var(--r-s);font:400 18px system-ui}
+.frame{flex:1;min-height:0;display:grid}
+.beside .frame{grid-template-columns:minmax(0,1fr) var(--tw)}
+.below .frame{grid-template-columns:minmax(0,1fr);overflow-y:auto}
+.main{min-width:0;padding:0 32px 24px;overflow-y:auto}.below .main{overflow:visible}
+h1{font:600 24px/32px system-ui;margin:0 0 12px;max-width:68ch}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px solid var(--border);border-radius:var(--r-s);font:500 12px/16px system-ui;color:var(--muted)}
+.chip b{color:var(--text);font-weight:500}
+h2{font:500 12px/16px system-ui;color:var(--muted);margin:0 0 8px}
+.prose{max-width:68ch;margin-bottom:24px}.prose p{margin:0 0 8px}
+.fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px 16px;margin-bottom:24px;max-width:720px}
+.fields div span{display:block;font:500 12px/16px system-ui;color:var(--muted)}
+.fields div b{display:flex;align-items:center;height:32px;padding:0 12px;border:1px solid var(--border);border-radius:var(--r-s);background:var(--field);font-weight:400}
+.check{max-width:68ch;margin-bottom:24px}.check div{display:flex;gap:8px;align-items:center;height:32px;border-bottom:1px solid var(--line)}
+.cb{width:16px;height:16px;border:1px solid var(--border);border-radius:var(--r-s);background:var(--field);display:grid;place-items:center;color:var(--on-accent);font-size:11px}.cb.on{background:var(--accent);border-color:var(--accent)}
+.atts{display:flex;gap:12px}.att{width:120px;height:80px;border:1px solid var(--border);border-radius:var(--r-m);background:var(--surface);display:grid;place-items:end start;padding:8px;font:500 12px/16px system-ui;color:var(--muted)}
+.thread{display:flex;flex-direction:column;min-height:0;min-width:0;position:relative}
+.beside .thread{border-left:1px solid var(--border);background:color-mix(in oklab,var(--bg) 30%,var(--panel))}
+.below .thread{border:1px solid var(--border);border-radius:var(--r-m);height:420px;background:var(--surface);overflow:hidden;margin-top:24px}
+.tabs{display:flex;gap:4px;padding:8px 16px 0;border-bottom:1px solid var(--border);flex:none}
+.tab{padding:8px 12px;color:var(--muted);font:500 13px/20px system-ui;border-bottom:2px solid transparent;margin-bottom:-1px}.tab.on{color:var(--text);border-color:var(--accent)}
+.tab i{font:500 12px/16px system-ui;margin-left:4px;color:var(--muted)}
+.list{flex:1;min-height:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px}
+.c{display:grid;grid-template-columns:24px 1fr;gap:4px 8px}
+.av{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;color:#0c1a16}
+.c .who{font:500 12px/16px system-ui;color:var(--muted);align-self:center}.c .who b{color:var(--text);font-weight:600;font-size:13px;margin-right:8px}
+.c .body{grid-column:2;max-width:68ch}
+.day{text-align:center;font:500 12px/16px system-ui;color:var(--muted)}
+.new{position:absolute;left:50%;translate:-50% 0;bottom:124px;display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:99px;background:var(--accent);color:var(--on-accent);font:500 12px/16px system-ui;box-shadow:0 8px 24px rgb(0 0 0/.18)}
+.composer{flex:none;padding:12px 16px 16px;border-top:1px solid var(--border)}
+.composer .box{border:1px solid var(--border);border-radius:var(--r-s);background:var(--field);padding:8px 12px;color:var(--muted);min-height:56px}
+.composer .row{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:var(--muted);font:500 12px/16px system-ui}
+.btn{height:32px;padding:0 12px;border-radius:var(--r-s);background:var(--accent);color:var(--on-accent);display:inline-flex;align-items:center;font:500 13px system-ui}
+</style>
+<body>
+<div class="scrim"></div>
+<div class="win" id="w">
+ <div class="head"><span class="dot"></span><span class="id">INT-493</span><span>task · Staged</span><span class="sp"></span><span>Saved</span>
+  <div class="seg" role="group" aria-label="Thread position"><span id="sb"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M10 2.75v10.5"/></svg>Beside</span><span id="sw"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M1.75 9h12.5"/></svg>Below</span></div>
+  <span class="x">×</span></div>
+ <div class="frame">
+  <div class="main">
+   <h1>Ticket window: the comment thread can sit beside the ticket</h1>
+   <div class="chips"><span class="chip">Priority <b>High</b></span><span class="chip">Assignee <b>phyla</b></span><span class="chip">Type <b>task</b></span><span class="chip">Parent <b>none</b></span></div>
+   <h2>Description</h2>
+   <div class="prose"><p>Redesign the ticket modals to make better use of horizontal space. Give the user the option to put the comment thread in a list on the side, so the description and fields stay visible.</p><p>Always scroll the thread to the bottom and follow new comments, unless the user scrolls up.</p></div>
+   <h2>Fields</h2>
+   <div class="fields"><div><span>Estimate</span><b>3</b></div><div><span>Risk</span><b>low</b></div><div><span>Area</span><b>ui</b></div></div>
+   <h2>Checklist · 1 of 3</h2>
+   <div class="check"><div><span class="cb"></span>Setting and toggle, two-column layout, fallback</div><div><span class="cb on">✓</span>Follow the bottom, with the new-comments chip</div><div><span class="cb"></span>Full suite green</div></div>
+   <h2>Attachments</h2>
+   <div class="atts"><div class="att">mockup.png</div><div class="att">scroll.mp4</div></div>
+  </div>
+  <div class="thread" id="th">
+   <div class="tabs"><span class="tab on">Comments<i>6</i></span><span class="tab">Triggers<i>1</i></span><span class="tab">History</span></div>
+   <div class="list">
+    <div class="day">Yesterday</div>
+    <div class="c"><span class="av" style="background:#c7b6ff">P</span><span class="who"><b>phyla</b>23:12</span><div class="body">Starting on the layout. The thread gets its own column and its own scroll.</div></div>
+    <div class="c"><span class="av" style="background:#79d0b8">M</span><span class="who"><b>mantis</b>23:20</span><div class="body">Mockups are on the card. The toggle sits in the header, beside the close button.</div></div>
+    <div class="day">Today</div>
+    <div class="c"><span class="av" style="background:#ffd28a">J</span><span class="who"><b>James</b>08:02</span><div class="body">The thread should stay at the bottom while I read the description.</div></div>
+    <div class="c"><span class="av" style="background:#c7b6ff">P</span><span class="who"><b>phyla</b>08:04</span><div class="body">It does until you scroll up; then a chip says how many came in.</div></div>
+    <div class="c"><span class="av" style="background:#9fd0ff">G</span><span class="who"><b>gamora</b>08:09</span><div class="body">Fallback below 1000 px is in.</div></div>
+    <div class="c"><span class="av" style="background:#c7b6ff">P</span><span class="who"><b>phyla</b>08:11</span><div class="body">Tests for the scroll logic are green.</div></div>
+   </div>
+   <span class="new">2 new ↓</span>
+   <div class="composer"><div class="box">Write a comment, @ to mention</div><div class="row"><span>Ctrl+Enter to send</span><span class="btn">Comment</span></div></div>
+  </div>
+ </div>
+</div>
+<script>
+const q=new URLSearchParams(location.search),m=q.get('m')||'beside';
+document.documentElement.dataset.t=q.get('t')||'light';
+const win=document.getElementById('w');win.classList.add(m);
+win.style.setProperty('--tw',innerWidth>=1800?'440px':'400px');
+document.getElementById(m=='beside'?'sb':'sw').classList.add('on');
+if(m=='below')win.querySelector('.main').append(document.getElementById('th'));
+if(m=='below')win.querySelector('.frame').scrollTop=1e4;
+</script>

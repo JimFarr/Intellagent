@@ -1,0 +1,43 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rule as a sentence (INT-507 mockup)</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--surface:#fff;--text:#1b1f27;--muted:#5d6676;--border:#d5d9e0;--accent:#2a7f6f;--on-accent:#fff;--danger:#c03545;--field-bg:color-mix(in oklab,var(--bg) 35%,var(--surface));--hover:color-mix(in oklab,var(--text) 6%,transparent);--r-s:6px;--r-m:10px}
+[data-t=dark]{--bg:#12151b;--panel:#171b22;--surface:#1c212a;--text:#e8ebf0;--muted:#9aa3b2;--border:#2e3541;--accent:#79d0b8;--on-accent:#0c1a16;--danger:#ff7a8a}
+*{box-sizing:border-box}body{--field-bg:color-mix(in oklab,var(--bg) 35%,var(--surface));--hover:color-mix(in oklab,var(--text) 6%,transparent);margin:0;background:var(--bg);color:var(--text);font:13px/20px system-ui,sans-serif}
+.page{max-width:720px;margin:0 auto;padding:24px 16px;display:grid;gap:24px}
+h1{font:600 18px/24px system-ui;margin:0}
+.sum{padding:12px 16px;border:1px solid var(--border);border-radius:var(--r-m);background:var(--panel);font-size:14px;line-height:22px}
+.sum b{font-weight:600}.sum u{text-decoration:none;color:var(--accent);font-weight:600}
+.sec{display:grid;grid-template-columns:56px 1fr;gap:0 16px;padding:16px 0;border-top:1px solid var(--border)}
+.cap{font:500 12px/32px system-ui;color:var(--muted);text-transform:none}
+.line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-height:32px}
+.line+.line{margin-top:8px}
+.f{height:32px;border:1px solid var(--border);border-radius:var(--r-s);background:var(--field-bg);color:var(--text);padding:0 12px;display:inline-flex;align-items:center;gap:8px}
+.f.n{width:64px;font-variant-numeric:tabular-nums}.f i{font-style:normal;color:var(--muted)}
+.t{background:color-mix(in oklab,var(--accent) 14%,transparent);color:var(--text);border-radius:var(--r-s);padding:0 8px;font-weight:600;height:24px;display:inline-flex;align-items:center}
+.help{font:500 12px/16px system-ui;color:var(--muted);flex-basis:100%}
+.link{color:var(--accent);font-weight:500}
+.b{height:32px;padding:0 12px;border-radius:var(--r-s);border:1px solid var(--border);background:var(--surface);color:var(--text);font:500 13px system-ui}.b.p{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.acts{display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border);padding-top:16px}
+.old{color:var(--muted);text-decoration:line-through}
+@media(max-width:520px){.sec{grid-template-columns:1fr;gap:0}.cap{line-height:20px;margin-bottom:8px}}
+</style>
+<body data-t="light"><div class="page">
+<div style="display:flex;align-items:center;gap:8px"><h1>Archive Done Tickets</h1><span style="margin-left:auto;color:var(--muted)">
+<button class="b" onclick="document.body.dataset.t='light'">Light</button> <button class="b" onclick="document.body.dataset.t='dark'">Dark</button></span></div>
+<div class="sum">For a ticket <u>T</u>, when <u>T</u> has been in <b>Done</b> for <b>2 days</b>, archive <u>T</u>.</div>
+<div>
+<div class="sec"><div class="cap">For</div><div class="line">a ticket <span class="t">T</span></div></div>
+<div class="sec"><div class="cap">When</div><div>
+ <div class="line"><span class="t">T</span> has been in <span class="f">Done <i>⌄</i></span> for <span class="f n">2</span><span class="f">days <i>⌄</i></span></div>
+ <div class="line"><span class="help">The rule looks at each ticket when this becomes true. <span class="link">Change the trigger</span></span></div></div></div>
+<div class="sec"><div class="cap">If</div><div>
+ <div class="line">and only if <span class="f" style="min-width:240px;color:var(--muted)">T.priority in ["Low"]</span></div>
+ <div class="line"><span class="help">Narrows the When: both must hold. Leave it out and the rule acts every time. <span class="link">Remove</span> · <span class="link">Use the builder</span></span></div>
+ <div class="line" style="margin-top:16px;color:var(--muted)">Empty state: <span class="link">+ Add a condition</span> <span class="old">(Every time)</span></div></div></div>
+<div class="sec"><div class="cap">Then</div><div>
+ <div class="line">archive <span class="t">T</span></div>
+ <div class="line"><span class="link">+ Add an action</span></div></div></div>
+</div>
+<div class="acts"><button class="b">Cancel</button><button class="b p">Save rule</button></div>
+</div>

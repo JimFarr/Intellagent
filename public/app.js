@@ -4552,8 +4552,10 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       <tbody>${groups.map(([k, ps]) => `<tr class="pg-grp"><th colspan="${g.agents.length + 1}" scope="colgroup">${esc(PERM_KINDS[k][0])}<span class="cnt">${ps.length}</span></th></tr>`
         + ps.map((p) => { const row = r++; return `<tr><th class="pg-perm${p.enforced ? '' : ' verbal'}" scope="row" title="${esc(`${p.name}|${p.description || p.key}`)}">${esc(p.name)}</th>${g.agents.map((a, c) => cellHtml(a, p, row, c)).join('')}</tr>`; }).join('')).join('')}</tbody></table>`;
     const first = !$('.pg-scroll', body);
+    // with many agents the column grows to the page; with a few it stays the language's 960 px, title and table in one line
+    body.closest('.page-pane')?.classList.toggle('pg-wide', g.agents.length > 5);
     if (first) {
-      body.innerHTML = `<p class="perm-intro">Every standing agent against every permission. Click a cell to change it.</p>
+      body.innerHTML = `<p class="perm-intro">Who may do what. Click a cell to grant or take away.</p>
         ${me.boardHasUserToken === false ? `<div class="aa-lock">${icon('lock', 'sm')}<span>Read only: cells can be changed only on a board with a sign-in token. Run <code>intellagent token</code>, restart the board and sign in with <code>intellagent open</code>.</span></div>` : ''}
         ${g.errors?.length ? `<div class="perm-warn risk perm-errors">${icon('info', 'sm')}<span>Skipped: ${g.errors.map(esc).join(' · ')}</span></div>` : ''}
         <div class="pg-scroll" tabindex="0" role="region" aria-label="Permissions grid, scrolls sideways"></div>
@@ -5028,20 +5030,41 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     };
   }
 
-  function toast(msg, { kind = '', icon: ic = null, actor = null, action = null, onAction = null, onClick = null, timeout = 3800, wrap = false } = {}) {
-    const lead = actor ? avatar(actor) : ic ? icon(ic) : kind === 'error' ? icon('x') : kind === 'needs' ? icon('ask') : icon('sparkle');
-    const t = el(`<div class="toast ${kind} ${onClick ? 'click' : ''} ${wrap ? 'wrap' : ''}">${lead}<span class="msg"></span>${action ? `<button>${esc(action)}</button>` : ''}<i class="bar" style="animation-duration:${timeout}ms"></i></div>`);
-    $('.msg', t).textContent = msg;
+  // Toasts (INT-471, docs/design.md): bottom right, three at most, a dot for the meaning, a Dismiss button. Information stays
+  // 4 s, with an action 8 s, an error until dismissed; hover or focus pauses it; the same message twice shows once, counted.
+  function toast(msg, { kind = '', icon: ic = null, actor = null, action = null, onAction = null, onClick = null, timeout = null, wrap = false } = {}) {
     const host = $('#toasts');
+    const same = [...host.children].find((x) => !x.classList.contains('out') && x.dataset.msg === msg && x.dataset.kind === kind);
+    if (same) { const n = (+same.dataset.n || 1) + 1; same.dataset.n = n; $('.n', same).textContent = `×${n}`; same._arm(); return; }
+    const ms = timeout ?? (kind === 'error' ? 0 : action ? 8000 : 4000);
+    const t = el(`<div class="toast ${kind} ${onClick ? 'click' : ''} ${wrap ? 'wrap' : ''}" data-kind="${esc(kind)}">${actor ? avatar(actor) : '<i class="dot"></i>'}<span class="msg"></span><b class="n"></b>${action ? `<button class="btn ghost sm act">${esc(action)}</button>` : ''}<button class="btn ghost x" aria-label="Dismiss">${icon('x')}</button></div>`);
+    $('.msg', t).textContent = msg;
+    t.dataset.msg = msg;
     host.append(t);
-    while (host.children.length > 4) host.firstChild.remove();
-    const kill = () => { t.classList.add('out'); setTimeout(() => t.remove(), 250); };
-    if (action) $('button', t).onclick = (e) => { e.stopPropagation(); onAction?.(); kill(); };
+    while (host.children.length > 3) host.firstChild.remove();
+    const kill = () => { clearTimeout(t._timer); t.classList.add('out'); setTimeout(() => t.remove(), 120); };
+    $('.x', t).onclick = (e) => { e.stopPropagation(); kill(); };
+    if (action) $('.act', t).onclick = (e) => { e.stopPropagation(); onAction?.(); kill(); };
     if (onClick) t.onclick = () => { onClick(); kill(); };
-    let timer = setTimeout(kill, timeout);
-    t.onmouseenter = () => clearTimeout(timer);
-    t.onmouseleave = () => { timer = setTimeout(kill, 1500); };
+    t._arm = () => { clearTimeout(t._timer); if (ms) t._timer = setTimeout(kill, ms); };
+    t._arm();
+    t.onmouseenter = t.onfocusin = () => clearTimeout(t._timer);
+    t.onmouseleave = t.onfocusout = t._arm;
   }
+
+  // The colour field (INT-471, docs/design.md): the native picker is the value, the hex box and the theme dots write to it.
+  // shortcut: no saturation square, the native picker opens from the swatch; upgrade when a popover is wanted.
+  const setColour = (cf, hex) => { const c = $('input[type="color"]', cf); c.value = hex; $('.cf-hex', cf).value = c.value; c.dispatchEvent(new Event('input', { bubbles: true })); };
+  document.addEventListener('input', (e) => {
+    const cf = e.target.closest?.('.cf'); if (!cf) return;
+    if (e.target.type === 'color') $('.cf-hex', cf).value = e.target.value;
+    else if (/^#[0-9a-f]{6}$/i.test(e.target.value)) { $('input[type="color"]', cf).value = e.target.value; e.target.classList.remove('bad'); } else e.target.classList.add('bad');
+  });
+  document.addEventListener('click', (e) => {
+    const d = e.target.closest?.('.cf-dot'); if (!d) return;
+    const rgb = getComputedStyle(d).backgroundColor.match(/\d+/g).slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('');
+    setColour(d.closest('.cf'), `#${rgb}`);
+  });
 
   /* ═════════════════════════ token prompt ═════════════════════════ */
 
@@ -5287,7 +5310,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       const byDay = new Map();
       for (const e of (state.board.digest || []).slice().reverse()) { if (!byDay.has(e.date)) byDay.set(e.date, []); byDay.get(e.date).push(e); }
       body.innerHTML = `<div class="digest-compose">${tboxHTML({ ph: 'Add a note…', okIcon: 'send', okTitle: 'Post (Ctrl+Enter)' })}</div>${[...byDay].map(([d, list]) => `<div class="dg-day"><div class="section-head"><span>${esc(dayLabel(d))}</span><span class="rule"></span></div>
-        ${list.map((e) => `<div class="dg-entry">${avatar(e.author, 'lg')}<div style="min-width:0"><div class="cmt-head"><b>${nameHTML(e.author?.name)}</b><span>${new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>${(e.items || []).map((id) => `<span class="mini-chip link" data-open="${esc(id)}">${esc(id)}</span>`).join('')}</div><div class="md">${md(e.summary)}</div></div></div>`).join('')}</div>`).join('') || `<div class="empty-note">${icon('news')}<span>No digest entries yet</span></div>`}`;
+        <div class="dg-list">${list.map((e) => `<div class="dg-entry">${avatar(e.author, 'lg')}<div style="min-width:0"><div class="cmt-head"><b>${nameHTML(e.author?.name)}</b>${(e.items || []).map((id) => `<span class="mini-chip link" data-open="${esc(id)}">${esc(id)}</span>`).join('')}<span class="dg-time">${new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div><div class="md">${md(e.summary)}</div></div></div>`).join('')}</div></div>`).join('') || `<div class="empty-note">${icon('news')}<span>No digest entries yet</span></div>`}`;
       wireTbox($('.tbox', body), post);
     };
     body._redraw = draw;
@@ -5512,7 +5535,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         ${pane('identity', `<label class="spec-label" for="pe-label-${id}">Title</label><input class="inp" id="pe-label-${id}" data-id="label" maxlength="60" value="${esc(prof.label || '')}">
           <div class="pe-row">
             <div><label class="spec-label" for="pe-glyph-${id}">Glyph</label><input class="inp" id="pe-glyph-${id}" data-id="glyph" maxlength="8" value="${esc(prof.glyph || '')}"></div>
-            <div><label class="spec-label" for="pe-color-${id}">Colour</label><input class="inp pe-color" id="pe-color-${id}" data-id="color" type="color" value="${hex}"></div>
+            <div><label class="spec-label" for="pe-color-${id}">Colour</label><div class="cf"><input class="pe-color" id="pe-color-${id}" data-id="color" type="color" value="${hex}" aria-label="Pick a colour"><input class="inp cf-hex" value="${hex}" maxlength="7" spellcheck="false" aria-label="Colour as hex"><span class="cf-pal">${['accent', 'ok', 'warn', 'danger'].map((t) => `<button type="button" class="cf-dot" data-cf="${t}" style="background:var(--${t})" title="Use the ${t} colour" aria-label="${t}"></button>`).join('')}</span></div></div>
             <div><label class="spec-label" for="pe-model-${id}">Model tier</label><input class="inp" id="pe-model-${id}" data-id="model" list="pe-models-${id}" maxlength="64" value="${esc(a.model || '')}"><datalist id="pe-models-${id}"><option value="haiku"><option value="sonnet"><option value="opus"></datalist></div>
           </div>
           <label class="spec-label" for="pe-desc-${id}">Description <span class="muted">— what the receptionist routes by</span></label><textarea class="inp" id="pe-desc-${id}" data-id="description" rows="3" maxlength="2000">${esc(prof.description || a.description || '')}</textarea>`)}
