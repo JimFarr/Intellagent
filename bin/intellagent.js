@@ -13,6 +13,7 @@
  *   intellagent api <METHOD> <path> [json | @file | -]
  *   intellagent mcp                     MCP server over stdio
  *   intellagent plugin-mcp              MCP server for writing plugins (docs/plugins.md)
+ *   intellagent theme-mcp               MCP server for making themes (themes/README.md)
  *   intellagent hook install | post-commit | sync-ci
  *   intellagent agents [add|remove|pause|resume|run|accept|return|log] standing agents the board wakes up itself
  *   intellagent autostart on|off|status  start this board when you log in
@@ -1105,6 +1106,7 @@ const HELP = `intellagent — a kanban for you and your agents
                    or --filter "types=item.created&column=Ready" (any /api/events filter)
   mcp              MCP server over stdio
   plugin-mcp       MCP server for writing plugins: new, check and try one, no board needed (docs/plugins.md)
+  theme-mcp        MCP server for making themes: start from one, set the palette, check its contrast (themes/README.md)
   hook ...         git: install | post-commit | sync-ci
 
   agents           standing agents the board wakes up itself (defined in .intellagent/agents.json)
@@ -1154,6 +1156,7 @@ const commands = {
   do: () => doOp().catch((e) => { console.error(e.message); process.exit(e.exit || 2); }),
   mcp: () => forward('mcp.js', rest),
   'plugin-mcp': () => forward('plugin-mcp.js', rest),
+  'theme-mcp': () => forward('theme-mcp.js', rest),
   hook: () => forward('git-hook.js', rest),
   leases: () => require('../lib/leasesCli').leases(rest).catch((e) => { console.error(e.message); process.exit(e.exit || 1); }),
   help: () => (rest[0] ? opHelp(rest[0]) : process.stdout.write(HELP)),

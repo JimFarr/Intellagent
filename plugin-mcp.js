@@ -8,6 +8,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { validate, NAME_RE } = require('./lib/plugins');
 const { childEnv } = require('./lib/agents/runner');
+const { serve, launched } = require('./lib/mcp-serve');
 
 const ROOT = __dirname;
 const VERSION = require('./package.json').version;
@@ -146,48 +147,9 @@ const TOOLS = [
     ['path'], async (a) => JSON.stringify(await tryPlugin(a), null, 2)],
 ];
 
-function send(msg) { process.stdout.write(`${JSON.stringify(msg)}\n`); }
-async function handle(msg) {
-  const { id, method, params } = msg;
-  if (id === undefined) return;
-  try {
-    if (method === 'initialize') {
-      return send({ jsonrpc: '2.0', id, result: { protocolVersion: params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'intellagent-plugins', version: VERSION },
-        instructions: 'Writes and tries Intellagent plugins. Call plugin_guide first; then plugin_new, edit index.js, plugin_check, plugin_try. Nothing here touches a board: the human adds and enables the finished folder.' } });
-    }
-    if (method === 'ping') return send({ jsonrpc: '2.0', id, result: {} });
-    if (method === 'tools/list') {
-      return send({ jsonrpc: '2.0', id, result: { tools: TOOLS.map(([name, description, properties, required]) => ({ name, description, inputSchema: { type: 'object', properties, required } })) } });
-    }
-    if (method === 'tools/call') {
-      const t = TOOLS.find(([name]) => name === params?.name);
-      let text, isError = false;
-      try { if (!t) throw new Error(`no tool ${params?.name}`); text = await t[4](params.arguments || {}); } catch (e) { text = `Error: ${e.message}`; isError = true; }
-      return send({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], isError } });
-    }
-    send({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } });
-  } catch (e) { send({ jsonrpc: '2.0', id, error: { code: -32603, message: e.message } }); }
-}
-
-// run directly, or through intellagent plugin-mcp (which requires this file with it as argv[1]); not when a test imports it
-if (require.main === module || path.resolve(process.argv[1] || '') === __filename) {
-  let buf = '';
-  const pending = new Set();
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', (chunk) => {
-    buf += chunk;
-    let nl;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line) continue;
-      let msg;
-      try { msg = JSON.parse(line); } catch { continue; }
-      const p = handle(msg).finally(() => pending.delete(p));
-      pending.add(p);
-    }
-  });
-  process.stdin.on('end', async () => { await Promise.allSettled([...pending]); process.exit(0); });
+if (launched(module, __filename)) {
+  serve({ name: 'intellagent-plugins', version: VERSION, tools: TOOLS,
+    instructions: 'Writes and tries Intellagent plugins. Call plugin_guide first; then plugin_new, edit index.js, plugin_check, plugin_try. Nothing here touches a board: the human adds and enables the finished folder.' });
 }
 
 module.exports = { TOOLS, skeleton, tryPlugin };
