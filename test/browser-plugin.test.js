@@ -29,12 +29,14 @@ test('browser plugin: one browser per agent on its own port, in the size and the
     assert.match((await s.ok('POST', '/api/plugins/browser/connection/test', {}, HUMAN)).message, /Chrome launches: FakeChrome/);
 
     // ann's browser: its own port, its size and theme, a fresh profile in the plugin's data
-    const first = await run('start', { url: 'http://127.0.0.1:7431/', width: 375, theme: 'dark' }, ANN);
+    // headless Chrome keeps its window at least 500 wide, so a narrower width is refused (375 is the browser tool's resize)
+    assert.strictEqual((await run('start', { url: 'http://127.0.0.1:7431/', width: 375 }, ANN)).status, 400);
+    const first = await run('start', { url: 'http://127.0.0.1:7431/', width: 500, theme: 'dark' }, ANN);
     assert.strictEqual(first.body.status, 'succeeded', JSON.stringify(first.body));
     const port = first.body.result.port;
     assert.strictEqual(first.body.result.attach, `--cdp-endpoint http://127.0.0.1:${port}`);
     const { args } = await up(port);
-    for (const want of ['--headless=new', '--window-size=375,800', '--blink-settings=preferredColorScheme=0', 'http://127.0.0.1:7431/']) assert.ok(args.includes(want), `${want} in ${args}`);
+    for (const want of ['--headless=new', '--window-size=500,800', '--blink-settings=preferredColorScheme=0', 'http://127.0.0.1:7431/']) assert.ok(args.includes(want), `${want} in ${args}`);
     assert.ok(args.some((a) => a.startsWith('--user-data-dir=') && a.endsWith(path.join('data', 'profiles', 'ann'))));
 
     // the grant bounds where it opens: never a real board
@@ -42,7 +44,7 @@ test('browser plugin: one browser per agent on its own port, in the size and the
     assert.strictEqual((await run('start', { url: 'http://127.0.0.1:7431/' }, { agent: 'cal' })).body.code, 'FORBIDDEN');
 
     // the same size and theme: a new tab in the same browser
-    const again = (await run('start', { url: 'http://127.0.0.1:7432/x', width: 375, theme: 'dark' }, ANN)).body.result;
+    const again = (await run('start', { url: 'http://127.0.0.1:7432/x', width: 500, theme: 'dark' }, ANN)).body.result;
     assert.deepStrictEqual([again.reused, again.port], [true, port]);
     assert.deepStrictEqual((await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).map((t) => t.url), ['http://127.0.0.1:7431/', 'http://127.0.0.1:7432/x']);
 

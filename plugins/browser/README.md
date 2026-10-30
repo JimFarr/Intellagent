@@ -2,7 +2,7 @@
 
 Gives each agent its own headless Chrome, so it can look at its own build. Off until the human enables it on **Integrations**.
 
-- `start { url, width?, height?, theme? }`: launches the calling agent's browser (a fresh profile, `width`×`height`, default 1280×800, `light` or `dark`) opened at `url`, on a port of its own (9400–9499, the same each time), and answers `{ devtools, port, attach }`. Starting again with the same size and theme opens `url` in a new tab; another size or theme restarts it.
+- `start { url, width?, height?, theme? }`: launches the calling agent's browser (a fresh profile, `width`×`height`, default 1280×800, `light` or `dark`) opened at `url`, on a port of its own (9400–9499, the same each time), and answers `{ devtools, port, attach }`. Starting again with the same size and theme opens `url` in a new tab; another size or theme restarts it. Headless Chrome keeps its window at least 500 wide, so `width` starts at 500: for a 375 px look, resize the page with the browser tool (Playwright's `browser_resize` sets the page's size over DevTools, which goes below 500).
 - `stop`: closes it. A browser whose pages haven't changed for the idle time (connection, default 15 minutes) closes itself, and disabling the plugin closes them all.
 
 **Grants**, per agent in **Agents › Assignments**: `plugin.browser.start` scoped on `url` to the sandbox ports, e.g. `{ "power": "plugin.browser.start", "where": { "url": ["http://127.0.0.1:743*", "http://127.0.0.1:744*"] } }`, and `plugin.browser.stop`.

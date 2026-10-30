@@ -14,7 +14,7 @@
     { "id": "start", "label": "Start my browser", "help": "Launches (or reuses) your headless Chrome, opened at url → { devtools, port, attach }", "timeoutSec": 40,
       "inputs": [
         { "key": "url", "label": "Address", "type": "url", "required": true, "help": "Your sandbox build, e.g. http://127.0.0.1:7431" },
-        { "key": "width", "label": "Width", "type": "number", "min": 320, "max": 3840 },
+        { "key": "width", "label": "Width", "type": "number", "min": 500, "max": 3840, "help": "Headless Chrome keeps its window at least 500 wide: for 375, resize the page with your browser tool" },
         { "key": "height", "label": "Height", "type": "number", "min": 320, "max": 2160 },
         { "key": "theme", "label": "Theme", "type": "enum", "options": ["light", "dark"] }
       ] },
