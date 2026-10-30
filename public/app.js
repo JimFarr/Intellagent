@@ -3457,6 +3457,10 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       toast(describe(ev), { actor: ev.actor, onClick: () => openRequests(), timeout: 6000 });
       return;
     }
+    if (ev.type === 'rule.held') { // a rule hit its hourly cap (INT-509); once per hold, the server says it once
+      toast(describe(ev), { icon: 'clock', action: 'See what it did', onAction: () => rules.open('log'), timeout: 12000 });
+      return;
+    }
     if (ev.type === 'agent.failed') {
       toast(describe(ev), { kind: 'needs', icon: 'bot', action: 'Log', onAction: () => showRunLog(ev.agent), onClick: () => openAgent(ev.agent), timeout: 9000 });
       return;

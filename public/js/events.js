@@ -84,6 +84,7 @@ export function describe(ev, html, nameOf, RUN_LABEL) {
     case 'item.unblocked': return `${b(id)} is unblocked (${b(ev.resolvedBy)} done)`;
     case 'app.renamed': return `${who} renamed the app to ${b(ev.to)}`;
     case 'rule.fired': return `${who} woke ${nb((ev.addressed || [])[0] || '')}${id ? ` about ${b(id)}` : ''}${ev.stall ? `: ${b(ev.stall.agent)} stalled (${ev.stall.why})` : ''}${ev.note ? `: ${html ? esc(ev.note) : ev.note}` : ''}`;
+    case 'rule.held': return `${html ? esc(ev.name) : ev.name} is held at ${ev.fired} an hour: ${ev.waiting} still waiting`;
     case 'rule.ran': {
       const t = (s) => (html ? esc(s) : s);
       // what it did, action by action, when the event says (older ones only count the failures)

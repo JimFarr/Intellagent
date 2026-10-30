@@ -781,7 +781,6 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
   // Live: the log grows as rules fire; editors are never redrawn under the human's hands
   let pending = null;
   function onEvent(ev) {
-    if (ev.type === 'rule.held') toast(`${ev.name} is held at ${ev.fired} an hour: ${ev.waiting} still waiting`, { icon: 'clock', action: 'See what it did', onAction: () => open('log'), timeout: 12000 });
     if (!isOpen() || S.view || !(ev.type === 'rule.ran' || ev.type === 'rule.held' || (ev.type === 'board.updated' && ev.changes?.rules))) return;
     clearTimeout(pending);
     pending = setTimeout(() => load().then(render, () => {}), 300);
