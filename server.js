@@ -5048,10 +5048,23 @@ const STALLS = require('./lib/alerts/stalls');
 const STALL_TIMINGS = STALLS.timingsOf(M.stalls);
 // shortcut: the ledger is in memory, so a stall still standing at a restart is raised once more; keep it on disk if that bothers
 let stallLedger = {};
+// The board's own 401/403 answers to a standing agent's run (INT-506): counted only while that run is live and its
+// X-Intellagent-Run is the run's id (a made-up id counts for nothing), and kept by the run's start, which the
+// finished run keeps in lastRun, so the stall check gives the count to the run that made it. agent → { startedAt, count }
+const refusals = new Map();
+function countRefusal(actor) {
+  if (actor?.kind !== 'agent' || !actor.run || !standing) return;
+  let a;
+  try { a = standing.get(actor.name); } catch { return; } // not a standing agent
+  if (!a.runningSince || a.lastRun?.runId !== actor.run) return;
+  const r = refusals.get(actor.name);
+  refusals.set(actor.name, { startedAt: a.lastRun.startedAt, count: r?.startedAt === a.lastRun.startedAt ? r.count + 1 : 1 });
+}
+const withRefusals = (a) => { const r = refusals.get(a.name); return r && r.startedAt === a.lastRun?.startedAt ? { ...a, refusals: r.count } : a; };
 function checkStalls() {
   if (M.sandbox || !standing) return; // a sandbox's agents never run: every one would look stalled
   const work = (a) => { try { return pendingWork(a.name, a.pickup === true ? 'ready' : a.pickup || false); } catch { return []; } };
-  const r = STALLS.check(standingAgents(), work, stallLedger, Date.now(), STALL_TIMINGS);
+  const r = STALLS.check(standingAgents().map(withRefusals), work, stallLedger, Date.now(), STALL_TIMINGS);
   stallLedger = r.ledger;
   for (const s of r.stalls) {
     for (const ctx of boards.values()) {
@@ -6277,6 +6290,7 @@ let lastUsed = Date.now();
 
 const server = http.createServer(async (req, res) => {
   if (M.sandbox && !(req.method === 'GET' && String(req.url).split('?')[0] === '/api/app')) lastUsed = Date.now();
+  let actor = null;
   try {
     const badHost = hostProblem(req, HOSTS, `http://127.0.0.1:${M.port}`);
     if (badHost) fail(badHost.status, badHost.error, { code: badHost.code, hint: `${badHost.hint}, or add the name to "allowedHosts" in ${MANIFEST_PATH}` });
@@ -6296,7 +6310,7 @@ const server = http.createServer(async (req, res) => {
     if (!m) fail(404, `No route for ${req.method} ${u.pathname}`, { code: 'NOT_FOUND', hint: 'Routes: GET /api. From the CLI, call operations by name instead: intellagent help <word> (e.g. intellagent help search), then intellagent do <operation> key=value' });
     const q = Object.fromEntries(u.searchParams);
     const body = !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? {} : m.r.pattern === '/hooks/:name' ? await readRaw(req) : await readBody(req);
-    const actor = actorOf(req, q);
+    actor = actorOf(req, q);
     checkAuth(req, q, actor, u.pathname, m.r.policy);
     if (actor.kind === 'agent' && req.method !== 'GET') probationGate(req.method, u.pathname, body, actor);
     const bm = /^\/api\/boards\/([^/]+)(?:\/(.*))?$/.exec(u.pathname);
@@ -6320,6 +6334,7 @@ const server = http.createServer(async (req, res) => {
     if (res.headersSent) { res.end(); return; }
     const status = e.status || 500;
     if (status === 500) console.error(e);
+    if (status === 401 || status === 403) countRefusal(actor);
     reply(res, status, { error: e.message, code: e.code || (status === 500 ? 'INTERNAL' : 'ERROR'), status, ...(e.extra || {}) });
   }
 });
