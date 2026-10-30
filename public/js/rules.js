@@ -154,7 +154,7 @@ function condText(c, fields) {
 }
 
 export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board, people = () => [] }) {
-  const S = { tab: 'mine', view: null, data: null, log: [], agents: [], body: null };
+  const S = { tab: 'mine', view: null, data: null, log: [], agents: [], plugins: [], body: null };
   const base = () => `/api/boards/${encodeURIComponent(board().id)}/rules`;
   const ago = (ts) => { const r = rel(ts); return !r ? '' : r === 'now' ? 'just now' : `${r} ago`; };
   const fail = (e) => toast(e.message + (e.data?.hint ? ` — ${e.data.hint}` : ''), { kind: 'error', wrap: true, timeout: 7000 });
@@ -168,6 +168,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     const [data, log] = await Promise.all([api('GET', base()), api('GET', `${base()}/log?limit=100`)]);
     Object.assign(S, { data, log });
     // who a wake or an assign can name: the standing agents (a typed name still works)
+    api('GET', '/api/plugins').then((r) => { S.plugins = r.plugins || []; }, () => {});
     api('GET', '/api/agents').then((a) => { S.agents = (a.agents || a || []).map((x) => x.name).filter(Boolean); }, () => {});
   }
 
@@ -303,7 +304,14 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         ${d.column ? `<select class="inp" data-w="column" aria-label="Column">${board().columns.map((c) => option(c.id, c.name, c.id === st.when.column)).join('')}</select>` : ''}
         ${st.when.on === 'in_column' ? '<span class="rb-word">for</span>' : ''}
         ${v.times[st.when.on] ? `<span class="rb-unit"><input class="inp" type="number" data-wn min="1" step="1" value="${mins / UNITS[unit]}" aria-label="How long"><select class="inp" data-wu aria-label="Unit">${Object.keys(UNITS).map((u) => option(u, u, u === unit)).join('')}</select></span>` : ''}
+        ${st.when.on === 'plugin_event' ? pluginEventHTML() : ''}
         ${st.when.on === 'assigned' || st.when.on === 'mentioned' ? `<span class="rb-unit"><span>${st.when.on === 'assigned' ? 'to' : 'who'}</span><input class="inp" data-w="to" list="rl-people" placeholder="anyone" value="${esc(st.when.to || '')}" spellcheck="false"></span>` : ''}</div>`;
+    }
+    // a plugin and one of the events it declares
+    function pluginEventHTML() {
+      const p = S.plugins.find((x) => x.name === st.when.plugin);
+      return `<select class="inp" data-w="plugin" aria-label="Plugin">${option('', 'a plugin…', !p)}${S.plugins.map((x) => option(x.name, x.label || x.name, x.name === st.when.plugin)).join('')}</select>
+        <select class="inp" data-w="event" aria-label="Event">${option('', 'an event…', !st.when.event)}${(p?.events || []).map((x) => option(x.id, x.label || x.id, x.id === st.when.event)).join('')}</select>`;
     }
     // one condition: field · operator · value
     function rowHTML(row, addr) {
@@ -486,6 +494,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       const w = e.target.dataset.w;
       if (w) {
         st.when[w] = e.target.value;
+        if (w === 'plugin') { st.when.event = ''; drawIf(); }
         if (w === 'on') {
           const d = v.events[st.when.on] || v.times[st.when.on];
           if (d.column && !st.when.column) st.when.column = board().columns[0]?.id;
@@ -576,6 +585,14 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         row.replaceWith(el(actionRow({ do: 'extract', from: g('from'), how: g('how'), into: g('into'), ask: g('ask'), pattern: g('pattern'), key: g('key') })));
         renumber();
       }
+      // a run's plugin and action decide which inputs it shows
+      if (e.target.matches('[data-redraw-run]')) {
+        const row = e.target.closest('.rb-act');
+        const g = (n) => $(`[name="${n}"]`, row)?.value ?? '';
+        const pick = e.target.name === 'plugin';
+        row.replaceWith(el(actionRow({ do: 'run', plugin: g('plugin'), action: pick ? '' : g('action'), inputs: pick ? {} : readInputs(row) })));
+        renumber();
+      }
       changed();
     });
     acts.addEventListener('input', changed);
@@ -614,6 +631,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         if (a.do === 'move') a.column = g('column');
         if (a.do === 'comment' || a.do === 'ask_human') a.text = g('text');
         if (a.do === 'set_field' || a.do === 'set_property') { a.key = g('key'); const raw = g('value'); a.value = raw === '' ? null : raw; if (/^(true|false|-?\d+(\.\d+)?|\[.*\])$/.test(raw)) try { a.value = JSON.parse(raw); } catch { /* text as typed */ } }
+        if (a.do === 'run') Object.assign(a, { plugin: g('plugin'), action: g('action'), inputs: readInputs(row) });
         if (a.do === 'merge') { a.branch = g('branch'); a.push = !!$('[name="push"]', row)?.checked; }
         if (a.do === 'extract') {
           Object.assign(a, { from: g('from') || 'all', how: g('how') || 'pattern', into: g('into') || 'property' });
@@ -634,6 +652,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       const d = v.events[when.on] || v.times[when.on] || {};
       if (d.column) when.column = st.when.column;
       if (v.times[when.on]) when.minutes = Number(st.when.minutes) || 60;
+      if (when.on === 'plugin_event') Object.assign(when, { plugin: st.when.plugin || '', event: st.when.event || '' });
       if ((when.on === 'assigned' || when.on === 'mentioned') && st.when.to?.trim()) when.to = st.when.to.trim();
       return { name: f.elements.name.value.trim(), enabled: st.enabled, ...(st.expr ? { for: st.for, names: st.names, lang: 'expr' } : {}), when, if: cond === null ? null : cond || undefined, then };
     }
@@ -659,6 +678,9 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     pane.append(el(`<datalist id="rl-people">${fields.find((x) => x.k === 'assignee').options.map((o) => `<option value="${esc(o.v)}">${esc(o.l)}</option>`).join('')}</datalist>`));
   }
 
+  // a run's typed inputs as filled in; empty ones are left out (texts may hold {id}, {title} and {event.<field>})
+  const readInputs = (row) => Object.fromEntries($$('[data-input]', row).map((i) => [i.dataset.input, i.type === 'checkbox' ? i.checked : i.type === 'number' ? (i.value === '' ? '' : Number(i.value)) : i.value.trim()]).filter(([, x]) => x !== '' && x !== false));
+
   // One action: a numbered card with what to do and the one or two things it needs
   // an action in the rule's own name for its ticket: "archive T"
   let alias = 'T';
@@ -676,6 +698,21 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     if (a.do === 'set_field' || a.do === 'set_property') {
       const keys = a.do === 'set_field' ? board().schema?.fields?.map((x) => x.key) || [] : [];
       rest = `<input class="inp" name="key" value="${esc(a.key || '')}" placeholder="${a.do === 'set_field' ? 'field' : 'property'}" spellcheck="false"${keys.length ? ` list="rl-keys-${id}"` : ''}>${keys.length ? `<datalist id="rl-keys-${id}">${keys.map((k) => `<option value="${esc(k)}">`).join('')}</datalist>` : ''}<span class="rb-to">to</span><input class="inp rb-wide" name="value" value="${esc(a.value == null ? '' : typeof a.value === 'string' ? a.value : JSON.stringify(a.value))}" placeholder="value, e.g. {pr.url} (empty clears it)" spellcheck="false">`;
+    }
+    if (a.do === 'run') {
+      const p = S.plugins.find((x) => x.name === a.plugin);
+      const act = p?.actions?.find((x) => x.id === a.action);
+      const input = (f) => {
+        const cur = a.inputs?.[f.key];
+        const lab = `${esc(f.label || f.key)}${f.required ? ' *' : ''}`;
+        const at = `data-input="${esc(f.key)}" aria-label="${lab}" title="${esc(f.help || '')}"`;
+        if (f.type === 'enum') return `<select class="inp" ${at}>${option('', `${f.label || f.key}…`, cur == null)}${(f.options || []).map((o) => option(o.value, o.label || o.value, o.value === cur)).join('')}</select>`;
+        if (f.type === 'boolean') return `<label class="rb-check"><input type="checkbox" ${at}${cur ? ' checked' : ''}>${lab}</label>`;
+        return `<input class="inp rb-wide" ${f.type === 'number' ? 'type="number"' : ''} ${at} value="${esc(cur ?? '')}" placeholder="${lab}${f.type === 'number' ? '' : ': {id} {title} {event.field}'}" spellcheck="false">`;
+      };
+      rest = `<select class="inp" name="plugin" aria-label="Plugin" data-redraw-run>${option('', 'a plugin…', !p)}${S.plugins.map((x) => option(x.name, x.label || x.name, x.name === a.plugin)).join('')}</select>
+        <select class="inp" name="action" aria-label="Plugin action" data-redraw-run>${option('', 'an action…', !act)}${(p?.actions || []).map((x) => option(x.id, x.label || x.id, x.id === a.action)).join('')}</select>
+        ${(act?.inputs || []).map(input).join('')}`;
     }
     if (a.do === 'merge') rest = `<input class="inp" name="branch" value="${esc(a.branch || 'integration/next')}" placeholder="branch" spellcheck="false" aria-label="Branch"><label class="rb-check"><input type="checkbox" name="push"${a.push === false ? '' : ' checked'}>push to origin</label>`;
     if (a.do === 'extract') {
