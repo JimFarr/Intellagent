@@ -23,6 +23,8 @@ test('theme_new writes an importable file from a starting theme, with the palett
   assert.match(css, /--bg: #011627;/);
   assert.match(css, /"cards":"clean"/);
   assert.match(out, /imports cleanly/);
+  assert.throws(() => tool('theme_new')({ dir, name: 'Night Owl' }), /exists/);
+  assert.match(tool('theme_new')({ dir, name: 'Night Owl', overwrite: true }), /imports cleanly/);
   assert.match(tool('theme_list')({}), /^clear \(light, built in\)/);
 });
 

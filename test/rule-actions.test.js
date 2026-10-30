@@ -61,6 +61,20 @@ describe('rule actions on a board', () => {
     await s.ok('POST', `${B}/items/${t.id}/move`, { column: done }, USER);
     await until(async () => (await item(s, t.id)).style == null, 5000, 'the style cleared');
   });
+
+  it('{comment.text}, {comment.author} and {comment.url} fill from the comment that set the rule off', async () => {
+    await rule(s, { name: 'Read comments', when: { on: 'commented' }, then: [
+      { do: 'set_property', key: 'text', value: '{comment.text}' },
+      { do: 'set_property', key: 'author', value: '{comment.author}' },
+      { do: 'set_property', key: 'url', value: '{comment.url}' },
+    ] });
+    const t = await s.ok('POST', `${B}/items`, { title: 'Commented on', column: 'Ready' }, USER);
+    const c = await s.ok('POST', `${B}/items/${t.id}/comments`, { body: 'Ship it' }, USER);
+    const done = await until(async () => { const x = await item(s, t.id); return x.properties.url && x; }, 8000, 'the comment placeholders');
+    assert.equal(done.properties.text, 'Ship it');
+    assert.equal(done.properties.author, USER.user);
+    assert.equal(done.properties.url, `${B}/items/${t.id}#${c.id}`);
+  });
 });
 
 describe('merge into a branch', () => {

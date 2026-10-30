@@ -4875,10 +4875,18 @@ async function extractFrom(item, a) {
   return found || null;
 }
 
-// ev: the event that set the rule off (null for time rules), for {comment.*} in texts and values
-async function ruleAction(ctx, rule, a, item, why, ev = null) {
+// The {comment.*} context of a comment.added event: the comment as stored (the event trims its body), its author and a link to it
+function commentFill(ctx, item, ev) {
+  if (ev?.type !== 'comment.added' || !ev.comment) return ev;
+  const c = item?.comments?.find((x) => x.id === ev.comment.id);
+  return { comment: { text: c?.body ?? ev.comment.body, author: ev.actor?.name, url: `/api/boards/${ctx.id}/items/${item?.id}#${ev.comment.id}` } };
+}
+
+// raw: the event that set the rule off (null for time rules), for {comment.*} in texts and values
+async function ruleAction(ctx, rule, a, item, why, raw = null) {
   const actor = ruleActor(rule);
   const id = item?.id;
+  const ev = commentFill(ctx, item, raw);
   const fill = (t) => RULES.fill(t, item, ev);
   switch (a.do) {
     case 'wake': {
