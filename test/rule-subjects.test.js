@@ -29,7 +29,9 @@ describe('rules: filter conditions as expressions (lib/rules.js toExpr)', () => 
       ['review.oks>=2 review.allOk', 'T.review.oks >= 2 && T.review.allOk'],
       ['fields.estimate=3', 'T.fields.estimate == 3'],
       ['type:issue or (priority:Critical @drax)', 'T.type == "issue" || (T.priority == "Critical" && (T.assignee == "drax" || T.claimant == "drax"))'],
-      ['column:"In Progress"', null], // the filter reads the quotes as part of the value: not one of the columns
+      ['column:"In Progress"', 'T.column == "In Progress"'], // a quoted value may hold spaces (INT-481)
+      ['fields.estimate~3', null], // ~ (contains) stays in the filter language
+      ['title~cache', null],
       ['is:rule:urgent', null], // another card look: not in the expression language
       ['properties.pr:x', null], // an open bag: a list or a text, the filter matched either
       ['fields.risk:medium', null], // not one of the options: the filter matched nothing, the expression would not read
