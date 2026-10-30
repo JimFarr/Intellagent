@@ -3864,7 +3864,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     fillAgents(body);
     // the refresh redraws the rows, so the spot goes on after it
     refreshPresence().then(() => {
-      const row = name && ($$('.now-row', body).find((r) => r.dataset.now === name) || $$('.agent-row', body).find((r) => r.dataset.agent === name));
+      const row = name && $$('.agent-row', body).find((r) => r.dataset.agent === name);
       if (row) { row.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); row.classList.add('spot'); }
     });
   }
@@ -4149,20 +4149,16 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
   const secs = (ms) => (ms == null ? '' : ms < 60000 ? `${Math.max(1, Math.round(ms / 1000))}s` : ms < 3600000 ? `${Math.round(ms / 60000)}m` : `${(ms / 3600000).toFixed(1)}h`);
   const runResult = (code) => (code === 0 ? `<span class="rr ok" title="Finished">${icon('check', 'sm')}</span>` : code === 'stopped' ? '<span class="rr" title="Stopped by you">⏹</span>' : `<span class="rr bad" title="Failed|exit ${esc(String(code))}">${icon('x', 'sm')}</span>`);
   const ticketLinks = (ids) => (ids || []).map((id) => `<span class="mini-chip link" data-board="${esc(state.boardId)}" data-open="${esc(id)}">${esc(id)}</span>`).join('');
+  // An awake agent's state words, ticket ids and live line: its row in the Agents list shows them (INT-502).
+  function liveOf(a) {
+    const lr = a.lastRun || {};
+    const st = a.status === 'running' ? `running ${rel(a.now?.since || a.runningSince) || 'now'}`
+      : a.status === 'failed' ? 'failed' : `${a.status === 'queued' ? 'waiting' : RUN_LABEL[a.status]}${a.queued ? ` · ${a.queued} queued` : ''}`;
+    const items = a.status === 'running' ? a.now?.items : a.status === 'failed' ? lr.items : null;
+    const line = a.status === 'running' ? a.now?.line : a.status === 'failed' ? `exit ${lr.code ?? '?'}${lr.durationMs != null ? ` after ${secs(lr.durationMs)}` : ''}` : a.resumesAt ? `${a.waitingFor === 'usage limit' ? 'usage limit, ' : ''}runs ${new Date(a.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+    return { st, items, line };
+  }
   function agentsNowHTML() {
-    const awake = Object.values(state.standing || {}).filter((a) => RING[a.status])
-      .sort((a, b) => RING_ORDER[RING[a.status]] - RING_ORDER[RING[b.status]] || a.name.localeCompare(b.name));
-    const now = awake.map((a) => {
-      const ring = RING[a.status], lr = a.lastRun || {};
-      const state_ = a.status === 'running' ? `running ${rel(a.now?.since || a.runningSince) || 'now'}`
-        : a.status === 'failed' ? 'failed' : `${a.status === 'queued' ? 'waiting' : RUN_LABEL[a.status]}${a.queued ? ` · ${a.queued} queued` : ''}`;
-      const items = a.status === 'running' ? a.now?.items : a.status === 'failed' ? lr.items : null;
-      const line = a.status === 'running' ? a.now?.line : a.status === 'failed' ? `exit ${lr.code ?? '?'}${lr.durationMs != null ? ` after ${secs(lr.durationMs)}` : ''}` : a.resumesAt ? `${a.waitingFor === 'usage limit' ? 'usage limit, ' : ''}runs ${new Date(a.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
-      const acts = a.status === 'failed' ? `<span class="now-acts"><button class="btn sm ghost" data-standing="log" data-name="${esc(a.name)}">${icon('terminal', 'sm')}<span>Log</span></button><button class="btn sm ghost" data-standing="resume" data-name="${esc(a.name)}">${icon('play', 'sm')}<span>Resume</span></button></span>` : '';
-      return `<div class="now-row" data-now="${esc(a.name)}" data-ring="${ring}"><span class="run-ring" data-ring="${ring}" style="${ringPhase()}">${avatar({ kind: 'agent', name: a.name })}${ring === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</span>
-        <b class="now-nm">${esc(nameOf(a.name))}</b><span class="now-st">${esc(state_)}</span>
-        <span class="now-line">${ticketLinks(items)}${line ? `<span>${esc(line)}</span>` : ''}</span>${acts}</div>`;
-    }).join('');
     const runs = Object.values(state.standing || {}).flatMap((a) => (a.history || []).map((h) => ({ agent: a.name, ...h })))
       .sort((x, y) => y.startedAt.localeCompare(x.startedAt)).slice(0, 10);
     // the shared list rows: who ran, why and on what; when and how long; how it ended
@@ -4170,8 +4166,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       <div class="ent-body"><h3 class="ent-title"><span class="ent-name">${esc(nameOf(r.agent))}</span></h3>
         <div class="ent-sub"><time datetime="${esc(r.startedAt)}" title="${esc(new Date(r.startedAt).toLocaleString())}">${new Date(r.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time> · ${secs(r.durationMs)}${r.why ? ` · woken by ${esc(whyWords(r.why))}` : ''}${r.items?.length ? ` on ${ticketLinks(r.items)}` : ''}</div></div>
       <div class="ent-status">${runResult(r.code)}</div></article>`).join('');
-    if (!now && !recent) return '';
-    return `<section class="ag-now"><div class="ag-sec">Now</div>${now || '<div class="now-quiet">Nobody is awake.</div>'}</section>${recent ? `<section class="ag-runs"><div class="ag-sec">Recent runs</div><div class="ent-list">${recent}</div></section>` : ''}`;
+    return `${recent ? `<section class="ag-runs"><div class="ag-sec">Recent runs</div><div class="ent-list">${recent}</div></section>` : ''}`;
   }
 
   // "Approves for you": who may approve on the human's behalf and when, in plain words, with the one switch
@@ -4957,13 +4952,15 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       const tok = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k tokens` : `${n} tokens`);
       // the row's rarer actions live in its ⋯ menu, so they take no room in the row (INT-268)
       const more = [sa && 'Run now', sa && (sa.status === 'running' ? 'Watch live' : 'Runs'), sa && 'Edit', p.name !== coord && 'Make coordinator', forgettable(p) && 'Forget', sa && 'Remove'].filter(Boolean);
+      const ring = sa && RING[sa.status], lv = ring ? liveOf(sa) : null;
       const role = sa?.role ? `${esc(sa.role[0].toUpperCase() + sa.role.slice(1))} · ` : '';
-      const modeText = mode === 'standing by' && !p.lastSeen ? 'waiting for its first run' : `${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}`;
-      return `<article class="ent agent-row${p.online || sa ? '' : ' off'}${sa?.status === 'failed' ? ' needs' : ''}" data-agent="${esc(p.name)}"${first ? ` style="animation-delay:${i * 40}ms"` : ''}>
-        <div class="ent-lead">${avatar({ kind: 'agent', name: p.name })}<span class="status-dot ${p.online ? 'on' : ''}"></span></div>
+      const modeText = lv ? lv.st : mode === 'standing by' && !p.lastSeen ? 'waiting for its first run' : `${mode} · ${p.lastSeen ? rel(p.lastSeen) : '—'}`;
+      return `<article class="ent agent-row${p.online || sa ? '' : ' off'}${sa?.status === 'failed' ? ' needs' : ''}" data-agent="${esc(p.name)}"${ring ? ` data-ring="${ring}"` : ''}${first ? ` style="animation-delay:${i * 40}ms"` : ''}>
+        <div class="ent-lead">${ring ? `<span class="run-ring" data-ring="${ring}" style="${ringPhase()}">${avatar({ kind: 'agent', name: p.name })}${ring === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</span>` : avatar({ kind: 'agent', name: p.name })}<span class="status-dot ${p.online ? 'on' : ''}"></span></div>
         <div class="ent-body">
           <h3 class="ent-title"${sa?.description ? ` title="${esc(nameOf(p.name))}|${esc(sa.description.replace(/\s+/g, ' '))}"` : ''}><span class="ent-name">${esc(nameOf(p.name))}</span>${p.name === coord ? '<span class="chip coord-chip" title="Coordinator|Requests from Ask an agent go to this agent unless you pick another">takes requests</span>' : ''}</h3>
           <div class="ent-sub"${failed ? ` title="${esc(sa.lastRun.error)}"` : p.lastAction ? ` title="${esc(p.lastAction)}"` : ''}>${role}${failed ? `<span class="bad-t">failed${sa.failures ? ` ${sa.failures}×` : ''}: ${esc(sa.lastRun.error.slice(0, 120))}</span>` : `${modeText}${p.lastAction ? ` · ${esc(callWords(p.lastAction))}` : ''}`}${leases}${subs}</div>
+          ${lv && (lv.items?.length || lv.line) ? `<div class="ag-live">${ticketLinks(lv.items)}${lv.line ? `<span>${esc(lv.line)}</span>` : ''}</div>` : ''}
         </div>
         <div class="ent-side">${sa ? `<span class="ent-col extra" title="Tokens today${sa.usageToday ? `|${sa.usageToday.runs} run${sa.usageToday.runs === 1 ? '' : 's'}` : ''}">${sa.usageToday ? tok((sa.usageToday.input || 0) + (sa.usageToday.output || 0)) : '—'}</span><span class="ent-col pill">${runPill(sa)}</span>` : ''}
           <div class="ent-acts">${sa ? standingButtons(sa).split('</button>')[0] + '</button>' : ''}${more.length ? `<button class="ent-more" data-row-more="${esc(p.name)}" aria-label="More for ${esc(nameOf(p.name))}" title="More|${more.join(', ')}">${icon('more', 'sm')}</button>` : ''}</div></div>
