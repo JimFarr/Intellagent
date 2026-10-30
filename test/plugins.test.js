@@ -351,7 +351,7 @@ test('plugins in rules and webhooks: a plugin event sets a rule off, a rule runs
     assert.match((await s.api('POST', '/api/boards/main/rules', { ...rule, when: { ...rule.when, event: 'pong' } }, USER)).body.error, /no event "pong"/);
     assert.match((await s.api('POST', '/api/boards/main/rules', { ...rule, then: [{ do: 'run', plugin: 'ghost', action: 'post' }] }, USER)).body.error, /No plugin "ghost"/);
     const saved = await s.ok('POST', '/api/boards/main/rules', rule, USER);
-    assert.strictEqual(saved.text, "If fake raises ping → run fake's post, comment on it");
+    assert.strictEqual(saved.text, "For a ticket T, when fake raises ping, run fake's post, comment on T.");
     const card = await s.ok('POST', '/api/boards/main/items', { title: 'Hooked' }, USER);
 
     // the plugin checks the request; the board acts only on the event it returns
