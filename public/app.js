@@ -704,13 +704,15 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
   function renderIdleBadge() {
     const b = $('#idleBtn');
     if (!b) return;
-    const n = state.idleNotice;
-    b.hidden = !n;
-    if (!n) { b.innerHTML = ''; return; }
-    const { waits, who } = idleSummary(n);
-    b.innerHTML = `${icon('bot')}<span class="idle-n">${n.waitingCount}</span>`;
-    b.dataset.tip = `Board idle|${waits}, ${who}. Click to resume`;
-    b.setAttribute('aria-label', `Board idle: ${waits}, ${who}. Open to resume`);
+    const n = state.idleNotice, st = state.idleStalls || [];
+    b.hidden = !n && !st.length;
+    if (b.hidden) { b.innerHTML = ''; return; }
+    // a stall told to the human (INT-512) shares the badge with the idle alarm
+    const said = st.map((x) => `${nameOf(x.agent)} stalled (${x.why})`).join(', ');
+    const text = [n && `${idleSummary(n).waits}, ${idleSummary(n).who}`, said].filter(Boolean).join('; ');
+    b.innerHTML = `${icon('bot')}<span class="idle-n">${n ? n.waitingCount : st.length}</span>`;
+    b.dataset.tip = `${n ? 'Board idle' : 'Agent stalled'}|${text}. Click to resume`;
+    b.setAttribute('aria-label', `${n ? 'Board idle' : 'Agent stalled'}: ${text}. Open to resume`);
   }
   let idleReq = 0;
   async function refreshIdleNotice() {
@@ -719,25 +721,31 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     let v;
     try { v = await api('GET', `/api/boards/${state.boardId}/idle-alarm`); } catch { return; }
     if (mine !== idleReq) return;
-    const was = JSON.stringify(state.idleNotice || null);
+    const was = JSON.stringify([state.idleNotice || null, state.idleStalls || []]);
     state.idleNotice = v.notice || null;
-    if (JSON.stringify(state.idleNotice) !== was) renderIdleBadge();
+    state.idleStalls = v.stalls || [];
+    if (JSON.stringify([state.idleNotice, state.idleStalls]) !== was) renderIdleBadge();
   }
   function idleMenu(anchor) {
-    const n = state.idleNotice;
-    if (!n) return;
-    const { waits, who } = idleSummary(n);
-    const items = [{ label: waits[0].toUpperCase() + waits.slice(1), hint: (n.waiting || []).slice(0, 4).join(', '), disabled: true, icon: 'ask' }, '-'];
-    for (const d of n.down || []) {
-      const can = d.status !== 'disabled';
-      items.push({ label: can ? `Resume ${nameOf(d.name)}` : `${nameOf(d.name)} is switched off`, hint: d.status, avatar: { kind: 'agent', name: d.name }, disabled: !can,
+    const n = state.idleNotice, st = state.idleStalls || [];
+    if (!n && !st.length) return;
+    const items = [];
+    if (n) {
+      const { waits } = idleSummary(n);
+      items.push({ label: waits[0].toUpperCase() + waits.slice(1), hint: (n.waiting || []).slice(0, 4).join(', '), disabled: true, icon: 'ask' }, '-');
+    }
+    // an agent in a stall the board told the human about, with its reason and how long
+    const rows = [...(n?.down || []).map((d) => ({ name: d.name, hint: d.status, can: d.status !== 'disabled' })),
+      ...st.filter((x) => !(n?.down || []).some((d) => d.name === x.agent)).map((x) => ({ name: x.agent, hint: `${x.why}, ${x.minutes} min`, can: true }))];
+    for (const d of rows) {
+      items.push({ label: d.can ? `Resume ${nameOf(d.name)}` : `${nameOf(d.name)} is switched off`, hint: d.hint, avatar: { kind: 'agent', name: d.name }, disabled: !d.can,
         run: async () => {
           try { await api('POST', `/api/agents/${encodeURIComponent(d.name)}/resume`); toast(`${nameOf(d.name)} resumed`, { icon: 'check', kind: 'ok', timeout: 2200 }); }
           catch (e) { toast(e.message, { kind: 'error' }); }
           refreshIdleNotice();
         } });
     }
-    if (!(n.down || []).length) items.push({ label: who, disabled: true });
+    if (n && !(n.down || []).length) items.push({ label: idleSummary(n).who, disabled: true });
     items.push({ label: 'Open the Agents page', icon: 'bot', run: () => openAgents() });
     menu(anchor, items, { width: 300 });
   }
@@ -3438,7 +3446,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     if (forMe(ev) && !state.inbox.some((x) => x.seq === ev.seq)) { state.inbox.unshift(ev); state.inbox.length = Math.min(200, state.inbox.length); renderInboxBtn(); }
     // the idle notice (INT-316) appears with the alarm and goes when a builder runs or a downed agent is back:
     // only those events ask again, and only while a notice stands
-    if (ev.type === 'agent.idle_alarm' || (state.idleNotice && /^(agent\.(status|run\.started|failed|resumed|paused)|agents\.changed)$/.test(ev.type))) refreshIdleNotice();
+    if (ev.type === 'agent.idle_alarm' || ev.type === 'agent.stall_notice' || ((state.idleNotice || state.idleStalls?.length) && /^(agent\.(status|run\.started|failed|resumed|paused)|agents\.changed)$/.test(ev.type))) refreshIdleNotice();
     if (ev.type === 'item.moved' && ev.columnId === 'done') refreshCodeState();
     if (ev.type === 'app.renamed') { state.app.name = ev.to; renderHeader(); }
     if (ev.type === 'profile.updated') refreshProfiles();
