@@ -4976,7 +4976,7 @@ async function fireRule(ctx, rule, itemId, why, mark = () => {}, ev = null) {
   });
 }
 // what set a rule off, in words: "a ticket enters In Progress"
-const whyOf = (ctx, rule) => RULES.describe({ ...rule, if: null, then: [] }, ctx.board.columns).replace(/^If /, '').replace(/ → $/, '');
+const whyOf = (ctx, rule) => RULES.describeWhen(rule, ctx.board.columns);
 const ruleFails = (fn) => fn().catch((e) => console.warn(`rule: ${e.message}`));
 // Every event, after it is saved: the event rules it sets off. Not the rules' own (actor.rule): no chains.
 function onRuleEvent(e) {

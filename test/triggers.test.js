@@ -135,7 +135,7 @@ describe('triggers on a real board', () => {
       const t = await s.ok('POST', `${B}/items`, { title: 'the export', column: 'Ready' }, USER);
       const set = [];
       for (let i = 0; i < 5; i++) set.push(await s.ok('POST', `${B}/items/${t.id}/triggers`, { when: { every: `${10 + i}m` } }, as('groot')));
-      assert.deepEqual([set[0].rule.item, set[0].rule.when, set[0].text], [t.id, { on: 'every', minutes: 10 }, 'If every 10 min → wake coordinator'], 'the reply names the rule it wrote');
+      assert.deepEqual([set[0].rule.item, set[0].rule.when, set[0].text], [t.id, { on: 'every', minutes: 10 }, 'When every 10 minutes, wake coordinator.'], 'the reply names the rule it wrote');
       const sixth = await s.api('POST', `${B}/items/${t.id}/triggers`, { when: { every: '1h' } }, as('groot'));
       assert.deepEqual([sixth.status, sixth.body.code], [409, 'CONFLICT']);
       const rules = (await s.ok('GET', `${B}/rules`, undefined, USER)).rules;

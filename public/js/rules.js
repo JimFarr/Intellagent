@@ -15,7 +15,10 @@ const ACTION_ICON = { look: 'card', wake: 'bot', ask_human: 'ask', move: 'move',
 const PLACEHOLDERS = '{id} {title} {field.key} {property.name} {pr.url} {pr.title} {comment.text} {comment.author} {comment.url}';
 let uid = 0;
 // The page's views, each its own entry in the section's side picker (app.js PAGES.rules)
-export const RULE_VIEWS = { mine: ['rulesDrawer', 'Rules', 'zap'], log: ['rulesLogDrawer', 'What they did', 'activity'] };
+// a duration is stored as minutes and shown in the largest unit that divides it
+const UNITS = { minutes: 1, hours: 60, days: 1440 };
+const bigUnit = (m) => (m % 1440 === 0 ? 'days' : m % 60 === 0 ? 'hours' : 'minutes');
+export const RULE_VIEWS ={ mine: ['rulesDrawer', 'Rules', 'zap'], log: ['rulesLogDrawer', 'What they did', 'activity'] };
 
 /* ─── conditions: what each field can be asked, and how a row becomes a term of the condition language ─── */
 // kind → its operators: [key, label]. "one of" takes several values; "set" / "empty" take none.
@@ -187,9 +190,9 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
 
   // A rule's sentence with its parts picked out: If … and … then …
   function sentence(text, expr) {
-    const m = /^If (.*?)(?: and (.*?))? → (.*)$/.exec(text || '');
+    const m = /^(?:For (.*?), when|When) (.*?)(?:, and only if (.*?))?, (.*)\.$/.exec(text || '');
     if (!m) return `<span>${esc(text || '')}</span>`;
-    return `<span class="rl-k">If</span> ${esc(m[1])}${m[2] ? ` <span class="rl-k">and</span> ${expr ? `<code>${esc(m[2])}</code>` : condWords(m[2])}` : ''} <span class="rl-k">then</span> ${esc(m[3])}`;
+    return `${m[1] ? `<span class="rl-k">For</span> ${esc(m[1])}, ` : ''}<span class="rl-k">${m[1] ? 'when' : 'When'}</span> ${esc(m[2])}${m[3] ? `, <span class="rl-k">and only if</span> ${expr ? `<code>${esc(m[3])}</code>` : condWords(m[3])}` : ''}, ${esc(m[4])}.`;
   }
   // a condition in words, with the builder's own labels: "priority is one of High, Critical and held by is nobody"
   function condWords(text) {
@@ -270,8 +273,10 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     pane.innerHTML = `<form class="rb" autocomplete="off">
       <header class="rb-top"><input class="rb-name" name="name" required maxlength="80" value="${esc(r?.name || '')}" placeholder="Name this rule" aria-label="Rule name">
         <label class="rb-on"><span>${st.enabled ? 'On' : 'Off'}</span><button type="button" class="switch ${st.enabled ? 'on' : ''}" role="switch" aria-checked="${st.enabled}" aria-label="Rule on" data-enabled></button></label></header>
+      <p class="rb-sum rl-sentence" data-sum aria-live="polite"></p>
       <div class="rb-grid"><ol class="rb-flow">
         <li class="rb-step" data-for-step${st.expr ? '' : ' hidden'}><span class="rb-dot">For</span><div class="rb-card"><div class="rb-for" data-for></div></div></li>
+        <li class="rb-step"><span class="rb-dot">When</span><div class="rb-card"><div data-when></div></div></li>
         <li class="rb-step"><span class="rb-dot">If</span><div class="rb-card"><div data-if></div></div></li>
         <li class="rb-step"><span class="rb-dot">Then</span><div class="rb-card"><div class="rb-acts" data-acts></div>
           <button type="button" class="rb-add" data-add-act>${icon('plus', 'sm')}Add an action</button></div></li>
@@ -279,19 +284,25 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       <aside class="rb-preview" aria-live="polite"><div class="rb-ph">${icon('eye', 'sm')}Preview</div><div data-preview><div class="sk-lines" aria-hidden="true"><b></b><b class="s"></b></div></div></aside></div>
       <footer class="rb-foot">${r ? `<button type="button" class="btn sm ghost danger" data-del>${icon('trash', 'sm')}Delete</button>` : ''}<span class="grow"></span>
         <button type="button" class="btn sm ghost" data-cancel>Cancel</button><button class="btn sm primary">${icon('check', 'sm')}${r ? 'Save' : 'Add rule'}</button></footer></form>`;
+    alias = st.names?.ticket || 'T'; // before the action rows below are drawn
     const f = $('form', pane);
-    const ifEl = $('[data-if]', f), acts = $('[data-acts]', f);
+    const ifEl = $('[data-if]', f), whenEl = $('[data-when]', f), acts = $('[data-acts]', f);
     const joinSel = (mode, at) => `<select class="inp rb-join" data-join="${at}" aria-label="And or or">${option('all', 'AND', mode === 'all')}${option('any', 'OR', mode === 'any')}</select>`;
 
     // the trigger line: what sets the rule off, with what it needs
     function triggerHTML() {
       const d = v.events[st.when.on] || v.times[st.when.on] || {};
+      // the rule's own names for its parts, so the trigger reads "T has been in Done for 2 days"
+      const T = st.names?.ticket || 'T', C = st.names?.comment || 'C';
+      const say = (k, label) => (k === 'commented' ? `a comment ${C} is added to ${T}` : k === 'in_column' ? `${T} has been in` : label.replace(/^a ticket\b/, T));
+      const mins = Number(st.when.minutes) || 60, unit = st.unit || bigUnit(mins);
       return `<div class="rb-trigger"><select class="inp" data-w="on" aria-label="What sets it off">
-          <optgroup label="Something happens">${Object.entries(v.events).filter(([k, x]) => !x.state && (!x.nativeOnly || k === st.when.on) && (!st.expr || x.subject === st.for)).map(([k, x]) => option(k, x.label, k === st.when.on)).join('')}</optgroup>
-          <optgroup label="Time passes">${Object.entries(v.times).filter(([k, x]) => (!x.nativeOnly || k === st.when.on) && (!st.expr || st.for === 'ticket')).map(([k, x]) => option(k, x.label, k === st.when.on)).join('')}</optgroup>
-          <optgroup label="While">${Object.entries(v.events).filter(([, x]) => x.state && (!st.expr || st.for === 'ticket')).map(([k, x]) => option(k, `${x.label} (its card's look)`, k === st.when.on)).join('')}</optgroup></select>
+          <optgroup label="Something happens">${Object.entries(v.events).filter(([k, x]) => !x.state && (!x.nativeOnly || k === st.when.on) && (!st.expr || x.subject === st.for)).map(([k, x]) => option(k, say(k, x.label), k === st.when.on)).join('')}</optgroup>
+          <optgroup label="Time passes">${Object.entries(v.times).filter(([k, x]) => (!x.nativeOnly || k === st.when.on) && (!st.expr || st.for === 'ticket')).map(([k, x]) => option(k, say(k, x.label), k === st.when.on)).join('')}</optgroup>
+          <optgroup label="While">${Object.entries(v.events).filter(([, x]) => x.state && (!st.expr || st.for === 'ticket')).map(([k, x]) => option(k, `${say(k, x.label)} (its card's look)`, k === st.when.on)).join('')}</optgroup></select>
         ${d.column ? `<select class="inp" data-w="column" aria-label="Column">${board().columns.map((c) => option(c.id, c.name, c.id === st.when.column)).join('')}</select>` : ''}
-        ${v.times[st.when.on] ? `<span class="rb-unit"><input class="inp" type="number" data-w="minutes" min="${d.minMinutes || 5}" step="5" value="${esc(st.when.minutes || 60)}" aria-label="Minutes"><span>min</span></span>` : ''}
+        ${st.when.on === 'in_column' ? '<span class="rb-word">for</span>' : ''}
+        ${v.times[st.when.on] ? `<span class="rb-unit"><input class="inp" type="number" data-wn min="1" step="1" value="${mins / UNITS[unit]}" aria-label="How long"><select class="inp" data-wu aria-label="Unit">${Object.keys(UNITS).map((u) => option(u, u, u === unit)).join('')}</select></span>` : ''}
         ${st.when.on === 'assigned' || st.when.on === 'mentioned' ? `<span class="rb-unit"><span>${st.when.on === 'assigned' ? 'to' : 'who'}</span><input class="inp" data-w="to" list="rl-people" placeholder="anyone" value="${esc(st.when.to || '')}" spellcheck="false"></span>` : ''}</div>`;
     }
     // one condition: field · operator · value
@@ -317,6 +328,12 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     // the rows as text and back: the expression language for a rule on a subject, the filter language for the rest
     const toText = () => (st.expr ? X.treeText(st.cond, xfields) : condText(st.cond, fields));
     const fromText = (t) => (st.expr ? X.parseRows(t, schemaX()) : parseCond(t, fields));
+    const drawWhen = () => {
+      alias = st.names?.ticket || 'T';
+      $$('[data-do] option', acts).forEach((o) => { const d = v.actions[o.value]; if (d) o.textContent = actLabel(d.label); });
+      whenEl.innerHTML = `${triggerHTML()}<div class="rb-hint">The rule looks at each ticket when this becomes true.</div>`;
+    };
+    const drawSummary = () => changed();
     function drawIf() {
       if (st.expr && !st.asText) st.text = toText() ?? st.text; // the builder writes the same text the box holds
       const c = st.cond;
@@ -327,7 +344,12 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
           ${it.rows.map((row, k) => `<div class="rb-item">${k === 0 ? '' : joinSel(it.mode, `g${i}`)}${rowHTML(row, `${i}.${k}`)}</div>`).join('')}
           <button type="button" class="rb-add" data-add-row="${i}">${icon('plus', 'sm')}Condition</button></div></div>`;
       }).join('');
-      ifEl.innerHTML = `${triggerHTML()}
+      const open = st.ifOpen || !!st.text.trim() || c.items.length > 0;
+      if (!open) {
+        ifEl.innerHTML = `<div class="rb-iff"><button type="button" class="link-btn" data-if-open>${icon('plus', 'sm')}Add a condition</button><span class="rb-hint">Without one the rule acts every time the When happens.</span></div>`;
+        return;
+      }
+      ifEl.innerHTML = `<div class="rb-iff"><b>and only if</b><span class="rb-hint">Narrows the When: both must hold.</span><button type="button" class="link-btn" data-if-clear>Remove</button></div>
         ${st.asText && st.expr ? `<div class="rb-x">
             <div class="rb-xbox"><input class="inp mono rb-xin" data-x role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="rl-sg" aria-describedby="rl-xmsg" aria-label="Only when" value="${esc(st.text)}" placeholder="${st.for === 'comment' ? esc(`${st.names.comment}.text.contains("?")`) : esc(`${st.names.ticket}.priority in ["High", "Critical"]`)}" spellcheck="false" autocapitalize="off">
               <ul class="rb-sug" id="rl-sg" role="listbox" aria-label="Suggestions" hidden></ul></div>
@@ -442,10 +464,28 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         st.cond = c; st.asText = false; drawIf(); changed();
       }
     });
-    ifEl.addEventListener('change', (e) => {
+    whenEl.addEventListener('input', (e) => {
+      if (e.target.matches('[data-wn]')) { setMinutes(); changed(); }
+    });
+    whenEl.addEventListener('change', (e) => {
+      if (e.target.matches('[data-wu]')) { st.unit = e.target.value; setMinutes(); changed(); }
+    });
+    // the number and its unit, kept as minutes
+    function setMinutes() {
+      const n = Number($('[data-wn]', whenEl).value), u = $('[data-wu]', whenEl).value;
+      st.unit = u;
+      st.when.minutes = Math.max(v.times[st.when.on]?.minMinutes || 5, Math.round(n * UNITS[u]) || 0);
+      drawSummary();
+    }
+    ifEl.addEventListener('click', (e) => {
+      if (e.target.closest('[data-if-open]')) { st.ifOpen = true; drawIf(); (xin() || $('select, input', ifEl))?.focus(); }
+      if (e.target.closest('[data-if-clear]')) { Object.assign(st, { ifOpen: false, text: '', cond: { mode: 'all', items: [] } }); drawIf(); changed(); }
+    });
+    whenEl.addEventListener('change', whenChanged);
+    function whenChanged(e) {
       const w = e.target.dataset.w;
       if (w) {
-        st.when[w] = w === 'minutes' ? Number(e.target.value) : e.target.value;
+        st.when[w] = e.target.value;
         if (w === 'on') {
           const d = v.events[st.when.on] || v.times[st.when.on];
           if (d.column && !st.when.column) st.when.column = board().columns[0]?.id;
@@ -456,10 +496,14 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
           const hasLook = $$('[data-do]', acts).some((x) => x.value === 'look');
           if (isLook !== hasLook) { acts.innerHTML = ''; acts.append(el(actionRow(isLook ? { do: 'look', look: { outline: 'accent' } } : { do: 'wake', agent: 'coordinator' }))); renumber(); }
           $('[data-add-act]', f).hidden = isLook;
-          drawIf();
+          st.unit = null;
+          drawWhen(); drawIf();
         }
-        changed(); return;
+        if (w === 'column') drawSummary();
+        changed();
       }
+    }
+    ifEl.addEventListener('change', (e) => {
       const j = e.target.dataset.join;
       if (j) { if (j === 'top') st.cond.mode = e.target.value; else st.cond.items[Number(j.slice(1))].mode = e.target.value; drawIf(); changed(); return; }
       if (e.target.matches('[data-rk]')) {
@@ -502,7 +546,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       st.for = e.target.value; st.names = { ...subjects[st.for].names }; st.text = ''; st.cond = { mode: 'all', items: [] }; st.asText = true; xfields = X.fieldsOf(schemaX());
       const own = Object.keys(v.events).find((k) => v.events[k].subject === st.for && !v.events[k].state && !v.events[k].nativeOnly);
       if (v.events[st.when.on]?.subject !== st.for) st.when = { on: own, column: board().columns[0]?.id };
-      drawFor(); drawIf(); changed();
+      drawFor(); drawWhen(); drawIf(); changed();
     });
     f.addEventListener('input', (e) => {
       const nm = e.target.closest('[data-nm]');
@@ -517,7 +561,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       st.text = X.renameIn(st.asText ? st.text : toText() ?? st.text, was, word);
       st.names[role] = word; xfields = X.fieldsOf(schemaX());
       if (!st.asText) { const c = fromText(st.text); if (c) st.cond = c; else st.asText = true; }
-      drawIf(); changed();
+      drawWhen(); drawIf(); changed();
     });
     for (const a of r?.then || [{ do: 'wake', agent: 'coordinator' }]) acts.append(el(actionRow(a)));
     const renumber = () => $$('.rb-act', acts).forEach((x, i) => { $('.rb-n', x).textContent = i + 1; });
@@ -605,17 +649,20 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       try {
         const p = await api('POST', `${base()}/preview`, { rule: { ...body, name: body.name || 'preview' } });
         const items = p.items.map((x) => `<li><code>${esc(x.id)}</code><span>${esc(x.title)}</span></li>`).join('');
-        out.innerHTML = `<p class="rl-sentence">${sentence(p.text, st.expr)}</p>
-          <div class="rb-count"><b>${p.mode === 'board' ? '—' : p.count}</b><span>${p.mode === 'board' ? 'Acts on no ticket: it wakes once each time' : p.mode === 'due' ? `ticket${p.count === 1 ? '' : 's'} it would fire for right now` : `ticket${p.count === 1 ? '' : 's'} on the board fit the conditions now`}</span></div>
+        $('[data-sum]', f).innerHTML = sentence(p.text, st.expr);
+        out.innerHTML = `<div class="rb-count"><b>${p.mode === 'board' ? '—' : p.count}</b><span>${p.mode === 'board' ? 'Acts on no ticket: it wakes once each time' : p.mode === 'due' ? `ticket${p.count === 1 ? '' : 's'} it would fire for right now` : `ticket${p.count === 1 ? '' : 's'} on the board fit the conditions now`}</span></div>
           ${items ? `<ul class="rb-items">${items}</ul>` : ''}`;
         out.classList.remove('bad');
       } catch (e) { out.innerHTML = `<p>${esc(e.message)}</p>${e.data?.hint ? `<p class="rb-wait">${esc(e.data.hint)}</p>` : ''}`; out.classList.add('bad'); }
     }
-    drawFor(); drawIf(); changed();
+    drawFor(); drawWhen(); drawIf(); changed();
     pane.append(el(`<datalist id="rl-people">${fields.find((x) => x.k === 'assignee').options.map((o) => `<option value="${esc(o.v)}">${esc(o.l)}</option>`).join('')}</datalist>`));
   }
 
   // One action: a numbered card with what to do and the one or two things it needs
+  // an action in the rule's own name for its ticket: "archive T"
+  let alias = 'T';
+  const actLabel = (label) => label.replace(/\bthe ticket\b/g, alias).replace(/\bit\b/g, alias);
   function actionRow(a) {
     const v = S.data.vocabulary;
     const id = `rl${++uid}`;
@@ -647,7 +694,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         <select class="inp" name="shape" aria-label="mark">${option('', 'no mark', !l.mark)}${v.shapes.map((x) => option(x, `${x} mark`, x === l.mark?.shape)).join('')}</select>${tone('markTone', l.mark?.tone, 'mark colour')}`;
     }
     return `<div class="rb-act"><span class="rb-n"></span><span class="rb-aic">${icon(ACTION_ICON[a.do] || 'zap', 'sm')}</span>
-      <div class="rb-afields"><select class="inp" data-do aria-label="Action">${Object.entries(v.actions).filter(([k, d]) => (!d.nativeOnly || k === a.do) && (k === 'look') === (a.do === 'look')).map(([k, d]) => option(k, d.label, k === a.do)).join('')}</select>${rest}</div>
+      <div class="rb-afields"><select class="inp" data-do aria-label="Action">${Object.entries(v.actions).filter(([k, d]) => (!d.nativeOnly || k === a.do) && (k === 'look') === (a.do === 'look')).map(([k, d]) => option(k, actLabel(d.label), k === a.do)).join('')}</select>${rest}</div>
       <button type="button" class="icon-x" data-act-del title="Remove" aria-label="Remove this action">${icon('x', 'sm')}</button></div>`;
   }
   /* ─── the log ─── */

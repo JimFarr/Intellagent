@@ -67,7 +67,7 @@ describe('rules on a board', () => {
     }
     assert.ok(!own['board-idle-alarm'], 'an alarm the board never set follows agents.json, with no rule');
     assert.deepEqual(own['board-idle-check'].when, { on: 'idle', minutes: 60 });
-    assert.match(own['board-idle-check'].text, /^If a ticket idles for 1 h → wake coordinator/);
+    assert.match(own['board-idle-check'].text, /^For a ticket T, when T idles for 1 hour, wake coordinator\./);
     assert.ok(!v.vocabulary.times.board_idle.nativeOnly, 'no word is reserved any more');
     assert.ok(v.vocabulary.events.entered.column);
   });
@@ -147,7 +147,7 @@ describe('rules on a board', () => {
 
   it('an event rule acts on the tickets its "if" picks, logs it, and shows on the ticket', async () => {
     const r = await s.ok('POST', '/api/boards/main/rules', { name: 'Flag urgent work', when: { on: 'entered', column: 'In Progress' }, if: 'priority:Critical', then: [{ do: 'comment', text: '{id} is urgent' }, { do: 'set_field', key: 'nope', value: 1 }] }, USER);
-    assert.match(r.text, /If a ticket enters In Progress and T\.priority == "Critical" → comment on it/);
+    assert.match(r.text, /For a ticket T, when T enters In Progress, and only if T\.priority == "Critical", comment on T/);
     const hot = await newItem({ priority: 'Critical' });
     const cool = await newItem({ priority: 'Low' });
     await s.ok('POST', `/api/boards/main/items/${hot.id}/move`, { column: 'In Progress' }, USER);
@@ -193,7 +193,7 @@ describe('rules on a board', () => {
   it('a card look is a rule: if a ticket fits, its card looks so; the card rules are its copy, both ways', async () => {
     const t = await newItem({ priority: 'Critical', title: 'Hot' });
     const r = await s.ok('POST', '/api/boards/main/rules', { name: 'hot', when: { on: 'fits' }, if: 'priority:Critical', then: [{ do: 'look', look: { outline: 'danger', badge: { text: 'hot' } } }] }, USER);
-    assert.match(r.text, /^If a ticket fits and priority:Critical → its card shows a danger outline, the badge "hot"/);
+    assert.match(r.text, /^For a ticket T, when T fits, and only if priority:Critical, T's card shows a danger outline, the badge "hot"/);
     const cr = await s.ok('GET', '/api/boards/main/card-rules', undefined, USER);
     assert.deepEqual(cr.rules.map((x) => x.name), ['hot']);
     const looks = await s.ok('GET', '/api/boards/main/card-rules/matches', undefined, USER);

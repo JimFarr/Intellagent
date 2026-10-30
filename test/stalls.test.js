@@ -92,7 +92,7 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
   it('takes why and agent, refuses ticket actions and conditions, and says itself in words', () => {
     const r = RULES.cleanRule({ name: 'x', when: { on: 'agent_stalled', why: 'paused', agent: 'drax' }, then: [{ do: 'wake', agent: 'coordinator' }] }, COLS, { id: 'r', nowIso: 'now' });
     assert.deepEqual(r.when, { on: 'agent_stalled', why: 'paused', agent: 'drax' });
-    assert.equal(RULES.describe(r, COLS), 'If drax stalls (paused) → wake coordinator');
+    assert.equal(RULES.describe(r, COLS), 'When drax stalls (paused), wake coordinator.');
     for (const [bad, msg] of [
       [{ when: { on: 'agent_stalled', why: 'bored' }, then: [{ do: 'wake', agent: 'coordinator' }] }, /not a reason/],
       [{ when: { on: 'agent_stalled' }, then: [{ do: 'comment', text: 'hi' }] }, /about an agent/],
@@ -114,7 +114,7 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
 
   it('a paused agent with work waiting: raised once, and the rule wakes whom it names with the stall', async () => {
     const rule = await s.ok('POST', `${B}/rules`, { name: 'Paused agents', when: { on: 'agent_stalled', why: 'paused' }, then: [{ do: 'wake', agent: 'boss' }] }, USER);
-    assert.equal(rule.text, 'If an agent stalls (paused) → wake boss');
+    assert.equal(rule.text, 'When an agent stalls (paused), wake boss.');
     const vocab = (await s.ok('GET', `${B}/rules`)).vocabulary.events.agent_stalled;
     assert.deepEqual([vocab.agent, vocab.whys], [true, ['failed', 'limited', 'paused', 'waiting']]);
     await s.ok('POST', '/api/agents/drax/pause', {}, USER);

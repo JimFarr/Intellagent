@@ -2359,6 +2359,20 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
   color: var(--muted); font: 500 12px var(--font); transition: color .15s, border-color .15s, background .15s; }
 .rb .rb-add:hover { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 55%, var(--border)); background: color-mix(in oklab, var(--accent) 6%, transparent); }
 .rb-hint { padding-left: 64px; font: 12px/1.45 var(--font); color: var(--muted); }
+/* the sentence summary, the When caption and the If lead-in (INT-507) */
+.rb-sum { margin: 0; padding: 12px 16px; border: var(--bw) solid var(--border); border-radius: var(--r-card); background: var(--surface); font: 14px/22px var(--font); }
+.rb-sum:empty { display: none; }
+.rb-sum.rl-sentence { display: block; overflow: visible; font-size: 14px; }
+.rb-sum .rl-k { font-size: 13px; }
+[data-when] .rb-trigger > [data-w="on"] { min-width: 0; width: 100%; max-width: 280px; }
+.rb-card > [data-when] { display: grid; gap: 6px; }
+[data-when] .rb-trigger { padding-bottom: 0; border-bottom: 0; }
+[data-when] .rb-hint, [data-if] .rb-iff .rb-hint { padding-left: 0; }
+.rb-word { color: var(--muted); font: 13px var(--font); }
+.rb-unit > .inp[data-wu]:not([type="number"]) { width: 96px; }
+.rb-iff { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.rb-iff b { font: 600 13px var(--font); }
+.rb-iff .link-btn:last-child { margin-left: auto; }
 /* For / If / Then (INT-496): the subject and its names, the expression box with its suggestions */
 .rb-for { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .rb-for > .inp { width: auto; max-width: 100%; height: 32px; }
