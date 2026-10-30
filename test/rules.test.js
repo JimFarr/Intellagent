@@ -159,6 +159,16 @@ describe('rules on a board', () => {
     try { assert.deepEqual(await ids(t), ['rule_mine']); } finally { await t.stop(); }
   });
 
+  it('the stall rule wakes whoever the idle-board alarm wakes, by name, even when it follows agents.json flags at boot (INT-516)', async () => {
+    const run = [process.execPath, '-e', ''];
+    const agents = { agents: { lander: { run, idleAlarm: true, enabled: false }, lead: { run, enabled: false } } };
+    const t = await startServer({ agents });
+    try {
+      const stall = (await t.ok('GET', '/api/boards/main/rules', undefined, USER)).rules.find((r) => r.id === 'board-stall-wake');
+      assert.deepEqual(stall.then, [{ do: 'wake', agent: 'lander' }], 'the idle alarm wakes lander, so the stall rule does');
+    } finally { await t.stop(); }
+  });
+
   it('only the human makes rules; a bad one comes back 400 with a hint', async () => {
     const rule = { name: 'x', when: { on: 'created' }, then: [{ do: 'comment', text: 'hi' }] };
     assert.equal((await s.api('POST', '/api/boards/main/rules', rule)).status, 403);

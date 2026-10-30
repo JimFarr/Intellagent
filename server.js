@@ -454,16 +454,22 @@ function seedEngineRules(b) {
   if (b.rebalance) delete b.rebalance.on; // its numbers stay settings
   b.automations.engines = 1;
 }
-// Once per board (INT-488; engines 2): an agent stalls → wake the coordinator, an ordinary rule the human edits or
-// deletes. A board whose human already has a stall rule keeps only theirs.
+// Once per board (INT-488; engines 2): an agent stalls → wake whoever the idle-board alarm wakes, by name, or the
+// coordinator when the alarm wakes nobody (INT-516); an ordinary rule the human edits or deletes. A board whose human
+// already has a stall rule keeps only theirs. At boot boards load before the standing agents (whose idleAlarm flags
+// the alarm may follow), so it waits for them: seedStallRules runs it again once they are up.
 function seedStallRule(b) {
-  if (b.automations.engines >= 2) return;
+  if (b.automations.engines >= 2 || !standing) return false;
   if (!b.automations.rules.some((r) => r.when?.on === 'agent_stalled')) {
     const at = new Date().toISOString();
-    b.automations.rules.push({ id: 'board-stall-wake', name: 'Wake the coordinator when an agent stalls', enabled: true, when: { on: 'agent_stalled' }, then: [{ do: 'wake', agent: 'coordinator' }], createdAt: at, updatedAt: at });
+    const ia = idleAlarmOf({ board: b });
+    const wake = ia.on && ia.wake.length ? ia.wake : ['coordinator'];
+    b.automations.rules.push({ id: 'board-stall-wake', name: 'Wake the coordinator when an agent stalls', enabled: true, when: { on: 'agent_stalled' }, then: wake.map((agent) => ({ do: 'wake', agent })), createdAt: at, updatedAt: at });
   }
   b.automations.engines = 2;
+  return true;
 }
+const seedStallRules = () => { for (const ctx of boards.values()) if (!(ctx.board.automations.engines >= 2)) tx(ctx, () => seedStallRule(ctx.board)); };
 // Once per board (INT-475): the triggers stored on tickets become rules on their ticket, same ids and state. The
 // default idle check goes (the board's Idle check rule covers the card, its last firing kept), a card that removed it
 // is skipped by that rule, and what waited in triggerQueue waits on its rule.
@@ -6474,6 +6480,7 @@ standing = require('./lib/agents').createAgents({
 });
 
 try { for (const a of standing.list().agents) issueAgentToken(a.name); } catch (e) { console.warn(`agent tokens: ${e.message}`); }
+try { seedStallRules(); } catch (e) { console.warn(`stall rule: ${e.message}`); }
 
 server.on('error', (e) => {
   if (e.code === 'EADDRINUSE') console.error(`Port ${M.port} is in use. Set "port" in ${MANIFEST_PATH} or INTELLAGENT_PORT.`);
