@@ -24,7 +24,7 @@ export const DEFAULTS = {
   colw: 300, ageDays: '7',
   motion: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full',
   stub: { id: true, type: true, priority: true, parent: true, author: true, lease: true, comments: true, attachments: true, blocked: true, properties: false, description: false, thumbnail: true, fields: true, assignee: true, status: true, checklist: true, listeners: true, writing: true },
-  grouping: 'stack', saveMode: 'accept', userName: 'You', notify: false, notifyHidden: true, sound: false, toasts: true,
+  grouping: 'stack', saveMode: 'accept', thread: 'below', userName: 'You', notify: false, notifyHidden: true, sound: false, toasts: true,
   metrics: true, metricsDays: 7,
 };
 function loadSettings() {

@@ -8,6 +8,7 @@ import { eventIcon, describe as describeEvent } from './js/events.js';
 import { createRules, RULE_VIEWS } from './js/rules.js';
 import { state, settings, settingsStore, themeKey, onSystemTheme, DEFAULTS, stored, AUTH, tokenStore } from './js/state.js';
 import { THEMES, BUILT_IN, addTheme, removeTheme, themeGroups, contrast } from './js/themes.js';
+import { follower, atBottom } from './js/follow.js';
 import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, rel, fmtLeft, TYPES, PRIORITIES, PRIO_VAR, TYPE_VAR, FIELD_ICON, LOGO, avatar, emojiGlyph, nameOf, nameHTML, dotsHTML, minsSince, standingOf, runAgo, thinkAge, lastDays, daysBefore } from './js/core.js';
 
 (() => {
@@ -1953,6 +1954,36 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     }).catch(() => {});
   }
 
+  // The thread follows its newest comment until the reader scrolls up; then a chip counts what came (INT-493).
+  const toEnd = (cmts) => { cmts.scrollTop = cmts.scrollHeight; };
+  function showNew(m, n) {
+    const chip = $('.new-chip', m.root);
+    if (!chip) return;
+    chip.textContent = `${n} new ↓`;
+    chip.setAttribute('aria-label', `${n} new comment${n === 1 ? '' : 's'}: jump to the newest`);
+    chip.classList.toggle('on', n > 0);
+    chip.tabIndex = n > 0 ? 0 : -1;
+    chip.setAttribute('aria-hidden', n > 0 ? 'false' : 'true');
+  }
+  function wireThread(m) {
+    const cmts = $('.cmts', m.root);
+    m.follow ||= follower(m.item.comments?.length || 0);
+    cmts.addEventListener('scroll', () => {
+      const bottom = atBottom(cmts);
+      m.follow.scrolled(bottom);
+      if (bottom) showNew(m, 0);
+    }, { passive: true });
+    cmts.addEventListener('load', () => { if (m.follow.following) toEnd(cmts); }, true); // an image above the end finished loading
+    $('.new-chip', m.root).onclick = () => { m.follow.jump(); toEnd(cmts); showNew(m, 0); cmts.focus(); };
+  }
+  function applyThread(m) {
+    const seg = $('.thread-seg', m.root);
+    if (!seg) return;
+    m.modal.classList.toggle('thread-beside', settings.thread === 'beside');
+    for (const b of $$('[data-thread]', seg)) { const on = b.dataset.thread === settings.thread; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }
+    if (m.follow?.following) { const c = $('.cmts', m.root); if (c) toEnd(c); }
+  }
+
   async function fetchItem(id) {
     if (state.board.items[id]) return { item: state.board.items[id], archived: false };
     const it = await api('GET', I(id));
@@ -1970,6 +2001,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     closeModal(true);
     const root = el(`<div class="scrim"><div class="modal item-modal" role="dialog" aria-modal="true">
       <header class="m-head"><span class="m-type"></span><span class="m-id" title="Copy ID|Copy the ticket number to the clipboard"></span><span class="saved">${icon('check', 'sm')}</span><span class="grow"></span>
+        <div class="seg thread-seg" role="group" aria-label="Comment thread"><button data-thread="beside" title="Thread beside|Comments in a column beside the ticket (screens 1000 px and wider)">${icon('thread-beside', 'sm')}Beside</button><button data-thread="below" title="Thread below|Comments under the ticket">${icon('thread-below', 'sm')}Below</button></div>
         <button class="pill-btn icon-btn sm" data-a="delete" hidden title="Delete|A test ticket: removed for good, with its comments and files">${icon('trash')}</button>
         <button class="pill-btn icon-btn sm" data-a="archive" title="Archive|Kept in the archive and restorable — tickets are never deleted">${icon('archive')}</button>
         <button class="pill-btn icon-btn sm" data-a="close" title="Close">${icon('x')}</button></header>
@@ -2006,13 +2038,14 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       if (m.src) m.src.classList.remove('is-open');
       m.src = cardEls.get(nid) || null;
       if (m.src && state.modal === m) m.src.classList.add('is-open');
-      Object.assign(m, { id: nid, item: g.item, archived: g.archived, editingDesc: false, staged: [], tab: 'comments', draft: {}, baseVersion: null, unanswered: [], unansStamp: null });
+      Object.assign(m, { id: nid, item: g.item, archived: g.archived, editingDesc: false, staged: [], tab: 'comments', draft: {}, baseVersion: null, unanswered: [], unansStamp: null, follow: null });
       renderSaveBar(m);
       buildModalBody(m);
       for (const n of [$('.m-main', root), $('.m-side', root)]) { n.classList.remove('swap-in'); void n.offsetWidth; n.classList.add('swap-in'); n.scrollTop = 0; }
     };
     wireModalShell(m);
     buildModalBody(m);
+    applyThread(m);
   }
 
   /* ─── create mode: write a whole ticket in the ticket modal, then create it ─── */
@@ -2179,6 +2212,13 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         scheduleRefresh(0);
       } catch (e) { toast(e.message, { kind: 'error' }); }
     };
+    const seg = $('.thread-seg', root);
+    if (seg) seg.onclick = (e) => {
+      const b = e.target.closest('[data-thread]');
+      if (!b || settings.thread === b.dataset.thread) return;
+      settings.thread = b.dataset.thread;
+      saveSettings(); applyThread(m);
+    };
     $('.m-id', root).onclick = () => { navigator.clipboard?.writeText(m.id); toast(`Copied ${m.id}`, { icon: 'copy', timeout: 1500 }); };
 
     const modal = m.modal;
@@ -2262,17 +2302,19 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
   function buildModalBody(m) {
     const main = $('.m-main', m.root);
     const editDesc = canEdit('description') && !m.archived;
-    main.innerHTML = `
+    main.innerHTML = `<div class="m-left">
       <div class="ask-slot"></div>
       <div class="m-title-wrap"><textarea class="m-title" rows="1" spellcheck="true"></textarea><button class="tb-ok" title="Save title">${icon('check')}</button></div>
       <div class="m-sub"></div>
       ${shown('description') ? `<div class="desc"><div class="md desc-view ${editDesc ? 'editable' : ''}" data-ph="${editDesc ? 'Description…' : '—'}"></div><div class="desc-edit" hidden>${tboxHTML({ mono: true, okTitle: 'Save (Ctrl+Enter)', hint: 'Ctrl+Enter · Esc' })}</div></div>` : ''}
       ${shown('attachments') ? `<div class="section"><div class="section-head">${icon('clip', 'sm')}<span>${esc(bi('attachments').label)}</span><span class="att-n"></span><span class="rule"></span></div><div class="atts"></div></div>` : ''}
-      <nav class="tabs"><button data-t="comments" class="on">${icon('msg', 'sm')}<span class="n c-n">0</span></button><button data-t="activity">${icon('activity', 'sm')}</button>${m.create ? '' : `<button data-t="triggers" title="Triggers|What this card waits on, and who it wakes">${icon('bell', 'sm')}<span class="n t-n"></span></button>`}</nav>
-      <div class="tab-comments"><div class="cmts"></div>
+      </div><section class="m-thread"><nav class="tabs"><button data-t="comments" class="on">${icon('msg', 'sm')}<span class="n c-n">0</span></button><button data-t="activity">${icon('activity', 'sm')}</button>${m.create ? '' : `<button data-t="triggers" title="Triggers|What this card waits on, and who it wakes">${icon('bell', 'sm')}<span class="n t-n"></span></button>`}</nav>
+      <div class="tab-comments"><div class="cmts" tabindex="0" role="log" aria-label="Comments"></div>
+        <button class="new-chip" type="button" tabindex="-1" aria-hidden="true"></button>
         <div class="cmt-compose">${tboxHTML({ ph: 'Comment…', okIcon: 'send', okTitle: 'Send (Ctrl+Enter)', tools: `<label class="tb-btn" title="Attach">${icon('clip')}<input type="file" multiple hidden></label>` })}</div></div>
       <div class="tab-activity" hidden></div>
-      ${m.create ? '' : `<div class="tab-triggers" hidden><div class="trg-list"></div>${trigBuilderHTML()}</div>`}`;
+      ${m.create ? '' : `<div class="tab-triggers" hidden><div class="trg-list"></div>${trigBuilderHTML()}</div>`}</section>`;
+    if (!m.create) wireThread(m);
     wireModalBody(m);
     renderRail(m);
     fillModal(m, true);
@@ -2469,6 +2511,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         $('.tab-activity', main).hidden = m.tab !== 'activity';
         const trg = $('.tab-triggers', main);
         if (trg) trg.hidden = m.tab !== 'triggers';
+        if (m.tab === 'comments' && m.follow?.following) toEnd($('.cmts', main));
         if (m.tab === 'activity') loadActivity(m);
       };
     }
@@ -2485,6 +2528,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         const attachments = [];
         for (const f of files) attachments.push({ name: f.name || 'pasted.png', mime: f.type, dataBase64: await readFile(f) });
         await api('POST', I(m.id, '/comments'), { body, attachments });
+        m.follow?.jump(); showNew(m, 0); // your own comment: follow it
         scheduleRefresh(0);
       } catch (e) { toast(e.message, { kind: 'error' }); ta.value = body; m.staged = files; drawStaged(m); }
     };
@@ -2761,6 +2805,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         + think.map((n) => `<div class="cmt thinking" aria-live="polite">${avatar({ kind: 'agent', name: n }, 'lg')}<div><div class="cmt-head"><b>${nameHTML(n)}</b><span class="kind">${icon('bot', 'sm')}</span><span>${replyWords(n, posts)}</span></div><div class="think-bubble" role="status" aria-label="${esc(nameOf(n))} ${replyWords(n, posts)}">${thinkAge(n)}</div></div></div>`).join('')
         + ended.map((t) => `<div class="cmt-ended muted">${esc(t)}</div>`).join('');
       if (!cmts._reactWired) { cmts._reactWired = true; wireReactions(cmts, m.id); }
+      if (m.follow) { const r = m.follow.update(it.comments.length); if (r.scroll) toEnd(cmts); else showNew(m, r.unseen); }
       cmts.querySelectorAll('.cmt-fold').forEach((d) => { d.ontoggle = () => (d.open ? open.add(d.dataset.cid) : open.delete(d.dataset.cid)); });
       cmts.onclick = (e) => {
         const b = e.target.closest('[data-why]');
@@ -6007,6 +6052,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         ${previewStage('grouping')}
         <h3>Ticket edits</h3>
         ${choiceRow('saveMode', 'Apply changes', [['accept', 'Save button', 'Edits wait until you press Save'], ['instant', 'Instant', 'Every change applies immediately']], settings.saveMode)}
+        ${choiceRow('thread', 'Comment thread', [['below', 'Below', 'Under the ticket, as before'], ['beside', 'Beside', 'A column beside the ticket, on screens 1000 px and wider']], settings.thread)}
         <h3>Ageing</h3>
         ${choiceRow('ageDays', 'Fade idle tickets', [['0', 'Off', 'Never fade tickets'], ['3', '3d', 'Fully faded after 3 idle days'], ['7', '7d', 'Fully faded after a week'], ['14', '14d', 'Fully faded after two weeks']], String(settings.ageDays))}
         <h3>You</h3>
