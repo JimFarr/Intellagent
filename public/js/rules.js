@@ -6,6 +6,8 @@
    builder writes from dropdowns (field · operator · value, joined by AND or OR, one level of groups) and reads
    back. A condition the builder can't show as rows stays as text. */
 import { $, $$, esc, el, icon } from './util.js';
+import { compile, suggest, tokenize } from './expr.js';
+import * as X from './exprrows.js';
 
 const ROLE = { coordinator: 'the coordinator', assignee: 'the assignee', last_worker: 'whoever worked it last' };
 const ACTION_ICON = { look: 'card', wake: 'bot', ask_human: 'ask', move: 'move', assign: 'user', release_lease: 'lock', archive: 'archive', comment: 'msg', set_field: 'braces', set_property: 'braces', extract: 'sparkle', land: 'checks', merge: 'send', style: 'palette', unstyle: 'x' };
@@ -184,10 +186,10 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
   }
 
   // A rule's sentence with its parts picked out: If … and … then …
-  function sentence(text) {
+  function sentence(text, expr) {
     const m = /^If (.*?)(?: and (.*?))? → (.*)$/.exec(text || '');
     if (!m) return `<span>${esc(text || '')}</span>`;
-    return `<span class="rl-k">If</span> ${esc(m[1])}${m[2] ? ` <span class="rl-k">and</span> ${condWords(m[2])}` : ''} <span class="rl-k">then</span> ${esc(m[3])}`;
+    return `<span class="rl-k">If</span> ${esc(m[1])}${m[2] ? ` <span class="rl-k">and</span> ${expr ? `<code>${esc(m[2])}</code>` : condWords(m[2])}` : ''} <span class="rl-k">then</span> ${esc(m[3])}`;
   }
   // a condition in words, with the builder's own labels: "priority is one of High, Critical and held by is nobody"
   function condWords(text) {
@@ -220,7 +222,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       const when = last?.held ? '<span class="warn-t">held back</span>' : bad ? `<span class="bad-t">${bad} failed</span>` : last ? esc(ago(last.at)) : r.native || r.when.on === 'fits' ? '' : 'never';
       return `<article class="ent${r.enabled ? '' : ' off'}" data-rule="${esc(r.id)}">
           <span class="ent-lead ent-tile"${r.enabled ? '' : ' data-tone="muted"'}>${icon(r.when.on === 'fits' ? 'card' : r.when.on in S.data.vocabulary.times ? 'clock' : 'zap')}</span>
-          <div class="ent-body"><h3 class="ent-title"><span class="ent-name">${esc(r.name)}</span></h3><p class="rl-sentence">${sentence(r.text)}</p></div>
+          <div class="ent-body"><h3 class="ent-title"><span class="ent-name">${esc(r.name)}</span></h3><p class="rl-sentence">${sentence(r.text, r.lang === 'expr')}</p></div>
           <div class="ent-side"><span class="ent-col when" title="${last ? `Last fired ${esc(new Date(last.at).toLocaleString())}${last.item ? ` on ${esc(last.item)}` : ''}` : ''}">${when}</span>
             <div class="ent-acts"><button type="button" class="switch ${r.enabled ? 'on' : ''}" role="switch" aria-checked="${r.enabled}" aria-label="${esc(r.name)} on" data-on title="${r.enabled ? 'On|Switch it off' : 'Off|Switch it on'}"></button></div></div></article>`;
     };
@@ -246,19 +248,30 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       if (!getSelection().toString()) { S.view = (p) => editor(p, r); render(); }
     };
   }
-  const strip = (r) => ({ name: r.name, enabled: r.enabled, when: r.when, ...(r.if ? { if: r.if } : {}), then: r.then });
+  const strip = (r) => ({ name: r.name, enabled: r.enabled, ...(r.for ? { for: r.for, names: r.names } : {}), ...(r.lang ? { lang: r.lang } : {}), when: r.when, ...(r.if ? { if: r.if } : {}), then: r.then });
 
   /* ─── the builder: If (the trigger, then conditions joined by AND / OR) → Then, with a live preview ─── */
   function editor(pane, r) {
     const v = S.data.vocabulary;
     const fields = condFields(board(), [...new Set([...S.agents, ...people()])].map((n) => ({ v: n, l: nameOf(n) })), lookNames());
     const blankRow = () => ({ k: 'priority', op: 'oneof', value: [] });
-    const st = { when: { ...(r?.when || { on: 'entered', column: board().columns[0]?.id }) }, cond: parseCond(r?.if, fields), text: r?.if || '', asText: false, enabled: r ? r.enabled : true };
-    if (!st.cond) { st.asText = true; st.cond = { mode: 'all', items: [] }; }
+    const subjects = v.subjects || {};
+    // a rule's "if" is an expression (For / If / Then) unless it is a card look, a board behaviour or an older rule in the filter language
+    const st = { when: { ...(r?.when || { on: 'entered', column: board().columns[0]?.id }) }, cond: null, text: r?.if || '', asText: false, enabled: r ? r.enabled : true,
+      for: r?.for && subjects[r.for] ? r.for : 'ticket', expr: !!subjects.ticket && (r ? r.lang === 'expr' : true) };
+    st.names = { ...(subjects[st.for]?.names || {}), ...(r?.names || {}) };
+    if (st.expr) { st.asText = true; st.cond = { mode: 'all', items: [] }; } else { st.cond = parseCond(r?.if, fields); if (!st.cond) { st.asText = true; st.cond = { mode: 'all', items: [] }; } }
+    // the expression language's schema under this rule's names, and the rows it offers
+    const schemaX = () => ({ vars: Object.fromEntries(Object.entries(st.names).map(([role, name]) => [name, subjects[st.for].parts[role]])) });
+    let xfields = st.expr ? X.fieldsOf(schemaX()) : [];
+    const FLD = () => (st.expr ? xfields : fields), OPT = () => (st.expr ? X.OPS : OPS);
+    const rowDone = (row) => (st.expr ? X.rowText(row, xfields) : rowTerm(row, fields));
+    const ROLE_WORD = { ticket: 'the ticket', comment: 'the comment' };
     pane.innerHTML = `<form class="rb" autocomplete="off">
       <header class="rb-top"><input class="rb-name" name="name" required maxlength="80" value="${esc(r?.name || '')}" placeholder="Name this rule" aria-label="Rule name">
         <label class="rb-on"><span>${st.enabled ? 'On' : 'Off'}</span><button type="button" class="switch ${st.enabled ? 'on' : ''}" role="switch" aria-checked="${st.enabled}" aria-label="Rule on" data-enabled></button></label></header>
       <div class="rb-grid"><ol class="rb-flow">
+        <li class="rb-step" data-for-step${st.expr ? '' : ' hidden'}><span class="rb-dot">For</span><div class="rb-card"><div class="rb-for" data-for></div></div></li>
         <li class="rb-step"><span class="rb-dot">If</span><div class="rb-card"><div data-if></div></div></li>
         <li class="rb-step"><span class="rb-dot">Then</span><div class="rb-card"><div class="rb-acts" data-acts></div>
           <button type="button" class="rb-add" data-add-act>${icon('plus', 'sm')}Add an action</button></div></li>
@@ -274,33 +287,38 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     function triggerHTML() {
       const d = v.events[st.when.on] || v.times[st.when.on] || {};
       return `<div class="rb-trigger"><select class="inp" data-w="on" aria-label="What sets it off">
-          <optgroup label="Something happens">${Object.entries(v.events).filter(([k, x]) => !x.state && (!x.nativeOnly || k === st.when.on)).map(([k, x]) => option(k, x.label, k === st.when.on)).join('')}</optgroup>
-          <optgroup label="Time passes">${Object.entries(v.times).filter(([k, x]) => !x.nativeOnly || k === st.when.on).map(([k, x]) => option(k, x.label, k === st.when.on)).join('')}</optgroup>
-          <optgroup label="While">${Object.entries(v.events).filter(([, x]) => x.state).map(([k, x]) => option(k, `${x.label} (its card's look)`, k === st.when.on)).join('')}</optgroup></select>
+          <optgroup label="Something happens">${Object.entries(v.events).filter(([k, x]) => !x.state && (!x.nativeOnly || k === st.when.on) && (!st.expr || x.subject === st.for)).map(([k, x]) => option(k, x.label, k === st.when.on)).join('')}</optgroup>
+          <optgroup label="Time passes">${Object.entries(v.times).filter(([k, x]) => (!x.nativeOnly || k === st.when.on) && (!st.expr || st.for === 'ticket')).map(([k, x]) => option(k, x.label, k === st.when.on)).join('')}</optgroup>
+          <optgroup label="While">${Object.entries(v.events).filter(([, x]) => x.state && (!st.expr || st.for === 'ticket')).map(([k, x]) => option(k, `${x.label} (its card's look)`, k === st.when.on)).join('')}</optgroup></select>
         ${d.column ? `<select class="inp" data-w="column" aria-label="Column">${board().columns.map((c) => option(c.id, c.name, c.id === st.when.column)).join('')}</select>` : ''}
         ${v.times[st.when.on] ? `<span class="rb-unit"><input class="inp" type="number" data-w="minutes" min="${d.minMinutes || 5}" step="5" value="${esc(st.when.minutes || 60)}" aria-label="Minutes"><span>min</span></span>` : ''}
         ${st.when.on === 'assigned' || st.when.on === 'mentioned' ? `<span class="rb-unit"><span>${st.when.on === 'assigned' ? 'to' : 'who'}</span><input class="inp" data-w="to" list="rl-people" placeholder="anyone" value="${esc(st.when.to || '')}" spellcheck="false"></span>` : ''}</div>`;
     }
     // one condition: field · operator · value
     function rowHTML(row, addr) {
-      const fd = fields.find((x) => x.k === row.k) || fields[0];
-      const ops = OPS[fd.kind];
+      const fd = FLD().find((x) => x.k === row.k) || FLD()[0];
+      const ops = OPT()[fd.kind];
       if (!ops.some(([k]) => k === row.op)) row.op = ops[0][0];
       const vals = [].concat(row.value ?? []);
       let val = '';
       if (fd.kind === 'raw') val = `<input class="inp mono rb-grow" data-val value="${esc(vals.join(''))}" placeholder="e.g. reviewers.nebula:ok" spellcheck="false">`;
       else if (noValue(row.op)) val = '';
-      else if (fd.options?.length && isMulti(row.op)) val = `<span class="rb-chips">${fd.options.map((o) => `<button type="button" class="toggle-chip ${vals.includes(o.v) ? 'on' : ''}" data-opt="${esc(o.v)}">${esc(o.l)}</button>`).join('')}</span>`;
-      else if (fd.options?.length && fd.kind !== 'person' && fd.kind !== 'who') val = `<select class="inp" data-val>${option('', 'choose…', !vals[0])}${fd.options.map((o) => option(o.v, o.l, o.v === vals[0])).join('')}</select>`;
+      else if (fd.options?.length && isMulti(row.op)) val = `<span class="rb-chips">${fd.options.map((o) => { const ov = o.v ?? o, ol = o.l ?? o; return `<button type="button" class="toggle-chip ${vals.includes(ov) ? 'on' : ''}" data-opt="${esc(ov)}">${esc(ol)}</button>`; }).join('')}</span>`;
+      else if (fd.options?.length && fd.kind !== 'person' && fd.kind !== 'who' && fd.kind !== 'list') val = `<select class="inp" data-val>${option('', 'choose…', !vals[0])}${fd.options.map((o) => option(o.v ?? o, o.l ?? o, (o.v ?? o) === vals[0])).join('')}</select>`;
+      else if (fd.options?.length && fd.kind === 'list') val = `<select class="inp" data-val>${option('', 'choose…', !vals[0])}${fd.options.map((o) => option(o, o, o === vals[0])).join('')}</select>`;
       else if (fd.kind === 'number') val = `<input class="inp rb-num" type="number" min="0" data-val value="${esc(vals[0] ?? '')}" placeholder="2">`;
       else val = `<input class="inp" data-val ${fd.kind === 'person' || fd.kind === 'who' ? 'list="rl-people" placeholder="a name"' : 'placeholder="value"'} value="${esc(vals.join('|'))}" spellcheck="false">`;
-      const groups = [...new Set(fields.map((x) => x.group))];
-      return `<div class="rb-row${rowTerm(row, fields) ? '' : ' todo'}" data-row="${addr}">
-        <select class="inp" data-rk aria-label="Field">${groups.map((g) => `<optgroup label="${esc(g)}">${fields.filter((x) => x.group === g).map((x) => option(x.k, x.label, x.k === fd.k)).join('')}</optgroup>`).join('')}</select>
+      const groups = [...new Set(FLD().map((x) => x.group))];
+      return `<div class="rb-row${rowDone(row) ? '' : ' todo'}" data-row="${addr}">
+        <select class="inp" data-rk aria-label="Field">${groups.map((g) => `<optgroup label="${esc(g)}">${FLD().filter((x) => x.group === g).map((x) => option(x.k, x.label, x.k === fd.k)).join('')}</optgroup>`).join('')}</select>
         ${ops.length > 1 ? `<select class="inp rb-op" data-op aria-label="Operator">${ops.map(([k, l]) => option(k, l, k === row.op)).join('')}</select>` : fd.kind === 'raw' ? '' : `<span class="rb-opword">${esc(ops[0][1])}</span>`}
         ${val}<button type="button" class="icon-x" data-rdel title="Remove" aria-label="Remove this condition">${icon('x', 'sm')}</button></div>`;
     }
+    // the rows as text and back: the expression language for a rule on a subject, the filter language for the rest
+    const toText = () => (st.expr ? X.treeText(st.cond, xfields) : condText(st.cond, fields));
+    const fromText = (t) => (st.expr ? X.parseRows(t, schemaX()) : parseCond(t, fields));
     function drawIf() {
+      if (st.expr && !st.asText) st.text = toText() ?? st.text; // the builder writes the same text the box holds
       const c = st.cond;
       const items = c.items.map((it, i) => {
         const join = i === 0 ? '<span class="rb-and">AND</span>' : joinSel(c.mode, 'top');
@@ -310,13 +328,85 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
           <button type="button" class="rb-add" data-add-row="${i}">${icon('plus', 'sm')}Condition</button></div></div>`;
       }).join('');
       ifEl.innerHTML = `${triggerHTML()}
-        ${st.asText ? `<div class="rb-item"><span class="rb-and">AND</span><input class="inp mono rb-grow" data-cond-text value="${esc(st.text)}" placeholder="priority:High|Critical (@drax or @nebula)" spellcheck="false"></div>
+        ${st.asText && st.expr ? `<div class="rb-x">
+            <div class="rb-xbox"><input class="inp mono rb-xin" data-x role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="rl-sg" aria-describedby="rl-xmsg" aria-label="Only when" value="${esc(st.text)}" placeholder="${st.for === 'comment' ? esc(`${st.names.comment}.text.contains("?")`) : esc(`${st.names.ticket}.priority in ["High", "Critical"]`)}" spellcheck="false" autocapitalize="off">
+              <ul class="rb-sug" id="rl-sg" role="listbox" aria-label="Suggestions" hidden></ul></div>
+            <button type="button" class="rb-xmsg" id="rl-xmsg" data-xgo hidden></button>
+            <div class="rb-hint">Written as an expression, e.g. <code>${esc(`${st.names.ticket}.priority == "High" && ${st.names.ticket}.assignee.isEmpty()`)}</code>. Leave it empty for every one. Ctrl+Space shows what fits here.</div></div>
+          <div class="rb-adds"><button type="button" class="link-btn" data-as-rows>Use the builder</button></div>`
+        : st.asText ? `<div class="rb-item"><span class="rb-and">AND</span><input class="inp mono rb-grow" data-cond-text value="${esc(st.text)}" placeholder="priority:High|Critical (@drax or @nebula)" spellcheck="false"></div>
           <div class="rb-hint">Written in the condition language. Leave it empty for every ticket.</div>
           <div class="rb-adds"><button type="button" class="link-btn" data-as-rows>Use the builder</button></div>`
         : `${items}<div class="rb-adds"><button type="button" class="rb-add" data-add-row>${icon('plus', 'sm')}Add a condition</button>
           <button type="button" class="rb-add" data-add-group>${icon('layers', 'sm')}Add a group</button><span class="grow"></span>
           <button type="button" class="link-btn" data-as-text>Write it as text</button></div>
-          ${c.items.length ? '' : '<div class="rb-hint">No conditions: every ticket it happens to.</div>'}`}`;
+          ${c.items.length ? '' : '<div class="rb-hint">No conditions: every one it happens to.</div>'}
+          ${st.expr ? `<div class="rb-hint">Writes: <code data-xtext>${esc(st.text || 'nothing yet')}</code></div>` : ''}`}`;
+      if (st.expr && st.asText) check();
+    }
+    /* the If box: green or red as it reads, and what fits under the caret */
+    const sg = { items: [], at: 0, from: 0, to: 0 };
+    const xin = () => $('[data-x]', ifEl);
+    function check() {
+      const i = xin(), msg = $('[data-xgo]', ifEl);
+      if (!i) return true;
+      const c = st.text.trim() ? compile(st.text, schemaX()) : null;
+      i.classList.toggle('ok', !!c?.ok); i.classList.toggle('bad', c ? !c.ok : false); i.setAttribute('aria-invalid', c && !c.ok ? 'true' : 'false');
+      msg.hidden = !c || c.ok;
+      if (c && !c.ok) {
+        const er = c.error;
+        msg.textContent = `${er.message} (character ${er.pos + 1})`;
+        Object.assign(msg.dataset, { at: er.pos, end: Math.max(er.end, er.pos + 1) });
+      }
+      return !c || c.ok;
+    }
+    function closeSug() { sg.items = []; const u = $('#rl-sg', ifEl), i = xin(); if (u) u.hidden = true; if (i) { i.setAttribute('aria-expanded', 'false'); i.removeAttribute('aria-activedescendant'); } }
+    function drawSug() {
+      const u = $('#rl-sg', ifEl), i = xin();
+      if (!u || !i) return;
+      if (!sg.items.length) return closeSug();
+      u.innerHTML = sg.items.map((x, n) => `<li id="rl-sg-${n}" role="option" data-sg="${n}" aria-selected="${n === sg.at}"><b>${esc(x.label)}</b><span>${esc(x.hint || x.kind)}</span></li>`).join('');
+      u.hidden = false; i.setAttribute('aria-expanded', 'true'); i.setAttribute('aria-activedescendant', `rl-sg-${sg.at}`);
+      $(`#rl-sg-${sg.at}`, u)?.scrollIntoView({ block: 'nearest' });
+      // under the caret: the width of the text before where the word starts
+      const cs = getComputedStyle(i), ctx = document.createElement('canvas').getContext('2d');
+      ctx.font = cs.font;
+      const x = parseFloat(cs.paddingLeft) + ctx.measureText(i.value.slice(0, sg.from)).width - i.scrollLeft;
+      u.style.left = `${Math.max(0, Math.min(x, i.offsetWidth - 220))}px`;
+    }
+    // an empty box offers nothing until asked (Ctrl+Space)
+    function suggestNow(force) {
+      const i = xin();
+      if (!i) return;
+      const out = suggest(i.value, i.selectionStart ?? i.value.length, schemaX());
+      sg.items = force || i.value ? out.items.slice(0, 40) : [];
+      Object.assign(sg, { at: 0, from: out.from, to: out.to });
+      drawSug();
+    }
+    function take(n) {
+      const i = xin(), it = sg.items[n];
+      if (!i || !it) return;
+      i.value = i.value.slice(0, sg.from) + it.insert + i.value.slice(sg.to);
+      const caret = sg.from + it.insert.length;
+      i.setSelectionRange(caret, caret); i.focus();
+      st.text = i.value; check(); changed(); suggestNow();
+    }
+    /* the For step: what the rule is about, and what its parts are called */
+    const VAR = /^[A-Za-z][A-Za-z0-9_]{0,19}$/;
+    function drawFor() {
+      const box = $('[data-for]', f);
+      $('[data-for-step]', f).hidden = !st.expr;
+      if (!st.expr) return;
+      const roles = Object.keys(subjects[st.for].names);
+      box.innerHTML = `<select class="inp" data-subject aria-label="What the rule is for">${Object.entries(subjects).map(([k, x]) => option(k, x.label, k === st.for)).join('')}</select>
+        ${roles.map((role) => `<label class="rb-unit"><span>${role === st.for ? 'named' : 'its ticket, named'}</span><input class="inp rb-nm" data-nm="${role}" value="${esc(st.names[role])}" maxlength="20" spellcheck="false" autocapitalize="off" aria-label="Name for ${ROLE_WORD[role]}"></label>`).join('')}
+        <span class="rb-hint" data-nmmsg role="alert" hidden></span>`;
+    }
+    // the filter language and the expression language each have their own If: a card look is the only new rule that needs the old one
+    function setLanguage(expr) {
+      Object.assign(st, { expr, text: '', asText: expr, cond: expr ? { mode: 'all', items: [] } : parseCond('', fields) });
+      xfields = expr ? X.fieldsOf(schemaX()) : [];
+      drawFor();
     }
     const rowAt = (n) => {
       const [i, k] = n.closest('[data-row]').dataset.row.split('.').map(Number);
@@ -341,10 +431,14 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
         vals.has(opt.dataset.opt) ? vals.delete(opt.dataset.opt) : vals.add(opt.dataset.opt);
         row.value = [...vals]; drawIf(); changed(); return;
       }
-      if (e.target.closest('[data-as-text]')) { st.text = condText(st.cond, fields) ?? st.text; st.asText = true; drawIf(); return; }
+      if (e.target.closest('[data-as-text]')) { st.text = toText() ?? st.text; st.asText = true; drawIf(); return; }
+      const go = e.target.closest('[data-xgo]');
+      if (go) { const i = $('[data-x]', ifEl); i.focus(); i.setSelectionRange(Number(go.dataset.at), Number(go.dataset.end)); return; }
+      const pick = e.target.closest('[data-sg]');
+      if (pick) { take(Number(pick.dataset.sg)); return; }
       if (e.target.closest('[data-as-rows]')) {
-        const c = parseCond(st.text, fields);
-        if (!c) { toast('This condition nests groups the builder can’t show: keep it as text', { kind: 'error' }); return; }
+        const c = fromText(st.text);
+        if (!c) { toast('The builder can’t show this as rows (a group in a group, or something its rows lack): keep it as text', { kind: 'error' }); return; }
         st.cond = c; st.asText = false; drawIf(); changed();
       }
     });
@@ -357,6 +451,8 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
           if (d.column && !st.when.column) st.when.column = board().columns[0]?.id;
           if (v.times[st.when.on] && !st.when.minutes) st.when.minutes = 60;
           const isLook = st.when.on === 'fits';
+          // a card look keeps the filter language; every other new rule is written in the expression language
+          if (!r && subjects.ticket && st.expr === isLook) setLanguage(!isLook);
           const hasLook = $$('[data-do]', acts).some((x) => x.value === 'look');
           if (isLook !== hasLook) { acts.innerHTML = ''; acts.append(el(actionRow(isLook ? { do: 'look', look: { outline: 'accent' } } : { do: 'wake', agent: 'coordinator' }))); renumber(); }
           $('[data-add-act]', f).hidden = isLook;
@@ -367,8 +463,8 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       const j = e.target.dataset.join;
       if (j) { if (j === 'top') st.cond.mode = e.target.value; else st.cond.items[Number(j.slice(1))].mode = e.target.value; drawIf(); changed(); return; }
       if (e.target.matches('[data-rk]')) {
-        const row = rowAt(e.target); const fd = fields.find((x) => x.k === e.target.value);
-        Object.assign(row, { k: fd.k, op: OPS[fd.kind][0][0], value: undefined });
+        const row = rowAt(e.target); const fd = FLD().find((x) => x.k === e.target.value);
+        Object.assign(row, { k: fd.k, op: OPT()[fd.kind][0][0], value: undefined });
         drawIf(); changed(); return;
       }
       if (e.target.matches('[data-op]')) {
@@ -379,16 +475,50 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       }
       if (e.target.matches('select[data-val]')) { rowAt(e.target).value = [e.target.value]; drawIf(); changed(); }
     });
+    ifEl.addEventListener('keydown', (e) => {
+      if (!e.target.matches('[data-x]')) return;
+      const open = sg.items.length;
+      if (e.key === ' ' && e.ctrlKey) { e.preventDefault(); suggestNow(true); return; }
+      if (!open) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); sg.at = (sg.at + (e.key === 'ArrowDown' ? 1 : -1) + open) % open; drawSug(); }
+      else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); take(sg.at); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSug(); }
+    });
+    ifEl.addEventListener('focusout', (e) => { if (e.target.matches('[data-x]')) closeSug(); });
+    ifEl.addEventListener('mousedown', (e) => { if (e.target.closest('[data-sg]')) e.preventDefault(); }); // keep the caret in the box
     ifEl.addEventListener('input', (e) => {
       if (e.target.matches('input[data-val]')) {
         const row = rowAt(e.target);
         row.value = e.target.value;
-        e.target.closest('[data-row]').classList.toggle('todo', !rowTerm(row, fields));
+        e.target.closest('[data-row]').classList.toggle('todo', !rowDone(row));
         changed();
       }
       if (e.target.matches('[data-cond-text]')) { st.text = e.target.value; changed(); }
+      if (e.target.matches('[data-x]')) { st.text = e.target.value; check(); changed(); suggestNow(); }
     });
 
+    f.addEventListener('change', (e) => {
+      if (!e.target.matches('[data-subject]')) return;
+      st.for = e.target.value; st.names = { ...subjects[st.for].names }; st.text = ''; st.cond = { mode: 'all', items: [] }; st.asText = true; xfields = X.fieldsOf(schemaX());
+      const own = Object.keys(v.events).find((k) => v.events[k].subject === st.for && !v.events[k].state && !v.events[k].nativeOnly);
+      if (v.events[st.when.on]?.subject !== st.for) st.when = { on: own, column: board().columns[0]?.id };
+      drawFor(); drawIf(); changed();
+    });
+    f.addEventListener('input', (e) => {
+      const nm = e.target.closest('[data-nm]');
+      if (!nm) return;
+      const role = nm.dataset.nm, word = nm.value.trim(), msg = $('[data-nmmsg]', f);
+      const bad = !VAR.test(word) || ['in', 'true', 'false', 'null'].includes(word) ? 'A letter or a short word: letters, digits and _, starting with a letter'
+        : Object.entries(st.names).some(([k, n]) => k !== role && n === word) ? 'Two parts need different names' : '';
+      nm.setAttribute('aria-invalid', bad ? 'true' : 'false'); msg.hidden = !bad; msg.textContent = bad;
+      if (bad) return;
+      // the If keeps meaning the same thing under the new name
+      const was = st.names[role];
+      st.text = X.renameIn(st.asText ? st.text : toText() ?? st.text, was, word);
+      st.names[role] = word; xfields = X.fieldsOf(schemaX());
+      if (!st.asText) { const c = fromText(st.text); if (c) st.cond = c; else st.asText = true; }
+      drawIf(); changed();
+    });
     for (const a of r?.then || [{ do: 'wake', agent: 'coordinator' }]) acts.append(el(actionRow(a)));
     const renumber = () => $$('.rb-act', acts).forEach((x, i) => { $('.rb-n', x).textContent = i + 1; });
     renumber();
@@ -421,6 +551,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     f.onsubmit = async (e) => {
       e.preventDefault();
       const body = read();
+      if (st.expr && st.asText && !check()) { xin().focus(); toast('The If doesn’t read yet: the red message says where', { kind: 'error' }); return; }
       if (body.if === null) { toast('Finish the conditions first (a highlighted row needs a value), or remove them', { kind: 'error' }); return; }
       try {
         if (r) await api('PUT', `${base()}/${encodeURIComponent(r.id)}`, body); else await api('POST', base(), body);
@@ -430,7 +561,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
     };
 
     function read() {
-      const cond = st.asText ? st.text.trim() : condText(st.cond, fields);
+      const cond = st.asText ? st.text.trim() : toText();
       const then = $$('.rb-act', acts).map((row) => {
         const g = (n) => $(`[name="${n}"]`, row)?.value.trim() ?? '';
         const a = { do: $('[data-do]', row).value };
@@ -460,7 +591,7 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       if (d.column) when.column = st.when.column;
       if (v.times[when.on]) when.minutes = Number(st.when.minutes) || 60;
       if ((when.on === 'assigned' || when.on === 'mentioned') && st.when.to?.trim()) when.to = st.when.to.trim();
-      return { name: f.elements.name.value.trim(), enabled: st.enabled, when, if: cond === null ? null : cond || undefined, then };
+      return { name: f.elements.name.value.trim(), enabled: st.enabled, ...(st.expr ? { for: st.for, names: st.names, lang: 'expr' } : {}), when, if: cond === null ? null : cond || undefined, then };
     }
 
     let t = null;
@@ -470,16 +601,17 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
       if (!out) return;
       const body = read();
       if (body.if === null) { out.innerHTML = '<p class="rb-wait">Finish the highlighted conditions to see which tickets it picks.</p>'; return; }
+      if (st.expr && !(st.text.trim() ? compile(st.text, schemaX()).ok : true)) { out.innerHTML = '<p class="rb-wait">Fix the If (the red message) to see which it picks.</p>'; return; }
       try {
         const p = await api('POST', `${base()}/preview`, { rule: { ...body, name: body.name || 'preview' } });
         const items = p.items.map((x) => `<li><code>${esc(x.id)}</code><span>${esc(x.title)}</span></li>`).join('');
-        out.innerHTML = `<p class="rl-sentence">${sentence(p.text)}</p>
+        out.innerHTML = `<p class="rl-sentence">${sentence(p.text, st.expr)}</p>
           <div class="rb-count"><b>${p.mode === 'board' ? '—' : p.count}</b><span>${p.mode === 'board' ? 'Acts on no ticket: it wakes once each time' : p.mode === 'due' ? `ticket${p.count === 1 ? '' : 's'} it would fire for right now` : `ticket${p.count === 1 ? '' : 's'} on the board fit the conditions now`}</span></div>
           ${items ? `<ul class="rb-items">${items}</ul>` : ''}`;
         out.classList.remove('bad');
       } catch (e) { out.innerHTML = `<p>${esc(e.message)}</p>${e.data?.hint ? `<p class="rb-wait">${esc(e.data.hint)}</p>` : ''}`; out.classList.add('bad'); }
     }
-    drawIf(); changed();
+    drawFor(); drawIf(); changed();
     pane.append(el(`<datalist id="rl-people">${fields.find((x) => x.k === 'assignee').options.map((o) => `<option value="${esc(o.v)}">${esc(o.l)}</option>`).join('')}</datalist>`));
   }
 
