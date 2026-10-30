@@ -83,7 +83,8 @@ describe('rules on a board', () => {
     // reshaped, it stays the same rule (same id) and is no longer the idle check
     const mine = await s.ok('PUT', '/api/boards/main/rules/board-idle-check', { ...body, enabled: true, if: 'priority:High' }, USER);
     assert.equal(mine.id, 'board-idle-check');
-    assert.equal(mine.if, 'priority:High');
+    assert.equal(mine.if, 'T.priority == "High"', 'an older caller\'s filter "if" is kept as the expression that says the same (INT-480)');
+    assert.equal(mine.lang, 'expr');
     // an engine's words work only in its rule's shape, with a hint naming the rule
     const bad = await s.api('POST', '/api/boards/main/rules', { name: 'x', when: { on: 'board_idle', minutes: 30 }, then: [{ do: 'comment', text: 'idle' }] }, USER);
     assert.equal(bad.status, 400);
@@ -146,7 +147,7 @@ describe('rules on a board', () => {
 
   it('an event rule acts on the tickets its "if" picks, logs it, and shows on the ticket', async () => {
     const r = await s.ok('POST', '/api/boards/main/rules', { name: 'Flag urgent work', when: { on: 'entered', column: 'In Progress' }, if: 'priority:Critical', then: [{ do: 'comment', text: '{id} is urgent' }, { do: 'set_field', key: 'nope', value: 1 }] }, USER);
-    assert.match(r.text, /If a ticket enters In Progress and priority:Critical → comment on it/);
+    assert.match(r.text, /If a ticket enters In Progress and T\.priority == "Critical" → comment on it/);
     const hot = await newItem({ priority: 'Critical' });
     const cool = await newItem({ priority: 'Low' });
     await s.ok('POST', `/api/boards/main/items/${hot.id}/move`, { column: 'In Progress' }, USER);
