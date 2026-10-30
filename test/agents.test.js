@@ -1531,6 +1531,26 @@ describe('per-agent git worktrees', () => {
       try { execFileSync('git', ['worktree', 'prune'], { cwd: dir }); } catch { /* ignore */ }
     }
   });
+  it('a branch held by another folder fails the worktree plainly, naming the folder (INT-492)', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const { createWorktrees } = require('../lib/worktrees');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-wt-'));
+    const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    try {
+      git(dir, 'init', '-q', '-b', 'main');
+      git(dir, 'config', 'user.email', 'test@example.com');
+      git(dir, 'config', 'user.name', 'Test');
+      fs.writeFileSync(path.join(dir, 'f.txt'), 'x\n');
+      git(dir, 'add', '.');
+      git(dir, 'commit', '-q', '-m', 'init');
+      const squatter = path.join(dir, 'sandbox-wt');
+      git(dir, 'worktree', 'add', squatter, '-b', 'agent/ann');
+      await assert.rejects(createWorktrees({ root: dir, dir: path.join(dir, '.worktrees') }).ensure('ann'),
+        (e) => e.message.includes('agent/ann is checked out in') && e.message.includes('sandbox-wt') && /sandbox must never/.test(e.message));
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
   it('a conflict the agent resolved by merging main lands by merge; never with another ticket\'s commits', async () => {
     const fs = require('fs');
     const os = require('os');
