@@ -18,7 +18,8 @@ const work = [{ board: 'main', action: 'start', id: 'INT-1', title: 'One' }];
 describe('agent stalls (INT-483)', () => {
   it('says why for each kind, and nothing for an agent at work or with nothing to do', () => {
     assert.equal(whyOf(agent({ status: 'failed' }), none), 'failed');
-    assert.equal(whyOf(agent({ status: 'retrying', failures: 1, queued: 1 }), none), 'failed', 'a failed run being retried');
+    assert.equal(whyOf(agent({ status: 'retrying', failures: 2, queued: 1 }), none), 'failed', 'two failed runs, being retried');
+    assert.equal(whyOf(agent({ status: 'retrying', failures: 1, queued: 1 }), none), 'waiting', 'one transient failure is no failed stall (INT-501)');
     assert.equal(whyOf(agent({ status: 'waiting', waitingFor: 'usage limit', queued: 2 }), none), 'limited');
     assert.equal(whyOf(agent({ status: 'throttled', queued: 1 }), none), 'limited');
     assert.equal(whyOf(agent({ status: 'paused', queued: 1 }), none), 'paused');
@@ -43,7 +44,17 @@ describe('agent stalls (INT-483)', () => {
     assert.equal(r.stalls.length, 1, 'a new stall is raised');
   });
 
-  it('waiting and limited count only after their minutes; paused and failed at once', () => {
+  it('Stop all: paused agents raise their stall only after the hold, and not at all if they are resumed first (INT-501)', () => {
+    const all = ['a', 'b', 'c'].map((name) => agent({ name, status: 'paused', queued: 1 }));
+    let r = check(all, none, {}, T0);
+    assert.equal(r.stalls.length, 0, 'just paused');
+    r = check([agent({ name: 'a', status: 'idle' }), ...all.slice(1)], none, r.ledger, T0 + TIMINGS.pausedMs - 1);
+    assert.deepEqual([r.stalls.length, Object.keys(r.ledger)], [0, ['b', 'c']], 'a resumed in time: nothing raised for it');
+    r = check(all.slice(1), none, r.ledger, T0 + TIMINGS.pausedMs);
+    assert.deepEqual(r.stalls.map((s) => [s.agent, s.why, s.minutes]), [['b', 'paused', 2], ['c', 'paused', 2]]);
+  });
+
+  it('waiting and limited count only after their minutes; paused after its hold; failed at once', () => {
     const queued = agent({ status: 'queued', queued: 2 });
     let r = check([queued], none, {}, T0);
     assert.equal(r.stalls.length, 0, 'just queued');
@@ -59,17 +70,19 @@ describe('agent stalls (INT-483)', () => {
     r = check([limited], none, {}, T0);
     r = check([limited], none, r.ledger, T0 + 15 * MIN);
     assert.deepEqual([r.stalls[0].why, r.stalls[0].evidence.limitedUntil], ['limited', '2026-10-29T15:00:00Z']);
-    assert.equal(check([agent({ status: 'paused', queued: 1 })], none, {}, T0).stalls[0].why, 'paused');
   });
 
   it('a different reason is a new stall', () => {
-    let r = check([agent({ status: 'paused', queued: 1 })], none, {}, T0);
-    r = check([agent({ status: 'failed' })], none, r.ledger, T0 + MIN);
+    let r = check([agent({ status: 'failed' })], none, {}, T0);
     assert.deepEqual(r.stalls.map((s) => s.why), ['failed']);
+    r = check([agent({ status: 'paused', queued: 1 })], none, r.ledger, T0 + MIN);
+    r = check([agent({ status: 'paused', queued: 1 })], none, r.ledger, T0 + MIN + TIMINGS.pausedMs);
+    assert.deepEqual(r.stalls.map((s) => s.why), ['paused']);
   });
 
   it('the manifest tunes the minutes; anything else keeps the default', () => {
-    assert.deepEqual(timingsOf({ waitMinutes: 5, limitedMinutes: 'x' }), { waitMs: 5 * MIN, limitedMs: TIMINGS.limitedMs });
+    assert.deepEqual(timingsOf({ waitMinutes: 5, limitedMinutes: 'x' }), { waitMs: 5 * MIN, limitedMs: TIMINGS.limitedMs, pausedMs: TIMINGS.pausedMs });
+    assert.equal(timingsOf({ pausedMinutes: 0.01 }).pausedMs, 600);
     assert.deepEqual(timingsOf(null), TIMINGS);
   });
 });
@@ -92,7 +105,7 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
   const B = '/api/boards/main';
   let s;
   before(async () => {
-    s = await startServer({ agents: { defaults: { settleSeconds: 0.2, retrySeconds: 0.2, throttleMinutes: 0 }, agents: {
+    s = await startServer({ manifest: { stalls: { pausedMinutes: 0.01 } }, agents: { defaults: { settleSeconds: 0.2, retrySeconds: 0.2, throttleMinutes: 0 }, agents: {
       boss: { run: run('ok') }, drax: { run: run('ok') }, flaky: { run: run('fail'), maxFailures: 1, failedRetryMinutes: 0 }, spare: { run: run('ok') },
     } } });
   });
@@ -108,13 +121,16 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
     await s.ok('POST', `${B}/items`, { title: 'for drax', column: 'Ready', assignee: 'drax' }, USER);
     // any agent's status change runs the check (as the minute's sweep does)
     await s.ok('POST', '/api/agents/spare/pause', {}, USER);
+    assert.equal((await events('agent.stalled')).length, 0, 'inside the hold: nothing yet (INT-501)');
+    await new Promise((r) => setTimeout(r, 800));
+    await s.ok('POST', '/api/agents/spare/resume', {}, USER); // another status change: the check runs again, past the hold
     const stall = await until(async () => (await events('agent.stalled')).find((e) => e.agent === 'drax'), 5000, 'drax stalled');
     assert.equal(stall.why, 'paused');
     assert.ok(stall.evidence.queued >= 1 || stall.evidence.waiting.length, 'the evidence says what waits');
     const woke = await until(async () => (await events('rule.fired')).find((e) => e.stall?.agent === 'drax'), 5000, 'boss woken');
     assert.deepEqual([woke.addressed, woke.stall.why, woke.why], [['boss'], 'paused', 'drax stalls (paused)']);
     // still paused: another check raises nothing more
-    await s.ok('POST', '/api/agents/spare/resume', {}, USER);
+    await s.ok('POST', '/api/agents/spare/pause', {}, USER);
     await new Promise((r) => setTimeout(r, 500));
     assert.equal((await events('agent.stalled')).filter((e) => e.agent === 'drax').length, 1);
   });
