@@ -1987,10 +1987,19 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     cmts.addEventListener('load', () => { if (m.follow.following) toEnd(cmts); }, true); // an image above the end finished loading
     $('.new-chip', m.root).onclick = () => { m.follow.jump(); toEnd(cmts); showNew(m, 0); cmts.focus(); };
   }
+  // Beside mode on a wide screen: the side controls live in the ticket column, not their own column (INT-499).
+  const wideMq = matchMedia('(min-width: 1000px)');
+  const besideNow = (m) => !m.create && settings.thread === 'beside' && wideMq.matches;
+  function placeSide(m) {
+    const side = $('.m-side', m.root), to = besideNow(m) ? $('.m-left', m.root) : $('.m-frame', m.root);
+    if (side && to && side.parentNode !== to) { to.append(side); m.modal.classList.toggle('side-in-left', to.matches('.m-left')); fillSide(m); }
+  }
   function applyThread(m) {
     const seg = $('.thread-seg', m.root);
     if (!seg) return;
     m.modal.classList.toggle('thread-beside', settings.thread === 'beside');
+    if (!m.mqWired) { m.mqWired = true; wideMq.addEventListener('change', () => m.modal.isConnected && placeSide(m)); }
+    placeSide(m);
     for (const b of $$('[data-thread]', seg)) { const on = b.dataset.thread === settings.thread; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }
     if (m.follow?.following) { const c = $('.cmts', m.root); if (c) toEnd(c); }
   }
@@ -2052,6 +2061,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       Object.assign(m, { id: nid, item: g.item, archived: g.archived, editingDesc: false, staged: [], tab: 'comments', draft: {}, baseVersion: null, unanswered: [], unansStamp: null, follow: null });
       renderSaveBar(m);
       buildModalBody(m);
+      placeSide(m);
       for (const n of [$('.m-main', root), $('.m-side', root)]) { n.classList.remove('swap-in'); void n.offsetWidth; n.classList.add('swap-in'); n.scrollTop = 0; }
     };
     wireModalShell(m);
@@ -2312,6 +2322,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
 
   function buildModalBody(m) {
     const main = $('.m-main', m.root);
+    $('.m-frame', m.root).append($('.m-side', m.root)); // rebuilding .m-left must not take the side controls with it
     const editDesc = canEdit('description') && !m.archived;
     main.innerHTML = `<div class="m-left">
       <div class="ask-slot"></div>
@@ -2962,25 +2973,26 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     const lease = activeLease(it);
     const col = colById(it.columnId);
     const parts = [];
+    const wide = besideNow(m);
 
     // details
     const det = [];
     det.push(`<div class="field">${'<div class="lbl">'}${icon('board', 'sm')}Column</div>${m.archived ? `<div class="ro-val">${esc(col?.name || '—')}</div>` : ddHTML('column', col ? `<span class="sw" style="--c:${esc(col.color)}"></span>${esc(col.name)}` : '')}</div>`);
-    if (shown('type')) {
+    if (!wide && shown('type')) {
       det.push(`<div class="field">${lbl('type', 'layers')}${lock('type')
         ? `<div class="ro-val" style="color:${TYPE_VAR[it.type]}">${icon(it.type, 'sm')}${it.type}</div>`
         : `<div class="seg" data-f="type">${TYPES.map((t) => `<button class="${t === it.type ? 'on' : ''}" data-v="${t}" style="--c:${TYPE_VAR[t]}">${icon(t, 'sm')}${t}</button>`).join('')}</div>`}</div>`);
     }
-    if (shown('priority')) {
+    if (!wide && shown('priority')) {
       det.push(`<div class="field">${lbl('priority', 'flag')}${lock('priority')
         ? `<div class="ro-val" style="color:${PRIO_VAR[it.priority]}">${icon('flag', 'sm')}${it.priority}</div>`
         : `<div class="seg" data-f="priority">${PRIORITIES.map((p) => `<button class="${p === it.priority ? 'on' : ''}" data-v="${p}" style="--c:${PRIO_VAR[p]}">${p === 'Critical' ? 'Crit' : p}</button>`).join('')}</div>`}</div>`);
     }
-    if (shown('parent')) {
+    if (!wide && shown('parent')) {
       const v = it.parent ? `<span class="sw" style="--c:${tagColor(it.parent)}"></span>${esc(it.parent)}` : '';
       det.push(`<div class="field">${lbl('parent', 'hash')}${lock('parent') ? `<div class="ro-val ${it.parent ? '' : 'empty'}">${v || '—'}</div>` : ddHTML('parent', v, { placeholder: 'None' })}</div>`);
     }
-    if (shown('assignee')) {
+    if (!wide && shown('assignee')) {
       const v = it.assignee ? `${avatar({ name: it.assignee })}${nameHTML(it.assignee)}` : '';
       det.push(`<div class="field">${lbl('assignee', 'user')}${lock('assignee') ? `<div class="ro-val ${it.assignee ? '' : 'empty'}">${v || '—'}</div>` : ddHTML('assignee', v, { placeholder: 'Nobody' })}</div>`);
     }
@@ -2988,7 +3000,14 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     if (!m.create && ((it.reviewers || []).length || Object.values(state.standing || {}).some((a) => a.reviewer))) {
       det.push(`<div class="field"><div class="lbl">${icon('eye', 'sm')}Reviewers</div><div class="rv-list">${(it.reviewers || []).map((r) => reviewerTick(r, { rm: !m.archived })).join('')}${m.archived ? '' : `<button class="rv-add" type="button" data-act="rv-add" title="Add a reviewer|An agent marked as a reviewer comments its verdict; you still approve">${icon('plus', 'sm')}</button>`}</div></div>`);
     }
-    parts.push(`<div class="fgroup">${det.join('')}</div>`);
+    if (wide) {
+      // beside mode: the four core fields are a chip row under the title; the rest opens as Details (INT-499)
+      const chip = (k, ic, label, val, color) => (!shown(k) ? '' : lock(k)
+        ? `<span class="chip-ro" ${color ? `style="--c:${color}"` : ''}>${icon(ic, 'sm')}${label} <b>${val}</b></span>`
+        : `<button class="dd chip-dd" data-dd="${k}" aria-label="${label}: change" ${color ? `style="--c:${color}"` : ''}>${icon(ic, 'sm')}${label} <b>${val}</b></button>`);
+      parts.push(`<div class="fgroup side-chips">${chip('priority', 'flag', 'Priority', esc(it.priority), PRIO_VAR[it.priority])}${chip('assignee', 'user', 'Assignee', it.assignee ? esc(it.assignee) : 'nobody')}${chip('type', 'layers', 'Type', esc(it.type), TYPE_VAR[it.type])}${chip('parent', 'hash', 'Parent', it.parent ? esc(it.parent) : 'none')}<button class="chip-dd details-toggle" data-act="details" aria-expanded="${!!m.details}">${icon('chev', 'sm')}Details</button></div>`);
+    }
+    parts.push(`<div class="fgroup side-details">${det.join('')}</div>`);
 
     // lease + dependencies
     const work = [];
@@ -3016,23 +3035,24 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       const others = focusBoards().length > mine.length;
       work.push(`<div class="field inline wrap"><div class="lbl">${icon('target', 'sm')}Focus</div><span class="row-val">${mine.map((f) => `<span class="dep focus-chip" data-showfocus="${esc(f.id)}" title="Open ${esc(f.name)}">${esc(f.name)}<button class="x" data-rmfocus="${esc(f.id)}" title="Take it out of this focus board">${icon('x', 'sm')}</button></span>`).join('') || '<span class="empty">None</span>'}${others ? `<button class="row-btn icon" data-act="focus-add" title="Add to a focus board">${icon('plus', 'sm')}</button>` : ''}</span></div>`);
     }
-    parts.push(`<div class="fgroup">${work.join('')}</div>`);
+    parts.push(`<div class="fgroup side-details">${work.join('')}</div>`);
 
     // declared fields
     const defs = schema().fields.filter((f) => f.ui !== 'hidden');
-    if (defs.length) parts.push(`<div class="fgroup"><div class="fgroup-title">${icon('layers', 'sm')}Fields</div>${defs.map((f) => fieldControl(f, it.fields?.[f.key], f.ui !== 'edit' || m.archived)).join('')}</div>`);
+    if (defs.length) parts.push(`<div class="fgroup side-fields"><div class="fgroup-title">${icon('layers', 'sm')}Fields</div>${defs.map((f) => fieldControl(f, it.fields?.[f.key], f.ui !== 'edit' || m.archived)).join('')}</div>`);
 
     // free-form properties
     if (shown('properties')) {
       const props = Object.entries(it.properties || {});
       const ro = lock('properties');
       const showVal = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
-      parts.push(`<div class="fgroup"><div class="fgroup-title">${icon('braces', 'sm')}${esc(bi('properties').label)}${roIcon('properties')}</div>
+      parts.push(`<div class="fgroup side-details"><div class="fgroup-title">${icon('braces', 'sm')}${esc(bi('properties').label)}${roIcon('properties')}</div>
         <div class="props">${props.map(([k, v]) => `<div class="prop"><input class="inp k" data-k="${esc(k)}" value="${esc(k)}" ${ro ? 'readonly' : ''}><input class="inp" data-v="${esc(k)}" value="${esc(showVal(v))}" ${ro ? 'readonly' : ''}>${ro ? '<span></span>' : `<button class="x" data-del="${esc(k)}" title="Remove">${icon('x', 'sm')}</button>`}</div>`).join('')}</div>
         ${ro ? (props.length ? '' : '<div class="ro-val empty">—</div>') : `<button class="add-row">${icon('plus', 'sm')}Add</button>`}</div>`);
     }
 
     if (m.archived) parts.unshift(`<button class="btn primary" data-act="restore" style="width:100%;margin-bottom:14px">${icon('restore')}Restore</button>`);
+    side.classList.toggle('details-open', !!m.details);
     side.innerHTML = parts.join('');
     tickRings(side);
     tickModal();
@@ -3095,6 +3115,8 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         editItem(m, { [segBtn.parentElement.dataset.f]: segBtn.dataset.v });
         return;
       }
+      const dt = e.target.closest('[data-act="details"]');
+      if (dt) { m.details = !m.details; side.classList.toggle('details-open', m.details); dt.setAttribute('aria-expanded', m.details); return; }
       const sw = e.target.closest('[data-fbool]');
       if (sw && !sw.disabled) { sw.classList.toggle('on'); setField(sw.dataset.fbool, sw.classList.contains('on')); return; }
       const rmfocus = e.target.closest('[data-rmfocus]');
@@ -3308,7 +3330,10 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     const it = draftView(m);
     const b = state.board;
     const key = btn.dataset.dd;
-    if (key === 'column') {
+    if (key === 'priority' || key === 'type') {
+      const list = key === 'type' ? TYPES : PRIORITIES;
+      openDd(btn, list.map((v) => ({ label: v, color: (key === 'type' ? TYPE_VAR : PRIO_VAR)[v], cls: v === it[key] ? 'on' : '', run: () => v !== it[key] && editItem(m, { [key]: v }) })));
+    } else if (key === 'column') {
       const from = colById(it.columnId);
       openDd(btn, b.columns.map((c) => ({
         label: c.name, color: c.color, cls: c.id === it.columnId ? 'on' : '',

@@ -3099,4 +3099,37 @@ input.inp[type=number], input.inp[type=date] { font-variant-numeric: tabular-num
   .thread-beside .m-thread .md, .thread-beside .m-thread .cmt-body { max-width: 68ch; }
 }
 @media (max-width: 999px) { .thread-seg { display: none; } }
-@media (min-width: 1000px) { .thread-beside:not(.creating) .m-frame { grid-template-columns: minmax(0, 1fr) 280px; } .thread-beside:not(.creating) .m-frame.has-rail { grid-template-columns: 230px minmax(0, 1fr) 280px; } }
+/* beside mode (INT-499, Mantis's mockup): the side controls move into the ticket column: chips under the title, Details opening under them, the fields as a 3-up grid under the description */
+@media (min-width: 1000px) {
+  .item-modal.side-in-left:not(.creating) .m-frame { grid-template-columns: minmax(0, 1fr); }
+  .item-modal.side-in-left:not(.creating) .m-frame.has-rail { grid-template-columns: 230px minmax(0, 1fr); }
+  .item-modal.side-in-left:not(.creating) .m-left { display: flex; flex-direction: column; }
+  .item-modal.side-in-left:not(.creating) .m-left > * { order: 5; flex: none; }
+  .item-modal.side-in-left:not(.creating) .m-left > .ask-slot, .item-modal.side-in-left:not(.creating) .m-left > .m-title-wrap, .item-modal.side-in-left:not(.creating) .m-left > .m-sub { order: 1; }
+  .item-modal.side-in-left:not(.creating) .m-left > .desc { order: 6; }
+  .item-modal.side-in-left:not(.creating) .m-left > .m-side { display: contents; }
+  .item-modal.side-in-left:not(.creating) .m-side > .side-chips { order: 2; }
+  .item-modal.side-in-left:not(.creating) .m-side > .side-details { order: 3; }
+  .item-modal.side-in-left:not(.creating) .m-side > .side-fields { order: 7; }
+  .item-modal.side-in-left:not(.creating) .m-left > .section { order: 8; }
+  .item-modal.side-in-left:not(.creating) .m-side > .fgroup { margin: 0; padding: 0; border: 0; }
+  .item-modal.side-in-left:not(.creating) .m-side > .side-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
+  .item-modal.side-in-left:not(.creating) .chip-dd, .item-modal.side-in-left:not(.creating) .chip-ro { width: auto; height: 26px; padding: 0 9px; gap: 6px; display: inline-flex; align-items: center; border: var(--bw) solid var(--border); border-radius: var(--r-ctl); background: none; color: var(--muted); font: 500 12px var(--font); }
+  .item-modal.side-in-left:not(.creating) .chip-dd { cursor: pointer; }
+  .item-modal.side-in-left:not(.creating) .chip-dd:hover { border-color: color-mix(in oklab, var(--text) 22%, var(--border)); }
+  .item-modal.side-in-left:not(.creating) .chip-dd:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 20%, transparent); outline: none; }
+  .item-modal.side-in-left:not(.creating) .chip-dd b, .item-modal.side-in-left:not(.creating) .chip-ro b { color: var(--text); font-weight: 500; }
+  .item-modal.side-in-left:not(.creating) .chip-dd svg:first-child, .item-modal.side-in-left:not(.creating) .chip-ro svg:first-child { color: var(--c, var(--muted)); }
+  .item-modal.side-in-left:not(.creating) .details-toggle { margin-left: auto; border-color: transparent; }
+  .item-modal.side-in-left:not(.creating) .details-toggle svg { transition: transform .15s; }
+  .item-modal.side-in-left:not(.creating) .details-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .reduced .item-modal.side-in-left:not(.creating) .details-toggle svg { transition: none; }
+  .item-modal.side-in-left:not(.creating) .side-details { display: none; }
+  .item-modal.side-in-left:not(.creating) .details-open .side-details { display: block; }
+  .item-modal.side-in-left:not(.creating) .m-side > .side-details { margin: 0 0 12px; padding: 0 0 0 14px; border-left: 2px solid var(--border); max-width: 720px; }
+  .item-modal.side-in-left:not(.creating) .side-details .field { margin-bottom: 12px; }
+  .item-modal.side-in-left:not(.creating) .m-side > .side-fields { margin: 8px 0 20px; max-width: 760px; }
+  .item-modal.side-in-left:not(.creating) .side-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; align-items: start; }
+  .item-modal.side-in-left:not(.creating) .side-fields > .fgroup-title { grid-column: 1 / -1; margin: 0; }
+  .item-modal.side-in-left:not(.creating) .side-fields > .field:has(.fmd, .deps, .url-row) { grid-column: 1 / -1; }
+}
