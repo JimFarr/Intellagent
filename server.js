@@ -454,6 +454,16 @@ function seedEngineRules(b) {
   if (b.rebalance) delete b.rebalance.on; // its numbers stay settings
   b.automations.engines = 1;
 }
+// Once per board (INT-488; engines 2): an agent stalls → wake the coordinator, an ordinary rule the human edits or
+// deletes. A board whose human already has a stall rule keeps only theirs.
+function seedStallRule(b) {
+  if (b.automations.engines >= 2) return;
+  if (!b.automations.rules.some((r) => r.when?.on === 'agent_stalled')) {
+    const at = new Date().toISOString();
+    b.automations.rules.push({ id: 'board-stall-wake', name: 'Wake the coordinator when an agent stalls', enabled: true, when: { on: 'agent_stalled' }, then: [{ do: 'wake', agent: 'coordinator' }], createdAt: at, updatedAt: at });
+  }
+  b.automations.engines = 2;
+}
 // Once per board (INT-475): the triggers stored on tickets become rules on their ticket, same ids and state. The
 // default idle check goes (the board's Idle check rule covers the card, its last firing kept), a card that removed it
 // is skipped by that rule, and what waited in triggerQueue waits on its rule.
@@ -517,6 +527,7 @@ function normalizeBoard(b) {
   b.digest = Array.isArray(b.digest) ? b.digest : [];
   b.automations = isObj(b.automations) ? { rules: Array.isArray(b.automations.rules) ? b.automations.rules : [], log: Array.isArray(b.automations.log) ? b.automations.log : [], ...(b.automations.engines ? { engines: b.automations.engines } : {}), ...(b.automations.idleAlarmDeleted ? { idleAlarmDeleted: true } : {}) } : { rules: [], log: [] };
   seedEngineRules(b);
+  seedStallRule(b);
   migrateTriggers(b);
   // Card looks are rules (when a ticket fits, then its card looks so): a board's card rules move in once. cardRules
   // stays as their copy for what draws and matches looks (lookFor, is:rule:, the page), rebuilt from the rules.

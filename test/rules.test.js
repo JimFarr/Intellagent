@@ -68,7 +68,8 @@ describe('rules on a board', () => {
     assert.ok(!own['board-idle-alarm'], 'an alarm the board never set follows agents.json, with no rule');
     assert.deepEqual(own['board-idle-check'].when, { on: 'idle', minutes: 60 });
     assert.match(own['board-idle-check'].text, /^For a ticket T, when T idles for 1 hour, wake coordinator\./);
-    assert.ok(!v.vocabulary.times.board_idle.nativeOnly, 'no word is reserved any more');
+    // an agent stalls → wake the coordinator: an ordinary rule, no engine (INT-488)
+    assert.deepEqual([own['board-stall-wake'].enabled, own['board-stall-wake'].engine, own['board-stall-wake'].when, own['board-stall-wake'].then], [true, undefined, { on: 'agent_stalled' }, [{ do: 'wake', agent: 'coordinator' }]]);    assert.ok(!v.vocabulary.times.board_idle.nativeOnly, 'no word is reserved any more');
     assert.ok(v.vocabulary.events.entered.column);
   });
 
@@ -134,7 +135,28 @@ describe('rules on a board', () => {
       await u.ok('POST', '/api/boards/main/items', { title: 'saves the board', column: 'Ready' }, USER);
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       assert.ok(!saved.behaviours && !saved.idleAlarm, 'the old settings are gone once saved');
+      assert.ok(rules['board-stall-wake'], 'the stall rule comes with the others');
     } finally { await u.stop(); }
+  });
+
+  it('a board seeded before INT-488 gets the stall rule once: deleted, it stays deleted; a stall rule of the human\'s keeps only his', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ia-stall-'));
+    const file = path.join(dir, 'data', 'boards', 'main', 'board.json');
+    const rewrite = (fn) => { const b = JSON.parse(fs.readFileSync(file, 'utf8')); fn(b); fs.chmodSync(file, 0o666); fs.writeFileSync(file, JSON.stringify(b)); };
+    const ids = async (t) => (await t.ok('GET', '/api/boards/main/rules', undefined, USER)).rules.filter((r) => r.when.on === 'agent_stalled').map((r) => r.id);
+    let t = await startServer({ dir });
+    await t.stop({ keep: true });
+    rewrite((b) => { b.automations.engines = 1; b.automations.rules = b.automations.rules.filter((r) => r.id !== 'board-stall-wake'); });
+    t = await startServer({ dir });
+    try {
+      assert.deepEqual(await ids(t), ['board-stall-wake'], 'seeded on a board from before');
+      await t.ok('DELETE', '/api/boards/main/rules/board-stall-wake', undefined, USER);
+    } finally { await t.stop({ keep: true }); }
+    t = await startServer({ dir });
+    try { assert.deepEqual(await ids(t), [], 'deleted stays deleted'); } finally { await t.stop({ keep: true }); }
+    rewrite((b) => { b.automations.engines = 1; b.automations.rules.push({ id: 'rule_mine', name: 'Mine', enabled: true, when: { on: 'agent_stalled', why: 'failed' }, then: [{ do: 'wake', agent: 'coordinator' }], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' }); });
+    t = await startServer({ dir });
+    try { assert.deepEqual(await ids(t), ['rule_mine']); } finally { await t.stop(); }
   });
 
   it('only the human makes rules; a bad one comes back 400 with a hint', async () => {
