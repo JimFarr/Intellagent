@@ -50,9 +50,9 @@ export const THEMES = {
 const finish = (t) => {
   const v = t.vars, ink = luminance(v.bg) < luminance(v.text) ? v.bg : v.text;
   v['on-accent'] ??= '#fff'; v['accent-fill'] ??= v.accent;
-  // muted text keeps 4.5:1 on the surface and the page: mixed toward the text until it does (docs/design.md, Colour audit)
+  // muted text keeps 4.5:1 on the surface, the panel and the page: mixed toward the text until it does (docs/design.md, Colour audit)
   const m0 = v.muted;
-  for (let i = 1; i <= 50 && Math.min(contrast(v.muted, v.surface), contrast(v.muted, v.bg)) < 4.5; i++) v.muted = mixHex(m0, v.text, i / 50);
+  for (let i = 1; i <= 50 && Math.min(contrast(v.muted, v.surface), contrast(v.muted, v.panel), contrast(v.muted, v.bg)) < 4.5; i++) v.muted = mixHex(m0, v.text, i / 50);
   if (contrast('#fff', v.accent) >= 4.5) return t;
   if (t.mode === 'dark' && contrast(ink, v.accent) >= 4.5) v['on-accent'] = ink;
   else for (let i = 1; i <= 50 && contrast('#fff', v['accent-fill']) < 4.5; i++) v['accent-fill'] = mixHex(v.accent, ink, i / 50);

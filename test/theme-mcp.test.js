@@ -31,8 +31,9 @@ test('theme_new writes an importable file from a starting theme, with the palett
 test('theme_check names each contrast rule a theme misses; a bad colour is never written', () => {
   const dir = tmp();
   const out = tool('theme_new')({ dir, name: 'Faint', from: 'clear', palette: { muted: '#cccccc', warn: '#fafafa' } });
-  assert.match(out, /--muted on --surface \(secondary text\): 1\.\d+, needs 4\.5/);
-  assert.match(out, /--warn on --surface/);
+  // the page deepens muted text until it reads (INT-471), so only the warn mark is missed
+  assert.doesNotMatch(out, /--muted on/);
+  assert.match(out, /--warn on --surface \(a mark on a card\): 1\.\d+, needs 3/);
   assert.match(tool('theme_check')({ path: path.join(dir, 'faint.css') }), /contrast rule\(s\) missed/);
   assert.throws(() => tool('theme_new')({ dir, name: 'Bad', palette: { bg: 'red' } }), /#rgb or #rrggbb/);
   assert.throws(() => tool('theme_new')({ dir, name: 'Clear' }), /built-in/);
