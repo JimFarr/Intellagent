@@ -5084,7 +5084,10 @@ function checkEngineWords(ctx, rule) {
   if (!word || inEngine(ctx, rule)) return;
   const e = ENGINES[ENGINE_WORDS[word]];
   const label = (RULES.EVENTS[word] || RULES.TIMES[word] || RULES.ACTIONS[word]).label;
-  fail(400, `"${label}" is carried out by the board's ${e.name} rule, so it works only in that rule's shape`, { code: 'BAD_REQUEST', hint: `Edit or copy the ${e.name} rule and change its numbers: ${RULES.describe(engineRule(ctx, ENGINE_WORDS[word], true) || { when: { on: word }, then: [] }, ctx.board.columns)}` });
+  const own = engineRule(ctx, ENGINE_WORDS[word], true);
+  fail(400, `"${label}" is carried out by the board's ${e.name} rule, so it works only in that rule's shape`, { code: 'BAD_REQUEST', hint: own
+    ? `Edit or copy the ${e.name} rule and change its numbers: ${RULES.describe(own, ctx.board.columns)}`
+    : `This board has no ${e.name} rule: switch the behaviour on (its setting writes the rule), then edit or copy it` });
 }
 const ruleView = (ctx, r) => ({ ...r, text: RULES.describe(r, ctx.board.columns), state: undefined, fired: (r.state?.recent || []).length ? new Date(Math.max(...r.state.recent)).toISOString() : null });
 // at / end: where an "if" that doesn't read went wrong, for the page to mark
