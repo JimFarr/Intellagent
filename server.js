@@ -2694,7 +2694,7 @@ const agentBranch = (name) => { try { return (name && standing?.get(name).worktr
 // seq is read with currentSeq().
 const { recent, currentSeq, parseFilter, matchesFilter, sseClients, waiters, emit, sseSend, longPoll, openStream, subs, saveSubs } = createEvents({
   fs, path, DATA, M, now, arr, boards, reply, HANDLED, presenceDelta, app, VERSION, BUILD, readJson, writeFileAtomic,
-  onEvent: (e) => { standing?.onEvent(e); onRuleEvent(e); }, uiItem: (ctx, it) => withTriggers(ctx, it) });
+  onEvent: (e) => { standing?.onEvent(e); onRuleEvent(e); onStallEvent(e); }, uiItem: (ctx, it) => withTriggers(ctx, it) });
 
 /* ───────────────────────── profiles (agent/user colour, glyph, image) ───────────────────────── */
 
@@ -3175,7 +3175,7 @@ const SCHEMA = {
       'attention.raised', 'attention.resolved', 'ask.created', 'ask.done', 'ask.withdrawn', 'ask.overdue', 'trigger.fired', 'rule.fired', 'rule.ran', 'review.requested', 'review.approved', 'review.changes_requested', 'reaction.added', 'reaction.removed', 'request.created', 'request.replied', 'request.done', 'lease.requested', 'lease.handed', 'lease.declined', 'digest.added', 'schema.updated', 'templates.updated', 'column.created', 'column.updated', 'column.deleted',
       'board.created', 'board.updated', 'board.external-edit', 'app.renamed', 'presence.changed', 'profile.updated',
       'master.claimed', 'master.renewed', 'master.released', 'master.revoked', 'master.expired', 'master.status',
-      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.managed', 'agent.role_changed', 'admin.reverted', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
+      'agent.status', 'agent.run.started', 'agent.run.finished', 'agent.failed', 'agent.activity', 'agent.idle_alarm', 'agent.usage_limited', 'agent.stalled', 'agent.managed', 'agent.role_changed', 'admin.reverted', 'agent.poke', 'agents.changed', 'agents.stopped', 'permissions.changed',
       'item.deleted', 'item.landed', 'item.land_failed', 'request.withdrawn', 'review.reviewed', 'review.reviewer_assigned', 'review.reviewer_removed', 'work.pending',
       'focus.created', 'focus.updated', 'focus.activated', 'focus.retired', 'memory.updated', 'agent.base_updated', 'item.typing',
       'plugin.added', 'plugin.enabled', 'plugin.disabled', 'plugin.removed', 'plugin.connection', 'plugin.crashed', 'plugin.event'],
@@ -4892,7 +4892,9 @@ async function ruleAction(ctx, rule, a, item, why, raw = null) {
     case 'wake': {
       const name = ruleWho(ctx, a.agent, item);
       if (!name) fail(409, `there is no ${a.agent.replace('_', ' ')}${item ? ` for ${item.id}` : ''}`);
-      tx(ctx, (events) => events.push({ board: ctx.id, type: 'rule.fired', actor, rule: actor.rule, why, ...(item ? { itemId: id, columnId: item.columnId, title: item.title } : {}), ...(a.note ? { note: fill(a.note) } : {}), recipients: [name], addressed: [name] }));
+      // a stall that set it off goes along: whose, why and the evidence are what the woken agent acts on (INT-483)
+      const stall = ev?.type === 'agent.stalled' ? { agent: ev.agent, why: ev.why, since: ev.since, minutes: ev.minutes, evidence: ev.evidence } : null;
+      tx(ctx, (events) => events.push({ board: ctx.id, type: 'rule.fired', actor, rule: actor.rule, why, ...(item ? { itemId: id, columnId: item.columnId, title: item.title } : {}), ...(stall ? { stall } : {}), ...(a.note ? { note: fill(a.note) } : {}), recipients: [name], addressed: [name] }));
       return { woke: name };
     }
     case 'ask_human': return { question: askHuman(ctx, id, fill(a.text), actor).questionId };
@@ -4987,10 +4989,31 @@ function onRuleEvent(e) {
     for (const rule of rules) ruleFails(async () => {
       const item = itemId ? ctx.board.items[itemId] : null;
       if (rule.if && !ruleHolds(ctx, rule, item, undefined, e)) return;
-      await fireRule(ctx, rule, itemId, whyOf(ctx, rule), undefined, e);
+      await fireRule(ctx, rule, itemId, e.type === 'agent.stalled' ? `${e.agent} stalls (${e.why})` : whyOf(ctx, rule), undefined, e);
     });
   });
 }
+// Agent stalls (INT-483, lib/alerts/stalls.js): checked once a minute and when an agent's status changes; each stall is
+// raised once, on every board, as agent.stalled, for the rules ("an agent stalls") to act on. It addresses nobody.
+const STALLS = require('./lib/alerts/stalls');
+const STALL_TIMINGS = STALLS.timingsOf(M.stalls);
+// shortcut: the ledger is in memory, so a stall still standing at a restart is raised once more; keep it on disk if that bothers
+let stallLedger = {};
+function checkStalls() {
+  if (M.sandbox || !standing) return; // a sandbox's agents never run: every one would look stalled
+  const work = (a) => { try { return pendingWork(a.name, a.pickup === true ? 'ready' : a.pickup || false); } catch { return []; } };
+  const r = STALLS.check(standingAgents(), work, stallLedger, Date.now(), STALL_TIMINGS);
+  stallLedger = r.ledger;
+  for (const s of r.stalls) {
+    for (const ctx of boards.values()) {
+      tx(ctx, (events) => events.push({ board: ctx.id, type: 'agent.stalled', actor: SYSTEM, ...s, evidence: { ...s.evidence, waiting: s.evidence.waiting.filter((w) => w.board === ctx.id) }, recipients: [] }));
+    }
+  }
+}
+const stallFails = () => { try { checkStalls(); } catch (e) { console.warn(`stalls: ${e.message}`); } };
+// a function, not a const: the event hook (createEvents' onEvent) can call it before this line has run
+function onStallEvent(e) { if (['agent.status', 'agent.failed', 'agent.run.finished', 'agent.usage_limited'].includes(e.type)) setImmediate(() => stallFails()); }
+setInterval(stallFails, 60_000).unref();
 // Time rules, once a minute: each ticket fires once per idle stretch or stay in the column; an "every" rule once a
 // period, for each ticket its "if" picks (or once, for no ticket)
 async function sweepRules(ctx) {
@@ -5103,13 +5126,13 @@ const getRule = (ctx, id) => boardRules(ctx).find((r) => r.id === id) || fail(40
 
 route('GET', '/api/boards/:board/rules', 'The rules: { rules: [{ id, name, enabled, for, names, when, lang?, if?, then, text (in words), fired, native? }], vocabulary: { subjects: { ticket|comment: { label, names, parts: expression-language descriptors of each part, for suggestions } }, events (each with its subject), times, actions, roles } }. The board\'s behaviours (landing, the idle check, ask escalation, the stuck watch, stale work, the idle alarm, rebalancing) are ordinary stored rules (ids board-…, marked engine: <key>): each runs from its marked rule, deleting it switches it off, and reshaped it loses the mark and is ordinary. A rule of yours in the same shape stays yours. The words board_idle, stuck, assignee_away, escalate, unstick and reassign work only in a marked rule, in its shape; a new rule in those words takes the mark only when its behaviour has no rule. native: a column\'s release-lease or auto-archive flag, listed and edited as a rule', ({ p }) => {
   const ctx = getCtx(p.board);
-  const labels = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => !v.legacy).map(([k, v]) => [k, { label: v.label, subject: v.subject || 'ticket', ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}) }]));
+  const labels = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => !v.legacy).map(([k, v]) => [k, { label: v.label, subject: v.subject || 'ticket', ...(v.column ? { column: true } : {}), ...(v.minutes ? { minMinutes: v.minutes } : {}), ...('ticket' in v ? { ticket: v.ticket } : {}), ...(v.agentOnly ? { agent: true, whys: STALLS.WHYS } : {}) }]));
   // each subject: its parts with their default names, and the expr.js descriptor of each part (the page's suggestions)
   const tdesc = RULES.ticketDesc(ctx.board.columns, ctx.board.schema.fields);
   const subjects = Object.fromEntries(Object.entries(RULES.SUBJECTS).map(([k, s]) => [k, { label: s.label, ...(s.event ? { event: s.event } : {}), names: Object.fromEntries(s.roles.map((r) => [r, RULES.DEFAULT_NAMES[r]])), parts: Object.fromEntries(s.roles.map((r) => [r, r === 'ticket' ? tdesc : RULES.COMMENT_DESC])) }]));
   return { rules: [...nativeRules(ctx).map((n) => nativeView(ctx, n)), ...boardRules(ctx).map((r) => ruleView(ctx, r))], vocabulary: { subjects, events: labels(RULES.EVENTS), times: labels(RULES.TIMES), actions: labels(RULES.ACTIONS), roles: RULES.ROLES, tones: cardrules.TONES, shapes: cardrules.SHAPES }, max: RULES.MAX_RULES };
 });
-route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, for?: ticket|comment, names?: { ticket: "T", comment: "C" }, when: { on, column?, minutes?, to? }, lang?: "expr", if?: an expression over the names (e.g. C.text.contains("?") && T.priority == "High"; without lang, the card-rules filter language, kept as the expression that says the same where there is one), then: [{ do, … }], enabled? }. An "if" that does not read answers 400 with at/end. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented (a comment rule\'s trigger; may be left out), unblocked, lease_expired, ask_overdue; or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
+route('POST', '/api/boards/:board/rules', 'Human: add a rule { name, for?: ticket|comment, names?: { ticket: "T", comment: "C" }, when: { on, column?, minutes?, to? }, lang?: "expr", if?: an expression over the names (e.g. C.text.contains("?") && T.priority == "High"; without lang, the card-rules filter language, kept as the expression that says the same where there is one), then: [{ do, … }], enabled? }. An "if" that does not read answers 400 with at/end. when.on: created, entered, left (column), assigned (to?), review_requested, approved, changes_requested, commented (a comment rule\'s trigger; may be left out), unblocked, lease_expired, ask_overdue, agent_stalled (why?: failed|limited|paused|waiting, agent?; no ticket, so only wake, and the woken agent gets the stall with its evidence); or by time: idle, in_column (column) and every, with minutes. then[].do: wake { agent: name|coordinator|assignee|last_worker, note? }, ask_human { text }, move { column }, assign { to: name|role|null }, release_lease, archive, comment { text }, set_field { key, value }, land. Text may hold {id} and {title}', ({ p, body, actor }) => created(saveRule(getCtx(p.board), body, actor)));
 route('PUT', '/api/boards/:board/rules/:id', 'Human: replace a rule (as POST); { enabled: false } with the rest switches it off', ({ p, body, actor }) => {
   const ctx = getCtx(p.board);
   const n = nativeRules(ctx).find((x) => x.id === p.id);
