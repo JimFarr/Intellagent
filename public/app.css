@@ -738,6 +738,12 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
 .dp-form label:not(.aa-check) { display: grid; gap: 4px; min-width: 0; }
 .dp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 8px; }
 .dp-sub { border-left: 2px solid var(--border); padding-left: 10px; display: grid; gap: 8px; }
+.dp-asks { display: grid; gap: 0; padding: 4px 12px; border-radius: var(--r-m); border: var(--bw) solid var(--border); background: var(--surface); }
+.dp-ask { display: grid; grid-template-columns: minmax(110px, 160px) 1fr; gap: 4px 12px; padding: 6px 0; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.dp-ask + .dp-ask { border-top: var(--bw) solid var(--border); }
+.dp-ask > b { font-weight: 500; font-size: 12px; color: var(--muted); }
+.dp-ask > .muted { font-size: 12px; }
+@media (max-width: 480px) { .dp-ask { grid-template-columns: 1fr; } }
 .dp-x .inp, .dp-row [data-bind] .inp { min-width: 90px; }
 
 
