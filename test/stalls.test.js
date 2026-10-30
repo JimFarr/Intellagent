@@ -41,6 +41,14 @@ describe('agent stalls (INT-483)', () => {
     assert.deepEqual([r.stalls[0].why, r.stalls[0].evidence.denied], ['refused', ['Bash:git', 'Edit']]);
     assert.equal(check([agent({ status: 'idle', lastRun: denied })], () => work, r.ledger, T0 + MIN).stalls.length, 0, 'raised once');
   });
+  it("the board's 401/403 answers to the last run (refusals, INT-506) are refused too, with their count in evidence", () => {
+    const run = { startedAt: 'a', endedAt: 'b', code: 0 };
+    assert.equal(whyOf(agent({ lastRun: run, refusals: 3 }), () => work), 'refused');
+    assert.equal(whyOf(agent({ lastRun: run, refusals: 3 }), none), null, 'nothing waits: nobody is held up');
+    assert.equal(whyOf(agent({ lastRun: run }), () => work), null, 'a run with no refusals clears it');
+    const s = check([agent({ lastRun: run, refusals: 3 })], () => work, {}, T0).stalls[0];
+    assert.deepEqual([s.why, s.evidence.refusals, 'denied' in s.evidence], ['refused', 3, false]);
+  });
 
   it('a stall is raised once, with its evidence, and again only after the agent is out of it', () => {
     const failed = agent({ status: 'failed', failures: 3, lastRun: { startedAt: 'a', endedAt: 'b', code: 1, error: 'boom', log: 'x.log' } });
@@ -118,7 +126,7 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
   let s;
   before(async () => {
     s = await startServer({ manifest: { stalls: { pausedMinutes: 0.01 } }, agents: { defaults: { settleSeconds: 0.2, retrySeconds: 0.2, throttleMinutes: 0 }, agents: {
-      boss: { run: run('ok') }, drax: { run: run('ok') }, flaky: { run: run('fail'), maxFailures: 1, failedRetryMinutes: 0 }, spare: { run: run('ok') },
+      boss: { run: run('ok') }, drax: { run: run('ok') }, flaky: { run: run('fail'), maxFailures: 1, failedRetryMinutes: 0 }, spare: { run: run('ok') }, sentry: { run: run('refuse') },
     } } });
   });
   after(async () => { await s.stop(); });
@@ -152,5 +160,11 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
     const stall = await until(async () => (await events('agent.stalled')).find((e) => e.agent === 'flaky'), 15000, 'flaky stalled');
     assert.equal(stall.why, 'failed');
     assert.notEqual(stall.evidence.lastRun.code, 0);
+  });
+
+  it("the board's 403 to a live run makes it refused, counted for that run (INT-506)", async () => {
+    await s.ok('POST', `${B}/items`, { title: 'for sentry', column: 'Ready', assignee: 'sentry' }, USER);
+    const stall = await until(async () => (await events('agent.stalled')).find((e) => e.agent === 'sentry'), 15000, 'sentry stalled');
+    assert.deepEqual([stall.why, stall.evidence.refusals], ['refused', 1]);
   });
 });

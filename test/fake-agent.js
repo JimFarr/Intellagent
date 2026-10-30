@@ -126,6 +126,17 @@ if (mode === 'commit') {
   });
   return;
 }
+//   node fake-agent.js refuse   calls a human-only route as its run (a 403 the board counts, INT-506) and does nothing else
+if (mode === 'refuse') {
+  process.stdin.resume();
+  process.stdin.on('end', async () => {
+    await fetch(`${process.env.INTELLAGENT_URL}/api/app`, {
+      method: 'PATCH', body: JSON.stringify({ name: 'mine now' }),
+      headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT, 'x-intellagent-run': process.env.INTELLAGENT_RUN, ...(process.env.INTELLAGENT_TOKEN ? { authorization: `Bearer ${process.env.INTELLAGENT_TOKEN}` } : {}) },
+    });
+  });
+  return;
+}
 let prompt = '';
 process.stdin.on('data', (d) => (prompt += d)).on('end', async () => {
   //   node fake-agent.js fail-json   exits 1 after only a stream-json tool_result line (INT-346: not a reason to show)
