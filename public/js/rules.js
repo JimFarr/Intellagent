@@ -516,11 +516,16 @@ export function createRules({ api, toast, openDrawer, rel, nameOf, isOpen, board
           $('[data-add-act]', f).hidden = isLook;
           st.unit = null;
           delete st.when.why; delete st.when.agent;
+          const wasStall = stallOnly;
           drawWhen();
-          // a rule with no ticket keeps no condition and none of the ticket actions
-          if (stallOnly) {
-            Object.assign(st, { ifOpen: false, text: '', cond: { mode: 'all', items: [] } });
-            for (const row of $$('.rb-act', acts)) if (v.actions[$('[data-do]', row).value]?.ticket) row.replaceWith(el(actionRow({ do: 'wake', agent: 'coordinator' })));
+          // a rule with no ticket keeps no condition and none of the ticket actions: redraw the rows so their lists follow
+          if (stallOnly) Object.assign(st, { ifOpen: false, text: '', cond: { mode: 'all', items: [] } });
+          if (stallOnly !== wasStall) {
+            for (const row of $$('.rb-act', acts)) {
+              const act = $('[data-do]', row).value, g = (n) => $(`[name="${n}"]`, row)?.value ?? '';
+              if (act === 'look') continue;
+              row.replaceWith(el(actionRow(act === 'wake' ? { do: 'wake', agent: g('agent'), note: g('note') } : stallOnly && v.actions[act]?.ticket ? { do: 'wake', agent: 'coordinator' } : { do: act })));
+            }
             renumber();
           }
           drawIf();
