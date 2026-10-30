@@ -2879,6 +2879,12 @@ input[type="checkbox"].ck { border-radius: 4px; }
 .ent.agent-row > .ent-body { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; min-width: 0; }
 .ent.agent-row > .ent-body > .ent-title { flex: none; }
 .ent.agent-row > .ent-body > .ent-sub { flex: 1; min-width: 0; }
+/* narrow: the side (tokens, state, actions) goes under the name, and the line wraps so the state and a failure show */
+@container ent (max-width: 560px) {
+  .ent-list > .ent.agent-row { grid-template-columns: 20px minmax(0, 1fr); grid-template-areas: "lead body" ". side"; row-gap: 8px; }
+  .ent-list > .ent.agent-row > .ent-side { justify-self: start; flex-wrap: wrap; }
+  .ent-list .ent.agent-row > .ent-body > .ent-sub { flex-basis: 100%; white-space: normal; }
+}
 /* Assignments: one column as wide as the design language's 960 px, the agent columns share what the names leave */
 /* centred: as wide as its columns need, at least 960 px, never wider than the page (then it scrolls sideways) */
 .pg-scroll { width: max-content; min-width: min(100%, 960px); max-width: 100%; margin-inline: auto; }
