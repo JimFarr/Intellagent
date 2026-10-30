@@ -30,6 +30,18 @@ describe('agent stalls (INT-483)', () => {
     assert.equal(whyOf(agent({ status: 'running', queued: 3, runningSince: new Date(T0).toISOString() }), none), null);
   });
 
+  it('a run whose permissions refused something is a stall only while work waits, and the evidence names what was denied', () => {
+    const denied = { startedAt: 'a', endedAt: 'b', code: 0, denied: ['Bash:git', 'Edit'] };
+    assert.equal(whyOf(agent({ status: 'idle', lastRun: denied }), () => work), 'refused');
+    assert.equal(whyOf(agent({ status: 'queued', queued: 1, lastRun: denied }), none), 'refused', 'before "waiting"');
+    assert.equal(whyOf(agent({ status: 'idle', lastRun: denied }), none), null, 'nothing waits: nobody is held up');
+    assert.equal(whyOf(agent({ status: 'idle', lastRun: { ...denied, denied: undefined } }), () => work), null, 'a clean run clears it');
+    assert.equal(whyOf(agent({ status: 'failed', lastRun: denied }), none), 'failed', 'a failure is the more basic why');
+    const r = check([agent({ status: 'idle', lastRun: denied })], () => work, {}, T0);
+    assert.deepEqual([r.stalls[0].why, r.stalls[0].evidence.denied], ['refused', ['Bash:git', 'Edit']]);
+    assert.equal(check([agent({ status: 'idle', lastRun: denied })], () => work, r.ledger, T0 + MIN).stalls.length, 0, 'raised once');
+  });
+
   it('a stall is raised once, with its evidence, and again only after the agent is out of it', () => {
     const failed = agent({ status: 'failed', failures: 3, lastRun: { startedAt: 'a', endedAt: 'b', code: 1, error: 'boom', log: 'x.log' } });
     let r = check([failed], () => work, {}, T0);
@@ -116,7 +128,7 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
     const rule = await s.ok('POST', `${B}/rules`, { name: 'Paused agents', when: { on: 'agent_stalled', why: 'paused' }, then: [{ do: 'wake', agent: 'boss' }] }, USER);
     assert.equal(rule.text, 'When an agent stalls (paused), wake boss.');
     const vocab = (await s.ok('GET', `${B}/rules`)).vocabulary.events.agent_stalled;
-    assert.deepEqual([vocab.agent, vocab.whys], [true, ['failed', 'limited', 'paused', 'waiting']]);
+    assert.deepEqual([vocab.agent, vocab.whys], [true, ['failed', 'limited', 'paused', 'refused', 'waiting']]);
     await s.ok('POST', '/api/agents/drax/pause', {}, USER);
     await s.ok('POST', `${B}/items`, { title: 'for drax', column: 'Ready', assignee: 'drax' }, USER);
     // any agent's status change runs the check (as the minute's sweep does)
