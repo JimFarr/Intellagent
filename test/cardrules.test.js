@@ -13,6 +13,20 @@ const { parseCondition, holds, reviewFacts, cleanRules, lookFor, RuleError, TYPE
 describe('the condition language', () => {
   const view = { assignee: 'drax', claimant: null, priority: 'High', fields: { risk: 'low', area: ['cli', 'ui'] }, review: { oks: 2, pending: 0, concerns: 0, allOk: true, evidence: true }, reviewers: { nebula: 'ok' } };
   const ok = (text, rules) => holds(parseCondition(text), view, rules);
+  it('contains (~) and quoted values', () => {
+    const v = { ...view, author: { name: 'Ann Reviewer' }, title: 'Fix the odds cache (again)' };
+    const yes = (text) => holds(parseCondition(text), v);
+    assert.ok(yes('title~cache'));
+    assert.ok(yes('title~CACHE|nothing'), 'case-insensitive, either of a|b');
+    assert.ok(!yes('title~absent'));
+    assert.ok(yes('fields.area~u'), 'any item of a list');
+    assert.ok(yes('author.name:"ann reviewer"'));
+    assert.ok(yes('title~"odds cache"'));
+    assert.ok(yes('title~"(again)" review.allOk'), 'a quoted value is one term, brackets and all');
+    assert.ok(yes('title~"x or odds" or @drax'), 'an or inside quotes is text');
+    assert.ok(!yes('!title~cache'));
+    assert.match(assertThrowsHint('title~'), /no value after the ~/);
+  });
   it('holds terms, comparisons, negation, names and other rules', () => {
     assert.ok(ok('review.allOk review.oks>=2 review.evidence'));
     assert.ok(!ok('review.oks>2'));

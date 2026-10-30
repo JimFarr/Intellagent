@@ -9,7 +9,7 @@ import { createRules, RULE_VIEWS } from './js/rules.js';
 import { state, settings, settingsStore, themeKey, onSystemTheme, DEFAULTS, stored, AUTH, tokenStore } from './js/state.js';
 import { THEMES, BUILT_IN, addTheme, removeTheme, themeGroups, contrast } from './js/themes.js';
 import { follower, atBottom } from './js/follow.js';
-import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, rel, fmtLeft, TYPES, PRIORITIES, PRIO_VAR, TYPE_VAR, FIELD_ICON, LOGO, avatar, emojiGlyph, nameOf, nameHTML, dotsHTML, minsSince, standingOf, runAgo, thinkAge } from './js/core.js';
+import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, rel, fmtLeft, TYPES, PRIORITIES, PRIO_VAR, TYPE_VAR, FIELD_ICON, LOGO, avatar, emojiGlyph, nameOf, nameHTML, dotsHTML, minsSince, standingOf, runAgo, thinkAge, lastDays, daysBefore } from './js/core.js';
 
 (() => {
   /* ═════════════════════════ helpers ═════════════════════════ */
@@ -601,8 +601,8 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     const trend = delta ? `<span class="mt-delta ${delta > 0 ? 'up' : 'down'}">${delta > 0 ? '↑' : '↓'}${Math.abs(delta)}</span>` : '';
     const w = m.waiting;
     box.innerHTML = `
-      <div class="seg mini mt-days">${[7, 30].map((d) => `<button class="${m.days === d ? 'on' : ''}" data-days="${d}" title="Window|Last ${d} days">${d}d</button>`).join('')}</div>
-      <button class="mt" data-mt="done" title="Done|Tickets that reached ${esc(state.board.columns.at(-1)?.name || 'the last column')} in the last ${m.days} days (vs the ${m.days} before)">${icon('check', 'sm')}<b>${m.done}</b> done${trend}${sparkline(m.perDay)}</button>
+      <div class="seg mini mt-days">${[1, 7, 30].map((d) => `<button class="${m.days === d ? 'on' : ''}" data-days="${d}" title="Window|${lastDays(d).replace(/^l/, 'L')}">${d}d</button>`).join('')}</div>
+      <button class="mt" data-mt="done" title="Done|Tickets that reached ${esc(state.board.columns.at(-1)?.name || 'the last column')} in the ${lastDays(m.days)} (vs the ${daysBefore(m.days)})">${icon('check', 'sm')}<b>${m.done}</b> done${trend}${sparkline(m.perDay)}</button>
       <button class="mt" data-mt="cycle" title="Cycle time|Median time from starting work to done">${icon('clock', 'sm')}<b>${dur(m.cycleHours.median)}</b> cycle</button>
       <button class="mt ${w.open ? 'attn' : ''}" data-mt="waiting" title="Waiting on you|Open questions and reviews${w.oldestId ? ` — oldest on ${esc(w.oldestId)}` : ''}">${icon('ask', 'sm')}<b>${w.open}</b> waiting on you${w.open ? ` · oldest ${dur(w.oldestHours)}` : ''}</button>
       <button class="mt" data-mt="answer" title="Your answer time|Median time from an agent asking to you answering (${m.answerHours.count} answered)">${icon('send', 'sm')}you answer in <b>${dur(m.answerHours.median)}</b></button>
@@ -610,7 +610,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       ${m.idle ? (() => {
         const d = m.idle.alarms - m.idle.prev;
         const tr = d ? `<span class="mt-delta ${d > 0 ? 'down' : 'up'}">${d > 0 ? '↑' : '↓'}${Math.abs(d)}</span>` : '';
-        return `<button class="mt ${m.idle.alarms ? 'attn' : ''}" data-mt="idle" title="Idle board|Times tickets waited while no builder ran long enough to set off the idle alarm, in the last ${m.days} days (vs the ${m.days} before)${m.idle.longestMinutes != null ? `; longest ${dur(m.idle.longestMinutes / 60)}` : ''}">${icon('pause', 'sm')}<b>${m.idle.alarms}</b> idle${tr}</button>`;
+        return `<button class="mt ${m.idle.alarms ? 'attn' : ''}" data-mt="idle" title="Idle board|Times tickets waited while no builder ran long enough to set off the idle alarm, in the ${lastDays(m.days)} (vs the ${daysBefore(m.days)})${m.idle.longestMinutes != null ? `; longest ${dur(m.idle.longestMinutes / 60)}` : ''}">${icon('pause', 'sm')}<b>${m.idle.alarms}</b> idle${tr}</button>`;
       })() : ''}`;
     box.onclick = (e) => {
       const d = e.target.closest('[data-days]');
@@ -625,14 +625,14 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     // The strip normally loads these; fetch them here when it is hidden.
     if (!state.metrics) { try { state.metrics = await api('GET', B(`/metrics?days=${settings.metricsDays}`)); } catch { return; } }
     const m = state.metrics;
-    const body = openDrawer('metricsDrawer', `Flow · last ${m.days} days`, 'activity');
+    const body = openDrawer('metricsDrawer', `Flow · ${lastDays(m.days)}`, 'activity');
     const maxStay = Math.max(1, ...m.columns.map((c) => c.medianStayHours || 0));
     const agents = Object.entries(m.byAgent).sort((a, b) => b[1] - a[1]);
     body.innerHTML = `<div class="section"><div class="section-head">${icon('layers', 'sm')}<span>Time in each column (median)</span><span class="rule"></span></div>
         <p class="mcap">Median time a ticket stays in each column, with how many are there now and the oldest. Bars are scaled to the longest column.</p>
         ${m.columns.map((c) => `<div class="mbar"><span class="mb-name"><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span class="mb-track"><b style="width:${((c.medianStayHours || 0) / maxStay) * 100}%;background:${esc(c.color)}"></b></span><span class="mb-val">${dur(c.medianStayHours)}</span><span class="mb-sub">${c.count} now${c.oldestHours != null ? ` · oldest ${dur(c.oldestHours)}` : ''}</span></div>`).join('')}</div>
       <div class="section"><div class="section-head">${icon('check', 'sm')}<span>Done per day</span><span class="rule"></span></div>
-        <p class="mcap">Tickets that reached ${esc(state.board.columns.at(-1)?.name || 'the last column')}, one bar per 24 hours, last ${m.days} days, each named by the day it ends. Today is the bar on the right.</p>
+        <p class="mcap">Tickets that reached ${esc(state.board.columns.at(-1)?.name || 'the last column')}, one bar per 24 hours, ${lastDays(m.days)}, each named by the day it ends. Today is the bar on the right.</p>
         ${(() => {
           const n = m.perDay.length;
           const top = Math.max(1, ...m.perDay);
@@ -641,7 +641,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
           const long = (d) => d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
           const short = (d) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
           const every = n > 10 ? 10 : 1;
-          return `<div class="mchart" role="img" aria-label="Tickets done per day, last ${m.days} days: ${m.perDay.reduce((a, b) => a + b, 0)} in total, at most ${top} in one day">
+          return `<div class="mchart" role="img" aria-label="Tickets done per day, ${lastDays(m.days)}: ${m.perDay.reduce((a, b) => a + b, 0)} in total, at most ${top} in one day">
             <span class="my-axis"><b>${top}</b><b>0</b></span>
             <div class="mdays">${m.perDay.map((v, i) => `<span class="mday" title="${esc(long(dayOf(i)))}: ${v} done"><i style="height:${(v / top) * 100}%"></i><b class="mv">${v || ''}</b></span>`).join('')}</div>
             <div class="mx">${m.perDay.map((_, i) => `<span>${(n - 1 - i) % every === 0 ? esc(i === n - 1 ? 'today' : short(dayOf(i))) : ''}</span>`).join('')}</div>
@@ -650,7 +650,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       ${agents.length ? `<div class="section"><div class="section-head">${icon('bot', 'sm')}<span>Finished, by who worked on it</span><span class="rule"></span></div>${agents.map(([n, v]) => `<div class="magent">${avatar({ kind: 'agent', name: n })}<span>${esc(n)}</span><b>${v}</b></div>`).join('')}</div>` : ''}
       <div class="section costly"></div>
       ${m.idle ? `<div class="section"><div class="section-head">${icon('pause', 'sm')}<span>Idle board</span><span class="rule"></span></div>
-        <div class="mbar"><span class="mb-name">Idle alarms</span><span class="mb-val">${m.idle.alarms}</span><span class="mb-sub">${m.idle.prev} the ${m.days} days before${m.idle.longestMinutes != null ? ` · longest ${dur(m.idle.longestMinutes / 60)}` : ''}${m.idle.lastAt ? ` · last ${esc(rel(m.idle.lastAt))}` : ''}</span></div></div>` : ''}`;
+        <div class="mbar"><span class="mb-name">Idle alarms</span><span class="mb-val">${m.idle.alarms}</span><span class="mb-sub">${m.idle.prev} the ${daysBefore(m.days)}${m.idle.longestMinutes != null ? ` · longest ${dur(m.idle.longestMinutes / 60)}` : ''}${m.idle.lastAt ? ` · last ${esc(rel(m.idle.lastAt))}` : ''}</span></div></div>` : ''}`;
     fillCostliest($('.costly', body), m.days);
   }
   // The tickets the agents' runs spent most on in the window; a ticket shared by several runs is split evenly.
@@ -823,7 +823,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     const sig = JSON.stringify(awake.map((a) => [a.name, a.status, a.now?.line, a.now?.items, a.now?.since, a.queued]));
     if (box.dataset.sig !== sig) {
       box.dataset.sig = sig;
-      box.innerHTML = awake.slice(0, shown).map((a) => `<button class="wk run-ring" data-wake="${esc(a.name)}" data-ring="${RING[a.status]}" style="${ringPhase()}"data-tip="${esc(line(a))}" aria-label="${esc(line(a).replace('|', ': '))}">${avatar({ kind: 'agent', name: a.name })}${RING[a.status] === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</button>`).join('')
+      box.innerHTML = awake.slice(0, shown).map((a) => `<button class="wk run-ring" data-wake="${esc(a.name)}" data-ring="${RING[a.status]}" style="${ringPhase()}"data-tip="${esc(line(a))}" aria-label="${esc(line(a).replace('|', ': '))}">${avatar({ kind: 'agent', name: a.name }, 'still')}${RING[a.status] === 'fail' ? '<i aria-hidden="true">!</i>' : ''}</button>`).join('')
         + (awake.length > shown ? `<button class="wk-more" data-wake="" data-tip="${esc(`${awake.length - shown} more awake|${awake.slice(shown).map((a) => `${a.name} · ${RUN_LABEL[a.status]}`).join(', ')}`)}">+${awake.length - shown}</button>` : '');
     } else {
       // only the minutes moved: refresh the tooltips in place
@@ -3514,7 +3514,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
   // Manager is set aside for now: #/@manager opens the board
   const SECTIONS = [['board', 'Board', 'board'], ['agents', 'Agents', 'bot'], ['deployments', 'Integrations', 'link'], ['rules', 'Rules', 'zap']];
   const PAGES = {
-    agents: [['agentsDrawer', 'Agents', 'bot', () => openAgents()], ['requestsDrawer', 'Ask an agent', 'send', () => openRequests()], ['inboxDrawer', 'Inbox', 'bell', () => openInbox()], ['catchDrawer', 'While you were away', 'sparkle', () => openCatchup()], ['digestDrawer', 'Digest', 'news', () => openDigest()], ['metricsDrawer', 'Flow', 'activity', () => openMetrics()], ['analyticsDrawer', 'Analytics', 'layers', () => openAnalytics()], ['contextDrawer', 'Context', 'text', () => openContext()], ['permsDrawer', 'Permissions', 'lock', () => openPermissions()], ['gridDrawer', 'Assignments', 'sliders', () => openPermGrid()]],
+    agents: [['agentsDrawer', 'Agents', 'bot', () => openAgents()], ['requestsDrawer', 'Ask an agent', 'send', () => openRequests()], ['inboxDrawer', 'Inbox', 'bell', () => openInbox()], ['catchDrawer', 'While you were away', 'sparkle', () => openCatchup()], ['digestDrawer', 'Digest', 'news', () => openDigest()], ['metricsDrawer', 'Flow', 'activity', () => openMetrics()], ['analyticsDrawer', 'Analytics', 'layers', () => openAnalytics()], ['contextDrawer', 'Shared context', 'text', () => openContext()], ['permsDrawer', 'Permissions', 'lock', () => openPermissions()], ['gridDrawer', 'Assignments', 'sliders', () => openPermGrid()]],
     deployments: [['deployDrawer', 'Connectors', 'link', () => openDeployments('connectors')], ['actionsDrawer', 'Actions', 'play', () => openDeployments('actions')]],
     rules: [[...RULE_VIEWS.mine, () => rules.open('mine')], [...RULE_VIEWS.log, () => rules.open('log')]],
   };
@@ -3762,7 +3762,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     show();
   }
 
-  /* Roles on the Context page (INT-363): the templates agents are built from. The built-ins are read-only; the
+  /* Roles on the Shared context page (INT-363): the templates agents are built from. The built-ins are read-only; the
      human's own (agents.json "roles") edit their label, description and brief, which is all the page changes:
      the rest of the role is sent back as it was, since PUT replaces the role. */
   const ROLE_KEYS = ['label', 'icon', 'description', 'brief', 'listen', 'pickup', 'supervise', 'reviewer', 'throttleMinutes', 'perms', 'model'];
@@ -3813,7 +3813,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     ['roles', 'Roles', 'bot', 'What an agent in each role is taught, after the base and the board rules. An agent adds its own speciality on its page.', mountRoles],
   ];
   function openContext(focus) {
-    const body = openDrawer('contextDrawer', 'Context', 'text');
+    const body = openDrawer('contextDrawer', 'Shared context', 'text');
     body.innerHTML = `<p class="perm-intro">What an agent reads on its first turn, in this order. Each layer is edited here and nowhere else; an agent's page shows them read-only. <em>Card rules</em> are a different thing: they say how a card looks, and live in Settings › Card rules.</p>
       ${CONTEXT_LAYERS.map(([id, title, ic, intro], i) => `<section class="section ctx-layer" id="ctx-${id}" aria-labelledby="ctx-h-${id}"><div class="section-head">${icon(ic, 'sm')}<span id="ctx-h-${id}"><span class="ly-n">${i + 1}</span> ${title}</span><span class="rule"></span></div>
         <p class="perm-intro">${intro}</p><div class="ctx-host" data-ctx="${id}"></div></section>`).join('')}`;
@@ -4500,7 +4500,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     };
     const tickets = a.tickets.slice(0, 10);
     body.innerHTML = `<div class="an-top">${win}<span class="grow"></span>${/^https?:\/\//i.test(state.app.grafanaUrl || '') ? `<a class="btn sm" href="${esc(state.app.grafanaUrl)}" target="_blank" rel="noopener">${icon('ext', 'sm')}Open in Grafana</a>` : ''}</div>
-      ${empty ? `<div class="empty-note">${icon('activity')}<span>No agent has run or changed state in the last ${days} days.</span></div>` : `
+      ${empty ? `<div class="empty-note">${icon('activity')}<span>No agent has run or changed state in the ${lastDays(days)}.</span></div>` : `
       <dl class="an-totals perm-facts"><dt>Runs</dt><dd>${a.totals.runs}</dd><dt>Tokens</dt><dd>${anTok(a.totals.tokens)}</dd><dt>Cost</dt><dd>${anCost(a.totals)}</dd></dl>
       ${(a.suggestions || []).filter((s) => s.kind === 'waiting-on-human').map(anTip).join('')}
       ${a.agents.map(card).join('')}
@@ -4606,7 +4606,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     const modes = [['off', 'Off'], ['on', 'On'], ...(power ? [['rules', 'With rules']] : [])];
     const host = $('.pg-panel', body);
     host.innerHTML = `<section class="pg-pan${p.enforced ? '' : ' verbal'}" aria-label="${esc(`${nameOf(agent)}: ${p.name}`)}">
-      <header class="perm-head">${avatar({ kind: 'agent', name: agent })}<b class="perm-nm">${esc(nameOf(agent))}</b><span class="muted">·</span><b class="perm-nm">${esc(p.name)}</b><code class="perm-key">${esc(key)}</code><span class="grow"></span><button class="btn sm ghost" data-pg-close title="Close">${icon('x', 'sm')}<span>Close</span></button></header>
+      <header class="perm-head">${avatar({ kind: 'agent', name: agent }, 'still')}<b class="perm-nm">${esc(nameOf(agent))}</b><span class="muted">·</span><b class="perm-nm">${esc(p.name)}</b><code class="perm-key">${esc(key)}</code><span class="grow"></span><button class="btn sm ghost" data-pg-close title="Close">${icon('x', 'sm')}<span>Close</span></button></header>
       ${p.enforced ? '' : `<p class="perm-warn">${icon('info', 'sm')}<span><b>Not enforced:</b> ${esc(String(p.warning || 'words only: the agent is trusted to follow it').replace(/^not enforced:\s*/i, ''))}</span></p>`}
       ${cell.implied ? `<p class="perm-warn">${icon('info', 'sm')}<span>On because ${esc((cell.by || []).join(', '))} ${(cell.by || []).length > 1 ? 'need' : 'needs'} it. Turn that off to turn this off.</span></p>` : ''}
       <div class="seg pg-modes" role="radiogroup" aria-label="Mode">${modes.map(([m, l]) => `<button type="button" role="radio" aria-checked="${cell.mode === m}" class="${cell.mode === m ? 'on' : ''}" data-pg-mode="${m}">${l}</button>`).join('')}</div>
@@ -4696,7 +4696,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       if (p.needs?.length) rows.push(['Needs', chips(p.needs.map((k) => byKey[k]?.name || k))]);
       if (p.brief) rows.push(['Brief', `<q class="perm-brief">${esc(p.brief)}</q>`]);
       const who = permHolders(p.key, byKey);
-      if (who.length) rows.push(['Held by', `<span class="perm-who">${who.map((n) => `<span title="${esc(nameOf(n))}">${avatar({ kind: 'agent', name: n })}</span>`).join('')}</span>`]);
+      if (who.length) rows.push(['Held by', `<span class="perm-who">${who.map((n) => `<span title="${esc(nameOf(n))}">${avatar({ kind: 'agent', name: n }, 'still')}</span>`).join('')}</span>`]);
       return rows.length ? `<dl class="perm-facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : '';
     };
     const row = (p) => {
@@ -4938,7 +4938,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       ? `<button class="btn primary" data-resume-all title="Resume all|Unpause every standing agent; their queued events run">${icon('play', 'sm')}Resume all agents</button>`
       : `<button class="btn danger${body._stopArmed ? ' armed' : ''}" data-stop-all title="Stop all agents|Kill every run, pause every standing agent, release agent leases and send their In Progress tickets back to Ready">${icon('pause', 'sm')}${body._stopArmed ? 'Click again to stop everything' : 'Stop all agents'}</button>`}</div>` : '';
     // The first fill draws the list and lets the rows drop in; a refresh patches it in place (INT-266). The agents come
-    // first; the idle alarm is a rule now, the base context is on the Context page and admin powers in Assignments.
+    // first; the idle alarm is a rule now, the base context is on the Shared context page and admin powers in Assignments.
     const first = !body._agentsFilled;
     body._agentsFilled = true;
     (first ? (h) => { body.innerHTML = h; } : (h) => patchHTML(body, h))(`<div class="focusbar codebar code-row" ${state.app.behind ? '' : 'hidden'}>${codeBehindHTML()}</div>` + stopRow + addBtn + (rows.length ? '<div class="ent-list">' + rows.map((p, i) => {
