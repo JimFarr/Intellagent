@@ -41,13 +41,14 @@ describe('agent stalls (INT-483)', () => {
     assert.deepEqual([r.stalls[0].why, r.stalls[0].evidence.denied], ['refused', ['Bash:git', 'Edit']]);
     assert.equal(check([agent({ status: 'idle', lastRun: denied })], () => work, r.ledger, T0 + MIN).stalls.length, 0, 'raised once');
   });
-  it("the board's 401/403 answers to the last run (refusals, INT-506) are refused too, with their count in evidence", () => {
+  it("the board refusing the last run a permission (refusals, INT-506) is refused too, with the codes in evidence", () => {
     const run = { startedAt: 'a', endedAt: 'b', code: 0 };
-    assert.equal(whyOf(agent({ lastRun: run, refusals: 3 }), () => work), 'refused');
-    assert.equal(whyOf(agent({ lastRun: run, refusals: 3 }), none), null, 'nothing waits: nobody is held up');
-    assert.equal(whyOf(agent({ lastRun: run }), () => work), null, 'a run with no refusals clears it');
-    const s = check([agent({ lastRun: run, refusals: 3 })], () => work, {}, T0).stalls[0];
-    assert.deepEqual([s.why, s.evidence.refusals, 'denied' in s.evidence], ['refused', 3, false]);
+    const refusals = { FORBIDDEN: 2, WIDEN: 1 };
+    assert.equal(whyOf(agent({ lastRun: run, refusals }), () => work), 'refused');
+    assert.equal(whyOf(agent({ lastRun: run, refusals }), none), null, 'nothing waits: nobody is held up');
+    assert.equal(whyOf(agent({ lastRun: run, refusals: {} }), () => work), null, 'a run with no refusals clears it');
+    const s = check([agent({ lastRun: run, refusals })], () => work, {}, T0).stalls[0];
+    assert.deepEqual([s.why, s.evidence.refusals, 'denied' in s.evidence], ['refused', refusals, false]);
   });
 
   it('a stall is raised once, with its evidence, and again only after the agent is out of it', () => {
@@ -125,7 +126,8 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
   const B = '/api/boards/main';
   let s;
   before(async () => {
-    s = await startServer({ manifest: { stalls: { pausedMinutes: 0.01 } }, agents: { defaults: { settleSeconds: 0.2, retrySeconds: 0.2, throttleMinutes: 0 }, agents: {
+    // sentry has a token on the board, so its runs carry a run token (INT-506 counts refusals only from those)
+    s = await startServer({ manifest: { stalls: { pausedMinutes: 0.01 }, auth: { agentTokens: { sentry: 'sentry-own-token' } } }, agents: { defaults: { settleSeconds: 0.2, retrySeconds: 0.2, throttleMinutes: 0 }, agents: {
       boss: { run: run('ok') }, drax: { run: run('ok') }, flaky: { run: run('fail'), maxFailures: 1, failedRetryMinutes: 0 }, spare: { run: run('ok') }, sentry: { run: run('refuse') },
     } } });
   });
@@ -162,9 +164,9 @@ describe('the "an agent stalls" trigger (INT-483)', () => {
     assert.notEqual(stall.evidence.lastRun.code, 0);
   });
 
-  it("the board's 403 to a live run makes it refused, counted for that run (INT-506)", async () => {
+  it("the board refusing a live run a permission makes it refused, counted for that run (INT-506)", async () => {
     await s.ok('POST', `${B}/items`, { title: 'for sentry', column: 'Ready', assignee: 'sentry' }, USER);
     const stall = await until(async () => (await events('agent.stalled')).find((e) => e.agent === 'sentry'), 15000, 'sentry stalled');
-    assert.deepEqual([stall.why, stall.evidence.refusals], ['refused', 1]);
+    assert.deepEqual([stall.why, stall.evidence.refusals], ['refused', { FORBIDDEN: 1 }], 'only the permission it lacked, sent with its own token');
   });
 });

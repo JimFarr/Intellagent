@@ -126,14 +126,18 @@ if (mode === 'commit') {
   });
   return;
 }
-//   node fake-agent.js refuse   calls a human-only route as its run (a 403 the board counts, INT-506) and does nothing else
+//   node fake-agent.js refuse   as its run, meets a missing permission (FORBIDDEN: the board counts it, INT-506), a
+//   human-only gate (not counted), and the same FORBIDDEN without its token, as anyone who read the run id could send it
 if (mode === 'refuse') {
   process.stdin.resume();
   process.stdin.on('end', async () => {
-    await fetch(`${process.env.INTELLAGENT_URL}/api/app`, {
-      method: 'PATCH', body: JSON.stringify({ name: 'mine now' }),
-      headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT, 'x-intellagent-run': process.env.INTELLAGENT_RUN, ...(process.env.INTELLAGENT_TOKEN ? { authorization: `Bearer ${process.env.INTELLAGENT_TOKEN}` } : {}) },
+    const call = (method, p, body, token = process.env.INTELLAGENT_TOKEN) => fetch(`${process.env.INTELLAGENT_URL}${p}`, {
+      method, body: body && JSON.stringify(body),
+      headers: { 'content-type': 'application/json', 'x-agent': process.env.INTELLAGENT_AGENT, 'x-intellagent-run': process.env.INTELLAGENT_RUN, ...(token ? { authorization: `Bearer ${token}` } : {}) },
     });
+    await call('GET', '/api/agents/drax/layers');
+    await call('PATCH', '/api/app', { name: 'mine now' });
+    await call('GET', '/api/agents/drax/layers', undefined, null);
   });
   return;
 }

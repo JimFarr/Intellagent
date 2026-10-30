@@ -5048,19 +5048,24 @@ const STALLS = require('./lib/alerts/stalls');
 const STALL_TIMINGS = STALLS.timingsOf(M.stalls);
 // shortcut: the ledger is in memory, so a stall still standing at a restart is raised once more; keep it on disk if that bothers
 let stallLedger = {};
-// The board's own 401/403 answers to a standing agent's run (INT-506): counted only while that run is live and its
-// X-Intellagent-Run is the run's id (a made-up id counts for nothing), and kept by the run's start, which the
-// finished run keeps in lastRun, so the stall check gives the count to the run that made it. agent → { startedAt, count }
+// The board's own 403s to a standing agent's run (INT-506): counted only while that run is live, its
+// X-Intellagent-Run is the run's id and the call carried the run's own token (names and run ids are in every event,
+// so anyone could send them), and only for a missing permission, not a workflow gate (HUMAN_ONLY, SLEEPING, OWN_WORK…:
+// a mistake the run can correct). Kept by the run's start, which the finished run keeps in lastRun, so the stall
+// check gives the codes to the run that met them. agent → { startedAt, codes: { <code>: n } }
+const REFUSAL_CODES = new Set(['FORBIDDEN', 'OUT_OF_SCOPE', 'NOT_DELEGABLE', 'WIDEN', 'NO_TOKEN']);
 const refusals = new Map();
-function countRefusal(actor) {
-  if (actor?.kind !== 'agent' || !actor.run || !standing) return;
+function countRefusal(actor, req, code) {
+  if (actor?.kind !== 'agent' || !actor.run || !standing || !REFUSAL_CODES.has(code)) return;
+  if (!tokenEq(tokenOf(req), runTokens.get(actor.name.toLowerCase()))) return;
   let a;
   try { a = standing.get(actor.name); } catch { return; } // not a standing agent
   if (!a.runningSince || a.lastRun?.runId !== actor.run) return;
   const r = refusals.get(actor.name);
-  refusals.set(actor.name, { startedAt: a.lastRun.startedAt, count: r?.startedAt === a.lastRun.startedAt ? r.count + 1 : 1 });
+  const codes = r?.startedAt === a.lastRun.startedAt ? r.codes : {};
+  refusals.set(actor.name, { startedAt: a.lastRun.startedAt, codes: { ...codes, [code]: (codes[code] || 0) + 1 } });
 }
-const withRefusals = (a) => { const r = refusals.get(a.name); return r && r.startedAt === a.lastRun?.startedAt ? { ...a, refusals: r.count } : a; };
+const withRefusals = (a) => { const r = refusals.get(a.name); return r && r.startedAt === a.lastRun?.startedAt ? { ...a, refusals: r.codes } : a; };
 function checkStalls() {
   if (M.sandbox || !standing) return; // a sandbox's agents never run: every one would look stalled
   const work = (a) => { try { return pendingWork(a.name, a.pickup === true ? 'ready' : a.pickup || false); } catch { return []; } };
@@ -6334,7 +6339,7 @@ const server = http.createServer(async (req, res) => {
     if (res.headersSent) { res.end(); return; }
     const status = e.status || 500;
     if (status === 500) console.error(e);
-    if (status === 401 || status === 403) countRefusal(actor);
+    if (status === 403) countRefusal(actor, req, e.code);
     reply(res, status, { error: e.message, code: e.code || (status === 500 ? 'INTERNAL' : 'ERROR'), status, ...(e.extra || {}) });
   }
 });
