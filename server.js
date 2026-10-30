@@ -232,6 +232,8 @@ function normBuiltins(src, lenient = false) {
 // `bad(problem, detail)` must throw; each caller words the problem its own way.
 const TYPE_ALIAS = { longtext: 'text', choice: 'enum', multi: 'tags', yesno: 'boolean' };
 const TEXT_LIMIT = { user: 64, longtext: 20_000 };
+// parses, and has no user:pass@ (http://127.0.0.1:7431@elsewhere/ would fit a "http://127.0.0.1:743*" grant scope, INT-494)
+const plainUrl = (v) => { try { const u = new URL(v); return !u.username && !u.password; } catch { return false; } };
 function checkValue(def, v, strict, bad) {
   const type = TYPE_ALIAS[def.type] || def.type;
   const options = def.options?.map((o) => o.value) || [];
@@ -268,7 +270,7 @@ function checkValue(def, v, strict, bad) {
       return ok ? v.slice(0, 40) : bad('date');
     }
     case 'url':
-      return typeof v === 'string' && /^https?:\/\//i.test(v) ? str(v, 2000) : bad('url');
+      return typeof v === 'string' && /^https?:\/\//i.test(v) && plainUrl(v) ? str(v, 2000) : bad('url');
     default:
       return bad('type');
   }

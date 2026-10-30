@@ -15,7 +15,7 @@ Gives each agent its own headless Chrome, so it can look at its own build. Off u
   "--blocked-origins", "http://127.0.0.1:7420;http://127.0.0.1:7421;http://127.0.0.1:7499"] } } }
 ```
 
-The blocked origins keep the real boards and the lease program out of reach whatever page the agent opens.
+The grant's `url` scope covers only the page the browser opens at (an address with a user name, `http://127.0.0.1:7431@…`, is refused). After that, the blocked origins are what keep the real boards and the lease program out of reach. They live in this config, which the board neither writes nor checks, so check them when you set an agent up.
 
 **Connection**: `chrome`, the program to launch (empty: Chrome's usual place), and `idleMinutes`. *Test* launches a throwaway browser and says which Chrome answered.
 

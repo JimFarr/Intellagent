@@ -41,6 +41,11 @@ test('browser plugin: one browser per agent on its own port, in the size and the
 
     // the grant bounds where it opens: never a real board
     assert.strictEqual((await run('start', { url: 'http://127.0.0.1:7420/' }, ANN)).body.code, 'OUT_OF_SCOPE');
+    // the part before @ is a user name, not the host: refused whatever the scope
+    for (const url of ['http://127.0.0.1:7431@127.0.0.1:7420/', 'http://127.0.0.1:743@evil.example/', 'http://127.0.0.1:743\n1@evil.example/', 'http://127.0.0.1:7431:x@evil.example/']) {
+      const r = await run('start', { url }, ANN);
+      assert.strictEqual(r.status, 400, `${JSON.stringify(url)}: ${JSON.stringify(r.body)}`);
+    }
     assert.strictEqual((await run('start', { url: 'http://127.0.0.1:7431/' }, { agent: 'cal' })).body.code, 'FORBIDDEN');
 
     // the same size and theme: a new tab in the same browser
