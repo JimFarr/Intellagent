@@ -2009,6 +2009,31 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
         settings.ticketW = { ...settings.ticketW, [k]: px }; saveSettings();
       });
     }
+    // beside mode: the divider between the ticket and the thread moves too, the thread's width kept (INT-519)
+    if (settings.threadW) m.modal.style.setProperty('--thread-w', `${settings.threadW}px`);
+    const split = $('.m-split', m.root);
+    if (split && !split.wired) {
+      split.wired = true;
+      // the thread runs from the divider to the window's right edge; the ticket keeps at least 480 px
+      const setW = (px) => {
+        const w = Math.round(Math.min(Math.max(px, 320), $('.m-main', m.root).offsetWidth - 480));
+        m.modal.style.setProperty('--thread-w', `${w}px`); split.setAttribute('aria-valuenow', w);
+        return w;
+      };
+      const save = (w) => { settings.threadW = w; saveSettings(); };
+      split.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); split.setPointerCapture(e.pointerId); split.classList.add('drag');
+        const right = $('.m-main', m.root).getBoundingClientRect().right;
+        let w = 0;
+        const move = (ev) => { w = setW(right - ev.clientX); };
+        split.addEventListener('pointermove', move);
+        split.addEventListener('pointerup', () => { split.removeEventListener('pointermove', move); split.classList.remove('drag'); if (w) save(w); }, { once: true });
+      });
+      split.addEventListener('keydown', (e) => {
+        const d = { ArrowLeft: 24, ArrowRight: -24 }[e.key];
+        if (d) { e.preventDefault(); save(setW($('.m-thread', m.root).offsetWidth + d)); }
+      });
+    }
     if (!m.mqWired) { m.mqWired = true; wideMq.addEventListener('change', () => m.modal.isConnected && placeSide(m)); }
     placeSide(m);
     for (const b of $$('[data-thread]', seg)) { const on = b.dataset.thread === settings.thread; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }
@@ -2341,7 +2366,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
       <div class="m-sub"></div>
       ${shown('description') ? `<div class="desc"><div class="md desc-view ${editDesc ? 'editable' : ''}" data-ph="${editDesc ? 'Description…' : '—'}"></div><div class="desc-edit" hidden>${tboxHTML({ mono: true, okTitle: 'Save (Ctrl+Enter)', hint: 'Ctrl+Enter · Esc' })}</div></div>` : ''}
       ${shown('attachments') ? `<div class="section"><div class="section-head">${icon('clip', 'sm')}<span>${esc(bi('attachments').label)}</span><span class="att-n"></span><span class="rule"></span></div><div class="atts"></div></div>` : ''}
-      </div><section class="m-thread"><nav class="tabs"><button data-t="comments" class="on">${icon('msg', 'sm')}<span class="n c-n">0</span></button><button data-t="activity">${icon('activity', 'sm')}</button>${m.create ? '' : `<button data-t="triggers" title="Triggers|What this card waits on, and who it wakes">${icon('bell', 'sm')}<span class="n t-n"></span></button>`}</nav>
+      </div><section class="m-thread">${m.create ? '' : '<div class="m-split" role="separator" aria-orientation="vertical" aria-label="Thread width" tabindex="0" title="Drag to resize the thread (or ← →)"></div>'}<nav class="tabs"><button data-t="comments" class="on">${icon('msg', 'sm')}<span class="n c-n">0</span></button><button data-t="activity">${icon('activity', 'sm')}</button>${m.create ? '' : `<button data-t="triggers" title="Triggers|What this card waits on, and who it wakes">${icon('bell', 'sm')}<span class="n t-n"></span></button>`}</nav>
       <div class="tab-comments"><div class="cmts" tabindex="0" role="log" aria-label="Comments"></div>
         <button class="new-chip" type="button" tabindex="-1" aria-hidden="true"></button>
         <div class="cmt-compose">${tboxHTML({ ph: 'Comment…', okIcon: 'send', okTitle: 'Send (Ctrl+Enter)', tools: `<label class="tb-btn" title="Attach">${icon('clip')}<input type="file" multiple hidden></label>` })}</div></div>
