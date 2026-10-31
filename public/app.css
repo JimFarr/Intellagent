@@ -602,7 +602,9 @@ input[type="checkbox"].ck:checked::after { scale: 1; }
 }
 
 /* markdown */
-.md { overflow-wrap: anywhere; }
+.md { overflow-wrap: break-word; }
+.md code { overflow-wrap: anywhere; }
+.md th { white-space: nowrap; } /* words stay whole; a wide table scrolls inside .tbl (INT-510) */
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 .7em; }
@@ -3087,13 +3089,14 @@ input.inp[type=number], input.inp[type=date] { font-variant-numeric: tabular-num
 .item-modal:not(.creating) .tab-comments .cmt-compose { margin-top: 12px; }
 
 @media (min-width: 1000px) {
-  .item-modal.thread-beside:not(.creating) { width: min(1560px, calc(100vw - 32px)); height: min(880px, calc(100vh - 48px)); }
-  .thread-beside:not(.creating) .m-main { display: grid; grid-template-columns: minmax(0, 1fr) 400px; padding: 0; overflow: hidden; scrollbar-gutter: auto; }
+  .item-modal.thread-beside:not(.creating) { width: calc(100vw - 32px); height: min(880px, calc(100vh - 48px)); }
+  .thread-beside:not(.creating) .m-main { display: grid; grid-template-columns: minmax(560px, 1fr) clamp(440px, 42%, 760px); padding: 0; overflow: hidden; scrollbar-gutter: auto; }
   .thread-beside:not(.creating) .m-left { display: block; min-width: 0; overflow-y: auto; padding: 2px 22px 28px 24px; scrollbar-gutter: stable; }
-  .thread-beside:not(.creating) .m-thread { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 14px 16px 14px; border-left: 1px solid var(--border); background: color-mix(in oklab, var(--bg) 30%, var(--surface)); }
+  .thread-beside:not(.creating) .m-thread { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 14px 24px; border-left: 1px solid var(--border); background: color-mix(in oklab, var(--bg) 30%, var(--surface)); }
   .thread-beside .m-thread .tabs { margin-top: 0; flex: none; }
   .thread-beside .m-thread .tab-comments:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .thread-beside .m-thread .cmts { flex: 1; max-height: none; padding-top: 12px; }
+  .thread-beside .m-thread .cmt { gap: 12px; padding: 14px 0; }
   .thread-beside .m-thread .cmt-compose { flex: none; border-top: 1px solid var(--border); padding-top: 10px; }
   .thread-beside .m-thread .tab-activity, .thread-beside .m-thread .tab-triggers { flex: 1; min-height: 0; overflow-y: auto; }
   .thread-beside .m-thread .md, .thread-beside .m-thread .cmt-body { max-width: 68ch; }
