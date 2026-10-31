@@ -1988,8 +1988,8 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     $('.new-chip', m.root).onclick = () => { m.follow.jump(); toEnd(cmts); showNew(m, 0); cmts.focus(); };
   }
   // Beside mode on a wide screen: the side controls live in the ticket column, not their own column (INT-499).
-  const wideMq = matchMedia('(min-width: 1000px)');
-  const besideNow = (m) => !m.create && settings.thread === 'beside' && wideMq.matches;
+  const wideMq = globalThis.matchMedia?.('(min-width: 1000px)'); // absent in the tests' stub DOM
+  const besideNow = (m) => !m.create && settings.thread === 'beside' && wideMq?.matches;
   function placeSide(m) {
     const side = $('.m-side', m.root), to = besideNow(m) ? $('.m-left', m.root) : $('.m-frame', m.root);
     if (side && to && side.parentNode !== to) { to.append(side); m.modal.classList.toggle('side-in-left', to.matches('.m-left')); fillSide(m); }
