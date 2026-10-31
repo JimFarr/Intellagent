@@ -1998,6 +1998,17 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     const seg = $('.thread-seg', m.root);
     if (!seg) return;
     m.modal.classList.toggle('thread-beside', settings.thread === 'beside');
+    // the width the person dragged it to, per mode; the CSS default until they do (INT-519)
+    const w = !m.create && settings.ticketW?.[besideNow(m) ? 'beside' : 'below'];
+    m.modal.style.width = w ? `${w}px` : '';
+    if (!m.resizeWired) {
+      m.resizeWired = true;
+      m.modal.addEventListener('pointerup', () => {
+        const k = besideNow(m) ? 'beside' : 'below', px = parseInt(m.modal.style.width, 10); // the resize grip sets style.width
+        if (m.create || !px || px === settings.ticketW?.[k]) return;
+        settings.ticketW = { ...settings.ticketW, [k]: px }; saveSettings();
+      });
+    }
     if (!m.mqWired) { m.mqWired = true; wideMq.addEventListener('change', () => m.modal.isConnected && placeSide(m)); }
     placeSide(m);
     for (const b of $$('[data-thread]', seg)) { const on = b.dataset.thread === settings.thread; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }
