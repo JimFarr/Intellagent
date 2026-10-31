@@ -2385,7 +2385,8 @@ body:not([data-section="board"]) #topbar .board-only { display: none !important;
 .rb-for .rb-hint, .rb-x .rb-hint, .rb-x + .rb-adds { padding-left: 0; }
 .rb-for [data-nmmsg] { color: var(--danger); }
 .rb-nm[aria-invalid="true"] { border-color: var(--danger); }
-.rb-x { display: grid; gap: 6px; position: relative; } /* the list opens below the message, never over it */
+.rb-x { display: grid; gap: 6px; }
+.rb-xbox { position: relative; } /* the list opens right under the input, where the caret is (INT-519) */
 .rb-xin { width: 100%; height: 34px; }
 .rb-xin.ok { border-color: color-mix(in oklab, var(--ok) 70%, var(--border)); }
 .rb-xin.bad { border-color: var(--danger); }
