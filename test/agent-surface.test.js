@@ -566,6 +566,19 @@ describe('waiting from the CLI', () => {
       assert.match(w.out, /attention\.resolved.*Okta/);
     } finally { await s.stop(); }
   });
+  it('wait refused by the board (a stale token) exits 1 with the reason and keeps its saved cursor (INT-520)', async () => {
+    const s = await startServer({ manifest: { auth: { requireAgentTokens: true } }, agents: { agents: {} } });
+    try {
+      const env = { INTELLAGENT_AGENT: 'pat', INTELLAGENT_TOKEN: issueToken(s.dir, 'pat') };
+      const file = path.join(s.dir, 'cursors', 'pat.json');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ cursor: 7 }));
+      const w = cli(['wait', '--timeout', '30'], { cwd: s.dir, env: { ...env, INTELLAGENT_TOKEN: 'not-the-token' } });
+      assert.equal(w.code, 1, w.err || w.out);
+      assert.match(w.err, /UNAUTHORIZED/);
+      assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).cursor, 7, 'the cursor is not wiped');
+    } finally { await s.stop(); }
+  });
 });
 
 describe('watching from the CLI', () => {

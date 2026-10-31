@@ -711,6 +711,12 @@ async function nextEvents({ agent, types, timeoutSec, quiet, listen = { scope: '
       await new Promise((res) => setTimeout(res, Math.min(5000, Math.max(0, deadline - Date.now()))));
       continue;
     }
+    // an error reply (a 401 once the token was rotated, say) has no cursor: stop and say why, rather than
+    // saving an empty cursor and asking again at once, for ever (INT-520)
+    if (r?.cursor == null) {
+      console.error(`error ${r?.code || 'NO_CURSOR'}: ${r?.error || 'the board answered without a cursor'}${r?.hint ? ` — hint: ${r.hint}` : ''}`);
+      process.exit(1);
+    }
     since = r.cursor;
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ cursor: since, at: new Date().toISOString() }));
