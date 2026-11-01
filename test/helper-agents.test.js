@@ -125,4 +125,24 @@ describe('helper agents (INT-252)', () => {
     assert.equal((await s.api('PATCH', `${A}/bob`, { helper: false }, USER)).status, 200);
     assert.equal((await by()).bob.helper, false);
   });
+
+  it('helper takes only a boolean, and no route makes a helper the coordinator (INT-521)', async () => {
+    const A = '/api/agents';
+    const no = await s.api('PATCH', `${A}/bob`, { helper: true }, { agent: 'gam' });
+    assert.match(no.body.error, /human's switch/);
+    for (const helper of ['false', 1, {}]) {
+      const r = await s.api('PATCH', `${A}/bob`, { helper }, USER);
+      assert.equal(r.status, 400, JSON.stringify(helper));
+    }
+    const bob = (await s.api('GET', `${A}/bob`, undefined, USER)).body;
+    assert.equal(bob.helper, false, 'a refused value changes nothing');
+    const role = await s.api('PATCH', `${A}/cosmo`, { role: 'coordinator' }, USER);
+    assert.equal(role.status, 409);
+    assert.equal(role.body.code, 'CONFLICT');
+    assert.equal((await s.api('PATCH', B, { coordinator: 'cosmo' }, USER)).status, 409);
+    assert.equal((await s.api('POST', A, { name: 'cosmo', coordinator: true }, USER)).status, 409);
+    assert.equal((await s.api('GET', B, undefined, USER)).body.board.coordinator, 'gam');
+    // the check is about the switch and the role: other edits of a helper go through
+    assert.equal((await s.api('PATCH', `${A}/cosmo`, { label: 'Chores' }, USER)).status, 200);
+  });
 });

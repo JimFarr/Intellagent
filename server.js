@@ -3678,6 +3678,7 @@ route('PATCH', '/api/boards/:board', 'Update board: { name?, idPrefix?, directiv
         const d = adminGate(ctx, actor, 'admin.coordinator', 'choose the coordinator');
         // an agent never makes itself the coordinator: the role carries routing and triage powers
         if (d && v && v.toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent never makes itself the coordinator', { code: 'OWN_WORK', hint: 'Ask the human on a card' });
+        if (v && isHelper(v)) fail(409, `${v} is a helper: the coordinator routes work, a helper is never routed to`, { code: 'CONFLICT', hint: `Turn helper off for ${v} first (Agents page, Edit, Role and areas)` });
         used.push([d, `Chose ${v || 'no one'} as the coordinator (was ${ctx.board.coordinator || 'no one'})`]);
         changes.coordinator = { from: ctx.board.coordinator, to: v };
         ctx.board.coordinator = v;
@@ -5697,6 +5698,7 @@ route('POST', '/api/agents', 'Human: add or update a standing agent { name, role
   if (body.grants !== undefined) body.grants = cleanGrants(body.grants);
   delete body.idleAlarmMinutes; // only as idleAlarm: { minutes }, checked
   Object.assign(body, cleanWake(body));
+  if ((body.coordinator || body.role === 'coordinator') && isHelper(body.name)) fail(409, `${body.name} is a helper: the coordinator routes work, a helper is never routed to`, { code: 'CONFLICT', hint: `Turn helper off for ${body.name} first (Agents page, Edit, Role and areas)` });
   const a = standing.define(body.name, body, { kind: actor.kind, name: actor.name });
   issueAgentToken(a.name);
   if (a.probation) askForIntroduction(a.name, actor); // the one run a new agent gets: introduce itself, read-only
@@ -5829,9 +5831,11 @@ function manageAgent(target, d, actor) {
   const a = standing.get(target); // 404 if unknown
   const name = a.name;
   const keys = Object.keys(d || {});
-  const bad = keys.filter((k) => !MANAGE_KEYS.includes(k) && !WAKE_KEYS.includes(k) && !(k === 'helper' && actor.kind === 'user')); // helper: the human's switch (INT-518)
+  const bad = keys.filter((k) => !MANAGE_KEYS.includes(k) && !WAKE_KEYS.includes(k) && k !== 'helper');
   if (bad.length) fail(403, `${bad.join(', ')} can't be changed through the API — the human edits agents.json for that`, { code: 'NOT_DELEGABLE', hint: `Changeable: ${MANAGE_KEYS.join(', ')}` });
   const agent = actor.kind !== 'user';
+  // helper (INT-518): the human's switch on the Agents page; no grant reaches it
+  if (agent && keys.includes('helper')) fail(403, 'helper is the human\'s switch: only the human makes an agent a helper', { code: 'NOT_DELEGABLE', hint: 'Ask the human on a card: Agents page, Edit, Role and areas' });
   if (agent) {
     if (grantsOf(actor.name).some((g) => g.power === 'agents.manage') && name.toLowerCase() === actor.name.toLowerCase()) fail(403, 'An agent manager never edits its own record', { code: 'OWN_WORK', hint: 'Ask the human' });
     managerOf(actor, name);
@@ -5906,8 +5910,12 @@ function manageAgent(target, d, actor) {
   if ('concerns' in d) cfg.concerns = strList(d.concerns, 'concerns');
   if ('reviewer' in d) cfg.reviewer = d.reviewer ? true : null;
   if ('helper' in d) {
-    if (d.helper && (cfg.role ?? a.role) === 'coordinator') fail(409, 'The coordinator routes work: it cannot be a helper', { code: 'CONFLICT', hint: 'Give the coordinator role to another agent first' });
-    cfg.helper = d.helper ? true : null;
+    if (d.helper !== null && typeof d.helper !== 'boolean') fail(400, '"helper" is true, false or null', { code: 'BAD_REQUEST', hint: 'Send true or false, not a string' });
+    cfg.helper = d.helper || null;
+  }
+  // a coordinator routes work and a helper is never routed to: whichever of the two this PATCH changes (INT-521)
+  if (('helper' in d || 'role' in d) && ('helper' in cfg ? cfg.helper : a.helper) && (('role' in cfg ? cfg.role : a.role) === 'coordinator' || isBoardCoordinator(name))) {
+    fail(409, `${name} would be a coordinator and a helper: the coordinator routes work, a helper is never routed to`, { code: 'CONFLICT', hint: 'Turn helper off first, or give the coordinator role to another agent' });
   }
   if ('personality' in d) cfg.personality = cleanPersonality(d.personality);
   if ('skills' in d) {
@@ -6071,6 +6079,7 @@ function heldPerms(name) {
 // is called on with a request for a chore on someone's ticket, never handed the ticket: only the human assigns it
 // one, and on any other ticket it never takes a lease, starts or requests review, so the caller keeps its work.
 function isHelper(name) { return !!name && !!standing?.helperOf?.(name); }
+const isBoardCoordinator = (name) => [...boards.values()].some((c) => c.board.coordinator?.toLowerCase() === name.toLowerCase());
 function mayAssign(actor, to) {
   if (actor.kind === 'user' || !isHelper(to)) return;
   fail(403, `${to} is a helper: only the human assigns it a ticket`, { code: 'NOT_ROUTABLE', hint: `Keep the ticket and send ${to} a request for a chore on it: POST /api/boards/<board>/requests { "to": "${to}", "body": "what, where, and which card to report on" }` });
