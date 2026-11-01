@@ -5905,7 +5905,10 @@ function manageAgent(target, d, actor) {
   if ('areas' in d) cfg.areas = strList(d.areas, 'areas');
   if ('concerns' in d) cfg.concerns = strList(d.concerns, 'concerns');
   if ('reviewer' in d) cfg.reviewer = d.reviewer ? true : null;
-  if ('helper' in d) cfg.helper = d.helper ? true : null;
+  if ('helper' in d) {
+    if (d.helper && (cfg.role ?? a.role) === 'coordinator') fail(409, 'The coordinator routes work: it cannot be a helper', { code: 'CONFLICT', hint: 'Give the coordinator role to another agent first' });
+    cfg.helper = d.helper ? true : null;
+  }
   if ('personality' in d) cfg.personality = cleanPersonality(d.personality);
   if ('skills' in d) {
     // A skill is read into the agent's worktree and prompt on every run, like a context file: the human's to attach

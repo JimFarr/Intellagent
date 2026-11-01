@@ -121,6 +121,7 @@ describe('helper agents (INT-252)', () => {
     assert.doesNotMatch(routing, /\*\*bob\*\*/);
     const refused = await s.api('POST', `${B}/items`, { title: 'For bob', column: 'Backlog', assignee: 'bob' }, { agent: 'gam' });
     assert.equal(refused.body.code, 'NOT_ROUTABLE');
+    assert.equal((await s.api('PATCH', `${A}/gam`, { helper: true }, USER)).status, 409, 'the coordinator is never a helper');
     assert.equal((await s.api('PATCH', `${A}/bob`, { helper: false }, USER)).status, 200);
     assert.equal((await by()).bob.helper, false);
   });
