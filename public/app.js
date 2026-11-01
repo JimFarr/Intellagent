@@ -5777,7 +5777,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
     root.addEventListener('change', (e) => {
       const t = e.target;
       if (t.dataset.dialSet) { $(`[data-dial="${t.dataset.dialSet}"]`, root).disabled = !t.checked; touch('personality'); }
-      else if (t.matches('[data-reviewer], [data-role]')) touch('role');
+      else if (t.matches('[data-reviewer], [data-helper], [data-role]')) touch('role');
       else if (t.matches('[data-wake]')) touch('wake');
     });
     root.addEventListener('keydown', (e) => {
