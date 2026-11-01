@@ -599,7 +599,7 @@ describe('standing agents pick up work already on the board', () => {
         const t = await item(s, id);
         assert.ok(['rocket', 'drax'].includes(t.assignee));
         assert.deepEqual([t.assignedBy.kind, t.rebalanced.from, t.rebalanced.why], ['system', 'leaving', 'leaving was removed']);
-        const c = t.comments.at(-1);
+        const c = t.comments.findLast((x) => x.author.kind === 'system'); // the woken owner's run may comment after it (INT-522)
         const note = id === byHand ? ' (was pinned to leaving; not pinned now)' : '';
         assert.deepEqual([c.author.kind, c.body], ['system', `↔ Moved from leaving to ${t.assignee}: leaving was removed${note}.`]);
         assert.equal(t.pinned, undefined, 'never pinned to an owner the board picked');
