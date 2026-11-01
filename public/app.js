@@ -5619,6 +5619,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
           <textarea class="inp spec-ctx" data-role-brief-ta spellcheck="true" hidden></textarea>
           <div class="spec-add" data-role-brief-bar hidden><span class="grow"></span><button class="btn sm primary" type="button" data-role-brief-save>${icon('check', 'sm')}Save role</button></div>
           <label class="spec-toggle"><input type="checkbox" data-reviewer ${a.reviewer ? 'checked' : ''}> <span><b>Can review</b> other agents' work in its areas — the receptionist may assign it; it comments, you approve</span></label>
+          <label class="spec-toggle"><input type="checkbox" data-helper ${a.helper ? 'checked' : ''}> <span><b>Helper</b> — the others call on it for chores; never assigned tickets, no pickup, a low run cap</span></label>
           <div class="muted pe-note">What it may do is the <button type="button" class="btn sm ghost" data-open-grid>permissions grid</button>; when it wakes is the Wake-ups tab.</div>`)}
         ${pane('wake', wakePane())}
         ${pane('context', `<div class="muted pe-note">Read on each session's first turn. Switch an item off to keep it without sending it.</div>
@@ -5828,7 +5829,7 @@ import { tagColor, tilt, decoVars, decoSlot, nowMs, reduced, autosize, isImage, 
           if (text) per.text = text;
           body.personality = Object.keys(per).length ? per : null;
         }
-        if (st.touched.has('role')) Object.assign(body, { role: $('[data-role]', root).value || null, areas: st.areas, concerns: st.concerns, reviewer: $('[data-reviewer]', root).checked });
+        if (st.touched.has('role')) Object.assign(body, { role: $('[data-role]', root).value || null, areas: st.areas, concerns: st.concerns, reviewer: $('[data-reviewer]', root).checked, helper: $('[data-helper]', root).checked });
         if (st.touched.has('wake')) {
           const w = (k) => $(`[data-wake="${k}"]`, root).value.trim();
           if (w('listen') !== '__custom') body.listen = w('listen') || null;

@@ -106,4 +106,22 @@ describe('helper agents (INT-252)', () => {
     const bob = (await s.api('GET', '/api/permissions/me', undefined, { agent: 'bob' })).body;
     assert.match(JSON.stringify(bob), /call-helpers/);
   });
+
+  it('the human switches an agent into a helper from the Agents page; a manager gets NOT_DELEGABLE (INT-518)', async () => {
+    const A = '/api/agents';
+    const no = await s.api('PATCH', `${A}/bob`, { helper: true }, { agent: 'gam' });
+    assert.equal(no.status, 403);
+    assert.equal(no.body.code, 'NOT_DELEGABLE');
+    const on = await s.api('PATCH', `${A}/bob`, { helper: true }, USER);
+    assert.equal(on.status, 200, JSON.stringify(on.body));
+    const by = () => s.api('GET', A, undefined, USER).then((r) => Object.fromEntries(r.body.agents.map((a) => [a.name, a])));
+    assert.equal((await by()).bob.helper, true);
+    assert.equal((await by()).bob.pickup, false);
+    const routing = (await s.api('GET', `${B}/brief`, undefined, { agent: 'gam' })).body.split('## Agents you can route to')[1].split('\n## ')[0];
+    assert.doesNotMatch(routing, /\*\*bob\*\*/);
+    const refused = await s.api('POST', `${B}/items`, { title: 'For bob', column: 'Backlog', assignee: 'bob' }, { agent: 'gam' });
+    assert.equal(refused.body.code, 'NOT_ROUTABLE');
+    assert.equal((await s.api('PATCH', `${A}/bob`, { helper: false }, USER)).status, 200);
+    assert.equal((await by()).bob.helper, false);
+  });
 });

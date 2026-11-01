@@ -5829,7 +5829,7 @@ function manageAgent(target, d, actor) {
   const a = standing.get(target); // 404 if unknown
   const name = a.name;
   const keys = Object.keys(d || {});
-  const bad = keys.filter((k) => !MANAGE_KEYS.includes(k) && !WAKE_KEYS.includes(k));
+  const bad = keys.filter((k) => !MANAGE_KEYS.includes(k) && !WAKE_KEYS.includes(k) && !(k === 'helper' && actor.kind === 'user')); // helper: the human's switch (INT-518)
   if (bad.length) fail(403, `${bad.join(', ')} can't be changed through the API — the human edits agents.json for that`, { code: 'NOT_DELEGABLE', hint: `Changeable: ${MANAGE_KEYS.join(', ')}` });
   const agent = actor.kind !== 'user';
   if (agent) {
@@ -5905,6 +5905,7 @@ function manageAgent(target, d, actor) {
   if ('areas' in d) cfg.areas = strList(d.areas, 'areas');
   if ('concerns' in d) cfg.concerns = strList(d.concerns, 'concerns');
   if ('reviewer' in d) cfg.reviewer = d.reviewer ? true : null;
+  if ('helper' in d) cfg.helper = d.helper ? true : null;
   if ('personality' in d) cfg.personality = cleanPersonality(d.personality);
   if ('skills' in d) {
     // A skill is read into the agent's worktree and prompt on every run, like a context file: the human's to attach
